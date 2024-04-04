@@ -36,7 +36,7 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::{
-    codec::{Decode, Encode, ParameterizedDecode},
+    codec::{CodecError, Decode, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
@@ -299,97 +299,119 @@ where
             })
             .collect();
 
-        // Compute report shares to send to helper, and decrypt our input shares & initialize
-        // preparation state.
-        let mut report_aggregations_to_write = Vec::new();
-        let mut prepare_inits = Vec::new();
-        let mut stepped_aggregations = Vec::new();
-        for report_aggregation in report_aggregations {
-            // Extract report data from the report aggregation state.
-            let (public_share, leader_extensions, leader_input_share, helper_encrypted_input_share) =
-                match report_aggregation.state() {
-                    ReportAggregationState::StartLeader {
+        let result: Result<_, CodecError> = {
+            let vdaf = Arc::clone(&vdaf);
+            let task_id = *task.id();
+            let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
+            let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
+            (move || {
+                // Compute report shares to send to helper, and decrypt our input shares & initialize
+                // preparation state.
+                let mut report_aggregations_to_write = Vec::new();
+                let mut prepare_inits = Vec::new();
+                let mut stepped_aggregations = Vec::new();
+                for report_aggregation in report_aggregations {
+                    // Extract report data from the report aggregation state.
+                    let (
                         public_share,
                         leader_extensions,
                         leader_input_share,
                         helper_encrypted_input_share,
-                    } => (
-                        public_share,
-                        leader_extensions,
-                        leader_input_share,
-                        helper_encrypted_input_share,
-                    ),
-
-                    // Panic safety: this can't happen because we filter to only StartLeader-state
-                    // report aggregations before this loop.
-                    _ => panic!(
-                        "Unexpected report aggregation state: {:?}",
-                        report_aggregation.state()
-                    ),
-                };
-
-            // Check for repeated extensions.
-            let mut extension_types = HashSet::new();
-            if !leader_extensions
-                .iter()
-                .all(|extension| extension_types.insert(extension.extension_type()))
-            {
-                debug!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
-                self.aggregate_step_failure_counter
-                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                report_aggregations_to_write.push(WritableReportAggregation::new(
-                    report_aggregation.with_state(ReportAggregationState::Failed {
-                        prepare_error: PrepareError::InvalidMessage,
-                    }),
-                    None,
-                ));
-                continue;
-            }
-
-            // Initialize the leader's preparation state from the input share.
-            match trace_span!("VDAF preparation").in_scope(|| {
-                vdaf.leader_initialized(
-                    verify_key.as_bytes(),
-                    aggregation_job.aggregation_parameter(),
-                    // DAP report ID is used as VDAF nonce
-                    report_aggregation.report_id().as_ref(),
-                    public_share,
-                    leader_input_share,
-                )
-                .map_err(|ping_pong_error| {
-                    handle_ping_pong_error(
-                        task.id(),
-                        Role::Leader,
-                        report_aggregation.report_id(),
-                        ping_pong_error,
-                        &self.aggregate_step_failure_counter,
-                    )
-                })
-            }) {
-                Ok((ping_pong_state, ping_pong_message)) => {
-                    prepare_inits.push(PrepareInit::new(
-                        ReportShare::new(
-                            report_aggregation.report_metadata(),
-                            public_share.get_encoded()?,
-                            helper_encrypted_input_share.clone(),
+                    ) = match report_aggregation.state() {
+                        ReportAggregationState::StartLeader {
+                            public_share,
+                            leader_extensions,
+                            leader_input_share,
+                            helper_encrypted_input_share,
+                        } => (
+                            public_share,
+                            leader_extensions,
+                            leader_input_share,
+                            helper_encrypted_input_share,
                         ),
-                        ping_pong_message,
-                    ));
-                    stepped_aggregations.push(SteppedAggregation {
-                        report_aggregation,
-                        leader_state: ping_pong_state,
-                    });
+
+                        // Panic safety: this can't happen because we filter to only StartLeader-state
+                        // report aggregations before this loop.
+                        _ => panic!(
+                            "Unexpected report aggregation state: {:?}",
+                            report_aggregation.state()
+                        ),
+                    };
+
+                    // Check for repeated extensions.
+                    let mut extension_types = HashSet::new();
+                    if !leader_extensions
+                        .iter()
+                        .all(|extension| extension_types.insert(extension.extension_type()))
+                    {
+                        debug!(
+                            report_id = %report_aggregation.report_id(),
+                            "Received report with duplicate extensions"
+                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                        report_aggregations_to_write.push(WritableReportAggregation::new(
+                            report_aggregation.with_state(ReportAggregationState::Failed {
+                                prepare_error: PrepareError::InvalidMessage,
+                            }),
+                            None,
+                        ));
+                        continue;
+                    }
+
+                    // Initialize the leader's preparation state from the input share.
+                    match trace_span!("VDAF preparation").in_scope(|| {
+                        vdaf.leader_initialized(
+                            verify_key.as_bytes(),
+                            &aggregation_parameter,
+                            // DAP report ID is used as VDAF nonce
+                            report_aggregation.report_id().as_ref(),
+                            public_share,
+                            leader_input_share,
+                        )
+                        .map_err(|ping_pong_error| {
+                            handle_ping_pong_error(
+                                &task_id,
+                                Role::Leader,
+                                report_aggregation.report_id(),
+                                ping_pong_error,
+                                &aggregate_step_failure_counter,
+                            )
+                        })
+                    }) {
+                        Ok((ping_pong_state, ping_pong_message)) => {
+                            prepare_inits.push(PrepareInit::new(
+                                ReportShare::new(
+                                    report_aggregation.report_metadata(),
+                                    public_share.get_encoded()?,
+                                    helper_encrypted_input_share.clone(),
+                                ),
+                                ping_pong_message,
+                            ));
+                            stepped_aggregations.push(SteppedAggregation {
+                                report_aggregation,
+                                leader_state: ping_pong_state,
+                            });
+                        }
+                        Err(prepare_error) => {
+                            report_aggregations_to_write.push(WritableReportAggregation::new(
+                                report_aggregation
+                                    .with_state(ReportAggregationState::Failed { prepare_error }),
+                                None,
+                            ));
+                            continue;
+                        }
+                    }
                 }
-                Err(prepare_error) => {
-                    report_aggregations_to_write.push(WritableReportAggregation::new(
-                        report_aggregation
-                            .with_state(ReportAggregationState::Failed { prepare_error }),
-                        None,
-                    ));
-                    continue;
-                }
-            }
-        }
+
+                Ok((
+                    report_aggregations_to_write,
+                    prepare_inits,
+                    stepped_aggregations,
+                ))
+            })()
+        };
+        let (report_aggregations_to_write, prepare_inits, stepped_aggregations) = result?;
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
