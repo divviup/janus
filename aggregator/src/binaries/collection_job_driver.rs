@@ -142,11 +142,17 @@ pub struct Config {
 }
 
 impl Config {
-    fn default_min_collection_job_retry_delay_secs() -> u64 { 600 }
+    fn default_min_collection_job_retry_delay_secs() -> u64 {
+        600
+    }
 
-    fn default_max_collection_job_retry_delay_secs() -> u64 { 3600 }
+    fn default_max_collection_job_retry_delay_secs() -> u64 {
+        3600
+    }
 
-    fn default_collection_job_retry_delay_exponential_factor() -> f64 { 1.25 }
+    fn default_collection_job_retry_delay_exponential_factor() -> f64 {
+        1.25
+    }
 }
 
 impl BinaryConfig for Config {

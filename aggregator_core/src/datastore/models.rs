@@ -691,6 +691,7 @@ pub struct AcquiredCollectionJob {
 
 impl AcquiredCollectionJob {
     /// Creates a new [`AcquiredCollectionJob`].
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
