@@ -91,15 +91,22 @@ use ring::{
     signature::{EcdsaKeyPair, Signature},
 };
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
-    panic,
+    panic::{catch_unwind, panic_any, AssertUnwindSafe},
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::Mutex, try_join};
-use tracing::{debug, info, trace_span, warn, Level};
+use tokio::{
+    sync::{
+        oneshot::{self, error::RecvError},
+        Mutex,
+    },
+    try_join,
+};
+use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
 
 #[cfg(test)]
@@ -1755,14 +1762,23 @@ impl VdafOps {
             }
         }
 
-        let result: Result<Vec<ReportShareData<SEED_SIZE, A>>, Error> = {
+        let prep_closure = {
+            let parent_span = Span::current();
             let global_hpke_keypairs = global_hpke_keypairs.view();
             let vdaf = Arc::clone(&vdaf);
             let task = Arc::clone(&task);
             let metrics = metrics.clone();
             let req = Arc::clone(&req);
+            let aggregation_job_id = *aggregation_job_id;
+            let verify_key = *verify_key;
             let agg_param = agg_param.clone();
-            (move || {
+            move || -> Result<Vec<ReportShareData<SEED_SIZE, A>>, Error> {
+                let span = info_span!(
+                    parent: parent_span,
+                    "handle_aggregate_init_generic threadpool task"
+                );
+                let _entered = span.enter();
+
                 // Decrypt shares & prepare initialization states. (§4.4.4.1)
                 let mut report_share_data = Vec::new();
                 for (ord, prepare_init) in req.prepare_inits().iter().enumerate() {
@@ -2029,7 +2045,7 @@ impl VdafOps {
                         report_aggregation: WritableReportAggregation::new(
                             ReportAggregation::<SEED_SIZE, A>::new(
                                 *task.id(),
-                                *aggregation_job_id,
+                                aggregation_job_id,
                                 *prepare_init.report_share().metadata().id(),
                                 *prepare_init.report_share().metadata().time(),
                                 ord.try_into()?,
@@ -2044,9 +2060,32 @@ impl VdafOps {
                     });
                 }
                 Ok(report_share_data)
-            })()
+            }
         };
-        let report_share_data = result?;
+        let (sender, receiver) = oneshot::channel();
+        rayon::spawn(|| {
+            // Do nothing if the result cannot be sent back. This would happen if the initiating
+            // future is cancelled.
+            //
+            // We need to catch panics here because rayon's default threadpool panic handler will
+            // abort, and it would be preferable to propagate the panic in the original future to
+            // avoid behavior changes.
+            //
+            // Using `AssertUnwindSafe` is OK here, because the only interior mutability we make use
+            // of is OTel instruments, which can't be put into inconsistent states merely by
+            // incrementing counters, and the global HPKE keypair cache, which we only read from.
+            // Using `AssertUnwindSafe` is easier than adding infectious `UnwindSafe` trait bounds
+            // to various VDAF associated types throughout the codebase.
+            let _ = sender.send(catch_unwind(AssertUnwindSafe(prep_closure)));
+        });
+        let report_share_data = receiver
+            .await
+            .map_err(|_recv_error: RecvError| {
+                Error::Internal("threadpool failed to send VDAF preparation result".into())
+            })?
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| {
+                panic_any(panic_cause);
+            })?;
 
         // Store data to datastore.
         let min_client_timestamp = req

@@ -41,9 +41,18 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::try_join;
-use tracing::{debug, error, info, trace_span, warn};
+use std::{
+    any::Any,
+    collections::HashSet,
+    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    sync::oneshot::{self, error::RecvError},
+    try_join,
+};
+use tracing::{debug, error, info, info_span, trace_span, warn, Span};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -299,12 +308,19 @@ where
             })
             .collect();
 
-        let result: Result<_, CodecError> = {
+        let prep_closure = {
+            let parent_span = Span::current();
             let vdaf = Arc::clone(&vdaf);
             let task_id = *task.id();
             let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
-            (move || {
+            move || -> Result<_, CodecError> {
+                let span = info_span!(
+                    parent: parent_span,
+                    "step_aggregation_job_aggregate_init threadpool task"
+                );
+                let _entered = span.enter();
+
                 // Compute report shares to send to helper, and decrypt our input shares & initialize
                 // preparation state.
                 let mut report_aggregations_to_write = Vec::new();
@@ -409,9 +425,29 @@ where
                     prepare_inits,
                     stepped_aggregations,
                 ))
-            })()
+            }
         };
-        let (report_aggregations_to_write, prepare_inits, stepped_aggregations) = result?;
+        let (sender, receiver) = oneshot::channel();
+        rayon::spawn(|| {
+            // Do nothing if the result cannot be sent back. This would happen if the initiating
+            // future is cancelled.
+            //
+            // We need to catch panics here because rayon's default threadpool panic handler will
+            // abort, and it would be preferable to propagate the panic in the original future to
+            // avoid behavior changes.
+            //
+            // Using `AssertUnwindSafe` is OK here, because the only interior mutability we make use
+            // of is OTel instruments, and those can't be put into inconsistent states merely by
+            // incrementing counters. Using `AssertUnwindSafe` is easier than adding infectious
+            // `UnwindSafe` trait bounds to various VDAF associated types throughout the codebase.
+            let _ = sender.send(catch_unwind(AssertUnwindSafe(prep_closure)));
+        });
+        let (report_aggregations_to_write, prepare_inits, stepped_aggregations) = receiver
+            .await
+            .map_err(|_recv_error: RecvError| {
+                Error::Internal("threadpool failed to send VDAF preparation result".into())
+            })?
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| panic_any(panic_cause))?;
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.

@@ -24,8 +24,13 @@ use prio::{
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
-use std::sync::Arc;
-use tracing::trace_span;
+use std::{
+    any::Any,
+    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    sync::Arc,
+};
+use tokio::sync::oneshot::{self, error::RecvError};
+use tracing::{info_span, trace_span, Span};
 
 impl VdafOps {
     /// Step the helper's aggregation job to the next step using the step `n` ping pong state in
@@ -54,12 +59,16 @@ impl VdafOps {
     {
         let request_step = req.step();
 
-        let result = {
+        let prep_closure = {
+            let parent_span = Span::current();
             let task_id = *task.id();
             let vdaf = Arc::clone(&vdaf);
             let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
             let metrics = metrics.clone();
-            (move || {
+            move || {
+                let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
+                let _entered = span.enter();
+
                 // Handle each transition in the request.
                 let mut report_aggregations_iter = report_aggregations.into_iter();
                 let mut report_aggregations_to_write = Vec::new();
@@ -213,9 +222,32 @@ impl VdafOps {
                     }
                 }
                 Ok(report_aggregations_to_write)
-            })()
+            }
         };
-        let report_aggregations_to_write = result?;
+        let (sender, receiver) = oneshot::channel();
+        rayon::spawn(|| {
+            // Do nothing if the result cannot be sent back. This would happen if the initiating
+            // future is cancelled.
+            //
+            // We need to catch panics here because rayon's default threadpool panic handler will
+            // abort, and it would be preferable to propagate the panic in the original future to
+            // avoid behavior changes.
+            //
+            // Using `AssertUnwindSafe` is OK here, because the only interior mutability we make use
+            // of is OTel instruments, and those can't be put into inconsistent states merely by
+            // incrementing counters. Using `AssertUnwindSafe` is easier than adding infectious
+            // `UnwindSafe` trait bounds to various VDAF associated types throughout the codebase.
+            let _ = sender.send(catch_unwind(AssertUnwindSafe(prep_closure)));
+        });
+        let report_aggregations_to_write = receiver
+            .await
+            .map_err(|_recv_error: RecvError| {
+                datastore::Error::User(
+                    Error::Internal("threadpool failed to send VDAF preparation result".into())
+                        .into(),
+                )
+            })?
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| panic_any(panic_cause))?;
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
