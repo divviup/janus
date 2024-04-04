@@ -470,20 +470,21 @@ async fn aggregate_share_request() {
                     Box::pin(async move {
                         let batch_aggregations: Vec<_> = try_join_all(
                             TimeInterval::batch_identifiers_for_collection_identifier(
-                                &task.leader_view().unwrap(),
+                                task.time_precision(),
                                 &collection_interval,
                             )
                             .map(|batch_identifier| {
                                 let task_id = *task.id();
 
                                 async move {
-                                tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy::Vdaf>(
-                                    &dummy::Vdaf::new(1),
-                                    &task_id,
-                                    &batch_identifier,
-                                    &dummy::AggregationParam(0),
-                                ).await
-                            }}),
+                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy::Vdaf>(
+                                        &dummy::Vdaf::new(1),
+                                        &task_id,
+                                        &batch_identifier,
+                                        &dummy::AggregationParam(0),
+                                    ).await
+                                }
+                            }),
                         )
                         .await
                         .unwrap()

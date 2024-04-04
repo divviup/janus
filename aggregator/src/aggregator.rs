@@ -2857,7 +2857,8 @@ impl VdafOps {
                     let (batch_aggregations, _) = try_join!(
                         Q::get_batch_aggregations_for_collection_identifier(
                             tx,
-                            &task,
+                            task.id(),
+                            task.time_precision(),
                             vdaf.as_ref(),
                             aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param
@@ -2980,7 +2981,7 @@ fn empty_batch_aggregations<
         .map(|ba| (ba.batch_identifier(), ba.ord()))
         .collect();
     iproduct!(
-        Q::batch_identifiers_for_collection_identifier(task, batch_identifier),
+        Q::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
         0..batch_aggregation_shard_count
     )
     .filter_map(|(batch_identifier, ord)| {

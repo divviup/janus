@@ -189,7 +189,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
-        _: &AggregatorTask,
+        time_precision: &Duration,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
@@ -216,7 +216,8 @@ pub trait CollectableQueryType: AccumulableQueryType {
         C: Clock,
     >(
         tx: &Transaction<C>,
-        task: &AggregatorTask,
+        task_id: &TaskId,
+        time_precision: &Duration,
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
@@ -226,25 +227,72 @@ pub trait CollectableQueryType: AccumulableQueryType {
         A::AggregateShare: Send + Sync,
     {
         Ok(try_join_all(
-            Self::batch_identifiers_for_collection_identifier(task, collection_identifier).map(
-                |batch_identifier| {
-                    let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
-                    async move {
-                        tx.get_batch_aggregations_for_batch(
-                            vdaf,
-                            &task_id,
-                            &batch_identifier,
-                            &aggregation_param,
-                        )
-                        .await
-                    }
-                },
-            ),
+            Self::batch_identifiers_for_collection_identifier(
+                time_precision,
+                collection_identifier,
+            )
+            .map(|batch_identifier| {
+                let task_id = *task_id;
+                let aggregation_param = aggregation_param.clone();
+
+                async move {
+                    tx.get_batch_aggregations_for_batch(
+                        vdaf,
+                        &task_id,
+                        &batch_identifier,
+                        &aggregation_param,
+                    )
+                    .await
+                }
+            }),
         )
         .await?
         .into_iter()
         .flatten()
         .collect::<Vec<_>>())
+    }
+
+    /// Retrieves the number of aggregation jobs created & terminated for all batches identified by
+    /// the given collection identifier.
+    async fn get_batch_aggregation_job_count_for_collection_identifier<
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        C: Clock,
+    >(
+        tx: &Transaction<C>,
+        task_id: &TaskId,
+        time_precision: &Duration,
+        vdaf: &A,
+        collection_identifier: &Self::BatchIdentifier,
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<(u64, u64), datastore::Error>
+    where
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+    {
+        Ok(try_join_all(
+            Self::batch_identifiers_for_collection_identifier(
+                time_precision,
+                collection_identifier,
+            )
+            .map(|batch_identifier| {
+                let task_id = *task_id;
+                let aggregation_param = aggregation_param.clone();
+
+                async move {
+                    tx.get_batch_aggregation_job_count_for_batch::<SEED_SIZE, Self, A>(
+                        vdaf,
+                        &task_id,
+                        &batch_identifier,
+                        &aggregation_param,
+                    )
+                    .await
+                }
+            }),
+        )
+        .await?
+        .into_iter()
+        .fold((0, 0), |(lc, lt), (rc, rt)| (lc + rc, lt + rt)))
     }
 }
 
@@ -261,10 +309,10 @@ impl CollectableQueryType for TimeInterval {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        task: &AggregatorTask,
+        time_precision: &Duration,
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
-        TimeIntervalBatchIdentifierIter::new(task, batch_interval)
+        TimeIntervalBatchIdentifierIter::new(time_precision, batch_interval)
     }
 
     fn validate_collection_identifier(
@@ -303,21 +351,20 @@ pub struct TimeIntervalBatchIdentifierIter {
 }
 
 impl TimeIntervalBatchIdentifierIter {
-    fn new(task: &AggregatorTask, batch_interval: &Interval) -> Self {
+    fn new(time_precision: &Duration, batch_interval: &Interval) -> Self {
         // Sanity check that the given interval is of an appropriate length. We use an assert as
         // this is expected to be checked before this method is used.
         assert_eq!(
-            batch_interval.duration().as_seconds() % task.time_precision().as_seconds(),
+            batch_interval.duration().as_seconds() % time_precision.as_seconds(),
             0
         );
-        let total_step_count =
-            batch_interval.duration().as_seconds() / task.time_precision().as_seconds();
+        let total_step_count = batch_interval.duration().as_seconds() / time_precision.as_seconds();
 
         Self {
             step: 0,
             total_step_count,
             start: *batch_interval.start(),
-            time_precision: *task.time_precision(),
+            time_precision: *time_precision,
         }
     }
 }
@@ -365,7 +412,7 @@ impl CollectableQueryType for FixedSize {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        _: &AggregatorTask,
+        _: &Duration,
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)

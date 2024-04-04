@@ -12,10 +12,7 @@ use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::{
-            AcquiredCollectionJob, BatchAggregation, BatchAggregationState, CollectionJobState,
-            Lease,
-        },
+        models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
         Datastore,
     },
     task,
@@ -142,23 +139,78 @@ where
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
     {
+        let collection_identifier = Arc::new(Q::BatchIdentifier::get_decoded(
+            lease.leased().encoded_batch_identifier(),
+        )?);
+        let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
+            lease.leased().encoded_aggregation_param(),
+        )?);
+
         let rslt = datastore
             .run_tx("step_collection_job_1", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
+                let collection_identifier = Arc::clone(&collection_identifier);
+                let aggregation_param = Arc::clone(&aggregation_param);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
                 let min_collection_job_retry_delay = self.min_collection_job_retry_delay;
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
-                    // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
-                    // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
-                    let (task, collection_job) = try_join!(
+                    // Read the task & collection job.
+                    //
+                    // Also, try to read an existing, already-FINISHED collection job for the same
+                    // batch & aggregation parameter, so that we can reuse an already-computed
+                    // result if available.
+                    //
+                    // Also, look for unaggregated reports & count the number of created/terminated
+                    // aggregation jobs relevant to the collection job, so that we can determine if
+                    // we are read to complete the collection job in the case there is no
+                    // preexisting FINISHED collection job.
+                    let (
+                        task,
+                        collection_job,
+                        finished_collection_job,
+                        interval_has_unaggregated_reports,
+                        (agg_jobs_created, agg_jobs_terminated),
+                    ) = try_join!(
                         tx.get_aggregator_task(lease.leased().task_id()),
                         tx.get_collection_job::<SEED_SIZE, Q, A>(
                             vdaf.as_ref(),
                             lease.leased().task_id(),
                             lease.leased().collection_job_id()
+                        ),
+                        tx.get_finished_collection_job::<SEED_SIZE, Q, A>(
+                            vdaf.as_ref(),
+                            lease.leased().task_id(),
+                            &collection_identifier,
+                            &aggregation_param,
+                        ),
+                        {
+                            let task_id = *lease.leased().task_id();
+                            let collection_identifier = Arc::clone(&collection_identifier);
+
+                            async move {
+                                if let Some(collection_interval) =
+                                    Q::to_batch_interval(&collection_identifier)
+                                {
+                                    tx.interval_has_unaggregated_reports(
+                                        &task_id,
+                                        collection_interval,
+                                    )
+                                    .await
+                                } else {
+                                    Ok(false)
+                                }
+                            }
+                        },
+                        Q::get_batch_aggregation_job_count_for_collection_identifier(
+                            tx,
+                            lease.leased().task_id(),
+                            lease.leased().time_precision(),
+                            vdaf.as_ref(),
+                            &collection_identifier,
+                            &aggregation_param,
                         ),
                     )?;
 
@@ -178,50 +230,10 @@ where
                         )
                     })?;
 
-                    // Try to read an existing, already-FINISHED collection job for the same batch &
-                    // aggregation parameter, so that we can reuse an already-computed result. Also
-                    // read batch aggregations & check if there are unaggregated reports in the
-                    // collection interval, so that we can compute the final aggregate if there is
-                    // no duplicate collection job to borrow from.
-                    let (
-                        mut batch_aggregations,
-                        finished_collection_job,
-                        interval_has_unaggregated_reports,
-                    ) = try_join!(
-                        Q::get_batch_aggregations_for_collection_identifier(
-                            tx,
-                            &task,
-                            vdaf.as_ref(),
-                            collection_job.batch_identifier(),
-                            collection_job.aggregation_parameter(),
-                        ),
-                        tx.get_finished_collection_job::<SEED_SIZE, Q, A>(
-                            vdaf.as_ref(),
-                            task.id(),
-                            collection_job.batch_identifier(),
-                            collection_job.aggregation_parameter()
-                        ),
-                        {
-                            let task_id = *task.id();
-                            let batch_identifier = collection_job.batch_identifier().clone();
-
-                            async move {
-                                if let Some(batch_interval) =
-                                    Q::to_batch_interval(&batch_identifier)
-                                {
-                                    tx.interval_has_unaggregated_reports(&task_id, batch_interval)
-                                        .await
-                                } else {
-                                    Ok(false)
-                                }
-                            }
-                        },
-                    )?;
-
+                    // If we found a matching finished collection job, borrow its state & exit
+                    // early. We don't need to update the batch aggregations because handling for
+                    // the finished collection job will have done so already.
                     if let Some(finished_collection_job) = finished_collection_job {
-                        // We found a matching finished collection job; borrow its state & exit
-                        // early. We don't need to update the batch aggregations because handling
-                        // for the finished collection job will have done so already.
                         let collection_job =
                             collection_job.with_state(finished_collection_job.state().clone());
                         try_join!(
@@ -232,37 +244,30 @@ where
                         return Ok(None);
                     }
 
-                    // There is no preexisting FINISHED collection job, so we need to compute our
-                    // aggregate share & ask the Helper for theirs. But first, check if aggregation
-                    // jobs relevant to this collection job are all complete, and that there are no
-                    // reports still waiting to be added to an aggregation job. If so, we have to
-                    // wait before we can compute the final aggregate value.
-                    let mut total_created: u64 = 0;
-                    let mut total_terminated: u64 = 0;
-                    for batch_aggregation in &batch_aggregations {
-                        let (created, terminated) = match batch_aggregation.state() {
-                            BatchAggregationState::Aggregating {
-                                aggregation_jobs_created,
-                                aggregation_jobs_terminated,
-                                ..
-                            }
-                            | BatchAggregationState::Collected {
-                                aggregation_jobs_created,
-                                aggregation_jobs_terminated,
-                                ..
-                            } => (*aggregation_jobs_created, *aggregation_jobs_terminated),
-                            BatchAggregationState::Scrubbed => {
-                                return Err(datastore::Error::Scrubbed)
-                            }
-                        };
-                        total_created += created;
-                        total_terminated += terminated;
-                    }
-                    if interval_has_unaggregated_reports || total_created != total_terminated {
+                    // Check if any aggregation jobs relevant to this collection job are incomplete,
+                    // and whether there are reports still waiting to be associated to an
+                    // aggregation job. If so, we have to wait before we can compute the final
+                    // aggregate value.
+                    if interval_has_unaggregated_reports || agg_jobs_created != agg_jobs_terminated
+                    {
                         tx.release_collection_job(&lease, Some(&min_collection_job_retry_delay))
                             .await?;
                         return Ok(None);
                     }
+
+                    // There is no pre-existing finished collection job, but the collection job is
+                    // ready to be completed. Read batch aggregations so that we can compute the
+                    // final aggregate value.
+                    let mut batch_aggregations =
+                        Q::get_batch_aggregations_for_collection_identifier(
+                            tx,
+                            lease.leased().task_id(),
+                            lease.leased().time_precision(),
+                            vdaf.as_ref(),
+                            &collection_identifier,
+                            &aggregation_param,
+                        )
+                        .await?;
 
                     // Mark batch aggregations as collected to avoid further aggregation. (We don't
                     // need to do this if there is a FINISHED collection job since that job will

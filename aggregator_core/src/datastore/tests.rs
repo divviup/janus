@@ -3637,6 +3637,7 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     ds.run_unnamed_tx(|tx| {
         let test_case = test_case.clone();
         let clock = clock.clone();
+
         Box::pin(async move {
             let leases = tx
                 .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
@@ -3660,6 +3661,9 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
                             c.collection_job_id.unwrap(),
                             test_case.query_type,
                             VdafInstance::Fake { rounds: 1 },
+                            Duration::from_hours(8).unwrap(),
+                            c.batch_identifier.get_encoded().unwrap(),
+                            c.agg_param.get_encoded().unwrap(),
                         ),
                         clock.now().as_naive_date_time().unwrap()
                             + chrono::Duration::try_seconds(100).unwrap(),
@@ -4225,6 +4229,9 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             c.collection_job_id.unwrap(),
                             task::QueryType::TimeInterval,
                             VdafInstance::Fake { rounds: 1 },
+                            Duration::from_hours(8).unwrap(),
+                            c.batch_identifier.get_encoded().unwrap(),
+                            c.agg_param.get_encoded().unwrap(),
                         ),
                         clock.now().as_naive_date_time().unwrap()
                             + chrono::Duration::try_seconds(100).unwrap(),
@@ -4606,7 +4613,8 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &task,
+                    task.id(),
+                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
@@ -4656,7 +4664,8 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &task,
+                    task.id(),
+                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
@@ -4702,7 +4711,8 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &task,
+                    task.id(),
+                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
