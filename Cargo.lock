@@ -2223,6 +2223,7 @@ dependencies = [
  "prio 0.16.2",
  "prometheus",
  "rand",
+ "rayon",
  "regex",
  "reqwest",
  "ring 0.17.8",

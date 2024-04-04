@@ -75,6 +75,7 @@ postgres-types = { workspace = true, features = ["derive", "array-impls"] }
 prio.workspace = true
 prometheus = { workspace = true, optional = true }
 rand = { workspace = true, features = ["min_const_gen"] }
+rayon.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 ring = { workspace = true }
