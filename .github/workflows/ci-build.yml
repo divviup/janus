@@ -136,7 +136,7 @@ jobs:
     - name: cargo-deny
       uses: EmbarkStudios/cargo-deny-action@v1.6.2
       with:
-        command: check bans
+        command: check bans sources -A unmatched-organization
 
   janus_docker:
     runs-on: ubuntu-latest

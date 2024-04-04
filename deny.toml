@@ -11,3 +11,9 @@ deny = [
     { name = "tracing", deny-multiple-versions = true },
     { name = "opentelemetry", deny-multiple-versions = true },
 ]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-org = { github = ["divviup"] }
