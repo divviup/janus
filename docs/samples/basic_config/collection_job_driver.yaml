@@ -31,6 +31,3 @@ maximum_attempts_before_failure: 10
 # (required)
 batch_aggregation_shard_count: 32
 
-# The minimum duration to wait, in seconds, before retrying a collection job that has been stepped
-# but was not ready yet because not all included reports had finished aggregation.
-min_collection_job_retry_delay_secs: 600

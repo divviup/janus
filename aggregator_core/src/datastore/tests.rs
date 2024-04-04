@@ -3664,6 +3664,7 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
                             Duration::from_hours(8).unwrap(),
                             c.batch_identifier.get_encoded().unwrap(),
                             c.agg_param.get_encoded().unwrap(),
+                            0,
                         ),
                         clock.now().as_naive_date_time().unwrap()
                             + chrono::Duration::try_seconds(100).unwrap(),
@@ -3775,10 +3776,14 @@ async fn time_interval_collection_job_acquire_release_happy_path(
 
                 let collection_jobs: Vec<_> = collection_job_leases
                     .iter()
-                    .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                    .map(|lease| {
+                        (
+                            lease.leased().clone().with_step_attempts(1),
+                            lease.lease_expiry_time(),
+                        )
+                    })
                     .collect();
 
-                assert_eq!(reacquired_jobs.len(), 1);
                 assert_eq!(reacquired_jobs, collection_jobs);
 
                 Ok(reacquired_leases)
@@ -3851,10 +3856,9 @@ async fn time_interval_collection_job_acquire_release_happy_path(
                 .collect();
             let collection_jobs: Vec<_> = collection_job_leases
                 .iter()
-                .map(|lease| lease.leased().clone())
+                .map(|lease| lease.leased().clone().with_step_attempts(2))
                 .collect();
 
-            assert_eq!(reacquired_jobs.len(), 1);
             assert_eq!(reacquired_jobs, collection_jobs);
 
             Ok(())
@@ -3955,10 +3959,14 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
 
                 let collection_jobs: Vec<_> = collection_job_leases
                     .iter()
-                    .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                    .map(|lease| {
+                        (
+                            lease.leased().clone().with_step_attempts(1),
+                            lease.lease_expiry_time(),
+                        )
+                    })
                     .collect();
 
-                assert_eq!(reacquired_jobs.len(), 1);
                 assert_eq!(reacquired_jobs, collection_jobs);
 
                 Ok(reacquired_leases)
@@ -4023,10 +4031,9 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
                 .collect();
             let collection_jobs: Vec<_> = collection_job_leases
                 .iter()
-                .map(|lease| lease.leased().clone())
+                .map(|lease| lease.leased().clone().with_step_attempts(2))
                 .collect();
 
-            assert_eq!(reacquired_jobs.len(), 1);
             assert_eq!(reacquired_jobs, collection_jobs);
 
             Ok(())
@@ -4232,6 +4239,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             Duration::from_hours(8).unwrap(),
                             c.batch_identifier.get_encoded().unwrap(),
                             c.agg_param.get_encoded().unwrap(),
+                            0,
                         ),
                         clock.now().as_naive_date_time().unwrap()
                             + chrono::Duration::try_seconds(100).unwrap(),

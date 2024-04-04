@@ -109,3 +109,11 @@ batch_aggregation_shard_count: 32
 # The minimum duration to wait, in seconds, before retrying a collection job that has been stepped
 # but was not ready yet because not all included reports had finished aggregation.
 min_collection_job_retry_delay_secs: 600
+
+# The maximum duration to wait, in seconds, before retrying a collection job that has been stepped
+# but was not ready yet because not all included reports had finished aggregation.
+max_collection_job_retry_delay_secs: 3600
+
+# The exponential factor to use when computing a retry delay when retrying a collection job that has
+# been stepped but was not ready yet because not all included reports had finished aggregation.
+collection_job_retry_delay_exponential_factor: 1.25

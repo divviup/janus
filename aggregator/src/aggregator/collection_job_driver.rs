@@ -48,9 +48,15 @@ pub struct CollectionJobDriver<B> {
 
     // Configuration.
     batch_aggregation_shard_count: u64,
-    // The minimum duration to wait before retrying a collection job that has been stepped but was
-    // not ready yet because not all included reports had finished aggregation.
+    /// The minimum duration to wait before retrying a collection job that has been stepped but was
+    /// not ready yet because of pending aggregation.
     min_collection_job_retry_delay: Duration,
+    /// The maximum duration to wait before retrying a collection job that has been stepped but was
+    /// not ready yet because of pending aggregation.
+    max_collection_job_retry_delay: Duration,
+    /// The exponential factor used when computing the next retry delay for a collection job that
+    /// has been stepped but was not ready yet because of pending aggregation.
+    collection_job_retry_delay_exponential_factor: f64,
 }
 
 impl<B> CollectionJobDriver<B>
@@ -64,6 +70,8 @@ where
         meter: &Meter,
         batch_aggregation_shard_count: u64,
         min_collection_job_retry_delay: Duration,
+        max_collection_job_retry_delay: Duration,
+        collection_job_retry_delay_exponential_factor: f64,
     ) -> Self {
         Self {
             http_client,
@@ -71,6 +79,8 @@ where
             metrics: CollectionJobDriverMetrics::new(meter),
             batch_aggregation_shard_count,
             min_collection_job_retry_delay,
+            max_collection_job_retry_delay,
+            collection_job_retry_delay_exponential_factor,
         }
     }
 
@@ -154,6 +164,9 @@ where
                 let aggregation_param = Arc::clone(&aggregation_param);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
                 let min_collection_job_retry_delay = self.min_collection_job_retry_delay;
+                let max_collection_job_retry_delay = self.max_collection_job_retry_delay;
+                let collection_job_retry_delay_exponential_factor =
+                    self.collection_job_retry_delay_exponential_factor;
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
@@ -250,7 +263,13 @@ where
                     // aggregate value.
                     if interval_has_unaggregated_reports || agg_jobs_created != agg_jobs_terminated
                     {
-                        tx.release_collection_job(&lease, Some(&min_collection_job_retry_delay))
+                        let reacquire_delay = compute_reacquire_delay(
+                            lease.leased().step_attempts(),
+                            min_collection_job_retry_delay,
+                            max_collection_job_retry_delay,
+                            collection_job_retry_delay_exponential_factor,
+                        );
+                        tx.release_collection_job(&lease, Some(&reacquire_delay))
                             .await?;
                         return Ok(None);
                     }
@@ -705,6 +724,41 @@ impl CollectionJobDriverMetrics {
     }
 }
 
+fn compute_reacquire_delay(
+    step_attempts: u64,
+    min_retry_delay: Duration,
+    max_retry_delay: Duration,
+    exponential_factor: f64,
+) -> Duration {
+    // Compute: min_retry_delay * (exponential_factor ** step_attempts), clamped to
+    // [min_retry_delay, max_retry_delay], avoiding overflow & with reasonable behavior if handed
+    // pathological parameter choices.
+
+    let min_retry_delay_secs = min_retry_delay.as_secs_f64();
+    let max_retry_delay_secs = max_retry_delay.as_secs_f64();
+
+    // Handle pathological parameters by returing the minimum delay.
+    if min_retry_delay_secs > max_retry_delay_secs
+        || exponential_factor.is_nan()
+        || exponential_factor.is_sign_negative()
+    {
+        return min_retry_delay;
+    }
+
+    let step_attempts = match i32::try_from(step_attempts).ok() {
+        Some(step_attempts) => step_attempts,
+        None => i32::MAX, // this will surely overflow, but this is handled by the clamp below.
+    };
+    let delay = min_retry_delay_secs * exponential_factor.powi(step_attempts);
+
+    // Panic safety: min > max guarded against above.
+    let delay = delay.clamp(min_retry_delay_secs, max_retry_delay_secs);
+
+    // Panic safety: delay is clamped between min_retry_delay_secs & max_retry_delay_secs, both of
+    // which come from duration values & therefore can't be negative/infinite nor overflow Duration.
+    Duration::from_secs_f64(delay)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -1038,6 +1092,8 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             StdDuration::ZERO,
+            StdDuration::ZERO,
+            1.0,
         );
 
         // Batch aggregations indicate not all aggregation jobs are complete, and there is an
@@ -1390,6 +1446,8 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             StdDuration::ZERO,
+            StdDuration::ZERO,
+            1.0,
         );
 
         // Run: abandon the collection job.
@@ -1452,6 +1510,8 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             StdDuration::ZERO,
+            StdDuration::ZERO,
+            1.0,
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1548,6 +1608,8 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             StdDuration::ZERO,
+            StdDuration::ZERO,
+            1.0,
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1675,6 +1737,8 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             StdDuration::ZERO,
+            StdDuration::ZERO,
+            1.0,
         );
 
         // Step the collection job. The driver should successfully run the job, but then discard the
@@ -1714,5 +1778,40 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn compute_reacquire_delay() {
+        for (step_attempts, min_delay_s, max_delay_s, exponential_factor, want_delay_s) in [
+            // normal cases
+            (0, 100, 1000, 1.1, 100),       // no steps
+            (1, 100, 1000, 1.1, 110),       // 1 step
+            (10, 100, 1000, 1.1, 259),      // 10 steps
+            (10_000, 100, 1000, 1.1, 1000), // 10,000 steps
+            // pathological cases
+            (u64::MAX, 100, 1000, 1.1, 1000), // more steps than can fit in an i32
+            (1, 1000, 100, 1.1, 1000),        // min_delay > max_delay
+            (1, 100, 1000, 0.9, 100),         // exponential_factor < 1
+            (1, 100, 1000, -1.1, 100),        // exponential factor negative
+            (1, 100, 1000, f64::NAN, 100),    // exponential factor is NaN
+            (1, 100, 1000, f64::INFINITY, 1000), // exponential factor is infinity
+            (1, 100, 1000, f64::NEG_INFINITY, 100), // exponential factor is -infinity
+        ] {
+            // We truncate the result of `compute_reacquire_delay` to the nearest second to mitigate
+            // floating-point issues.
+            let got_delay_s = super::compute_reacquire_delay(
+                step_attempts,
+                StdDuration::from_secs(min_delay_s),
+                StdDuration::from_secs(max_delay_s),
+                exponential_factor,
+            )
+            .as_secs();
+
+            assert_eq!(
+                want_delay_s,
+                got_delay_s,
+                "compute_reacquire_delay({step_attempts}, {min_delay_s}, {max_delay_s}, {exponential_factor})"
+            );
+        }
     }
 }

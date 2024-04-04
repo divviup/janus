@@ -686,6 +686,7 @@ pub struct AcquiredCollectionJob {
     time_precision: Duration,
     encoded_batch_identifier: Vec<u8>,
     encoded_aggregation_param: Vec<u8>,
+    step_attempts: u64,
 }
 
 impl AcquiredCollectionJob {
@@ -698,6 +699,7 @@ impl AcquiredCollectionJob {
         time_precision: Duration,
         encoded_batch_identifier: Vec<u8>,
         encoded_aggregation_param: Vec<u8>,
+        step_attempts: u64,
     ) -> Self {
         Self {
             task_id,
@@ -707,6 +709,7 @@ impl AcquiredCollectionJob {
             time_precision,
             encoded_batch_identifier,
             encoded_aggregation_param,
+            step_attempts,
         }
     }
 
@@ -744,6 +747,19 @@ impl AcquiredCollectionJob {
     /// bytes.
     pub fn encoded_aggregation_param(&self) -> &[u8] {
         &self.encoded_aggregation_param
+    }
+
+    /// Returns the number of times this collection job has been stepped without making progress.
+    pub fn step_attempts(&self) -> u64 {
+        self.step_attempts
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn with_step_attempts(self, step_attempts: u64) -> Self {
+        Self {
+            step_attempts,
+            ..self
+        }
     }
 }
 
