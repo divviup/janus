@@ -670,7 +670,7 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_outstanding_batches(task.id(), &None)
+                    .get_unfilled_outstanding_batches(task.id(), &None)
                     .await
                     .unwrap()
                     .is_empty());
