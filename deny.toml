@@ -1,7 +1,12 @@
+[graph]
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "x86_64-unknown-linux-musl" },
 ]
+all-features = true
+
+[advisories]
+version = 2
 
 [bans]
 multiple-versions = "allow"
@@ -10,7 +15,28 @@ deny = [
     { name = "opentelemetry", deny-multiple-versions = true },
 ]
 
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-org = { github = ["divviup"] }
+
 [licenses]
-copyleft = "allow"
-default = "allow"
-unlicensed = "allow"
+version = 2
+allow = [
+    "MPL-2.0",
+    "MIT",
+    "Apache-2.0",
+    "BSL-1.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "Unlicense",
+]
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
