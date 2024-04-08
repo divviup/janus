@@ -2086,7 +2086,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "trillium",
- "trillium-macros",
+ "trillium-macros 0.0.6",
  "trillium-router",
  "url",
  "uuid",
@@ -4861,21 +4861,20 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.17"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94dc381af2f03ae743d30c8997a9264003674d43a986697ff7f502adac2f44b2"
+checksum = "01c7180eac36666f14504c5a8606d027154a8e3a4704bd0acc69a13f56c202b6"
 dependencies = [
  "async-trait",
- "futures-lite",
  "log",
  "trillium-http",
 ]
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.10"
+version = "0.2.0-rc.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61ccf7f11b72ce50009d424b925832b7d87c45eb7a2e5dd364e36340d05ac54c"
+checksum = "8e9490fa41645e61efc5359bdea19686c71df855603361606a4afb501fec6038"
 dependencies = [
  "log",
  "mime",
@@ -4884,14 +4883,14 @@ dependencies = [
  "serde_path_to_error",
  "thiserror",
  "trillium",
- "trillium-macros",
+ "trillium-macros 0.0.6",
 ]
 
 [[package]]
 name = "trillium-caching-headers"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc0aec904fd1cc3f003b78a1165e1623bc1e1c907d73030e168867b325eced15"
+checksum = "531cab8c8b475e6d575491d96178d8d0e1265b8fdb4cd27cc3b7db18a38d8eeb"
 dependencies = [
  "etag",
  "httpdate",
@@ -4900,18 +4899,18 @@ dependencies = [
 
 [[package]]
 name = "trillium-head"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b73468273727c391b57bc4732bfc8c2163b05c81c23a0737f8fd7f5d4c68cc1b"
+checksum = "c80f1a23ae5c65e8b6cd969fead20eb7d70c7ec9e6ac16f075cd60b77ca47a6b"
 dependencies = [
  "trillium",
 ]
 
 [[package]]
 name = "trillium-http"
-version = "0.3.15"
+version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08cec7fc9b410d4d27a252e2925e656ddb27ee4cd80f86bfb3c8a0e39a9791f6"
+checksum = "a18d82a9418c6fc1a872bc163fffd49320229edf783cbbb1aa62ba49f517cfad"
 dependencies = [
  "encoding_rs",
  "futures-lite",
@@ -4926,7 +4925,7 @@ dependencies = [
  "smartstring",
  "stopper",
  "thiserror",
- "trillium-macros",
+ "trillium-macros 0.0.6",
 ]
 
 [[package]]
@@ -4941,6 +4940,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-macros"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "916e37646d33632b88ca02d4b8c4e2e6376f2a89d9888de71b7d82c150ed1f6c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.46",
+]
+
+[[package]]
 name = "trillium-opentelemetry"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4948,7 +4958,7 @@ checksum = "0c2624a8daa27fa4882a88258e447c9b95f1aa8292285bcef9101f751dd9940d"
 dependencies = [
  "opentelemetry",
  "trillium",
- "trillium-macros",
+ "trillium-macros 0.0.5",
 ]
 
 [[package]]
@@ -5008,7 +5018,7 @@ dependencies = [
  "portpicker",
  "trillium",
  "trillium-http",
- "trillium-macros",
+ "trillium-macros 0.0.5",
  "trillium-server-common",
  "trillium-tokio",
  "url",
@@ -5028,7 +5038,7 @@ dependencies = [
  "tokio-stream",
  "trillium",
  "trillium-http",
- "trillium-macros",
+ "trillium-macros 0.0.5",
  "trillium-server-common",
  "url",
 ]
