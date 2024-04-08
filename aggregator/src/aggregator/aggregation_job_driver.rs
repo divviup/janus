@@ -297,6 +297,8 @@ where
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
+        let aggregation_job = Arc::new(aggregation_job);
+
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
@@ -312,7 +314,7 @@ where
             let parent_span = Span::current();
             let vdaf = Arc::clone(&vdaf);
             let task_id = *task.id();
-            let aggregation_parameter = aggregation_job.aggregation_parameter().clone();
+            let aggregation_job = Arc::clone(&aggregation_job);
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
             move || -> Result<_, CodecError> {
                 let span = info_span!(
@@ -379,7 +381,7 @@ where
                     match trace_span!("VDAF preparation").in_scope(|| {
                         vdaf.leader_initialized(
                             verify_key.as_bytes(),
-                            &aggregation_parameter,
+                            aggregation_job.aggregation_parameter(),
                             // DAP report ID is used as VDAF nonce
                             report_aggregation.report_id().as_ref(),
                             public_share,
@@ -485,6 +487,10 @@ where
             // aggregation job response instead, which will finish the aggregation job.
             AggregationJobResp::new(Vec::new())
         };
+
+        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
+        let aggregation_job =
+            Arc::try_unwrap(aggregation_job).unwrap_or_else(|arc| arc.as_ref().clone());
 
         self.process_response_from_helper(
             datastore,

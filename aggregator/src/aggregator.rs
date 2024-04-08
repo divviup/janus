@@ -1743,7 +1743,9 @@ impl VdafOps {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req = Arc::new(AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?);
-        let agg_param = A::AggregationParam::get_decoded(req.aggregation_parameter())?;
+        let agg_param = Arc::new(A::AggregationParam::get_decoded(
+            req.aggregation_parameter(),
+        )?);
 
         let report_deadline = clock
             .now()
@@ -1771,7 +1773,7 @@ impl VdafOps {
             let req = Arc::clone(&req);
             let aggregation_job_id = *aggregation_job_id;
             let verify_key = *verify_key;
-            let agg_param = agg_param.clone();
+            let agg_param = Arc::clone(&agg_param);
             move || -> Result<Vec<ReportShareData<SEED_SIZE, A>>, Error> {
                 let span = info_span!(
                     parent: parent_span,
@@ -2086,6 +2088,9 @@ impl VdafOps {
             .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| {
                 panic_any(panic_cause);
             })?;
+
+        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
+        let agg_param = Arc::try_unwrap(agg_param).unwrap_or_else(|arc| arc.as_ref().clone());
 
         // Store data to datastore.
         let min_client_timestamp = req
