@@ -38,7 +38,7 @@ use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
-use trillium::{Handler, Headers, Info, Init, Status};
+use trillium::{Handler, Info, Init, Status};
 use trillium_api::{api, State};
 use trillium_head::Head;
 use trillium_router::Router;
@@ -474,7 +474,6 @@ pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
 /// to wait until the server shuts down.
 pub async fn setup_server(
     listen_address: SocketAddr,
-    response_headers: Headers,
     stopper: Stopper,
     handler: impl Handler,
 ) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
@@ -489,7 +488,7 @@ pub async fn setup_server(
         .with_host(&listen_address.ip().to_string())
         .with_stopper(stopper)
         .without_signals();
-    let handler = (init, response_headers, handler);
+    let handler = (init, handler);
 
     let task_handle = tokio::spawn(server_config.run_async(handler));
 

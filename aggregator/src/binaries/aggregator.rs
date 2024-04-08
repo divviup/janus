@@ -24,7 +24,7 @@ use std::{
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{join, sync::watch, time::interval};
 use tracing::{error, info};
-use trillium::{Handler, Headers};
+use trillium::Handler;
 use trillium_router::router;
 use url::Url;
 
@@ -60,9 +60,6 @@ async fn run_aggregator(
     } = ctx;
 
     let datastore = Arc::new(datastore);
-    let response_headers = config
-        .response_headers()
-        .context("failed to parse response headers")?;
 
     let mut handlers = (
         aggregator_handler(
@@ -108,14 +105,10 @@ async fn run_aggregator(
                 if let Some(listen_address) = config.listen_address {
                     // Bind the requested address and spawn a future that serves the aggregator API
                     // on it, which we'll `tokio::join!` on below
-                    let (aggregator_api_bound_address, aggregator_api_server) = setup_server(
-                        listen_address,
-                        response_headers.clone(),
-                        stopper.clone(),
-                        handler,
-                    )
-                    .await
-                    .context("failed to create aggregator API server")?;
+                    let (aggregator_api_bound_address, aggregator_api_server) =
+                        setup_server(listen_address, stopper.clone(), handler)
+                            .await
+                            .context("failed to create aggregator API server")?;
 
                     info!(?aggregator_api_bound_address, "Running aggregator API");
 
@@ -139,14 +132,10 @@ async fn run_aggregator(
             None => Box::pin(ready(())),
         };
 
-    let (aggregator_bound_address, aggregator_server) = setup_server(
-        config.listen_address,
-        response_headers,
-        stopper.clone(),
-        handlers,
-    )
-    .await
-    .context("failed to create aggregator server")?;
+    let (aggregator_bound_address, aggregator_server) =
+        setup_server(config.listen_address, stopper.clone(), handlers)
+            .await
+            .context("failed to create aggregator server")?;
     sender.send_replace(Some(aggregator_bound_address));
 
     info!(?aggregator_bound_address, "Running aggregator");
@@ -229,13 +218,6 @@ impl BinaryOptions for Options {
     }
 }
 
-/// A name-value HTTP header pair, that appears in configuration objects.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeaderEntry {
-    name: String,
-    value: String,
-}
-
 /// Options for serving the aggregator API.
 #[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -294,9 +276,6 @@ where
 /// aggregator_api:
 ///   listen_address: "0.0.0.0:8081"
 ///   public_dap_url: "https://dap.example.test"
-/// response_headers:
-/// - name: "Example"
-///   value: "header value"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
@@ -319,9 +298,6 @@ where
 /// aggregator_api:
 ///   path_prefix: "aggregator-api"
 ///   public_dap_url: "https://dap.example.test"
-/// response_headers:
-/// - name: "Example"
-///   value: "header value"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
@@ -354,9 +330,9 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_aggregator_api")]
     pub aggregator_api: Option<AggregatorApi>,
 
-    /// Additional headers that will be added to all responses.
-    #[serde(default)]
-    pub response_headers: Vec<HeaderEntry>,
+    /// This configuration option is no longer supported. It used to add headers to all HTTP
+    /// responses.
+    pub response_headers: Option<serde_yaml::Value>,
 
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
@@ -421,19 +397,12 @@ fn default_tasks_per_tx() -> usize {
 }
 
 impl Config {
-    fn response_headers(&self) -> Result<Headers> {
-        self.response_headers
-            .iter()
-            .map(|entry| {
-                Ok((
-                    entry.name.as_str().to_owned(),
-                    entry.value.as_str().to_owned(),
-                ))
-            })
-            .collect()
-    }
-
     fn aggregator_config(&self, options: &Options) -> Result<aggregator::Config> {
+        if self.response_headers.is_some() {
+            return Err(anyhow!(
+                "the response_headers configuration option is no longer supported"
+            ));
+        }
         Ok(aggregator::Config {
             max_upload_batch_size: self.max_upload_batch_size,
             max_upload_batch_write_delay: Duration::from_millis(
@@ -484,7 +453,7 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
 
 #[cfg(test)]
 mod tests {
-    use super::{AggregatorApi, Config, GarbageCollectorConfig, HeaderEntry, Options};
+    use super::{AggregatorApi, Config, GarbageCollectorConfig, Options};
     use crate::{
         aggregator::{
             self,
@@ -549,10 +518,7 @@ mod tests {
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
             },
-            response_headers: Vec::from([HeaderEntry {
-                name: "name".to_owned(),
-                value: "value".to_owned(),
-            }]),
+            response_headers: None,
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
