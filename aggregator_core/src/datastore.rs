@@ -100,7 +100,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(5, 4, 3);
+supported_schema_versions!(5);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -4011,9 +4011,10 @@ impl<C: Clock> Transaction<'_, C> {
         check_insert(row_count)
     }
 
-    /// Retrieves all [`OutstandingBatch`]es for a given task and time bucket, if applicable.
+    /// Retrieves all [`OutstandingBatch`]es for a given task and (if applicable) time bucket which
+    /// have not yet been marked filled.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_outstanding_batches(
+    pub async fn get_unfilled_outstanding_batches(
         &self,
         task_id: &TaskId,
         time_bucket_start: &Option<Time>,
@@ -4027,6 +4028,7 @@ impl<C: Clock> Transaction<'_, C> {
                                 AND batches.batch_identifier = outstanding_batches.batch_id
                     WHERE tasks.task_id = $1
                     AND time_bucket_start = $2
+                    AND outstanding_batches.state = 'FILLING'
                     AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
                 )
                 .await?;
@@ -4048,6 +4050,7 @@ impl<C: Clock> Transaction<'_, C> {
                                 AND batches.batch_identifier = outstanding_batches.batch_id
                     WHERE tasks.task_id = $1
                     AND time_bucket_start IS NULL
+                    AND outstanding_batches.state = 'FILLING'
                     AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
                 )
                 .await?;
@@ -4184,6 +4187,40 @@ impl<C: Clock> Transaction<'_, C> {
         .await?
         .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
         .transpose()
+    }
+
+    /// Marks a given outstanding batch as filled, such that it will no longer be considered when
+    /// assigning aggregation jobs to batches.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn mark_outstanding_batch_filled(
+        &self,
+        task_id: &TaskId,
+        batch_id: &BatchId,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE outstanding_batches
+                SET state = 'FILLED'
+                FROM tasks, batches
+                WHERE tasks.id = outstanding_batches.task_id
+                  AND batches.task_id = outstanding_batches.task_id
+                  AND batches.batch_identifier = outstanding_batches.batch_id
+                  AND tasks.task_id = $1
+                  AND outstanding_batches.batch_id = $2
+                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_id */ batch_id.as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?,
+        )
     }
 
     /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is

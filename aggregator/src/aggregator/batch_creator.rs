@@ -38,6 +38,7 @@ where
     aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
     buckets: HashMap<Option<Time>, Bucket>,
     new_batches: Vec<(BatchId, Option<Time>)>,
+    newly_filled_batches: HashSet<BatchId>,
     report_ids_to_scrub: HashSet<ReportId>,
 }
 
@@ -79,6 +80,7 @@ where
             aggregation_job_writer,
             buckets: HashMap::new(),
             new_batches: Vec::new(),
+            newly_filled_batches: HashSet::new(),
             report_ids_to_scrub: HashSet::new(),
         }
     }
@@ -106,8 +108,25 @@ where
             hash_map::Entry::Vacant(_) => {
                 // Lazily find existing unfilled batches.
                 let outstanding_batches = tx
-                    .get_outstanding_batches(&self.properties.task_id, &time_bucket_start_opt)
-                    .await?;
+                    .get_unfilled_outstanding_batches(
+                        &self.properties.task_id,
+                        &time_bucket_start_opt,
+                    )
+                    .await?
+                    .into_iter()
+                    .filter(|outstanding_batch| {
+                        if *outstanding_batch.size().start() < self.properties.task_min_batch_size {
+                            true
+                        } else {
+                            // This outstanding batch has completed enough aggregations to meet the
+                            // minimum batch size. Prepare to mark it filled, and ignore it for
+                            // purposes of assigning reports to batches.
+                            self.newly_filled_batches.insert(*outstanding_batch.id());
+                            false
+                        }
+                    })
+                    .collect();
+
                 self.buckets
                     .entry(time_bucket_start_opt)
                     .or_insert_with(|| Bucket::new(outstanding_batches))
@@ -370,6 +389,9 @@ where
         // Report scrubbing must wait until after report aggregations have been created,
         // because they have a write-after-read antidependency on the report shares.
         try_join!(
+            try_join_all(self.newly_filled_batches.iter().map(|batch_id| {
+                tx.mark_outstanding_batch_filled(&self.properties.task_id, batch_id)
+            })),
             try_join_all(
                 self.report_ids_to_scrub
                     .iter()
