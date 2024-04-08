@@ -1,0 +1,4 @@
+CREATE INDEX outstanding_batches_task_and_time_bucket_index ON outstanding_batches(task_id, time_bucket_start);
+DROP INDEX outstanding_batches_task_id_and_time_bucket_start;
+ALTER TABLE outstanding_batches DROP COLUMN state;
+DROP TYPE OUTSTANDING_BATCH_STATE;
