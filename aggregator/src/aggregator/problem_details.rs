@@ -98,7 +98,7 @@ pub trait ProblemDetailsConnExt {
 impl ProblemDetailsConnExt for Conn {
     fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
         self.with_status(problem_document.status)
-            .with_header(
+            .with_response_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
             )

@@ -62,7 +62,7 @@ impl Handler for ReplaceMimeTypes {
 
     async fn before_send(&self, conn: Conn) -> Conn {
         // API responses should always have versioned API content type
-        conn.with_header(ContentType, CONTENT_TYPE)
+        conn.with_response_header(ContentType, CONTENT_TYPE)
     }
 }
 

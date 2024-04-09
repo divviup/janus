@@ -176,7 +176,7 @@ where
     T: Encode + Sync + Send + 'static,
 {
     async fn run(&self, conn: Conn) -> Conn {
-        conn.with_header(KnownHeaderName::ContentType, self.media_type)
+        conn.with_response_header(KnownHeaderName::ContentType, self.media_type)
             .ok(self.object.get_encoded())
     }
 }
@@ -339,7 +339,7 @@ async fn hpke_config<C: Clock>(
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         // Unconditionally allow CORS requests from all origins.
         let origin = origin.clone();
-        conn.headers_mut()
+        conn.response_headers_mut()
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
@@ -351,10 +351,11 @@ async fn hpke_config<C: Clock>(
 
 /// Handler for CORS preflight requests to "/hpke_config".
 async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
-    conn.headers_mut().insert(KnownHeaderName::Allow, "GET");
+    conn.response_headers_mut()
+        .insert(KnownHeaderName::Allow, "GET");
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         let origin = origin.clone();
-        let request_headers = conn.headers_mut();
+        let request_headers = conn.response_headers_mut();
         request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
         request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "GET");
         request_headers.insert(
@@ -384,7 +385,7 @@ async fn upload<C: Clock>(
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         // Unconditionally allow CORS requests from all origins.
         let origin = origin.clone();
-        conn.headers_mut()
+        conn.response_headers_mut()
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
@@ -393,10 +394,11 @@ async fn upload<C: Clock>(
 
 /// Handler for CORS preflight requests to "/tasks/.../reports".
 async fn upload_cors_preflight(mut conn: Conn) -> Conn {
-    conn.headers_mut().insert(KnownHeaderName::Allow, "PUT");
+    conn.response_headers_mut()
+        .insert(KnownHeaderName::Allow, "PUT");
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         let origin = origin.clone();
-        let request_headers = conn.headers_mut();
+        let request_headers = conn.response_headers_mut();
         request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
         request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "PUT");
         request_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
@@ -505,7 +507,7 @@ async fn collection_jobs_post<C: Clock>(
         .await?;
     match response_opt {
         Some(response_bytes) => {
-            conn.headers_mut().insert(
+            conn.response_headers_mut().insert(
                 KnownHeaderName::ContentType,
                 Collection::<TimeInterval>::MEDIA_TYPE,
             );
