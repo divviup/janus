@@ -91,7 +91,7 @@ impl Display for HttpErrorResponse {
 /// value. Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.
 pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
-    if let Some(authorization_value) = conn.headers().get("authorization") {
+    if let Some(authorization_value) = conn.request_headers().get("authorization") {
         if let Some(received_token) = authorization_value.to_string().strip_prefix("Bearer ") {
             return Ok(Some(
                 AuthenticationToken::new_bearer_token_from_string(received_token)
