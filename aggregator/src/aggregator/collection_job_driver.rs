@@ -1807,7 +1807,7 @@ mod tests {
             assert_eq!(
                 want_delay_s,
                 got_delay_s,
-                "compute_reacquire_delay({step_attempts}, {min_delay_s}, {max_delay_s}, {exponential_factor})"
+                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor}).compute_retry_delay({step_attempts})"
             );
         }
 
@@ -1824,7 +1824,7 @@ mod tests {
                 StdDuration::from_secs(max_delay_s),
                 exponential_factor,
             )
-            .unwrap_err();
+            .expect_err(&format!("RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor})"));
         }
     }
 }
