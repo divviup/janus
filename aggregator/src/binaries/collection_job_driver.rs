@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::collection_job_driver::CollectionJobDriver,
+    aggregator::collection_job_driver::{CollectionJobDriver, RetryStrategy},
     binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
@@ -34,9 +34,12 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.job_driver_config.retry_config(),
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
-        Duration::from_secs(ctx.config.min_collection_job_retry_delay_secs),
-        Duration::from_secs(ctx.config.max_collection_job_retry_delay_secs),
-        ctx.config.collection_job_retry_delay_exponential_factor,
+        RetryStrategy::new(
+            Duration::from_secs(ctx.config.min_collection_job_retry_delay_secs),
+            Duration::from_secs(ctx.config.max_collection_job_retry_delay_secs),
+            ctx.config.collection_job_retry_delay_exponential_factor,
+        )
+        .context("Couldn't create collection retry strategy")?,
     ));
     let lease_duration =
         Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
