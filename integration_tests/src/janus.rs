@@ -160,7 +160,6 @@ impl JanusInProcess {
             garbage_collection: None,
             listen_address: (Ipv4Addr::LOCALHOST, 0).into(),
             aggregator_api: None,
-            response_headers: Vec::new(),
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 100,
             batch_aggregation_shard_count: 32,

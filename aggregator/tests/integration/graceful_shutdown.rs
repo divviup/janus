@@ -271,7 +271,6 @@ async fn aggregator_shutdown() {
             path_prefix: None,
             public_dap_url: "https://public.dap.url".parse().unwrap(),
         }),
-        response_headers: Vec::new(),
         max_upload_batch_size: 100,
         max_upload_batch_write_delay_ms: 250,
         batch_aggregation_shard_count: 32,
