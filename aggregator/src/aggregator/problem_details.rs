@@ -47,7 +47,7 @@ impl ProblemDetailsConnExt for Conn {
         let status = error_type.http_status();
 
         self.with_status(status as u16)
-            .with_header(
+            .with_response_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
             )
