@@ -230,31 +230,48 @@ impl JanusInProcess {
                 meter: noop_meter(),
                 stopper: stopper.clone(),
             });
-        tokio::spawn(aggregator_future);
-        tokio::spawn(aggregation_job_creator::main_callback(BinaryContext {
-            clock,
-            options: aggregation_job_creator_options,
-            config: aggregation_job_creator_config,
-            datastore: ephemeral_datastore.datastore(clock).await,
-            meter: noop_meter(),
-            stopper: stopper.clone(),
-        }));
-        tokio::spawn(aggregation_job_driver::main_callback(BinaryContext {
-            clock,
-            options: aggregation_job_driver_options,
-            config: aggregation_job_driver_config,
-            datastore: ephemeral_datastore.datastore(clock).await,
-            meter: noop_meter(),
-            stopper: stopper.clone(),
-        }));
-        tokio::spawn(collection_job_driver::main_callback(BinaryContext {
-            clock,
-            options: collection_job_driver_options,
-            config: collection_job_driver_config,
-            datastore: ephemeral_datastore.datastore(clock).await,
-            meter: noop_meter(),
-            stopper: stopper.clone(),
-        }));
+        tokio::spawn(async {
+            aggregator_future.await.unwrap();
+        });
+        tokio::spawn({
+            let future = aggregation_job_creator::main_callback(BinaryContext {
+                clock,
+                options: aggregation_job_creator_options,
+                config: aggregation_job_creator_config,
+                datastore: ephemeral_datastore.datastore(clock).await,
+                meter: noop_meter(),
+                stopper: stopper.clone(),
+            });
+            async {
+                future.await.unwrap();
+            }
+        });
+        tokio::spawn({
+            let future = aggregation_job_driver::main_callback(BinaryContext {
+                clock,
+                options: aggregation_job_driver_options,
+                config: aggregation_job_driver_config,
+                datastore: ephemeral_datastore.datastore(clock).await,
+                meter: noop_meter(),
+                stopper: stopper.clone(),
+            });
+            async {
+                future.await.unwrap();
+            }
+        });
+        tokio::spawn({
+            let future = collection_job_driver::main_callback(BinaryContext {
+                clock,
+                options: collection_job_driver_options,
+                config: collection_job_driver_config,
+                datastore: ephemeral_datastore.datastore(clock).await,
+                meter: noop_meter(),
+                stopper: stopper.clone(),
+            });
+            async {
+                future.await.unwrap();
+            }
+        });
 
         // Wait for the aggregator's socket address.
         let socket_address = loop {

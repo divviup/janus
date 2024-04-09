@@ -18,6 +18,7 @@ use futures::StreamExt;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::metrics::{Meter, MetricsError};
+use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use rustls::RootCertStore;
 use std::{
@@ -248,6 +249,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
 pub async fn janus_main<C, Options, Config, F, Fut>(
     options: Options,
     clock: C,
+    uses_rayon: bool,
     f: F,
 ) -> anyhow::Result<()>
 where
@@ -301,6 +303,10 @@ where
     .context("couldn't create datastore")?;
 
     register_database_pool_status_metrics(pool, &meter)?;
+
+    if uses_rayon {
+        initialize_rayon()?;
+    }
 
     let health_check_listen_address = config.common_config().health_check_listen_address;
     let zpages_task_handle = tokio::task::spawn(async move {
@@ -501,6 +507,13 @@ pub async fn setup_server(
     };
 
     Ok((address, future))
+}
+
+/// Configure the global rayon threadpool, and provide thread names.
+fn initialize_rayon() -> Result<(), ThreadPoolBuildError> {
+    ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayon-{i}"))
+        .build_global()
 }
 
 #[cfg(test)]

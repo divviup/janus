@@ -134,11 +134,47 @@ impl GlobalHpkeKeypairCache {
         let keypairs = self.keypairs.lock().unwrap();
         keypairs.get(id).cloned()
     }
+
+    /// Create a `GlobalHpkeKeypairCacheView` with access to the same caches of configs and
+    /// keypairs.
+    pub fn view(&self) -> GlobalHpkeKeypairCacheView {
+        GlobalHpkeKeypairCacheView {
+            configs: Arc::clone(&self.configs),
+            keypairs: Arc::clone(&self.keypairs),
+        }
+    }
 }
 
 impl Drop for GlobalHpkeKeypairCache {
     fn drop(&mut self) {
         self.refresh_handle.abort()
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalHpkeKeypairCacheView {
+    // We use a std::sync::Mutex in this cache because we won't hold locks across
+    // `.await` boundaries. StdMutex is lighter weight than `tokio::sync::Mutex`.
+    /// Cache of HPKE configs for advertisement.
+    configs: Arc<StdMutex<HpkeConfigs>>,
+
+    /// Cache of HPKE keypairs for report decryption.
+    keypairs: Arc<StdMutex<HpkeKeypairs>>,
+}
+
+impl GlobalHpkeKeypairCacheView {
+    /// Retrieve active configs for config advertisement. This only returns configs
+    /// for keypairs that are in the `[HpkeKeyState::Active]` state.
+    pub fn configs(&self) -> HpkeConfigs {
+        let configs = self.configs.lock().unwrap();
+        configs.clone()
+    }
+
+    /// Retrieve a keypair by ID for report decryption. This retrieves keypairs that
+    /// are in any state.
+    pub fn keypair(&self, id: &HpkeConfigId) -> Option<Arc<HpkeKeypair>> {
+        let keypairs = self.keypairs.lock().unwrap();
+        keypairs.get(id).cloned()
     }
 }
 

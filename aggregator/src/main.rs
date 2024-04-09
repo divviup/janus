@@ -48,13 +48,20 @@ enum Nested {
 async fn main() -> anyhow::Result<()> {
     match Options::parse() {
         Options::Aggregator(options) | Options::Default(Nested::Aggregator(options)) => {
-            janus_main(options, RealClock::default(), aggregator::main_callback).await
+            janus_main(
+                options,
+                RealClock::default(),
+                true,
+                aggregator::main_callback,
+            )
+            .await
         }
         Options::AggregationJobCreator(options)
         | Options::Default(Nested::AggregationJobCreator(options)) => {
             janus_main(
                 options,
                 RealClock::default(),
+                false,
                 aggregation_job_creator::main_callback,
             )
             .await
@@ -64,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
             janus_main(
                 options,
                 RealClock::default(),
+                true,
                 aggregation_job_driver::main_callback,
             )
             .await
@@ -73,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
             janus_main(
                 options,
                 RealClock::default(),
+                false,
                 collection_job_driver::main_callback,
             )
             .await
