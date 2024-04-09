@@ -738,8 +738,9 @@ impl RetryStrategy {
         if min_retry_delay > max_retry_delay {
             bail!("min_retry_delay ({min_retry_delay:?}) > max_retry_delay ({max_retry_delay:?})");
         }
-        if exponential_factor.is_nan() || exponential_factor < 1.0 {
-            bail!("exponential_factor ({exponential_factor}) is less than 1 (or NaN)");
+        if !exponential_factor.is_finite() || exponential_factor < 1.0 {
+            // is_finite also checks NaN
+            bail!("exponential_factor ({exponential_factor}) is less than 1 (or non-finite/NaN)");
         }
         Ok(Self {
             min_retry_delay,
@@ -1786,12 +1787,11 @@ mod tests {
     fn retry_strategy() {
         // Acceptable parameters.
         for (step_attempts, min_delay_s, max_delay_s, exponential_factor, want_delay_s) in [
-            (0, 100, 1000, 1.1, 100),            // no steps
-            (1, 100, 1000, 1.1, 110),            // 1 step
-            (10, 100, 1000, 1.1, 259),           // 10 steps
-            (10_000, 100, 1000, 1.1, 1000),      // 10,000 steps
-            (u64::MAX, 100, 1000, 1.1, 1000),    // more steps than can fit in an i32
-            (1, 100, 1000, f64::INFINITY, 1000), // exponential factor is infinity
+            (0, 100, 1000, 1.1, 100),         // no steps
+            (1, 100, 1000, 1.1, 110),         // 1 step
+            (10, 100, 1000, 1.1, 259),        // 10 steps
+            (10_000, 100, 1000, 1.1, 1000),   // 10,000 steps
+            (u64::MAX, 100, 1000, 1.1, 1000), // more steps than can fit in an i32
         ] {
             // We truncate the result of `compute_reacquire_delay` to the nearest second to mitigate
             // floating-point issues.
@@ -1817,6 +1817,7 @@ mod tests {
             (100, 1000, 0.9),               // exponential_factor < 1
             (100, 1000, -1.1),              // exponential factor negative
             (100, 1000, f64::NAN),          // exponential factor is NaN
+            (100, 1000, f64::INFINITY),     // exponential factor is infinity
             (100, 1000, f64::NEG_INFINITY), // exponential factor is -infinity
         ] {
             RetryStrategy::new(
