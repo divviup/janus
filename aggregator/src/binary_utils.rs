@@ -259,6 +259,8 @@ where
     F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
+    initialize_rustls();
+
     // Read and parse config.
     let config: Config = read_config(options.common_options())?;
 
@@ -514,6 +516,13 @@ fn initialize_rayon() -> Result<(), ThreadPoolBuildError> {
     ThreadPoolBuilder::new()
         .thread_name(|i| format!("rayon-{i}"))
         .build_global()
+}
+
+pub(crate) fn initialize_rustls() {
+    // Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by
+    // the default Cargo feature. Specifying a default provider here prevents runtime errors if
+    // another dependency also enables the ring feature.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 #[cfg(test)]
