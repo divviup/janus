@@ -1824,7 +1824,9 @@ mod tests {
                 StdDuration::from_secs(max_delay_s),
                 exponential_factor,
             )
-            .expect_err(&format!("RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor})"));
+            .expect_err(&format!(
+                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor})"
+            ));
         }
     }
 }
