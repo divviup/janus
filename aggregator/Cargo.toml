@@ -75,7 +75,7 @@ regex = "1"
 reqwest = { workspace = true, features = ["json"] }
 ring = "0.17.8"
 routefinder = "0.5.4"
-rustls = "0.22.3"
+rustls = "0.23.4"
 rustls-pemfile = "2.1.2"
 serde.workspace = true
 serde_json.workspace = true

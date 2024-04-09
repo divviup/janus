@@ -2314,7 +2314,7 @@ dependencies = [
  "routefinder",
  "rstest",
  "rustc_version",
- "rustls 0.22.3",
+ "rustls 0.23.4",
  "rustls-pemfile 2.1.2",
  "serde",
  "serde_json",
