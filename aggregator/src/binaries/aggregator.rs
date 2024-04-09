@@ -330,10 +330,6 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_aggregator_api")]
     pub aggregator_api: Option<AggregatorApi>,
 
-    /// This configuration option is no longer supported. It used to add headers to all HTTP
-    /// responses.
-    pub response_headers: Option<serde_yaml::Value>,
-
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
     pub max_upload_batch_size: usize,
@@ -398,11 +394,6 @@ fn default_tasks_per_tx() -> usize {
 
 impl Config {
     fn aggregator_config(&self, options: &Options) -> Result<aggregator::Config> {
-        if self.response_headers.is_some() {
-            return Err(anyhow!(
-                "the response_headers configuration option is no longer supported"
-            ));
-        }
         Ok(aggregator::Config {
             max_upload_batch_size: self.max_upload_batch_size,
             max_upload_batch_write_delay: Duration::from_millis(
@@ -518,7 +509,6 @@ mod tests {
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
             },
-            response_headers: None,
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
