@@ -36,14 +36,23 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::{
-    codec::{Decode, Encode, ParameterizedDecode},
+    codec::{CodecError, Decode, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
 use reqwest::Method;
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::try_join;
-use tracing::{debug, error, info, trace_span, warn};
+use std::{
+    any::Any,
+    collections::HashSet,
+    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    sync::oneshot::{self, error::RecvError},
+    try_join,
+};
+use tracing::{debug, error, info, info_span, trace_span, warn, Span};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -288,6 +297,8 @@ where
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
+        let aggregation_job = Arc::new(aggregation_job);
+
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
@@ -299,97 +310,146 @@ where
             })
             .collect();
 
-        // Compute report shares to send to helper, and decrypt our input shares & initialize
-        // preparation state.
-        let mut report_aggregations_to_write = Vec::new();
-        let mut prepare_inits = Vec::new();
-        let mut stepped_aggregations = Vec::new();
-        for report_aggregation in report_aggregations {
-            // Extract report data from the report aggregation state.
-            let (public_share, leader_extensions, leader_input_share, helper_encrypted_input_share) =
-                match report_aggregation.state() {
-                    ReportAggregationState::StartLeader {
+        let prep_closure = {
+            let parent_span = Span::current();
+            let vdaf = Arc::clone(&vdaf);
+            let task_id = *task.id();
+            let aggregation_job = Arc::clone(&aggregation_job);
+            let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
+            move || -> Result<_, CodecError> {
+                let span = info_span!(
+                    parent: parent_span,
+                    "step_aggregation_job_aggregate_init threadpool task"
+                );
+                let _entered = span.enter();
+
+                // Compute report shares to send to helper, and decrypt our input shares & initialize
+                // preparation state.
+                let mut report_aggregations_to_write = Vec::new();
+                let mut prepare_inits = Vec::new();
+                let mut stepped_aggregations = Vec::new();
+                for report_aggregation in report_aggregations {
+                    // Extract report data from the report aggregation state.
+                    let (
                         public_share,
                         leader_extensions,
                         leader_input_share,
                         helper_encrypted_input_share,
-                    } => (
-                        public_share,
-                        leader_extensions,
-                        leader_input_share,
-                        helper_encrypted_input_share,
-                    ),
-
-                    // Panic safety: this can't happen because we filter to only StartLeader-state
-                    // report aggregations before this loop.
-                    _ => panic!(
-                        "Unexpected report aggregation state: {:?}",
-                        report_aggregation.state()
-                    ),
-                };
-
-            // Check for repeated extensions.
-            let mut extension_types = HashSet::new();
-            if !leader_extensions
-                .iter()
-                .all(|extension| extension_types.insert(extension.extension_type()))
-            {
-                debug!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
-                self.aggregate_step_failure_counter
-                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                report_aggregations_to_write.push(WritableReportAggregation::new(
-                    report_aggregation.with_state(ReportAggregationState::Failed {
-                        prepare_error: PrepareError::InvalidMessage,
-                    }),
-                    None,
-                ));
-                continue;
-            }
-
-            // Initialize the leader's preparation state from the input share.
-            match trace_span!("VDAF preparation").in_scope(|| {
-                vdaf.leader_initialized(
-                    verify_key.as_bytes(),
-                    aggregation_job.aggregation_parameter(),
-                    // DAP report ID is used as VDAF nonce
-                    report_aggregation.report_id().as_ref(),
-                    public_share,
-                    leader_input_share,
-                )
-                .map_err(|ping_pong_error| {
-                    handle_ping_pong_error(
-                        task.id(),
-                        Role::Leader,
-                        report_aggregation.report_id(),
-                        ping_pong_error,
-                        &self.aggregate_step_failure_counter,
-                    )
-                })
-            }) {
-                Ok((ping_pong_state, ping_pong_message)) => {
-                    prepare_inits.push(PrepareInit::new(
-                        ReportShare::new(
-                            report_aggregation.report_metadata(),
-                            public_share.get_encoded()?,
-                            helper_encrypted_input_share.clone(),
+                    ) = match report_aggregation.state() {
+                        ReportAggregationState::StartLeader {
+                            public_share,
+                            leader_extensions,
+                            leader_input_share,
+                            helper_encrypted_input_share,
+                        } => (
+                            public_share,
+                            leader_extensions,
+                            leader_input_share,
+                            helper_encrypted_input_share,
                         ),
-                        ping_pong_message,
-                    ));
-                    stepped_aggregations.push(SteppedAggregation {
-                        report_aggregation,
-                        leader_state: ping_pong_state,
-                    });
+
+                        // Panic safety: this can't happen because we filter to only StartLeader-state
+                        // report aggregations before this loop.
+                        _ => panic!(
+                            "Unexpected report aggregation state: {:?}",
+                            report_aggregation.state()
+                        ),
+                    };
+
+                    // Check for repeated extensions.
+                    let mut extension_types = HashSet::new();
+                    if !leader_extensions
+                        .iter()
+                        .all(|extension| extension_types.insert(extension.extension_type()))
+                    {
+                        debug!(
+                            report_id = %report_aggregation.report_id(),
+                            "Received report with duplicate extensions"
+                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                        report_aggregations_to_write.push(WritableReportAggregation::new(
+                            report_aggregation.with_state(ReportAggregationState::Failed {
+                                prepare_error: PrepareError::InvalidMessage,
+                            }),
+                            None,
+                        ));
+                        continue;
+                    }
+
+                    // Initialize the leader's preparation state from the input share.
+                    match trace_span!("VDAF preparation").in_scope(|| {
+                        vdaf.leader_initialized(
+                            verify_key.as_bytes(),
+                            aggregation_job.aggregation_parameter(),
+                            // DAP report ID is used as VDAF nonce
+                            report_aggregation.report_id().as_ref(),
+                            public_share,
+                            leader_input_share,
+                        )
+                        .map_err(|ping_pong_error| {
+                            handle_ping_pong_error(
+                                &task_id,
+                                Role::Leader,
+                                report_aggregation.report_id(),
+                                ping_pong_error,
+                                &aggregate_step_failure_counter,
+                            )
+                        })
+                    }) {
+                        Ok((ping_pong_state, ping_pong_message)) => {
+                            prepare_inits.push(PrepareInit::new(
+                                ReportShare::new(
+                                    report_aggregation.report_metadata(),
+                                    public_share.get_encoded()?,
+                                    helper_encrypted_input_share.clone(),
+                                ),
+                                ping_pong_message,
+                            ));
+                            stepped_aggregations.push(SteppedAggregation {
+                                report_aggregation,
+                                leader_state: ping_pong_state,
+                            });
+                        }
+                        Err(prepare_error) => {
+                            report_aggregations_to_write.push(WritableReportAggregation::new(
+                                report_aggregation
+                                    .with_state(ReportAggregationState::Failed { prepare_error }),
+                                None,
+                            ));
+                            continue;
+                        }
+                    }
                 }
-                Err(prepare_error) => {
-                    report_aggregations_to_write.push(WritableReportAggregation::new(
-                        report_aggregation
-                            .with_state(ReportAggregationState::Failed { prepare_error }),
-                        None,
-                    ));
-                    continue;
-                }
+
+                Ok((
+                    report_aggregations_to_write,
+                    prepare_inits,
+                    stepped_aggregations,
+                ))
             }
-        }
+        };
+        let (sender, receiver) = oneshot::channel();
+        rayon::spawn(|| {
+            // Do nothing if the result cannot be sent back. This would happen if the initiating
+            // future is cancelled.
+            //
+            // We need to catch panics here because rayon's default threadpool panic handler will
+            // abort, and it would be preferable to propagate the panic in the original future to
+            // avoid behavior changes.
+            //
+            // Using `AssertUnwindSafe` is OK here, because the only interior mutability we make use
+            // of is OTel instruments, and those can't be put into inconsistent states merely by
+            // incrementing counters. Using `AssertUnwindSafe` is easier than adding infectious
+            // `UnwindSafe` trait bounds to various VDAF associated types throughout the codebase.
+            let _ = sender.send(catch_unwind(AssertUnwindSafe(prep_closure)));
+        });
+        let (report_aggregations_to_write, prepare_inits, stepped_aggregations) = receiver
+            .await
+            .map_err(|_recv_error: RecvError| {
+                Error::Internal("threadpool failed to send VDAF preparation result".into())
+            })?
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| panic_any(panic_cause))?;
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
@@ -427,6 +487,10 @@ where
             // aggregation job response instead, which will finish the aggregation job.
             AggregationJobResp::new(Vec::new())
         };
+
+        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
+        let aggregation_job =
+            Arc::try_unwrap(aggregation_job).unwrap_or_else(|arc| arc.as_ref().clone());
 
         self.process_response_from_helper(
             datastore,

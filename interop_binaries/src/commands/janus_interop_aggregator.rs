@@ -254,7 +254,7 @@ impl BinaryConfig for Config {
 
 impl Options {
     pub async fn run(self) -> anyhow::Result<()> {
-        janus_main::<_, _, Config, _, _>(self, RealClock::default(), |ctx| async move {
+        janus_main::<_, _, Config, _, _>(self, RealClock::default(), true, |ctx| async move {
             let datastore = Arc::new(ctx.datastore);
 
             // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
