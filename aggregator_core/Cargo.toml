@@ -51,7 +51,7 @@ tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4", "with-serd
 tracing = "0.1.40"
 tracing-log = "0.2.0"
 trillium.workspace = true
-trillium-macros = "0.0.5"
+trillium-macros = "0.0.6"
 trillium-router.workspace = true
 url = { version = "2.5.0", features = ["serde"] }
 uuid = { version = "1.8.0", features = ["v4"] }
