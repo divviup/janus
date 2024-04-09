@@ -1,5 +1,5 @@
 use crate::{
-    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
+    binary_utils::{database_pool, datastore, initialize_rustls, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     git_revision,
     metrics::{install_metrics_exporter, MetricsExporterHandle},
@@ -39,6 +39,8 @@ use tracing::{debug, info};
 use url::Url;
 
 pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
+    initialize_rustls();
+
     // Read and parse config.
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
@@ -729,9 +731,12 @@ mod tests {
             fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
             LazyKubeClient,
         },
-        binary_utils::CommonBinaryOptions,
-        config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        config::{default_max_transaction_retries, CommonConfig},
+        binary_utils::{initialize_rustls, CommonBinaryOptions},
+        config::{
+            default_max_transaction_retries,
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
+            CommonConfig,
+        },
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::CommandFactory;
@@ -1428,6 +1433,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_datastore_key() {
+        initialize_rustls();
+
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
 
@@ -1459,6 +1466,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_datastore_key_dry_run() {
+        initialize_rustls();
+
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
 

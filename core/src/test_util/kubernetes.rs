@@ -272,6 +272,7 @@ mod tests {
         // multiple clusters does not lead to collisions in some namespace.
 
         install_test_trace_subscriber();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         let first_cluster = EphemeralCluster::create();
         let first_client = first_cluster.cluster.client().await;
