@@ -4150,7 +4150,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Retrieves an outstanding batch for the given task with at least the given number of
     /// successfully-aggregated reports.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_filled_outstanding_batch(
+    pub async fn get_outstanding_batch_with_report_count(
         &self,
         task_id: &TaskId,
         min_report_count: u64,
