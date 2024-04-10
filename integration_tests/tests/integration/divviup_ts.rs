@@ -1,7 +1,10 @@
 #![cfg(feature = "testcontainer")]
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
-use crate::common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext};
+use crate::{
+    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
+    initialize_rustls,
+};
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
@@ -52,6 +55,7 @@ async fn run_divviup_ts_integration_test(
 #[ignore = "disabled until divviup-ts supports draft-ietf-ppm-dap-09"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_count",
@@ -65,6 +69,7 @@ async fn janus_divviup_ts_count() {
 #[ignore = "disabled until divviup-ts supports draft-ietf-ppm-dap-09"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_sum",
@@ -78,6 +83,7 @@ async fn janus_divviup_ts_sum() {
 #[ignore = "disabled until divviup-ts supports draft-ietf-ppm-dap-09"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_histogram",
@@ -94,6 +100,7 @@ async fn janus_divviup_ts_histogram() {
 #[ignore = "disabled until divviup-ts supports draft-ietf-ppm-dap-09"]
 async fn janus_divviup_ts_sumvec() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_sumvec",
