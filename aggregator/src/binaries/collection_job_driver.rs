@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::collection_job_driver::CollectionJobDriver,
+    aggregator::collection_job_driver::{CollectionJobDriver, RetryStrategy},
     binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
@@ -34,7 +34,12 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.job_driver_config.retry_config(),
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
-        Duration::from_secs(ctx.config.min_collection_job_retry_delay_secs),
+        RetryStrategy::new(
+            Duration::from_secs(ctx.config.min_collection_job_retry_delay_secs),
+            Duration::from_secs(ctx.config.max_collection_job_retry_delay_secs),
+            ctx.config.collection_job_retry_delay_exponential_factor,
+        )
+        .context("Couldn't create collection retry strategy")?,
     ));
     let lease_duration =
         Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
@@ -104,11 +109,13 @@ impl BinaryOptions for Options {
 /// retry_max_elapsed_time_millis: 300000
 /// batch_aggregation_shard_count: 32
 /// min_collection_job_retry_delay_secs: 600
+/// max_collection_job_retry_delay_secs: 3600
+/// collection_job_retry_delay_exponential_factor: 1.25
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,
@@ -122,7 +129,33 @@ pub struct Config {
 
     /// The minimum duration to wait, in seconds, before retrying a collection job that has been
     /// stepped but was not ready yet because not all included reports had finished aggregation.
+    #[serde(default = "Config::default_min_collection_job_retry_delay_secs")]
     pub min_collection_job_retry_delay_secs: u64,
+
+    /// The maximum duration to wait, in seconds, before retrying a collection job that has been
+    /// stepped but was not ready yet because not all included reports had finished aggregation.
+    #[serde(default = "Config::default_max_collection_job_retry_delay_secs")]
+    pub max_collection_job_retry_delay_secs: u64,
+
+    /// The exponential factor to use when computing a retry delay when retrying a collection job
+    /// that has been stepped but was not ready yet because not all included reports had finished
+    /// aggregation.
+    #[serde(default = "Config::default_collection_job_retry_delay_exponential_factor")]
+    pub collection_job_retry_delay_exponential_factor: f64,
+}
+
+impl Config {
+    fn default_min_collection_job_retry_delay_secs() -> u64 {
+        600
+    }
+
+    fn default_max_collection_job_retry_delay_secs() -> u64 {
+        3600
+    }
+
+    fn default_collection_job_retry_delay_exponential_factor() -> f64 {
+        1.25
+    }
 }
 
 impl BinaryConfig for Config {
@@ -176,6 +209,8 @@ mod tests {
             },
             batch_aggregation_shard_count: 32,
             min_collection_job_retry_delay_secs: 600,
+            max_collection_job_retry_delay_secs: 3600,
+            collection_job_retry_delay_exponential_factor: 1.25,
         })
     }
 

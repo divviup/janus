@@ -102,7 +102,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(3, 2, 1);
+supported_schema_versions!(3, 2);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -3347,7 +3347,8 @@ impl<C: Clock> Transaction<'_, C> {
                     incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
                     incomplete_jobs.time_precision, collection_jobs.collection_job_id,
                     collection_jobs.batch_identifier, collection_jobs.aggregation_param,
-                    collection_jobs.lease_token, collection_jobs.lease_attempts",
+                    collection_jobs.lease_token, collection_jobs.lease_attempts,
+                    collection_jobs.step_attempts",
             )
             .await?;
 
@@ -3375,6 +3376,8 @@ impl<C: Clock> Transaction<'_, C> {
             let encoded_aggregation_param = row.get("aggregation_param");
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+            let step_attempts = row.get_bigint_and_convert("step_attempts")?;
+
             Ok(Lease::new(
                 AcquiredCollectionJob::new(
                     task_id,
@@ -3384,6 +3387,7 @@ impl<C: Clock> Transaction<'_, C> {
                     time_precision,
                     encoded_batch_identifier,
                     encoded_aggregation_param,
+                    step_attempts,
                 ),
                 lease_expiry_time,
                 lease_token,
@@ -3395,8 +3399,9 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs)
     /// collect job. If given, `reacquire_delay` determines the duration of time that must pass
-    /// before the collection job can be reacquired. It returns an error if the collection job has
-    /// no current lease.
+    /// before the collection job can be reacquired; this method assumes a reacquire delay indicates
+    /// that no progress was made, and will increment `step_attempts` accordingly. It returns an
+    /// error if the collection job has no current lease.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn release_collection_job(
         &self,
@@ -3421,6 +3426,10 @@ impl<C: Clock> Transaction<'_, C> {
                 SET lease_expiry = $1,
                     lease_token = NULL,
                     lease_attempts = 0,
+                    step_attempts = CASE
+                            WHEN $6 = '-infinity'::TIMESTAMP THEN 0
+                            ELSE step_attempts + 1
+                        END,
                     updated_at = $2,
                     updated_by = $3
                 WHERE task_id = $4

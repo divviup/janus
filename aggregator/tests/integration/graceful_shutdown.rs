@@ -376,6 +376,8 @@ async fn collection_job_driver_shutdown() {
         },
         batch_aggregation_shard_count: 32,
         min_collection_job_retry_delay_secs: 1,
+        max_collection_job_retry_delay_secs: 1,
+        collection_job_retry_delay_exponential_factor: 1.0,
     };
 
     graceful_shutdown("collection_job_driver", config).await;

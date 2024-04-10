@@ -5,6 +5,7 @@ use crate::aggregator::{
     http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
     send_request_to_helper, Error, RequestBody,
 };
+use anyhow::bail;
 use backoff::backoff::Backoff;
 use bytes::Bytes;
 use derivative::Derivative;
@@ -48,9 +49,9 @@ pub struct CollectionJobDriver<B> {
 
     // Configuration.
     batch_aggregation_shard_count: u64,
-    // The minimum duration to wait before retrying a collection job that has been stepped but was
-    // not ready yet because not all included reports had finished aggregation.
-    min_collection_job_retry_delay: Duration,
+    /// The retry strategy to use for collection jobs that attempted to be stepped but was not yet
+    /// ready due to pending aggregation.
+    collection_retry_strategy: RetryStrategy,
 }
 
 impl<B> CollectionJobDriver<B>
@@ -63,14 +64,14 @@ where
         backoff: B,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
-        min_collection_job_retry_delay: Duration,
+        collection_retry_strategy: RetryStrategy,
     ) -> Self {
         Self {
             http_client,
             backoff,
             metrics: CollectionJobDriverMetrics::new(meter),
             batch_aggregation_shard_count,
-            min_collection_job_retry_delay,
+            collection_retry_strategy,
         }
     }
 
@@ -153,7 +154,7 @@ where
                 let collection_identifier = Arc::clone(&collection_identifier);
                 let aggregation_param = Arc::clone(&aggregation_param);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
-                let min_collection_job_retry_delay = self.min_collection_job_retry_delay;
+                let collection_retry_strategy = self.collection_retry_strategy.clone();
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
@@ -250,7 +251,9 @@ where
                     // aggregate value.
                     if interval_has_unaggregated_reports || agg_jobs_created != agg_jobs_terminated
                     {
-                        tx.release_collection_job(&lease, Some(&min_collection_job_retry_delay))
+                        let retry_delay = collection_retry_strategy
+                            .compute_retry_delay(lease.leased().step_attempts());
+                        tx.release_collection_job(&lease, Some(&retry_delay))
                             .await?;
                         return Ok(None);
                     }
@@ -705,11 +708,75 @@ impl CollectionJobDriverMetrics {
     }
 }
 
+/// An exponential retry strategy.
+#[derive(Debug, Clone)]
+pub struct RetryStrategy {
+    /// The minimum retry delay.
+    min_retry_delay: Duration,
+
+    /// The maximum retry delay.
+    max_retry_delay: Duration,
+
+    /// The exponential factor to use when computing the next tery delay.
+    exponential_factor: f64,
+}
+
+impl RetryStrategy {
+    /// A no-delay retry strategy.
+    #[cfg(test)]
+    const NO_DELAY: Self = Self {
+        min_retry_delay: Duration::ZERO,
+        max_retry_delay: Duration::ZERO,
+        exponential_factor: 1.0,
+    };
+
+    pub fn new(
+        min_retry_delay: Duration,
+        max_retry_delay: Duration,
+        exponential_factor: f64,
+    ) -> Result<Self, anyhow::Error> {
+        if min_retry_delay > max_retry_delay {
+            bail!("min_retry_delay ({min_retry_delay:?}) > max_retry_delay ({max_retry_delay:?})");
+        }
+        if !exponential_factor.is_finite() || exponential_factor < 1.0 {
+            // is_finite also checks NaN
+            bail!("exponential_factor ({exponential_factor}) is less than 1 (or non-finite/NaN)");
+        }
+        Ok(Self {
+            min_retry_delay,
+            max_retry_delay,
+            exponential_factor,
+        })
+    }
+
+    fn compute_retry_delay(&self, step_attempt: u64) -> Duration {
+        // Compute: min_retry_delay * (exponential_factor ** step_attempt), clamped to
+        // [min_retry_delay, max_retry_delay], avoiding overflow & with reasonable behavior if
+        // handed pathological parameter choices.
+
+        let min_retry_delay_secs = self.min_retry_delay.as_secs_f64();
+        let max_retry_delay_secs = self.max_retry_delay.as_secs_f64();
+        let step_attempt = match i32::try_from(step_attempt).ok() {
+            Some(step_attempt) => step_attempt,
+            None => i32::MAX, // this will surely overflow, but this is handled by the clamp below.
+        };
+
+        let delay = min_retry_delay_secs * self.exponential_factor.powi(step_attempt);
+        // Panic safety: min > max guarded against above.
+        let delay = delay.clamp(min_retry_delay_secs, max_retry_delay_secs);
+        // Panic safety: delay is clamped between min_retry_delay_secs & max_retry_delay_secs, both
+        // of which come from duration values & therefore can't be negative/infinite nor overflow
+        // Duration. (and we assume values between two valid duration values are also valid)
+        Duration::from_secs_f64(delay)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         aggregator::{
-            collection_job_driver::CollectionJobDriver, test_util::BATCH_AGGREGATION_SHARD_COUNT,
+            collection_job_driver::{CollectionJobDriver, RetryStrategy},
+            test_util::BATCH_AGGREGATION_SHARD_COUNT,
             Error,
         },
         binary_utils::job_driver::JobDriver,
@@ -1037,7 +1104,7 @@ mod tests {
             LimitedRetryer::new(0),
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
-            StdDuration::ZERO,
+            RetryStrategy::NO_DELAY.clone(),
         );
 
         // Batch aggregations indicate not all aggregation jobs are complete, and there is an
@@ -1389,7 +1456,7 @@ mod tests {
             LimitedRetryer::new(1),
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
-            StdDuration::ZERO,
+            RetryStrategy::NO_DELAY.clone(),
         );
 
         // Run: abandon the collection job.
@@ -1451,7 +1518,7 @@ mod tests {
             LimitedRetryer::new(0),
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
-            StdDuration::ZERO,
+            RetryStrategy::NO_DELAY.clone(),
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1547,7 +1614,7 @@ mod tests {
             LimitedRetryer::new(0),
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
-            StdDuration::ZERO,
+            RetryStrategy::NO_DELAY.clone(),
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1674,7 +1741,7 @@ mod tests {
             LimitedRetryer::new(0),
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
-            StdDuration::ZERO,
+            RetryStrategy::NO_DELAY.clone(),
         );
 
         // Step the collection job. The driver should successfully run the job, but then discard the
@@ -1714,5 +1781,53 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn retry_strategy() {
+        // Acceptable parameters.
+        for (step_attempts, min_delay_s, max_delay_s, exponential_factor, want_delay_s) in [
+            (0, 100, 1000, 1.1, 100),         // no steps
+            (1, 100, 1000, 1.1, 110),         // 1 step
+            (10, 100, 1000, 1.1, 259),        // 10 steps
+            (10_000, 100, 1000, 1.1, 1000),   // 10,000 steps
+            (u64::MAX, 100, 1000, 1.1, 1000), // more steps than can fit in an i32
+        ] {
+            // We truncate the result of `compute_reacquire_delay` to the nearest second to mitigate
+            // floating-point issues.
+            let got_delay_s = RetryStrategy::new(
+                StdDuration::from_secs(min_delay_s),
+                StdDuration::from_secs(max_delay_s),
+                exponential_factor,
+            )
+            .unwrap()
+            .compute_retry_delay(step_attempts)
+            .as_secs();
+
+            assert_eq!(
+                want_delay_s,
+                got_delay_s,
+                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor}).compute_retry_delay({step_attempts})"
+            );
+        }
+
+        // Bad parameters.
+        for (min_delay_s, max_delay_s, exponential_factor) in [
+            (1000, 100, 1.1),               // min_delay > max_delay
+            (100, 1000, 0.9),               // exponential_factor < 1
+            (100, 1000, -1.1),              // exponential factor negative
+            (100, 1000, f64::NAN),          // exponential factor is NaN
+            (100, 1000, f64::INFINITY),     // exponential factor is infinity
+            (100, 1000, f64::NEG_INFINITY), // exponential factor is -infinity
+        ] {
+            RetryStrategy::new(
+                StdDuration::from_secs(min_delay_s),
+                StdDuration::from_secs(max_delay_s),
+                exponential_factor,
+            )
+            .expect_err(&format!(
+                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor})"
+            ));
+        }
     }
 }
