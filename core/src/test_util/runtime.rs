@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     future::Future,
     hash::Hash,
-    panic::{panic_any, AssertUnwindSafe},
+    panic::{resume_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -127,7 +127,7 @@ impl Runtime for TestRuntime {
                         .inner
                         .any_panic
                         .fetch_or(true, Ordering::Release);
-                    panic_any(e);
+                    resume_unwind(e);
                 }
             }
         })

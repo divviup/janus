@@ -44,7 +44,7 @@ use reqwest::Method;
 use std::{
     any::Any,
     collections::HashSet,
-    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::Arc,
     time::Duration,
 };
@@ -378,6 +378,22 @@ where
                     }
 
                     // Initialize the leader's preparation state from the input share.
+                    let public_share_bytes = match public_share.get_encoded() {
+                        Ok(public_share_bytes) => public_share_bytes,
+                        Err(err) => {
+                            debug!(report_id = %report_aggregation.report_id(), ?err, "Could not encode public share");
+                            aggregate_step_failure_counter
+                                .add(1, &[KeyValue::new("type", "public_share_encode_failure")]);
+                            report_aggregations_to_write.push(WritableReportAggregation::new(
+                                report_aggregation.with_state(ReportAggregationState::Failed {
+                                    prepare_error: PrepareError::InvalidMessage,
+                                }),
+                                None,
+                            ));
+                            continue;
+                        }
+                    };
+
                     match trace_span!("VDAF preparation").in_scope(|| {
                         vdaf.leader_initialized(
                             verify_key.as_bytes(),
@@ -401,7 +417,7 @@ where
                             prepare_inits.push(PrepareInit::new(
                                 ReportShare::new(
                                     report_aggregation.report_metadata(),
-                                    public_share.get_encoded()?,
+                                    public_share_bytes,
                                     helper_encrypted_input_share.clone(),
                                 ),
                                 ping_pong_message,
@@ -449,7 +465,7 @@ where
             .map_err(|_recv_error: RecvError| {
                 Error::Internal("threadpool failed to send VDAF preparation result".into())
             })?
-            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| panic_any(panic_cause))?;
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| resume_unwind(panic_cause))?;
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
@@ -482,9 +498,9 @@ where
             .await?;
             AggregationJobResp::get_decoded(&resp_bytes)?
         } else {
-            // If there are no prepare inits to send (because every report aggregation was filtered by
-            // the block above), don't send a request to the Helper at all and process an artificial
-            // aggregation job response instead, which will finish the aggregation job.
+            // If there are no prepare inits to send (because every report aggregation was filtered
+            // by the block above), don't send a request to the Helper at all and process an
+            // artificial aggregation job response instead, which will finish the aggregation job.
             AggregationJobResp::new(Vec::new())
         };
 

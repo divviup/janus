@@ -50,7 +50,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::MessageDecode(_) => {
             conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
         }
-        Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
+        Error::MessageEncode(_) => conn.with_status(Status::InternalServerError),
         Error::ReportRejected(rejection) => match rejection.reason() {
             ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
@@ -212,7 +212,7 @@ where
             Ok(encoded) => conn
                 .with_response_header(KnownHeaderName::ContentType, self.media_type)
                 .ok(encoded),
-            Err(e) => Error::ResponseEncode(e).run(conn).await,
+            Err(e) => Error::MessageEncode(e).run(conn).await,
         }
     }
 }
