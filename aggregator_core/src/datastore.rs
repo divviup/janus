@@ -102,7 +102,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(3, 2);
+supported_schema_versions!(3);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -4465,9 +4465,10 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    /// Retrieves all [`OutstandingBatch`]es for a given task and time bucket, if applicable.
+    /// Retrieves all [`OutstandingBatch`]es for a given task and (if applicable) time bucket which
+    /// have not yet been marked filled.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_outstanding_batches(
+    pub async fn get_unfilled_outstanding_batches(
         &self,
         task_id: &TaskId,
         time_bucket_start: &Option<Time>,
@@ -4493,6 +4494,7 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT batch_id FROM outstanding_batches
                     WHERE task_id = $1
                       AND time_bucket_start = $2
+                      AND state = 'FILLING'
                       AND EXISTS(SELECT 1 FROM non_gc_batches
                                  WHERE batch_identifier = outstanding_batches.batch_id)",
                 )
@@ -4523,6 +4525,7 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT batch_id FROM outstanding_batches
                     WHERE task_id = $1
                       AND time_bucket_start IS NULL
+                      AND state = 'FILLING'
                       AND EXISTS(SELECT 1 FROM non_gc_batches
                                  WHERE batch_identifier = outstanding_batches.batch_id)",
                 )
@@ -4598,7 +4601,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Retrieves an outstanding batch for the given task with at least the given number of
     /// successfully-aggregated reports, removing it from the datastore.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn acquire_filled_outstanding_batch(
+    pub async fn acquire_outstanding_batch_with_report_count(
         &self,
         task_id: &TaskId,
         min_report_count: u64,
@@ -4645,6 +4648,50 @@ impl<C: Clock> Transaction<'_, C> {
         .await?
         .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
         .transpose()
+    }
+
+    /// Marks a given outstanding batch as filled, such that it will no longer be considered when
+    /// assigning aggregation jobs to batches.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn mark_outstanding_batch_filled(
+        &self,
+        task_id: &TaskId,
+        batch_id: &BatchId,
+    ) -> Result<(), Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Err(Error::MutationTargetNotFound),
+        };
+        let now = self.clock.now().as_naive_date_time()?;
+
+        let stmt = self
+            .prepare_cached(
+                "WITH non_gc_batches AS (
+                    SELECT batch_identifier
+                    FROM batch_aggregations
+                    WHERE task_id = $1
+                    AND batch_identifier = $2
+                    GROUP BY batch_identifier
+                    HAVING MAX(UPPER(client_timestamp_interval)) >= $3
+                )
+                UPDATE outstanding_batches
+                SET state = 'FILLED'
+                WHERE task_id = $1
+                AND batch_id = $2
+                AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* batch_id */ batch_id.as_ref(),
+                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                ],
+            )
+            .await?,
+        )
     }
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
