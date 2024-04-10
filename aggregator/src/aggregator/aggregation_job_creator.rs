@@ -1639,7 +1639,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -1842,7 +1844,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -2010,7 +2014,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -2107,7 +2113,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -2273,7 +2281,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -2376,7 +2386,9 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &None).await.unwrap(),
+                            tx.get_unfilled_outstanding_batches(task.id(), &None)
+                                .await
+                                .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,
@@ -2571,12 +2583,18 @@ mod tests {
 
                     Box::pin(async move {
                         Ok((
-                            tx.get_outstanding_batches(task.id(), &Some(time_bucket_start_1))
-                                .await
-                                .unwrap(),
-                            tx.get_outstanding_batches(task.id(), &Some(time_bucket_start_2))
-                                .await
-                                .unwrap(),
+                            tx.get_unfilled_outstanding_batches(
+                                task.id(),
+                                &Some(time_bucket_start_1),
+                            )
+                            .await
+                            .unwrap(),
+                            tx.get_unfilled_outstanding_batches(
+                                task.id(),
+                                &Some(time_bucket_start_2),
+                            )
+                            .await
+                            .unwrap(),
                             read_and_verify_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 FixedSize,

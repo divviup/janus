@@ -5476,34 +5476,62 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
     let (
         outstanding_batches_task_1,
+        outstanding_batches_task_1_after_mark,
         outstanding_batch_1,
         outstanding_batch_2,
         outstanding_batch_3,
         outstanding_batches_task_2,
+        outstanding_batches_task_2_after_mark,
         outstanding_batches_empty_time_bucket,
     ) = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let outstanding_batches_task_1 =
-                    tx.get_outstanding_batches(&task_id_1, &None).await?;
-                let outstanding_batch_1 = tx.get_filled_outstanding_batch(&task_id_1, 1).await?;
-                let outstanding_batch_2 = tx.get_filled_outstanding_batch(&task_id_1, 2).await?;
-                let outstanding_batch_3 = tx.get_filled_outstanding_batch(&task_id_1, 3).await?;
-                let outstanding_batches_task_2 = tx
-                    .get_outstanding_batches(&task_id_2, &Some(time_bucket_start))
+                let outstanding_batches_task_1 = tx
+                    .get_unfilled_outstanding_batches(&task_id_1, &None)
                     .await?;
+                tx.mark_outstanding_batch_filled(&task_id_1, &batch_id_1)
+                    .await
+                    .unwrap();
+                let outstanding_batches_task_1_after_mark = tx
+                    .get_unfilled_outstanding_batches(&task_id_1, &None)
+                    .await
+                    .unwrap();
+
+                let outstanding_batch_1 = tx
+                    .get_outstanding_batch_with_report_count(&task_id_1, 1)
+                    .await?;
+                let outstanding_batch_2 = tx
+                    .get_outstanding_batch_with_report_count(&task_id_1, 2)
+                    .await?;
+                let outstanding_batch_3 = tx
+                    .get_outstanding_batch_with_report_count(&task_id_1, 3)
+                    .await?;
+
+                let outstanding_batches_task_2 = tx
+                    .get_unfilled_outstanding_batches(&task_id_2, &Some(time_bucket_start))
+                    .await?;
+                tx.mark_outstanding_batch_filled(&task_id_2, &batch_id_2)
+                    .await
+                    .unwrap();
+                let outstanding_batches_task_2_after_mark = tx
+                    .get_unfilled_outstanding_batches(&task_id_2, &Some(time_bucket_start))
+                    .await
+                    .unwrap();
+
                 let outstanding_batches_empty_time_bucket = tx
-                    .get_outstanding_batches(
+                    .get_unfilled_outstanding_batches(
                         &task_id_2,
                         &Some(time_bucket_start.add(&Duration::from_hours(24)?)?),
                     )
                     .await?;
                 Ok((
                     outstanding_batches_task_1,
+                    outstanding_batches_task_1_after_mark,
                     outstanding_batch_1,
                     outstanding_batch_2,
                     outstanding_batch_3,
                     outstanding_batches_task_2,
+                    outstanding_batches_task_2_after_mark,
                     outstanding_batches_empty_time_bucket,
                 ))
             })
@@ -5518,6 +5546,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             RangeInclusive::new(2, 4)
         )])
     );
+    assert_eq!(outstanding_batches_task_1_after_mark, Vec::new());
     assert_eq!(outstanding_batch_1, Some(batch_id_1));
     assert_eq!(outstanding_batch_2, Some(batch_id_1));
     assert_eq!(outstanding_batch_3, None);
@@ -5529,6 +5558,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             RangeInclusive::new(0, 1)
         )])
     );
+    assert_eq!(outstanding_batches_task_2_after_mark, Vec::new());
     assert_eq!(outstanding_batches_empty_time_bucket, Vec::new());
 
     // Advance the clock further to trigger expiration of the written batches.
@@ -5537,7 +5567,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     // Verify that the batch is no longer available.
     let outstanding_batches = ds
         .run_unnamed_tx(|tx| {
-            Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })
+            Box::pin(async move { tx.get_unfilled_outstanding_batches(&task_id_1, &None).await })
         })
         .await
         .unwrap();
@@ -5555,7 +5585,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
     let outstanding_batches = ds
         .run_unnamed_tx(|tx| {
-            Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })
+            Box::pin(async move { tx.get_unfilled_outstanding_batches(&task_id_1, &None).await })
         })
         .await
         .unwrap();
@@ -7165,25 +7195,25 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .collect();
 
                 let leader_time_interval_outstanding_batch_ids = tx
-                    .get_outstanding_batches(&leader_time_interval_task_id, &None)
+                    .get_unfilled_outstanding_batches(&leader_time_interval_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
                 let helper_time_interval_outstanding_batch_ids = tx
-                    .get_outstanding_batches(&helper_time_interval_task_id, &None)
+                    .get_unfilled_outstanding_batches(&helper_time_interval_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
                 let leader_fixed_size_outstanding_batch_ids = tx
-                    .get_outstanding_batches(&leader_fixed_size_task_id, &None)
+                    .get_unfilled_outstanding_batches(&leader_fixed_size_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
                 let helper_fixed_size_outstanding_batch_ids = tx
-                    .get_outstanding_batches(&helper_fixed_size_task_id, &None)
+                    .get_unfilled_outstanding_batches(&helper_fixed_size_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
@@ -7191,7 +7221,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 let leader_fixed_size_time_bucketed_outstanding_batch_ids =
                     try_join_all(time_bucket_starts.iter().copied().map(
                         |time_bucket_start| async move {
-                            tx.get_outstanding_batches(
+                            tx.get_unfilled_outstanding_batches(
                                 &leader_fixed_size_time_bucketed_task_id,
                                 &Some(time_bucket_start),
                             )
@@ -7204,7 +7234,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .flatten()
                     .map(|batch| (*batch.task_id(), *batch.id()));
                 let other_task_outstanding_batch_ids = tx
-                    .get_outstanding_batches(&other_task_id, &None)
+                    .get_unfilled_outstanding_batches(&other_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
