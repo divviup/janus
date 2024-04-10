@@ -405,7 +405,7 @@ impl CollectableQueryType for FixedSize {
         match query.fixed_size_query() {
             FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
             FixedSizeQuery::CurrentBatch => {
-                tx.acquire_filled_outstanding_batch(task.id(), task.min_batch_size())
+                tx.acquire_outstanding_batch_with_report_count(task.id(), task.min_batch_size())
                     .await
             }
         }

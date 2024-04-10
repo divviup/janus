@@ -5558,15 +5558,15 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     .unwrap();
 
                 let outstanding_batch_1 = tx
-                    .acquire_filled_outstanding_batch(&task_id_1, 3)
+                    .acquire_outstanding_batch_with_report_count(&task_id_1, 3)
                     .await
                     .unwrap();
                 let outstanding_batch_2 = tx
-                    .acquire_filled_outstanding_batch(&task_id_1, 2)
+                    .acquire_outstanding_batch_with_report_count(&task_id_1, 2)
                     .await
                     .unwrap();
                 let outstanding_batch_3 = tx
-                    .acquire_filled_outstanding_batch(&task_id_1, 1)
+                    .acquire_outstanding_batch_with_report_count(&task_id_1, 1)
                     .await
                     .unwrap();
 

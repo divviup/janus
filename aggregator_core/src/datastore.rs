@@ -4601,7 +4601,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Retrieves an outstanding batch for the given task with at least the given number of
     /// successfully-aggregated reports, removing it from the datastore.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn acquire_filled_outstanding_batch(
+    pub async fn acquire_outstanding_batch_with_report_count(
         &self,
         task_id: &TaskId,
         min_report_count: u64,
