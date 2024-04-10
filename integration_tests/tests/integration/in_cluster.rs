@@ -1,6 +1,9 @@
 #![cfg(feature = "in-cluster")]
 
-use crate::common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext};
+use crate::{
+    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
+    initialize_rustls,
+};
 use chrono::prelude::*;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
@@ -471,6 +474,7 @@ impl InClusterJanus {
 #[tokio::test(flavor = "multi_thread")]
 async fn in_cluster_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair =
@@ -489,6 +493,7 @@ async fn in_cluster_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn in_cluster_sum() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair =
@@ -507,6 +512,7 @@ async fn in_cluster_sum() {
 #[tokio::test(flavor = "multi_thread")]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
@@ -531,6 +537,7 @@ async fn in_cluster_histogram() {
 #[tokio::test(flavor = "multi_thread")]
 async fn in_cluster_fixed_size() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
@@ -555,6 +562,7 @@ async fn in_cluster_fixed_size() {
 #[cfg(feature = "in-cluster-rate-limits")]
 mod rate_limits {
     use super::InClusterJanusPair;
+    use crate::initialize_rustls;
     use assert_matches::assert_matches;
     use http::Method;
     use janus_aggregator_core::task::QueryType;
@@ -611,6 +619,7 @@ mod rate_limits {
         method: Method,
     ) {
         install_test_trace_subscriber();
+        initialize_rustls();
         let test_config = TestConfig::load();
 
         let janus_pair =

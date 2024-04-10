@@ -1,6 +1,9 @@
-use crate::common::{
-    build_test_task, submit_measurements_and_verify_aggregate,
-    submit_measurements_and_verify_aggregate_varying_aggregation_parameter, TestContext,
+use crate::{
+    common::{
+        build_test_task, submit_measurements_and_verify_aggregate,
+        submit_measurements_and_verify_aggregate_varying_aggregation_parameter, TestContext,
+    },
+    initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 #[cfg(feature = "testcontainer")]
@@ -107,6 +110,7 @@ impl JanusInProcessPair {
 async fn janus_janus_count() {
     static TEST_NAME: &str = "janus_janus_count";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let container_client = container_client();
@@ -132,6 +136,7 @@ async fn janus_janus_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
@@ -156,6 +161,7 @@ async fn janus_in_process_count() {
 async fn janus_janus_sum_16() {
     static TEST_NAME: &str = "janus_janus_sum_16";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let container_client = container_client();
@@ -181,6 +187,7 @@ async fn janus_janus_sum_16() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_sum_16() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
@@ -205,6 +212,7 @@ async fn janus_in_process_sum_16() {
 async fn janus_janus_histogram_4_buckets() {
     static TEST_NAME: &str = "janus_janus_histogram_4_buckets";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let container_client = container_client();
@@ -233,6 +241,7 @@ async fn janus_janus_histogram_4_buckets() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_histogram_4_buckets() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
@@ -260,6 +269,7 @@ async fn janus_in_process_histogram_4_buckets() {
 async fn janus_janus_fixed_size() {
     static TEST_NAME: &str = "janus_janus_fixed_size";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let container_client = container_client();
@@ -288,6 +298,7 @@ async fn janus_janus_fixed_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_fixed_size() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
@@ -315,6 +326,7 @@ async fn janus_in_process_fixed_size() {
 async fn janus_janus_sum_vec() {
     static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let container_client = container_client();
     let janus_pair = JanusContainerPair::new(
@@ -342,6 +354,7 @@ async fn janus_janus_sum_vec() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_sum_vec() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         QueryType::TimeInterval,
@@ -367,6 +380,7 @@ async fn janus_in_process_sum_vec() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_customized_sum_vec() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         QueryType::TimeInterval,
@@ -393,6 +407,7 @@ async fn janus_in_process_customized_sum_vec() {
 #[ignore = "fixed size with agg param not yet supported (#225)"]
 async fn janus_in_process_one_round_with_agg_param_fixed_size() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(
         TaskBuilder::new(
@@ -426,6 +441,7 @@ async fn janus_in_process_one_round_with_agg_param_fixed_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_one_round_with_agg_param_time_interval() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(
         TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
