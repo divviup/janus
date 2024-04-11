@@ -29,7 +29,7 @@ pub enum Error {
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
     /// Error encoding a message.
-    #[error("response encoding failed: {0}")]
+    #[error("message encoding failed: {0}")]
     MessageEncode(prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
@@ -273,7 +273,7 @@ impl Error {
         match self {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
-            Error::MessageEncode(_) => "response_encode",
+            Error::MessageEncode(_) => "message_encode",
             Error::Message(_) => "message",
             Error::ReportRejected(rejection) => match rejection.reason {
                 ReportRejectionReason::TooEarly => "report_too_early",
