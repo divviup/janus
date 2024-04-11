@@ -692,9 +692,10 @@ fn parse_taskprov_header<C: Clock>(
                     // to actually authenticate the client is undesireable. We should rework this
                     // such that the authorization header is handled before parsing the untrusted
                     // input.
-                    Ok(Some(TaskConfig::decode(&mut Cursor::new(
-                        task_config_encoded,
-                    ))?))
+                    Ok(Some(
+                        TaskConfig::decode(&mut Cursor::new(task_config_encoded))
+                            .map_err(Error::MessageDecode)?,
+                    ))
                 }
             }
             None => Ok(None),

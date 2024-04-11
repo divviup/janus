@@ -27,7 +27,7 @@ pub enum Error {
     InvalidConfiguration(&'static str),
     /// Error decoding a message.
     #[error("message decoding failed: {0}")]
-    MessageDecode(#[from] prio::codec::CodecError),
+    MessageDecode(prio::codec::CodecError),
     /// Error encoding a message.
     #[error("message encoding failed: {0}")]
     MessageEncode(prio::codec::CodecError),

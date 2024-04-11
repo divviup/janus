@@ -344,7 +344,9 @@ impl<C: Clock> Aggregator<C> {
         };
 
         // Encode & (if configured to do so) sign the HPKE config list.
-        let encoded_hpke_config_list = hpke_config_list.get_encoded()?;
+        let encoded_hpke_config_list = hpke_config_list
+            .get_encoded()
+            .map_err(Error::MessageEncode)?;
         let signature = self
             .cfg
             .hpke_config_signing_key
@@ -357,7 +359,8 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
-        let report = Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::from(err)))?;
+        let report =
+            Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::MessageDecode(err)))?;
 
         let task_aggregator = self
             .task_aggregator_for(task_id)
@@ -474,7 +477,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
+        let req =
+            AggregationJobContinueReq::get_decoded(req_bytes).map_err(Error::MessageDecode)?;
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
 
@@ -1742,10 +1746,14 @@ impl VdafOps {
     {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
-        let req = Arc::new(AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?);
-        let agg_param = Arc::new(A::AggregationParam::get_decoded(
-            req.aggregation_parameter(),
-        )?);
+        let req = Arc::new(
+            AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
+                .map_err(Error::MessageDecode)?,
+        );
+        let agg_param = Arc::new(
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(Error::MessageDecode)?,
+        );
 
         let report_deadline = clock
             .now()
@@ -2499,10 +2507,12 @@ impl VdafOps {
         A::AggregationParam: 'static + Send + Sync + PartialEq + Eq + Hash,
         A::AggregateShare: Send + Sync,
     {
-        let req = Arc::new(CollectionReq::<Q>::get_decoded(req_bytes)?);
-        let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
-            req.aggregation_parameter(),
-        )?);
+        let req =
+            Arc::new(CollectionReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+        let aggregation_param = Arc::new(
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(Error::MessageDecode)?,
+        );
 
         Ok(datastore
             .run_tx("collect", move |tx| {
@@ -2887,7 +2897,8 @@ impl VdafOps {
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
-        let aggregate_share_req = Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes)?);
+        let aggregate_share_req =
+            Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !Q::validate_collection_identifier(

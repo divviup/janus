@@ -36,7 +36,7 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::{
-    codec::{CodecError, Decode, Encode, ParameterizedDecode},
+    codec::{Decode, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
@@ -316,7 +316,7 @@ where
             let task_id = *task.id();
             let aggregation_job = Arc::clone(&aggregation_job);
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
-            move || -> Result<_, CodecError> {
+            move || {
                 let span = info_span!(
                     parent: parent_span,
                     "step_aggregation_job_aggregate_init threadpool task"
@@ -438,11 +438,11 @@ where
                     }
                 }
 
-                Ok((
+                (
                     report_aggregations_to_write,
                     prepare_inits,
                     stepped_aggregations,
-                ))
+                )
             }
         };
         let (sender, receiver) = oneshot::channel();
@@ -465,12 +465,15 @@ where
             .map_err(|_recv_error: RecvError| {
                 Error::Internal("threadpool failed to send VDAF preparation result".into())
             })?
-            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| resume_unwind(panic_cause))?;
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| resume_unwind(panic_cause));
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
             let request = AggregationJobInitializeReq::<Q>::new(
-                aggregation_job.aggregation_parameter().get_encoded()?,
+                aggregation_job
+                    .aggregation_parameter()
+                    .get_encoded()
+                    .map_err(Error::MessageEncode)?,
                 PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
                 prepare_inits,
             );
@@ -486,7 +489,7 @@ where
                 AGGREGATION_JOB_ROUTE,
                 Some(RequestBody {
                     content_type: AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
-                    body: Bytes::from(request.get_encoded()?),
+                    body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
                 }),
                 // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
                 // case, and Janus never acts as the leader with taskprov enabled.
@@ -496,7 +499,7 @@ where
                 &self.http_request_duration_histogram,
             )
             .await?;
-            AggregationJobResp::get_decoded(&resp_bytes)?
+            AggregationJobResp::get_decoded(&resp_bytes).map_err(Error::MessageDecode)?
         } else {
             // If there are no prepare inits to send (because every report aggregation was filtered
             // by the block above), don't send a request to the Helper at all and process an
@@ -598,7 +601,7 @@ where
             AGGREGATION_JOB_ROUTE,
             Some(RequestBody {
                 content_type: AggregationJobContinueReq::MEDIA_TYPE,
-                body: Bytes::from(request.get_encoded()?),
+                body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
             }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
@@ -607,7 +610,7 @@ where
             &self.http_request_duration_histogram,
         )
         .await?;
-        let resp = AggregationJobResp::get_decoded(&resp_bytes)?;
+        let resp = AggregationJobResp::get_decoded(&resp_bytes).map_err(Error::MessageDecode)?;
 
         self.process_response_from_helper(
             datastore,
