@@ -26,7 +26,7 @@ use prio::{
 };
 use std::{
     any::Any,
-    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::Arc,
 };
 use tokio::sync::oneshot::{self, error::RecvError};
@@ -145,8 +145,9 @@ impl VdafOps {
                                             transition.evaluate(vdaf.as_ref())?;
                                         let (report_aggregation_state, output_share) =
                                             match new_state {
-                                                // Helper did not finish. Store the new state and await the
-                                                // next message from the Leader to advance preparation.
+                                                // Helper did not finish. Store the new state and
+                                                // await the next message from the Leader to advance
+                                                // preparation.
                                                 PingPongState::Continued(prepare_state) => (
                                                     ReportAggregationState::WaitingHelper {
                                                         prepare_state,
@@ -205,8 +206,8 @@ impl VdafOps {
                 }
 
                 for report_aggregation in report_aggregations_iter {
-                    // This report was omitted by the leader because of a prior failure. Note that the
-                    // report was dropped (if it's not already in an error state) and continue.
+                    // This report was omitted by the leader because of a prior failure. Note that
+                    // the report was dropped (if it's not already in an error state) and continue.
                     if matches!(
                         report_aggregation.state(),
                         ReportAggregationState::WaitingHelper { .. }
@@ -247,7 +248,7 @@ impl VdafOps {
                         .into(),
                 )
             })?
-            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| panic_any(panic_cause))?;
+            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| resume_unwind(panic_cause))?;
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.

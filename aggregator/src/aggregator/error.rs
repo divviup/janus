@@ -25,12 +25,12 @@ pub enum Error {
     /// An invalid configuration was passed.
     #[error("invalid configuration: {0}")]
     InvalidConfiguration(&'static str),
-    /// Error decoding an incoming message.
+    /// Error decoding a message.
     #[error("message decoding failed: {0}")]
-    MessageDecode(#[from] prio::codec::CodecError),
-    /// Error encoding a response to a request.
-    #[error("response encoding failed: {0}")]
-    ResponseEncode(prio::codec::CodecError),
+    MessageDecode(prio::codec::CodecError),
+    /// Error encoding a message.
+    #[error("message encoding failed: {0}")]
+    MessageEncode(prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
@@ -273,7 +273,7 @@ impl Error {
         match self {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
-            Error::ResponseEncode(_) => "response_encode",
+            Error::MessageEncode(_) => "message_encode",
             Error::Message(_) => "message",
             Error::ReportRejected(rejection) => match rejection.reason {
                 ReportRejectionReason::TooEarly => "report_too_early",

@@ -95,7 +95,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
-    panic::{catch_unwind, panic_any, AssertUnwindSafe},
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
@@ -344,7 +344,9 @@ impl<C: Clock> Aggregator<C> {
         };
 
         // Encode & (if configured to do so) sign the HPKE config list.
-        let encoded_hpke_config_list = hpke_config_list.get_encoded()?;
+        let encoded_hpke_config_list = hpke_config_list
+            .get_encoded()
+            .map_err(Error::MessageEncode)?;
         let signature = self
             .cfg
             .hpke_config_signing_key
@@ -357,7 +359,8 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
-        let report = Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::from(err)))?;
+        let report =
+            Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::MessageDecode(err)))?;
 
         let task_aggregator = self
             .task_aggregator_for(task_id)
@@ -474,7 +477,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
+        let req =
+            AggregationJobContinueReq::get_decoded(req_bytes).map_err(Error::MessageDecode)?;
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
 
@@ -1602,7 +1606,7 @@ impl VdafOps {
             report.public_share().to_vec(),
         )
         .get_encoded()
-        .map_err(|e| Arc::new(Error::ResponseEncode(e)))?;
+        .map_err(|e| Arc::new(Error::MessageEncode(e)))?;
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
                 hpke_keypair,
@@ -1742,10 +1746,14 @@ impl VdafOps {
     {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
-        let req = Arc::new(AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?);
-        let agg_param = Arc::new(A::AggregationParam::get_decoded(
-            req.aggregation_parameter(),
-        )?);
+        let req = Arc::new(
+            AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
+                .map_err(Error::MessageDecode)?,
+        );
+        let agg_param = Arc::new(
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(Error::MessageDecode)?,
+        );
 
         let report_deadline = clock
             .now()
@@ -1785,26 +1793,6 @@ impl VdafOps {
                 let mut report_share_data = Vec::new();
                 for (ord, prepare_init) in req.prepare_inits().iter().enumerate() {
                     // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-                    let input_share_aad = InputShareAad::new(
-                        *task.id(),
-                        prepare_init.report_share().metadata().clone(),
-                        prepare_init.report_share().public_share().to_vec(),
-                    )
-                    .get_encoded()
-                    .map_err(Error::ResponseEncode)?;
-                    let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
-                        hpke::open(
-                            hpke_keypair,
-                            &HpkeApplicationInfo::new(
-                                &Label::InputShare,
-                                &Role::Client,
-                                &Role::Helper,
-                            ),
-                            prepare_init.report_share().encrypted_input_share(),
-                            &input_share_aad,
-                        )
-                    };
-
                     let global_hpke_keypair = global_hpke_keypairs.keypair(
                         prepare_init
                             .report_share()
@@ -1834,7 +1822,45 @@ impl VdafOps {
                         Ok(())
                     };
 
-                    let plaintext = check_keypairs.and_then(|_| {
+                    let input_share_aad = check_keypairs.and_then(|_| {
+                        InputShareAad::new(
+                            *task.id(),
+                            prepare_init.report_share().metadata().clone(),
+                            prepare_init.report_share().public_share().to_vec(),
+                        )
+                        .get_encoded()
+                        .map_err(|err| {
+                            debug!(
+                                task_id = %task.id(),
+                                metadata = ?prepare_init.report_share().metadata(),
+                                ?err,
+                                "Couldn't encode input share AAD"
+                            );
+                            metrics.aggregate_step_failure_counter.add(
+                                1,
+                                &[KeyValue::new("type", "input_share_aad_encode_failure")],
+                            );
+                            // HpkeDecryptError isn't strictly accurate, but given that this
+                            // fallible encoding is part of the HPKE decryption process, I think
+                            // this is as close as we can get to a meaningful error signal.
+                            PrepareError::HpkeDecryptError
+                        })
+                    });
+
+                    let plaintext = input_share_aad.and_then(|input_share_aad| {
+                        let try_hpke_open = |hpke_keypair| {
+                            hpke::open(
+                                hpke_keypair,
+                                &HpkeApplicationInfo::new(
+                                    &Label::InputShare,
+                                    &Role::Client,
+                                    &Role::Helper,
+                                ),
+                                prepare_init.report_share().encrypted_input_share(),
+                                &input_share_aad,
+                            )
+                        };
+
                         match (task_hpke_keypair, global_hpke_keypair) {
                             (None, None) => unreachable!("already checked this condition"),
                             (None, Some(global_hpke_keypair)) => {
@@ -2050,6 +2076,13 @@ impl VdafOps {
                                 aggregation_job_id,
                                 *prepare_init.report_share().metadata().id(),
                                 *prepare_init.report_share().metadata().time(),
+                                // A conversion failure here will fail the entire aggregation.
+                                // However, this is desirable: this can only happen if we receive
+                                // too many report shares in an aggregation job for us to store,
+                                // which is a whole-aggregation problem rather than a per-report
+                                // problem. (separately, this would require more than u64::MAX
+                                // report shares in a single aggregation job, which is practically
+                                // impossible.)
                                 ord.try_into()?,
                                 Some(PrepareResp::new(
                                     *prepare_init.report_share().metadata().id(),
@@ -2086,7 +2119,7 @@ impl VdafOps {
                 Error::Internal("threadpool failed to send VDAF preparation result".into())
             })?
             .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| {
-                panic_any(panic_cause);
+                resume_unwind(panic_cause);
             })?;
 
         // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
@@ -2474,10 +2507,12 @@ impl VdafOps {
         A::AggregationParam: 'static + Send + Sync + PartialEq + Eq + Hash,
         A::AggregateShare: Send + Sync,
     {
-        let req = Arc::new(CollectionReq::<Q>::get_decoded(req_bytes)?);
-        let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
-            req.aggregation_parameter(),
-        )?);
+        let req =
+            Arc::new(CollectionReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+        let aggregation_param = Arc::new(
+            A::AggregationParam::get_decoded(req.aggregation_parameter())
+                .map_err(Error::MessageDecode)?,
+        );
 
         Ok(datastore
             .run_tx("collect", move |tx| {
@@ -2681,17 +2716,17 @@ impl VdafOps {
                     ),
                     &leader_aggregate_share
                         .get_encoded()
-                        .map_err(Error::ResponseEncode)?,
+                        .map_err(Error::MessageEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
                         collection_job
                             .aggregation_parameter()
                             .get_encoded()
-                            .map_err(Error::ResponseEncode)?,
+                            .map_err(Error::MessageEncode)?,
                         BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded()
-                    .map_err(Error::ResponseEncode)?,
+                    .map_err(Error::MessageEncode)?,
                 )?;
 
                 Ok(Some(
@@ -2705,7 +2740,7 @@ impl VdafOps {
                         encrypted_helper_aggregate_share.clone(),
                     )
                     .get_encoded()
-                    .map_err(Error::ResponseEncode)?,
+                    .map_err(Error::MessageEncode)?,
                 ))
             }
 
@@ -2862,7 +2897,8 @@ impl VdafOps {
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
-        let aggregate_share_req = Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes)?);
+        let aggregate_share_req =
+            Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !Q::validate_collection_identifier(
@@ -3026,17 +3062,17 @@ impl VdafOps {
             &aggregate_share_job
                 .helper_aggregate_share()
                 .get_encoded()
-                .map_err(Error::ResponseEncode)?,
+                .map_err(Error::MessageEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
                 aggregate_share_job
                     .aggregation_parameter()
                     .get_encoded()
-                    .map_err(Error::ResponseEncode)?,
+                    .map_err(Error::MessageEncode)?,
                 aggregate_share_req.batch_selector().clone(),
             )
             .get_encoded()
-            .map_err(Error::ResponseEncode)?,
+            .map_err(Error::MessageEncode)?,
         )?;
 
         Ok(AggregateShare::new(encrypted_aggregate_share))

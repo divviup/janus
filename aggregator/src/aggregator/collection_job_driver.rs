@@ -140,12 +140,14 @@ where
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
     {
-        let collection_identifier = Arc::new(Q::BatchIdentifier::get_decoded(
-            lease.leased().encoded_batch_identifier(),
-        )?);
-        let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
-            lease.leased().encoded_aggregation_param(),
-        )?);
+        let collection_identifier = Arc::new(
+            Q::BatchIdentifier::get_decoded(lease.leased().encoded_batch_identifier())
+                .map_err(Error::MessageDecode)?,
+        );
+        let aggregation_param = Arc::new(
+            A::AggregationParam::get_decoded(lease.leased().encoded_aggregation_param())
+                .map_err(Error::MessageDecode)?,
+        );
 
         let rslt = datastore
             .run_tx("step_collection_job_1", |tx| {
@@ -352,11 +354,15 @@ where
                 body: Bytes::from(
                     AggregateShareReq::<Q>::new(
                         BatchSelector::new(collection_job.batch_identifier().clone()),
-                        collection_job.aggregation_parameter().get_encoded()?,
+                        collection_job
+                            .aggregation_parameter()
+                            .get_encoded()
+                            .map_err(Error::MessageEncode)?,
                         report_count,
                         checksum,
                     )
-                    .get_encoded()?,
+                    .get_encoded()
+                    .map_err(Error::MessageEncode)?,
                 ),
             }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
@@ -373,7 +379,8 @@ where
             collection_job.with_state(CollectionJobState::Finished {
                 report_count,
                 client_timestamp_interval,
-                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)?
+                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)
+                    .map_err(Error::MessageDecode)?
                     .encrypted_aggregate_share()
                     .clone(),
                 leader_aggregate_share,
