@@ -296,9 +296,7 @@ where
         // report at this stage.
         match Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await {
             Ok(_) => {
-                let result = tx
-                    .put_client_report::<SEED_SIZE, A>(&self.vdaf, &self.report)
-                    .await;
+                let result = tx.put_client_report::<SEED_SIZE, A>(&self.report).await;
                 match result {
                     Ok(_) => {
                         task_upload_counter.increment_report_success(self.report.task_id());

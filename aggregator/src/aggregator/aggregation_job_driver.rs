@@ -1107,7 +1107,7 @@ mod tests {
         },
     };
     use rand::random;
-    use std::{borrow::Borrow, sync::Arc, time::Duration as StdDuration};
+    use std::{sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
     #[tokio::test]
@@ -1165,15 +1165,14 @@ mod tests {
         let aggregation_job_id = random();
 
         ds.run_unnamed_tx(|tx| {
-            let (vdaf, task, report, aggregation_param) = (
-                vdaf.clone(),
+            let (task, report, aggregation_param) = (
                 leader_task.clone(),
                 report.clone(),
                 aggregation_param.clone(),
             );
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                tx.put_client_report(&report).await.unwrap();
                 tx.scrub_client_report(report.task_id(), report.metadata().id())
                     .await
                     .unwrap();
@@ -1455,15 +1454,14 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let task = leader_task.clone();
                 let report = report.clone();
                 let repeated_extension_report = repeated_extension_report.clone();
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &repeated_extension_report)
+                    tx.put_client_report(&report).await.unwrap();
+                    tx.put_client_report(&repeated_extension_report)
                         .await
                         .unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
@@ -1777,15 +1775,14 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report, aggregation_param) = (
-                    vdaf.clone(),
+                let (task, report, aggregation_param) = (
                     leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -2066,19 +2063,14 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let leader_task = leader_task.clone();
                 let gc_eligible_report = gc_eligible_report.clone();
                 let gc_ineligible_report = gc_ineligible_report.clone();
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&leader_task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &gc_eligible_report)
-                        .await
-                        .unwrap();
-                    tx.put_client_report(vdaf.borrow(), &gc_ineligible_report)
-                        .await
-                        .unwrap();
+                    tx.put_client_report(&gc_eligible_report).await.unwrap();
+                    tx.put_client_report(&gc_ineligible_report).await.unwrap();
                     tx.scrub_client_report(
                         gc_eligible_report.task_id(),
                         gc_eligible_report.metadata().id(),
@@ -2409,10 +2401,10 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report) = (vdaf.clone(), leader_task.clone(), report.clone());
+                let (task, report) = (leader_task.clone(), report.clone());
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -2687,15 +2679,14 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report, aggregation_param) = (
-                    vdaf.clone(),
+                let (task, report, aggregation_param) = (
                     leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -2953,8 +2944,7 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, aggregation_param, report, transcript) = (
-                    vdaf.clone(),
+                let (task, aggregation_param, report, transcript) = (
                     leader_task.clone(),
                     aggregation_param.clone(),
                     report.clone(),
@@ -2962,7 +2952,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -3306,8 +3296,7 @@ mod tests {
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report, aggregation_param, transcript) = (
-                    vdaf.clone(),
+                let (task, report, aggregation_param, transcript) = (
                     leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
@@ -3315,7 +3304,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -3609,8 +3598,7 @@ mod tests {
 
         let lease = datastore
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report, aggregation_job, report_aggregation) = (
-                    vdaf.clone(),
+                let (task, report, aggregation_job, report_aggregation) = (
                     task.clone(),
                     report.clone(),
                     aggregation_job.clone(),
@@ -3618,7 +3606,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -3862,13 +3850,12 @@ mod tests {
 
         // Set up fixtures in the database.
         ds.run_unnamed_tx(|tx| {
-            let vdaf = vdaf.clone();
             let task = leader_task.clone();
             let report = report.clone();
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.put_client_report(&vdaf, &report).await.unwrap();
+                tx.put_client_report(&report).await.unwrap();
                 tx.scrub_client_report(report.task_id(), report.metadata().id())
                     .await
                     .unwrap();
@@ -4107,13 +4094,12 @@ mod tests {
 
         // Set up fixtures in the database.
         ds.run_unnamed_tx(|tx| {
-            let vdaf = vdaf.clone();
             let task = leader_task.clone();
             let report = report.clone();
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.put_client_report(&vdaf, &report).await.unwrap();
+                tx.put_client_report(&report).await.unwrap();
                 tx.scrub_client_report(report.task_id(), report.metadata().id())
                     .await
                     .unwrap();

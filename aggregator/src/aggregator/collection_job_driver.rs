@@ -207,11 +207,14 @@ where
                                 }
                             }
                         },
-                        Q::get_batch_aggregation_job_count_for_collection_identifier(
+                        Q::get_batch_aggregation_job_count_for_collection_identifier::<
+                            SEED_SIZE,
+                            A,
+                            C,
+                        >(
                             tx,
                             lease.leased().task_id(),
                             lease.leased().time_precision(),
-                            vdaf.as_ref(),
                             &collection_identifier,
                             &aggregation_param,
                         ),
@@ -886,9 +889,7 @@ mod tests {
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
-                    tx.put_client_report(&dummy::Vdaf::new(1), &report)
-                        .await
-                        .unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                     tx.mark_report_aggregated(task.id(), report.metadata().id())
                         .await
                         .unwrap();
@@ -1029,9 +1030,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_client_report(&dummy::Vdaf::default(), &report)
-                        .await
-                        .unwrap();
+                    tx.put_client_report(&report).await.unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                         *task.id(),

@@ -1589,7 +1589,6 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_client_report<const SEED_SIZE: usize, A>(
         &self,
-        vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error>
     where
@@ -3701,7 +3700,6 @@ impl<C: Clock> Transaction<'_, C> {
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,

@@ -201,9 +201,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
 
                     for ord in 0..task.min_batch_size() + 1 {
                         let report = LeaderStoredReport::new_dummy(*task.id(), time);
-                        tx.put_client_report(&dummy::Vdaf::new(1), &report)
-                            .await
-                            .unwrap();
+                        tx.put_client_report(&report).await.unwrap();
 
                         tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                             *task.id(),

@@ -497,7 +497,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     // Write the report, and then read it back.
     ds.run_tx("test-put-client-report", |tx| {
         let report = report.clone();
-        Box::pin(async move { tx.put_client_report(&dummy::Vdaf::default(), &report).await })
+        Box::pin(async move { tx.put_client_report(&report).await })
     })
     .await
     .unwrap();
@@ -525,25 +525,22 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         .run_unnamed_tx(|tx| {
             let task_id = *report.task_id();
             Box::pin(async move {
-                tx.put_client_report(
-                    &dummy::Vdaf::default(),
-                    &LeaderStoredReport::<0, dummy::Vdaf>::new(
-                        task_id,
-                        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
-                        (), // public share
-                        Vec::from([
-                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
-                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
-                        ]),
-                        dummy::InputShare::default(), // leader input share
-                        /* Dummy ciphertext for the helper share */
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(14),
-                            Vec::from("encapsulated_context_2"),
-                            Vec::from("payload_2"),
-                        ),
+                tx.put_client_report(&LeaderStoredReport::<0, dummy::Vdaf>::new(
+                    task_id,
+                    ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
+                    (), // public share
+                    Vec::from([
+                        Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
+                        Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
+                    ]),
+                    dummy::InputShare::default(), // leader input share
+                    /* Dummy ciphertext for the helper share */
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(14),
+                        Vec::from("encapsulated_context_2"),
+                        Vec::from("payload_2"),
                     ),
-                )
+                ))
                 .await
             })
         })
@@ -683,21 +680,15 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             tx.put_aggregator_task(&task).await.unwrap();
             tx.put_aggregator_task(&unrelated_task).await.unwrap();
 
-            tx.put_client_report(&dummy::Vdaf::default(), &first_unaggregated_report)
+            tx.put_client_report(&first_unaggregated_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &second_unaggregated_report)
+            tx.put_client_report(&second_unaggregated_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &expired_report)
-                .await
-                .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &aggregated_report)
-                .await
-                .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &unrelated_report)
-                .await
-                .unwrap();
+            tx.put_client_report(&expired_report).await.unwrap();
+            tx.put_client_report(&aggregated_report).await.unwrap();
+            tx.put_client_report(&unrelated_report).await.unwrap();
 
             // Mark aggregated_report as aggregated.
             tx.mark_report_aggregated(task.id(), aggregated_report.metadata().id())
@@ -901,14 +892,10 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             tx.put_aggregator_task(&task).await?;
             tx.put_aggregator_task(&unrelated_task).await?;
 
-            tx.put_client_report(&dummy::Vdaf::new(1), &first_unaggregated_report)
-                .await?;
-            tx.put_client_report(&dummy::Vdaf::new(1), &second_unaggregated_report)
-                .await?;
-            tx.put_client_report(&dummy::Vdaf::new(1), &aggregated_report)
-                .await?;
-            tx.put_client_report(&dummy::Vdaf::new(1), &unrelated_report)
-                .await?;
+            tx.put_client_report(&first_unaggregated_report).await?;
+            tx.put_client_report(&second_unaggregated_report).await?;
+            tx.put_client_report(&aggregated_report).await?;
+            tx.put_client_report(&unrelated_report).await?;
 
             // There are no client reports submitted under this task, so we shouldn't see
             // this aggregation parameter at all.
@@ -1217,21 +1204,19 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
             tx.put_aggregator_task(&unrelated_task).await.unwrap();
             tx.put_aggregator_task(&no_reports_task).await.unwrap();
 
-            tx.put_client_report(&dummy::Vdaf::default(), &expired_report_in_interval)
+            tx.put_client_report(&expired_report_in_interval)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &first_report_in_interval)
+            tx.put_client_report(&first_report_in_interval)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &second_report_in_interval)
+            tx.put_client_report(&second_report_in_interval)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &report_outside_interval)
+            tx.put_client_report(&report_outside_interval)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &report_for_other_task)
-                .await
-                .unwrap();
+            tx.put_client_report(&report_for_other_task).await.unwrap();
 
             Ok(())
         })
@@ -1388,15 +1373,9 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                 let aggregation_job_1_report_aggregation_1 =
                     report_1.as_start_leader_report_aggregation(*aggregation_job_1.id(), 1);
 
-                tx.put_client_report(&dummy::Vdaf::default(), &expired_report)
-                    .await
-                    .unwrap();
-                tx.put_client_report(&dummy::Vdaf::default(), &report_0)
-                    .await
-                    .unwrap();
-                tx.put_client_report(&dummy::Vdaf::default(), &report_1)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&expired_report).await.unwrap();
+                tx.put_client_report(&report_0).await.unwrap();
+                tx.put_client_report(&report_1).await.unwrap();
 
                 tx.put_aggregation_job(&expired_aggregation_job)
                     .await
@@ -2945,7 +2924,6 @@ async fn create_report_aggregation_from_client_reports_table(
         .run_unnamed_tx(|tx| {
             let clock = clock.clone();
             let task = task.clone();
-            let vdaf = vdaf.clone();
             let vdaf_transcript = vdaf_transcript.clone();
             let aggregation_param = aggregation_param.clone();
             Box::pin(async move {
@@ -2969,21 +2947,20 @@ async fn create_report_aggregation_from_client_reports_table(
 
                 let report_id = random();
                 let timestamp = clock.now();
-                let leader_stored_report = LeaderStoredReport::new(
-                    *task.id(),
-                    ReportMetadata::new(report_id, timestamp),
-                    vdaf_transcript.public_share,
-                    Vec::new(),
-                    vdaf_transcript.leader_input_share,
-                    HpkeCiphertext::new(
-                        HpkeConfigId::from(9),
-                        Vec::from(b"encapsulated"),
-                        Vec::from(b"encrypted helper share"),
-                    ),
-                );
-                tx.put_client_report(vdaf.as_ref(), &leader_stored_report)
-                    .await
-                    .unwrap();
+                let leader_stored_report =
+                    LeaderStoredReport::<16, Poplar1<XofTurboShake128, 16>>::new(
+                        *task.id(),
+                        ReportMetadata::new(report_id, timestamp),
+                        vdaf_transcript.public_share,
+                        Vec::new(),
+                        vdaf_transcript.leader_input_share,
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(9),
+                            Vec::from(b"encapsulated"),
+                            Vec::from(b"encrypted helper share"),
+                        ),
+                    );
+                tx.put_client_report(&leader_stored_report).await.unwrap();
 
                 let report_aggregation_metadata = ReportAggregationMetadata::new(
                     *task.id(),
@@ -3555,9 +3532,7 @@ async fn setup_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
             }
 
             for report in &test_case.reports {
-                tx.put_client_report(&dummy::Vdaf::default(), report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(report).await.unwrap();
             }
             for aggregation_job in &test_case.aggregation_jobs {
                 tx.put_aggregation_job(aggregation_job).await.unwrap();
@@ -5481,25 +5456,22 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     report_aggregation_1_2,
                     report_aggregation_2_0,
                 ] {
-                    tx.put_client_report(
-                        &dummy::Vdaf::default(),
-                        &LeaderStoredReport::new(
-                            *report_aggregation.task_id(),
-                            ReportMetadata::new(
-                                *report_aggregation.report_id(),
-                                *report_aggregation.time(),
-                            ),
-                            (), // Dummy public share
-                            Vec::new(),
-                            dummy::InputShare::default(), // Dummy leader input share
-                            // Dummy helper encrypted input share
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_0"),
-                                Vec::from("payload_0"),
-                            ),
+                    tx.put_client_report(&LeaderStoredReport::<0, dummy::Vdaf>::new(
+                        *report_aggregation.task_id(),
+                        ReportMetadata::new(
+                            *report_aggregation.report_id(),
+                            *report_aggregation.time(),
                         ),
-                    )
+                        (), // Dummy public share
+                        Vec::new(),
+                        dummy::InputShare::default(), // Dummy leader input share
+                        // Dummy helper encrypted input share
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("encapsulated_context_0"),
+                            Vec::from("payload_0"),
+                        ),
+                    ))
                     .await
                     .unwrap();
                     tx.put_report_aggregation(report_aggregation).await.unwrap();
@@ -5680,15 +5652,11 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                         .sub(&Duration::from_seconds(1))
                         .unwrap(),
                 );
-                tx.put_client_report(&dummy::Vdaf::default(), &old_report)
+                tx.put_client_report::<0, dummy::Vdaf>(&old_report)
                     .await
                     .unwrap();
-                tx.put_client_report(&dummy::Vdaf::default(), &new_report)
-                    .await
-                    .unwrap();
-                tx.put_client_report(&dummy::Vdaf::default(), &other_task_report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&new_report).await.unwrap();
+                tx.put_client_report(&other_task_report).await.unwrap();
 
                 Ok((
                     *task.id(),
@@ -5771,12 +5739,8 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
                 );
                 let new_report =
                     LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
-                tx.put_client_report(&dummy::Vdaf::default(), &old_report)
-                    .await
-                    .unwrap();
-                tx.put_client_report(&dummy::Vdaf::default(), &new_report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&old_report).await.unwrap();
+                tx.put_client_report(&new_report).await.unwrap();
 
                 Ok((
                     *task.id(),
@@ -5846,9 +5810,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         let mut reports = Vec::new();
         for client_timestamp in client_timestamps {
             let report = LeaderStoredReport::new_dummy(*task_id, *client_timestamp);
-            tx.put_client_report(&dummy::Vdaf::default(), &report)
-                .await
-                .unwrap();
+            tx.put_client_report(&report).await.unwrap();
             reports.push(report);
         }
 
@@ -7637,9 +7599,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
             let report = report.clone();
 
             Box::pin(async move {
-                tx.put_client_report(&dummy::Vdaf::default(), &report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&report).await.unwrap();
                 Ok(())
             })
         })
@@ -7666,9 +7626,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
                     .unwrap()
                     .is_none());
 
-                tx.put_client_report(&dummy::Vdaf::default(), &report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&report).await.unwrap();
 
                 assert!(tx
                     .get_client_report(

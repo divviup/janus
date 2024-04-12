@@ -972,7 +972,6 @@ mod tests {
         collections::{HashMap, HashSet},
         hash::Hash,
         iter,
-        ops::Deref,
         sync::Arc,
         time::Duration,
     };
@@ -1038,7 +1037,6 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let leader_task = Arc::clone(&leader_task);
             let helper_task = Arc::clone(&helper_task);
-            let vdaf = Arc::clone(&vdaf);
             let leader_report = Arc::clone(&leader_report);
             let helper_report = Arc::clone(&helper_report);
 
@@ -1046,12 +1044,8 @@ mod tests {
                 tx.put_aggregator_task(&leader_task).await.unwrap();
                 tx.put_aggregator_task(&helper_task).await.unwrap();
 
-                tx.put_client_report(vdaf.as_ref(), &leader_report)
-                    .await
-                    .unwrap();
-                tx.put_client_report(&dummy::Vdaf::new(1), &helper_report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&leader_report).await.unwrap();
+                tx.put_client_report(&helper_report).await.unwrap();
                 Ok(())
             })
         })
@@ -1228,13 +1222,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -1416,14 +1409,11 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let first_report = Arc::clone(&first_report);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_client_report(vdaf.as_ref(), &first_report)
-                    .await
-                    .unwrap();
+                tx.put_client_report(&first_report).await.unwrap();
                 Ok(())
             })
         })
@@ -1487,13 +1477,10 @@ mod tests {
         job_creator
             .datastore
             .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let second_report = Arc::clone(&second_report);
 
                 Box::pin(async move {
-                    tx.put_client_report(vdaf.as_ref(), &second_report)
-                        .await
-                        .unwrap();
+                    tx.put_client_report(&second_report).await.unwrap();
                     Ok(())
                 })
             })
@@ -1626,13 +1613,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 tx.put_batch_aggregation(&BatchAggregation::<
                     VERIFY_KEY_LENGTH,
@@ -1814,13 +1800,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -2032,13 +2017,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -2202,13 +2186,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -2310,13 +2293,10 @@ mod tests {
         job_creator
             .datastore
             .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let last_report = Arc::clone(&last_report);
 
                 Box::pin(async move {
-                    tx.put_client_report(vdaf.as_ref(), &last_report)
-                        .await
-                        .unwrap();
+                    tx.put_client_report(&last_report).await.unwrap();
                     Ok(())
                 })
             })
@@ -2470,13 +2450,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -2584,12 +2563,11 @@ mod tests {
         job_creator
             .datastore
             .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let new_reports = Arc::clone(&new_reports);
 
                 Box::pin(async move {
                     for report in new_reports.iter() {
-                        tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                        tx.put_client_report(report).await.unwrap();
                     }
                     Ok(())
                 })
@@ -2767,13 +2745,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -3060,13 +3037,12 @@ mod tests {
 
         ds.run_unnamed_tx(|tx| {
             let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
             let reports = Arc::clone(&reports);
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in reports.iter() {
-                    tx.put_client_report(vdaf.as_ref(), report).await.unwrap();
+                    tx.put_client_report(report).await.unwrap();
                 }
                 Ok(())
             })
@@ -3261,8 +3237,7 @@ mod tests {
         }
 
         ds.run_unnamed_tx(|tx| {
-            let (vdaf, task, batch_1_reports, batch_2_reports) = (
-                Arc::clone(&vdaf),
+            let (task, batch_1_reports, batch_2_reports) = (
                 Arc::clone(&task),
                 batch_1_reports.clone(),
                 batch_2_reports.clone(),
@@ -3270,10 +3245,10 @@ mod tests {
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 for report in batch_1_reports {
-                    tx.put_client_report(vdaf.deref(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                 }
                 for report in batch_2_reports {
-                    tx.put_client_report(vdaf.deref(), &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
                 }
                 Ok(())
             })

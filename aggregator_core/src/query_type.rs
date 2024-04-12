@@ -262,7 +262,6 @@ pub trait CollectableQueryType: AccumulableQueryType {
         tx: &Transaction<C>,
         task_id: &TaskId,
         time_precision: &Duration,
-        vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(u64, u64), datastore::Error>
@@ -281,7 +280,6 @@ pub trait CollectableQueryType: AccumulableQueryType {
 
                 async move {
                     tx.get_batch_aggregation_job_count_for_batch::<SEED_SIZE, Self, A>(
-                        vdaf,
                         &task_id,
                         &batch_identifier,
                         &aggregation_param,
