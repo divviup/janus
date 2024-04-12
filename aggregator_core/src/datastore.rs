@@ -1251,19 +1251,11 @@ impl<C: Clock> Transaction<'_, C> {
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_unaggregated_client_reports_for_task<
-        const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-    >(
+    pub async fn get_unaggregated_client_reports_for_task(
         &self,
-        vdaf: &A,
         task_id: &TaskId,
         limit: usize,
-    ) -> Result<Vec<ReportMetadata>, Error>
-    where
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
-    {
+    ) -> Result<Vec<ReportMetadata>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),

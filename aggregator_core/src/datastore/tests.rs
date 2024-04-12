@@ -726,7 +726,6 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(
-                        &dummy::Vdaf::default(),
                         task.id(),
                         5000,
                     )
@@ -759,7 +758,6 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(
-                        &dummy::Vdaf::default(),
                         task.id(),
                         5000,
                     )
@@ -796,7 +794,6 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(
-                        &dummy::Vdaf::default(),
                         task.id(),
                         5000,
                     )

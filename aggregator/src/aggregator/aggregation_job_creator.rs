@@ -592,7 +592,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some unaggregated client reports.
                     let mut reports = tx
                         .get_unaggregated_client_reports_for_task(
-                            vdaf.as_ref(),
                             task.id(),
                             aggregation_job_creation_report_window,
                         )
@@ -899,7 +898,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find unaggregated client reports.
                     let unaggregated_reports = tx
                         .get_unaggregated_client_reports_for_task(
-                            vdaf.as_ref(),
                             task.id(),
                             aggregation_job_creation_report_window,
                         )
@@ -2113,11 +2111,10 @@ mod tests {
             .datastore
             .run_unnamed_tx(|tx| {
                 let task = Arc::clone(&task);
-                let vdaf = Arc::clone(&vdaf);
 
                 Box::pin(async move {
                     let report_ids = tx
-                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id(), 5000)
+                        .get_unaggregated_client_reports_for_task(task.id(), 5000)
                         .await
                         .unwrap()
                         .into_iter()
