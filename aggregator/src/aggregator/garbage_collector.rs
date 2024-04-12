@@ -214,7 +214,7 @@ mod tests {
         // Setup.
         let task = ds
             .run_unnamed_tx(|tx| {
-                let (clock, vdaf) = (clock.clone(), vdaf.clone());
+                let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::QueryType::TimeInterval,
@@ -229,7 +229,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
-                    tx.put_client_report(&vdaf, &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
 
                     // Aggregation artifacts.
                     let aggregation_job_id = random();
@@ -537,7 +537,7 @@ mod tests {
         // Setup.
         let task = ds
             .run_unnamed_tx(|tx| {
-                let (clock, vdaf) = (clock.clone(), vdaf.clone());
+                let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::QueryType::FixedSize {
@@ -560,7 +560,7 @@ mod tests {
                         .sub(&Duration::from_seconds(2))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
-                    tx.put_client_report(&vdaf, &report).await.unwrap();
+                    tx.put_client_report(&report).await.unwrap();
 
                     // Aggregation artifacts.
                     let batch_id = random();
