@@ -38,7 +38,9 @@ impl<'a> Daphne<'a> {
             ),
             Role::Collector | Role::Client => unreachable!(),
         };
-        let (image_name, image_tag) = image_name_and_tag.rsplit_once(':').unwrap();
+        let (image_name, image_tag) = image_name_and_tag
+            .rsplit_once(':')
+            .unwrap_or((image_name_and_tag, "latest"));
 
         // Start the Daphne test container running.
         let (port, daphne_container) = if start_container {
