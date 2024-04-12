@@ -135,7 +135,7 @@ where
     ) -> Result<(), Error>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync,
+        A::AggregationParam: Send + Sync + Encode,
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
     {
@@ -189,6 +189,7 @@ where
                         {
                             let task_id = *lease.leased().task_id();
                             let collection_identifier = Arc::clone(&collection_identifier);
+                            let aggregation_param = Arc::clone(&aggregation_param);
 
                             async move {
                                 if let Some(collection_interval) =
@@ -197,6 +198,7 @@ where
                                     tx.interval_has_unaggregated_reports(
                                         &task_id,
                                         collection_interval,
+                                        aggregation_param.as_ref(),
                                     )
                                     .await
                                 } else {

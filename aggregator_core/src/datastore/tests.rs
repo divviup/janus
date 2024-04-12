@@ -626,7 +626,9 @@ async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: EphemeralDatastore) {
+async fn get_unaggregated_client_reports_for_task_no_agg_param(
+    ephemeral_datastore: EphemeralDatastore,
+) {
     install_test_trace_subscriber();
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -638,40 +640,66 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         Duration::from_seconds(2),
     )
     .unwrap();
-    let task = TaskBuilder::new(
-        task::QueryType::TimeInterval,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-    .build()
-    .leader_view()
-    .unwrap();
-    let unrelated_task = TaskBuilder::new(
-        task::QueryType::TimeInterval,
-        VdafInstance::Fake { rounds: 1 },
-    )
-    .build()
-    .leader_view()
-    .unwrap();
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+        .build()
+        .leader_view()
+        .unwrap();
+    let unrelated_task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .build()
+        .leader_view()
+        .unwrap();
 
-    let first_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
-    let second_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
-    let expired_report = LeaderStoredReport::new_dummy(
+    let vdaf = Arc::new(Prio3Count::new_count(2).unwrap());
+    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+
+    let first_unaggregated_report = LeaderStoredReport::run_vdaf_and_generate(
+        vdaf.as_ref(),
+        *task.id(),
+        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+        helper_hpke_keypair.config(),
+        &(),
+        &true,
+    );
+    let second_unaggregated_report = LeaderStoredReport::run_vdaf_and_generate(
+        vdaf.as_ref(),
+        *task.id(),
+        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+        helper_hpke_keypair.config(),
+        &(),
+        &true,
+    );
+    let expired_report = LeaderStoredReport::run_vdaf_and_generate(
+        vdaf.as_ref(),
         *task.id(),
         OLDEST_ALLOWED_REPORT_TIMESTAMP
             .sub(&Duration::from_seconds(1))
             .unwrap(),
+        helper_hpke_keypair.config(),
+        &(),
+        &true,
     );
-    let aggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
-    let unrelated_report =
-        LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let aggregated_report = LeaderStoredReport::run_vdaf_and_generate(
+        vdaf.as_ref(),
+        *task.id(),
+        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+        helper_hpke_keypair.config(),
+        &(),
+        &true,
+    );
+    let unrelated_report = LeaderStoredReport::run_vdaf_and_generate(
+        vdaf.as_ref(),
+        *unrelated_task.id(),
+        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+        helper_hpke_keypair.config(),
+        &(),
+        &true,
+    );
 
     // Set up state.
     ds.run_tx("test-unaggregated-reports", |tx| {
         let task = task.clone();
+        let vdaf = vdaf.clone();
         let unrelated_task = unrelated_task.clone();
         let first_unaggregated_report = first_unaggregated_report.clone();
         let second_unaggregated_report = second_unaggregated_report.clone();
@@ -683,19 +711,19 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             tx.put_aggregator_task(&task).await.unwrap();
             tx.put_aggregator_task(&unrelated_task).await.unwrap();
 
-            tx.put_client_report(&dummy::Vdaf::default(), &first_unaggregated_report)
+            tx.put_client_report(vdaf.as_ref(), &first_unaggregated_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &second_unaggregated_report)
+            tx.put_client_report(vdaf.as_ref(), &second_unaggregated_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &expired_report)
+            tx.put_client_report(vdaf.as_ref(), &expired_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &aggregated_report)
+            tx.put_client_report(vdaf.as_ref(), &aggregated_report)
                 .await
                 .unwrap();
-            tx.put_client_report(&dummy::Vdaf::default(), &unrelated_report)
+            tx.put_client_report(vdaf.as_ref(), &unrelated_report)
                 .await
                 .unwrap();
 
@@ -720,7 +748,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                 // At this point, first_unaggregated_report and second_unaggregated_report are both
                 // unaggregated.
                 assert!(tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
+                    .interval_has_unaggregated_reports(task.id(), &report_interval, &())
                     .await
                     .unwrap());
 
@@ -753,7 +781,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             Box::pin(async move {
                 // At this point, all reports have started aggregation.
                 assert!(!tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
+                    .interval_has_unaggregated_reports(task.id(), &report_interval, &())
                     .await
                     .unwrap());
 
@@ -790,7 +818,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             Box::pin(async move {
                 // At this point, first_unaggregated_report is unaggregated.
                 assert!(tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
+                    .interval_has_unaggregated_reports(task.id(), &report_interval, &())
                     .await
                     .unwrap());
 
@@ -861,16 +889,334 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
+async fn get_unaggregated_client_reports_for_task_with_agg_param(
     ephemeral_datastore: EphemeralDatastore,
 ) {
     install_test_trace_subscriber();
-    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+    let report_interval = Interval::new(
+        OLDEST_ALLOWED_REPORT_TIMESTAMP
+            .sub(&Duration::from_seconds(10))
+            .unwrap(),
+        Duration::from_seconds(11),
+    )
+    .unwrap();
+    let task = TaskBuilder::new(
+        task::QueryType::TimeInterval,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .build()
+    .leader_view()
+    .unwrap();
+    let unrelated_task = TaskBuilder::new(
+        task::QueryType::TimeInterval,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .build()
+    .leader_view()
+    .unwrap();
+
+    // Reports that should not be considered aggregatable
+    let before_interval_report = LeaderStoredReport::new_dummy(
+        *task.id(),
+        report_interval
+            .start()
+            .sub(&Duration::from_seconds(1))
+            .unwrap(),
+    );
+    let after_interval_report = LeaderStoredReport::new_dummy(
+        *task.id(),
+        report_interval
+            .end()
+            .add(&Duration::from_seconds(1))
+            .unwrap(),
+    );
+    let expired_report = LeaderStoredReport::new_dummy(
+        *task.id(),
+        OLDEST_ALLOWED_REPORT_TIMESTAMP
+            .sub(&Duration::from_seconds(1))
+            .unwrap(),
+    );
+    let unrelated_report =
+        LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+
+    // Reports that should be included, depending on agg param
+    let never_aggregated_report =
+        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let aggregated_with_1_report =
+        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+
+    // Set up state.
+    ds.run_tx("test-unaggregated-reports", |tx| {
+        let task = task.clone();
+        let before_interval_report = before_interval_report.clone();
+        let after_interval_report = after_interval_report.clone();
+        let unrelated_task = unrelated_task.clone();
+        let never_aggregated_report = never_aggregated_report.clone();
+        let aggregated_with_1_report = aggregated_with_1_report.clone();
+        let expired_report = expired_report.clone();
+        let unrelated_report = unrelated_report.clone();
+
+        Box::pin(async move {
+            tx.put_aggregator_task(&task).await.unwrap();
+            tx.put_aggregator_task(&unrelated_task).await.unwrap();
+
+            for report in [
+                before_interval_report,
+                after_interval_report,
+                never_aggregated_report,
+                aggregated_with_1_report.clone(),
+                expired_report,
+                unrelated_report,
+            ] {
+                tx.put_client_report(&dummy::Vdaf::default(), &report)
+                    .await
+                    .unwrap();
+            }
+
+            for report in [aggregated_with_1_report] {
+                tx.mark_report_aggregated(task.id(), report.metadata().id())
+                    .await
+                    .unwrap();
+            }
+
+            // Expired agg job shouldn't matter
+            let expired_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> = AggregationJob::new(
+                *task.id(),
+                random(),
+                dummy::AggregationParam(0),
+                (),
+                Interval::new(
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP
+                        .sub(&Duration::from_seconds(10))
+                        .unwrap(),
+                    Duration::from_seconds(1),
+                )
+                .unwrap(),
+                AggregationJobState::InProgress,
+                AggregationJobStep::from(0),
+            );
+            // Aggregation job before interval shouldn't matter
+            let before_interval_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    Interval::new(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .sub(&Duration::from_seconds(3))
+                            .unwrap(),
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+            // Aggregation job after interval shouldn't matter
+            let after_interval_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    Interval::new(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .add(&Duration::from_seconds(3))
+                            .unwrap(),
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+            // Unexpired aggregation job with aggregation parameter 1
+            let agg_param_1_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(1),
+                    (),
+                    report_interval,
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+            // Unexpired aggregation job with aggregation parameter 0 but different task
+            let unrelated_task_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *unrelated_task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    report_interval,
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+            // Unexpired aggregation job with aggregation parameter 0 but finished
+            let finished_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    report_interval,
+                    AggregationJobState::Finished,
+                    AggregationJobStep::from(0),
+                );
+            // Unexpired aggregation job with aggregation parameter 0 but abandoned
+            let abandoned_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    report_interval,
+                    AggregationJobState::Abandoned,
+                    AggregationJobStep::from(0),
+                );
+            // Unexpired aggregation job with aggregation parameter 0 but deleted
+            let deleted_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> = AggregationJob::new(
+                *task.id(),
+                random(),
+                dummy::AggregationParam(0),
+                (),
+                report_interval,
+                AggregationJobState::Deleted,
+                AggregationJobStep::from(0),
+            );
+            for job in [
+                expired_agg_job,
+                before_interval_agg_job,
+                after_interval_agg_job,
+                agg_param_1_agg_job,
+                unrelated_task_agg_job,
+                finished_agg_job,
+                abandoned_agg_job,
+                deleted_agg_job,
+            ] {
+                tx.put_aggregation_job(&job).await.unwrap();
+            }
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Advance the clock to "enable" report expiry.
+    clock.advance(&REPORT_EXPIRY_AGE);
+
+    ds.run_tx("test-unaggregated-reports", |tx| {
+        let task = task.clone();
+        let never_aggregated_report = never_aggregated_report.clone();
+        Box::pin(async move {
+            // Verify that we can aggregate some report with aggregation parameter 0
+            assert!(tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(0)
+                )
+                .await
+                .unwrap());
+
+            // Verify that we can aggregate some report with aggregation parameter 1
+            assert!(tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(1)
+                )
+                .await
+                .unwrap());
+
+            // Add an aggregation job for agg param 0, and mark never_aggregated as ever aggregated.
+            let agg_param_0_agg_job: AggregationJob<0, TimeInterval, dummy::Vdaf> =
+                AggregationJob::new(
+                    *task.id(),
+                    random(),
+                    dummy::AggregationParam(0),
+                    (),
+                    report_interval,
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+            tx.put_aggregation_job(&agg_param_0_agg_job).await.unwrap();
+            tx.mark_report_aggregated(task.id(), never_aggregated_report.metadata().id())
+                .await
+                .unwrap();
+
+            // Now, there should be no aggregatable reports in the interval under either aggregation
+            // parameter
+            assert!(tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(0)
+                )
+                .await
+                .unwrap());
+            assert!(tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(1)
+                )
+                .await
+                .unwrap());
+
+            // Finally, update one of the aggregation jobs to state FINISHED. There should not be no
+            // unaggregated reports for that aggregation parameter, but the other should be
+            // unchanged.
+            tx.update_aggregation_job(
+                &agg_param_0_agg_job.with_state(AggregationJobState::Finished),
+            )
+            .await
+            .unwrap();
+
+            assert!(!tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(0)
+                )
+                .await
+                .unwrap());
+            assert!(tx
+                .interval_has_unaggregated_reports(
+                    task.id(),
+                    &report_interval,
+                    &dummy::AggregationParam(1)
+                )
+                .await
+                .unwrap());
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_aggregatable_reports_for_time_interval_task(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::default();
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_report_expiry_age(Some(
+        clock
+            .now()
+            .difference(&Time::from_seconds_since_epoch(10001))
+            .unwrap(),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -890,6 +1236,8 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12347));
     let unrelated_report =
         LeaderStoredReport::new_dummy(*unrelated_task.id(), Time::from_seconds_since_epoch(12348));
+    let expired_report =
+        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(10000));
 
     // Set up state.
     ds.run_unnamed_tx(|tx| {
@@ -900,6 +1248,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             second_unaggregated_report,
             aggregated_report,
             unrelated_report,
+            expired_report,
         ) = (
             task.clone(),
             unrelated_task.clone(),
@@ -907,20 +1256,28 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             second_unaggregated_report.clone(),
             aggregated_report.clone(),
             unrelated_report.clone(),
+            expired_report.clone(),
         );
 
         Box::pin(async move {
-            tx.put_aggregator_task(&task).await?;
-            tx.put_aggregator_task(&unrelated_task).await?;
+            tx.put_aggregator_task(&task).await.unwrap();
+            tx.put_aggregator_task(&unrelated_task).await.unwrap();
 
             tx.put_client_report(&dummy::Vdaf::new(1), &first_unaggregated_report)
-                .await?;
+                .await
+                .unwrap();
             tx.put_client_report(&dummy::Vdaf::new(1), &second_unaggregated_report)
-                .await?;
+                .await
+                .unwrap();
             tx.put_client_report(&dummy::Vdaf::new(1), &aggregated_report)
-                .await?;
+                .await
+                .unwrap();
             tx.put_client_report(&dummy::Vdaf::new(1), &unrelated_report)
-                .await?;
+                .await
+                .unwrap();
+            tx.put_client_report(&dummy::Vdaf::new(1), &expired_report)
+                .await
+                .unwrap();
 
             // There are no client reports submitted under this task, so we shouldn't see
             // this aggregation parameter at all.
@@ -954,7 +1311,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         .run_unnamed_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
-                tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy::Vdaf>(
+                tx.get_aggregatable_reports_for_time_interval_task::<0, dummy::Vdaf>(
                     task.id(),
                     5000,
                 )
@@ -1007,8 +1364,8 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await?;
-            // No reports fall in this interval, so we shouldn't see it's aggregation
-            // parameter at all.
+            // No reports fall in this interval, so we shouldn't see its aggregation parameter
+            // at all.
             tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                 *task.id(),
                 random(),
@@ -1029,6 +1386,9 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             ))
             .await?;
 
+            // Create one aggregation job, and a report aggregation for one report using one
+            // aggregation param. This report should only be available for aggregation with the
+            // other aggregation param.
             let aggregation_job_id = random();
             tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                 *task.id(),
@@ -1056,7 +1416,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         .run_unnamed_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
-                tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy::Vdaf>(
+                tx.get_aggregatable_reports_for_time_interval_task::<0, dummy::Vdaf>(
                     task.id(),
                     5000,
                 )
@@ -1146,7 +1506,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         .run_unnamed_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
-                tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy::Vdaf>(
+                tx.get_aggregatable_reports_for_time_interval_task::<0, dummy::Vdaf>(
                     task.id(),
                     5000,
                 )

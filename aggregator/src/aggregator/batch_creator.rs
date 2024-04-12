@@ -402,6 +402,8 @@ where
         // because they have a write-after-read antidependency on the report shares.
         try_join!(
             try_join_all(
+                // TODO(#225): do not scrub reports if aggregation parameter is non-trivial, because
+                // we need to keep the input shares, etc. for future collections.
                 self.report_ids_to_scrub
                     .iter()
                     .map(|report_id| tx.scrub_client_report(&self.properties.task_id, report_id))
@@ -416,6 +418,9 @@ where
                     ))
             ),
             try_join_all(
+                // TODO(#225): do not mark reports we didn't aggregate under the current parameter
+                // as unaggregated, because they may have been aggregated under some other parameter
+                // previously.
                 unaggregated_report_ids
                     .iter()
                     .map(|report_id| tx

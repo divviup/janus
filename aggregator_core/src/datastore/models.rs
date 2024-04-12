@@ -233,6 +233,36 @@ where
     }
 
     #[cfg(feature = "test-util")]
+    pub fn run_vdaf_and_generate(
+        vdaf: &A,
+        task_id: TaskId,
+        timestamp: Time,
+        helper_hpke_config: &janus_messages::HpkeConfig,
+        aggregation_param: &A::AggregationParam,
+        measurement: &A::Measurement,
+    ) -> Self
+    where
+        A: vdaf::Client<16>,
+    {
+        let report_id = rand::random();
+        let verify_key = rand::random();
+        let transcript = janus_core::test_util::run_vdaf(
+            vdaf,
+            &verify_key,
+            aggregation_param,
+            &report_id,
+            measurement,
+        );
+        Self::generate(
+            task_id,
+            ReportMetadata::new(report_id, timestamp),
+            helper_hpke_config,
+            Vec::new(),
+            &transcript,
+        )
+    }
+
+    #[cfg(feature = "test-util")]
     pub fn generate(
         task_id: TaskId,
         report_metadata: ReportMetadata,

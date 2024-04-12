@@ -43,6 +43,7 @@ use prio::{
 use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
+    any::TypeId,
     collections::HashMap,
     convert::TryFrom,
     fmt::{Debug, Display},
@@ -1249,7 +1250,8 @@ impl<C: Clock> Transaction<'_, C> {
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
-    /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
+    /// `get_aggregatable_reports_for_{time_interval, fixed_size}_task` should be used instead,
+    /// depending on the query type.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_unaggregated_client_reports_for_task<
         const SEED_SIZE: usize,
@@ -1310,23 +1312,33 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<_>, Error>>()
     }
 
-    /// `get_unaggregated_client_report_ids_by_collect_for_task` returns pairs of report IDs and
+    /// `get_aggregatable_reports_for_time_interval_task` returns pairs of report IDs and
     /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
     /// or not aggregated with a certain aggregation parameter, and for which there are collect
-    /// jobs, for a given task. Returned client reports are marked as aggregation-started, but this
-    /// will not stop additional aggregation jobs from being created later with different
-    /// aggregation parameters.
+    /// jobs, for a given time interval task. Returned client reports are marked as
+    /// aggregation-started, but this will not stop additional aggregation jobs from being created
+    /// later with different aggregation parameters.
     ///
     /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
     /// has the unit type as its aggregation parameter, then
     /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
     /// not necessary to wait for a collection job to arrive before preparing reports.
     ///
-    /// This function deliberately ignores the `client_reports.aggregation_started` column, which
-    /// only has meaning for VDAFs without aggregation parameters.
+    /// Additionally, this method only works for time interval tasks, as it uses the collection
+    /// jobs' batch interval to determine if a report is included.
+    ///
+    /// This method updates the `aggregation_started` column, although it's not used to determine
+    /// whether a report is eligible for aggregation, since a report could be aggregated with
+    /// multiple aggregation parameters and thus a boolean does not suffice. Instead, that column is
+    /// used by [`Transaction::interval_has_unaggregated_reports`] to determine if a report has
+    /// never been aggregated.
+    // TODO(#225): It's possible we need to augment this so that the returned representation of an
+    // aggregatable report indicates whether it had ever been aggregated under some other parameter
+    // before this call. This would help the caller decide whether to call mark_report_unaggregated
+    // if it doesn't end up using an aggregatable report.
     #[tracing::instrument(skip(self), err)]
     #[cfg(feature = "test-util")]
-    pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const SEED_SIZE: usize, A>(
+    pub async fn get_aggregatable_reports_for_time_interval_task<const SEED_SIZE: usize, A>(
         &self,
         task_id: &TaskId,
         limit: usize,
@@ -1334,37 +1346,43 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter,
     {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(Vec::new()),
+        };
+        let now = self.clock.now().as_naive_date_time()?;
+
         // TODO(#224): lock retrieved client_reports rows
-        // TODO(#225): use get_task_primary_key_and_expiry_threshold as in
-        // get_unaggregated_client_reports_for_task
         let stmt = self
             .prepare_cached(
                 "WITH unaggregated_client_report_ids AS (
                     SELECT DISTINCT report_id, client_timestamp, collection_jobs.aggregation_param
                     FROM collection_jobs
                     INNER JOIN client_reports
-                    ON collection_jobs.task_id = client_reports.task_id
-                    AND client_reports.client_timestamp <@ collection_jobs.batch_interval
+                    ON collection_jobs.task_id = $1
+                        AND client_reports.task_id = $1
+                        AND client_reports.client_timestamp >= $2
+                        -- this only works for time interval
+                        AND client_reports.client_timestamp >= LOWER(collection_jobs.batch_interval)
+                        AND client_reports.client_timestamp < UPPER(collection_jobs.batch_interval)
                     LEFT JOIN (
                         SELECT report_aggregations.id, report_aggregations.client_report_id,
                             aggregation_jobs.aggregation_param
                         FROM report_aggregations
                         INNER JOIN aggregation_jobs
                         ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                        WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                        WHERE aggregation_jobs.task_id = $1
                     ) AS report_aggs
                     ON report_aggs.client_report_id = client_reports.report_id  -- this join is very inefficient, fix before deploying in non-test scenario
                     AND report_aggs.aggregation_param = collection_jobs.aggregation_param
-                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND collection_jobs.state = 'START'
+                    WHERE collection_jobs.state = 'START'
                     AND report_aggs.id IS NULL
-                    LIMIT $2::BIGINT
+                    LIMIT $5::BIGINT
                 ),
                 updated_client_reports AS (
-                    UPDATE client_reports SET aggregation_started = TRUE
+                    UPDATE client_reports SET aggregation_started = TRUE, updated_at = $3, updated_by = $4
                     FROM unaggregated_client_report_ids
-                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    WHERE client_reports.task_id = $1
                       AND client_reports.report_id = unaggregated_client_report_ids.report_id
                       AND client_reports.client_timestamp =
                         unaggregated_client_report_ids.client_timestamp
@@ -1376,7 +1394,13 @@ impl<C: Clock> Transaction<'_, C> {
         let rows = self
             .query(
                 &stmt,
-                &[&task_id.as_ref(), /* limit */ &i64::try_from(limit)?],
+                &[
+                    &task_info.pkey,
+                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* updated_at */ &now,
+                    /* updated_by */ &self.name,
+                    /* limit */ &i64::try_from(limit)?,
+                ],
             )
             .await?;
 
@@ -1470,19 +1494,23 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Determines whether the given task includes any client reports which have not yet started the
-    /// aggregation process in the given interval.
+    /// aggregation process in the given interval, for the given aggregation parameter.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn interval_has_unaggregated_reports(
+    pub async fn interval_has_unaggregated_reports<AP: std::any::Any + Debug + Encode>(
         &self,
         task_id: &TaskId,
         batch_interval: &Interval,
+        aggregation_param: &AP,
     ) -> Result<bool, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(false),
         };
 
-        let stmt = self
+        // Fast path: if aggregation parameter is the unit type, then we can simply consult the
+        // aggregation_started column. If it's not the unit type, then we can consider the report
+        // unaggregated if it's never been aggregated at all.
+        let fast_path_stmt = self
             .prepare_cached(
                 "SELECT EXISTS(
                     SELECT 1 FROM client_reports
@@ -1491,12 +1519,12 @@ impl<C: Clock> Transaction<'_, C> {
                       AND client_reports.client_timestamp < UPPER($2::TSRANGE)
                       AND client_reports.client_timestamp >= $3
                       AND client_reports.aggregation_started = FALSE
-                ) AS unaggregated_report_exists",
+                ) AS never_aggregated_report_exists",
             )
             .await?;
-        let row = self
+        let never_aggregated_report_exists = self
             .query_one(
-                &stmt,
+                &fast_path_stmt,
                 &[
                     /* task_id */ &task_info.pkey,
                     /* batch_interval */ &SqlInterval::from(batch_interval),
@@ -1504,8 +1532,46 @@ impl<C: Clock> Transaction<'_, C> {
                     &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
                 ],
             )
+            .await?
+            .get("never_aggregated_report_exists");
+
+        // TODO(timg): are we OK with runtime type check?
+        if never_aggregated_report_exists || TypeId::of::<AP>() == TypeId::of::<()>() {
+            return Ok(never_aggregated_report_exists);
+        }
+
+        // Slow path: aggregation parameter is non-trivial and we did not find any reports in the
+        // interval that have never been aggregated. We check whether there exist any unfinished
+        // aggregation jobs that match our aggregation parameter.
+        let slow_path_stmt = self
+            .prepare_cached(
+                "SELECT EXISTS(
+                    SELECT 1 FROM aggregation_jobs
+                    WHERE task_id = $1
+                        -- aggregation job interval is enclosed by collection interval
+                        AND UPPER(client_timestamp_interval) <= UPPER($2::TSRANGE)
+                        AND LOWER(client_timestamp_interval) >= LOWER($2::TSRANGE)
+                        -- aggregation job is not expired
+                        AND UPPER(client_timestamp_interval) >= $3
+                        AND aggregation_param = $4
+                        -- aggregation job is not finished
+                        AND state = 'IN_PROGRESS'
+                ) AS aggregation_in_progress",
+            )
             .await?;
-        Ok(row.get("unaggregated_report_exists"))
+        Ok(self
+            .query_one(
+                &slow_path_stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                    /* threshold */
+                    &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+                    &aggregation_param.get_encoded()?,
+                ],
+            )
+            .await?
+            .get::<_, bool>("aggregation_in_progress"))
     }
 
     /// Return the number of reports in the provided task whose timestamp falls within the provided
@@ -1668,6 +1734,9 @@ impl<C: Clock> Transaction<'_, C> {
     /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
     /// can no longer be read, so this method should only be called once all aggregations over the
     /// report have stepped past their START state.
+    // TODO(#225): We should only do this if the VDAF doesn't allow multiple aggregations of a
+    // report, like Prio. When running Poplar1 or Mastic, we need to keep the report contents for
+    // later collections.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn scrub_client_report(
         &self,
@@ -5421,7 +5490,7 @@ impl<C: Clock> Transaction<'_, C> {
 }
 
 /// Represents cached information about a task.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TaskInfo {
     /// The task's artificial primary key, corresponding to the tasks.id column.
     pkey: i64,

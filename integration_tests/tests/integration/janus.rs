@@ -413,8 +413,8 @@ async fn janus_in_process_one_round_with_agg_param_fixed_size() {
             dummy::AggregationParam(10),
             // TODO(#225): Querying a single batch multiple times doesn't work yet, failing with
             // "invalid number of reports (0)"
-            // dummy::AggregationParam(11),
-            // dummy::AggregationParam(12),
+            dummy::AggregationParam(11),
+            dummy::AggregationParam(12),
         ],
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -438,10 +438,8 @@ async fn janus_in_process_one_round_with_agg_param_time_interval() {
         &janus_pair.task_parameters,
         &[
             dummy::AggregationParam(10),
-            // TODO(#225): Querying a single batch multiple times doesn't work yet, failing with
-            // "invalid number of reports (0)"
-            // dummy::AggregationParam(11),
-            // dummy::AggregationParam(12),
+            dummy::AggregationParam(11),
+            dummy::AggregationParam(12),
         ],
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,

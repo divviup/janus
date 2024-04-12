@@ -775,7 +775,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some client reports that are covered by a collect request, but haven't
                     // been aggregated yet, and group them by their batch.
                     let result_map = tx
-                        .get_unaggregated_client_report_ids_by_collect_for_task::<SEED_SIZE, A>(
+                        .get_aggregatable_reports_for_time_interval_task::<SEED_SIZE, A>(
                             task.id(),
                             aggregation_job_creation_report_window,
                         )
@@ -853,6 +853,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                         // Write the aggregation jobs and report aggregations we created
                         aggregation_job_writer.write(tx, Arc::clone(&vdaf)).await?;
+                        // Unlike the case where there is no aggregation parameter, we do _not_
+                        // scrub reports: a report could be aggregated again in the future using a
+                        // distinct aggregation parameter, meaning we need to keep its input shares,
+                        // etc.
+                        // Also, we do not use Transaction::mark_report_unaggregated. First, because
+                        // every report visited by get_aggregatable_reports_for_time_interval_task
+                        // will have been assigned to an aggregation job. Second, even if there were
+                        // some outstanding reports under the current aggregation parameter, they
+                        // may still have been previously aggregated under some other parameter.
                         writers_are_empty = writers_are_empty && aggregation_job_writer.is_empty();
                     }
                     Ok(!writers_are_empty)
