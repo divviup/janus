@@ -27,7 +27,7 @@ anyhow = "1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
-chrono = { version = "0.4.37", default-features = false }
+chrono = { version = "0.4.38", default-features = false }
 derivative = "2.2.0"
 http = "1.1"
 http-api-problem = "0.58.0"
