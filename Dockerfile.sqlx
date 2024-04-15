@@ -1,4 +1,4 @@
-FROM rust:1.77.1-alpine as builder
+FROM rust:1.77.2-alpine as builder
 ENV CARGO_INCREMENTAL=0
 ARG SQLX_VERSION
 RUN apk add libc-dev
