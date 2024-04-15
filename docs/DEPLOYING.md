@@ -193,6 +193,14 @@ to decrypt data. Note that eager re-encryption of data is not supported yet, so
 plan to keep any previous keys in the datastore keys list until all data
 encrypted under them has been deleted.
 
+The 16-byte key can be generated with a command like this:
+
+```
+openssl rand 16 | basenc --base64url | sed 's/=//g'
+```
+
+(If you are missing `basenc` it is part of GNU Coreutils on Linux/macOS.)
+
 [base64url]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
 
 ### Recommended Configuration
