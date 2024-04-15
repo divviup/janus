@@ -30,7 +30,7 @@ bytes = "1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
-chrono = { version = "0.4.33", default-features = false }
+chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.5.4", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 http = "1.1"
