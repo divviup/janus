@@ -18,10 +18,11 @@ use janus_core::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
     },
+    time::DurationExt,
     vdaf::VdafInstance,
 };
 use janus_integration_tests::{client::ClientBackend, TaskParameters};
-use janus_messages::TaskId;
+use janus_messages::{Duration as JanusDuration, TaskId};
 use std::{env, str::FromStr, time::Duration};
 use trillium_rustls::RustlsConfig;
 use trillium_tokio::ClientConfig;
@@ -424,6 +425,13 @@ impl InClusterJanusPair {
                 QueryType::TimeInterval => None,
                 QueryType::FixedSize { max_batch_size, .. } => *max_batch_size,
             },
+            batch_time_window_size_seconds: match task.query_type() {
+                QueryType::TimeInterval => None,
+                QueryType::FixedSize {
+                    batch_time_window_size,
+                    ..
+                } => batch_time_window_size.map(|window| window.as_seconds()),
+            },
             time_precision_seconds: task.time_precision().as_seconds(),
             collector_credential_id,
         };
@@ -552,6 +560,31 @@ async fn in_cluster_fixed_size() {
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
         "in_cluster_fixed_size",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn in_cluster_time_bucketed_fixed_size() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    // Start port forwards and set up task.
+    let janus_pair = InClusterJanusPair::new(
+        VdafInstance::Prio3Count,
+        QueryType::FixedSize {
+            max_batch_size: Some(110),
+            batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
+        },
+    )
+    .await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        "in_cluster_time_bucketed_fixed_size",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
