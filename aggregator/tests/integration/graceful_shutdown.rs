@@ -8,7 +8,7 @@ use janus_aggregator::{
     binaries::{
         aggregation_job_creator::Config as AggregationJobCreatorConfig,
         aggregation_job_driver::Config as AggregationJobDriverConfig,
-        aggregator::{AggregatorApi, Config as AggregatorConfig},
+        aggregator::{AggregatorApi, Config as AggregatorConfig, GarbageCollectorConfig},
         collection_job_driver::Config as CollectionJobDriverConfig,
     },
     config::{
@@ -264,7 +264,14 @@ async fn aggregator_shutdown() {
             max_transaction_retries: default_max_transaction_retries(),
         },
         taskprov_config: TaskprovConfig::default(),
-        garbage_collection: None,
+        garbage_collection: Some(GarbageCollectorConfig {
+            gc_frequency_s: 60,
+            report_limit: 5000,
+            aggregation_limit: 500,
+            collection_limit: 50,
+            tasks_per_tx: 1,
+            concurrent_tx_limit: None,
+        }),
         listen_address: aggregator_listen_address,
         aggregator_api: Some(AggregatorApi {
             listen_address: Some(aggregator_api_listen_address),
