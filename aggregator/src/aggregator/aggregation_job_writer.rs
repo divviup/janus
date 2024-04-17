@@ -25,7 +25,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobId, Interval, PrepareError, PrepareResp, PrepareStepResult, ReportId,
-    ReportIdChecksum, Time,
+    ReportIdChecksum, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram},
@@ -91,6 +91,11 @@ where
     /// Returns true if this aggregation job writer does not contain any aggregation jobs.
     pub fn is_empty(&self) -> bool {
         self.aggregation_jobs.is_empty()
+    }
+
+    /// Returns the task ID of the aggregation jobs.
+    pub fn task_id(&self) -> &TaskId {
+        self.task.id()
     }
 
     /// Returns the aggregation parameter of the aggregation jobs, if known.

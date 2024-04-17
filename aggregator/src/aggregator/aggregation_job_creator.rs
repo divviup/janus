@@ -1,6 +1,6 @@
 use crate::aggregator::{
     aggregation_job_writer::{AggregationJobWriter, InitialWrite},
-    batch_creator::BatchCreator,
+    batch_creator::{self, BatchCreator},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
@@ -60,6 +60,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
+    sync::Semaphore,
     time::{self, sleep_until, Instant, MissedTickBehavior},
     try_join,
 };
@@ -70,6 +71,10 @@ pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
     meter: Meter,
+
+    // State.
+    /// The maximum number of tasks to create aggregation jobs for concurrently.
+    aggregation_job_creation_semaphore: Semaphore,
 
     // Configuration values.
     /// The number of batch aggregation shards to use per batch.
@@ -97,6 +102,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         batch_aggregation_shard_count: u64,
         tasks_update_frequency: Duration,
         aggregation_job_creation_interval: Duration,
+        aggregation_job_creation_concurrency: usize,
         min_aggregation_job_size: usize,
         max_aggregation_job_size: usize,
         aggregation_job_creation_report_window: usize,
@@ -108,6 +114,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         AggregationJobCreator {
             datastore,
             meter,
+            aggregation_job_creation_semaphore: Semaphore::new(
+                aggregation_job_creation_concurrency,
+            ),
             batch_aggregation_shard_count,
             tasks_update_frequency,
             aggregation_job_creation_interval,
@@ -553,6 +562,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A::PublicShare: Send + Sync + PartialEq,
         A::OutputShare: Send + Sync,
     {
+        // Unwrap safety: `acquire` returns an error only if the semaphore is closed, and this
+        // semaphore is never closed.
+        let _permit = self
+            .aggregation_job_creation_semaphore
+            .acquire()
+            .await
+            .unwrap();
+
         Ok(self
             .datastore
             .run_tx("aggregation_job_creator_time_no_param", |tx| {
@@ -727,6 +744,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A::OutputShare: Send + Sync,
         A::AggregationParam: Send + Sync + Eq + std::hash::Hash,
     {
+        // Unwrap safety: `acquire` returns an error only if the semaphore is closed, and this
+        // semaphore is never closed.
+        let _permit = self
+            .aggregation_job_creation_semaphore
+            .acquire()
+            .await
+            .unwrap();
+
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
         Ok(self
@@ -839,8 +864,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
-        task_max_batch_size: Option<u64>,
-        task_batch_time_window_size: Option<janus_messages::Duration>,
+        max_batch_size: Option<u64>,
+        batch_time_window_size: Option<janus_messages::Duration>,
     ) -> anyhow::Result<bool>
     where
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
@@ -852,9 +877,32 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A::PublicShare: Send + Sync + PartialEq,
         A::OutputShare: Send + Sync,
     {
-        let (task_min_batch_size, task_max_batch_size) = (
+        // XXX: do not allow creation of a task with batch_smear_min_age > report_expiry_age
+        let batch_smear_min_age: Option<janus_messages::Duration> = None; // XXX: plumb this through
+        let (report_windows, allow_partial_batch_generation) = if let Some(batch_smear_min_age) = batch_smear_min_age {
+            let now = self.datastore.clock().now();
+            // XXX: determine windows to load reports for (with `None` representing "no limit in this direction")
+            // [
+            //   (None, Some(now - batch_smear_min_age))
+            //   (Some(now - batch_smear_min_age), Some(now - batch_smear_min_age + batch_time_window_size)),
+            //   ...
+            //  stopping once we have a batch that includes `now + tolerable_clock_skew`
+            // ]
+        } else {
+            (Vec::from([(None, None)]), true)
+        };
+
+        // Unwrap safety: `acquire` returns an error only if the semaphore is closed, and this
+        // semaphore is never closed.
+        let _permit = self
+            .aggregation_job_creation_semaphore
+            .acquire()
+            .await
+            .unwrap();
+
+        let (min_batch_size, max_batch_size) = (
             usize::try_from(task.min_batch_size())?,
-            task_max_batch_size.map(usize::try_from).transpose()?,
+            max_batch_size.map(usize::try_from).transpose()?,
         );
         Ok(self
             .datastore
@@ -881,12 +929,20 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         None,
                     );
                     let mut batch_creator = BatchCreator::new(
-                        this.min_aggregation_job_size,
-                        this.max_aggregation_job_size,
-                        *task.id(),
-                        task_min_batch_size,
-                        task_max_batch_size,
-                        task_batch_time_window_size,
+                        tx.clock().now(),
+                        batch_creator::Config {
+                            task_id: *task.id(),
+                            min_aggregation_job_size: this.min_aggregation_job_size,
+                            max_aggregation_job_size: this.max_aggregation_job_size,
+                            min_batch_size,
+                            max_batch_size,
+                            time_bucketed_config: batch_time_window_size.map(
+                                |batch_time_window_size| batch_creator::TimeBucketedConfig {
+                                    batch_time_window_size,
+                                    batch_smear_min_age: None, // XXX: plumb this through
+                                },
+                            ),
+                        },
                         &mut aggregation_job_writer,
                     );
 
@@ -904,9 +960,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
-
     use super::AggregationJobCreator;
+    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -1033,6 +1088,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             AGGREGATION_JOB_CREATION_INTERVAL,
+            10,
             1,
             100,
             5000,
@@ -1214,6 +1270,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -1399,6 +1456,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             2,
             100,
             5000,
@@ -1625,6 +1683,7 @@ mod tests {
             1,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -1792,6 +1851,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -2009,6 +2069,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -2178,6 +2239,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -2442,6 +2504,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -2737,6 +2800,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -3029,6 +3093,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -3234,6 +3299,7 @@ mod tests {
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
             Duration::from_secs(1),
+            10,
             1,
             MAX_AGGREGATION_JOB_SIZE,
             5000,

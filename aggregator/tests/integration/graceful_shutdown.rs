@@ -342,6 +342,7 @@ async fn aggregation_job_creator_shutdown() {
         batch_aggregation_shard_count: 32,
         tasks_update_frequency_secs: 3600,
         aggregation_job_creation_interval_secs: 60,
+        aggregation_job_creation_concurrency: 10,
         min_aggregation_job_size: 100,
         max_aggregation_job_size: 100,
         aggregation_job_creation_report_window: 5000,

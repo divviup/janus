@@ -102,6 +102,10 @@ tasks_update_frequency_secs: 3600
 # Interval on which to create new aggregation jobs. (required)
 aggregation_job_creation_interval_secs: 60
 
+# The maximum number of tasks for which aggregation job creation will be concurrently attempted.
+# (optional, defaults to 10)
+aggregation_job_creation_concurrency: 10
+
 # Minimum aggregation job size, in reports. (required)
 min_aggregation_job_size: 10
 

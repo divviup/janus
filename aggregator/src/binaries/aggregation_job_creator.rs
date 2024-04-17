@@ -18,6 +18,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.batch_aggregation_shard_count,
         Duration::from_secs(ctx.config.tasks_update_frequency_secs),
         Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
+        ctx.config.aggregation_job_creation_concurrency,
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
         ctx.config.aggregation_job_creation_report_window,
@@ -60,6 +61,7 @@ impl BinaryOptions for Options {
 /// batch_aggregation_shard_count: 32
 /// tasks_update_frequency_secs: 3600
 /// aggregation_job_creation_interval_secs: 60
+/// aggregation_job_creation_concurrency: 5
 /// min_aggregation_job_size: 100
 /// max_aggregation_job_size: 500
 /// "#;
@@ -79,6 +81,10 @@ pub struct Config {
     pub tasks_update_frequency_secs: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
     pub aggregation_job_creation_interval_secs: u64,
+    /// The maximum number of tasks for which aggregation job creation will be concurrently
+    /// attempted.
+    #[serde(default = "default_aggregation_job_creation_concurrency")]
+    pub aggregation_job_creation_concurrency: usize,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
     /// "current" batch only; historical batches will create aggregation jobs of any size, on the
     /// theory that almost all reports will have be received for these batches already.
@@ -88,6 +94,10 @@ pub struct Config {
     /// Maximum number of reports to load at a time when creating aggregation jobs.
     #[serde(default = "default_aggregation_job_creation_report_window")]
     pub aggregation_job_creation_report_window: usize,
+}
+
+fn default_aggregation_job_creation_concurrency() -> usize {
+    10
 }
 
 fn default_aggregation_job_creation_report_window() -> usize {
@@ -134,6 +144,7 @@ mod tests {
             batch_aggregation_shard_count: 32,
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
+            aggregation_job_creation_concurrency: 10,
             min_aggregation_job_size: 100,
             max_aggregation_job_size: 500,
             aggregation_job_creation_report_window: 5000,

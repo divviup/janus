@@ -179,6 +179,7 @@ impl JanusInProcess {
             batch_aggregation_shard_count: 32,
             tasks_update_frequency_secs: 2,
             aggregation_job_creation_interval_secs: 1,
+            aggregation_job_creation_concurrency: 10,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 100,
             aggregation_job_creation_report_window: 5000,

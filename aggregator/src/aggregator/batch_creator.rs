@@ -33,7 +33,8 @@ pub struct BatchCreator<'a, const SEED_SIZE: usize, A>
 where
     A: Aggregator<SEED_SIZE, 16>,
 {
-    properties: Properties,
+    now: Time,
+    config: Config,
     aggregation_job_writer: &'a mut AggregationJobWriter<
         SEED_SIZE,
         FixedSize,
@@ -47,16 +48,31 @@ where
     report_ids_to_scrub: HashSet<ReportId>,
 }
 
-/// Common properties used by [`BatchCreator`]. This is broken out into a separate structure to make
-/// them easier to pass to helper associated functions that also take mutable references to map
-/// entries.
-struct Properties {
-    min_aggregation_job_size: usize,
-    max_aggregation_job_size: usize,
-    task_id: TaskId,
-    task_min_batch_size: usize,
-    effective_task_max_batch_size: usize,
-    task_batch_time_window_size: Option<Duration>,
+/// Common config used by [`BatchCreator`].
+pub struct Config {
+    pub task_id: TaskId,
+    pub min_aggregation_job_size: usize,
+    pub max_aggregation_job_size: usize,
+    pub min_batch_size: usize,
+    pub max_batch_size: Option<usize>,
+    pub time_bucketed_config: Option<TimeBucketedConfig>,
+}
+
+impl Config {
+    fn effective_max_batch_size(&self) -> usize {
+        self.max_batch_size.unwrap_or(self.min_batch_size)
+    }
+}
+
+/// Config for [`BatchCreator`] when using time-bucketed fixed-size mode.
+pub struct TimeBucketedConfig {
+    /// The size of the time windows that reports will be grouped together in.
+    pub batch_time_window_size: Duration,
+
+    /// The minimum age of (the beginning of) a time window before it is considered smearable, i.e.,
+    /// batches can be created using reports in this window along with any other time windows which
+    /// are considered smearable.
+    pub batch_smear_min_age: Option<Duration>,
 }
 
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
@@ -65,12 +81,8 @@ where
     A::PrepareState: Encode,
 {
     pub fn new(
-        min_aggregation_job_size: usize,
-        max_aggregation_job_size: usize,
-        task_id: TaskId,
-        task_min_batch_size: usize,
-        task_max_batch_size: Option<usize>,
-        task_batch_time_window_size: Option<Duration>,
+        now: Time,
+        config: Config,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
             FixedSize,
@@ -79,20 +91,10 @@ where
             ReportAggregationMetadata,
         >,
     ) -> Self {
+        assert_eq!(&config.task_id, aggregation_job_writer.task_id());
         Self {
-            properties: Properties {
-                min_aggregation_job_size,
-                max_aggregation_job_size,
-                task_id,
-                task_min_batch_size,
-                // If the task has no explicit max_batch_size set, then our goal is to create
-                // batches of exactly min_batch_size reports, so we use that value as the effective
-                // maximum batch size.
-                //
-                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.1.2-6
-                effective_task_max_batch_size: task_max_batch_size.unwrap_or(task_min_batch_size),
-                task_batch_time_window_size,
-            },
+            now,
+            config,
             aggregation_job_writer,
             buckets: HashMap::new(),
             new_batches: Vec::new(),
@@ -109,29 +111,41 @@ where
     where
         C: Clock,
     {
+        // Determine the time bucket this report falls into, as an `Option<Time>`. `None` indicates
+        // no time-based bucket, which represents reports that can be grouped with any other report
+        // not included in a specific time bucket; this value is used if time-bucketed support is
+        // not enabled, or if the report falls into a bucket where smearing is enabled.
         let time_bucket_start_opt = self
-            .properties
-            .task_batch_time_window_size
-            .map(|batch_time_window_size| {
-                report_metadata
+            .config
+            .time_bucketed_config
+            .as_ref()
+            .map(|time_bucketed_config| -> Result<Option<Time>, Error> {
+                let time = report_metadata
                     .time()
-                    .to_batch_interval_start(&batch_time_window_size)
+                    .to_batch_interval_start(&time_bucketed_config.batch_time_window_size)?;
+                if let Some(batch_smear_min_age) = time_bucketed_config.batch_smear_min_age {
+                    let threshold = self.now.sub(&batch_smear_min_age)?;
+                    if time <= threshold {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(time))
             })
-            .transpose()?;
+            .transpose()?
+            .flatten();
+
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),
             hash_map::Entry::Vacant(_) => {
                 // Lazily find existing unfilled batches.
+                // XXX: update this s.t. if time_bucket_start_opt is None & smearing is enabled, we grab all outstanding batches old enough to be smeared
                 let outstanding_batches = tx
-                    .get_unfilled_outstanding_batches(
-                        &self.properties.task_id,
-                        &time_bucket_start_opt,
-                    )
+                    .get_unfilled_outstanding_batches(&self.config.task_id, &time_bucket_start_opt)
                     .await?
                     .into_iter()
                     .filter(|outstanding_batch| {
-                        if *outstanding_batch.size().start() < self.properties.task_min_batch_size {
+                        if *outstanding_batch.size().start() < self.config.min_batch_size {
                             true
                         } else {
                             // This outstanding batch has completed enough aggregations to meet the
@@ -153,7 +167,7 @@ where
         bucket.unaggregated_reports.push_back(report_metadata);
 
         Self::process_batches(
-            &self.properties,
+            &self.config,
             self.aggregation_job_writer,
             &mut self.report_ids_to_scrub,
             &mut self.new_batches,
@@ -165,8 +179,8 @@ where
         Ok(())
     }
 
-    /// Helper function to extract common batch creation and aggregate job creation logic within the
-    /// scope of one set of outstanding batches.
+    /// Helper function to extract common batch creation and aggregation job creation logic within
+    /// the scope of one set of outstanding batches.
     ///
     /// If `greedy` is false, aggregation jobs will be created whenever there are enough reports to
     /// meet the maximum aggregation job size. If `greedy` is true, aggregation jobs will be created
@@ -175,7 +189,7 @@ where
     /// between the task's min_batch_size parameter and the upper limit of an outstanding batch's
     /// size range.
     fn process_batches(
-        properties: &Properties,
+        config: &Config,
         aggregation_job_writer: &mut AggregationJobWriter<
             SEED_SIZE,
             FixedSize,
@@ -198,8 +212,7 @@ where
                 }
 
                 // Discard any outstanding batches that do not currently have room for more reports.
-                if largest_outstanding_batch.max_size() >= properties.effective_task_max_batch_size
-                {
+                if largest_outstanding_batch.max_size() >= config.effective_max_batch_size() {
                     PeekMut::pop(largest_outstanding_batch);
                     continue;
                 }
@@ -208,15 +221,14 @@ where
                     let desired_aggregation_job_size = min(
                         min(
                             bucket.unaggregated_reports.len(),
-                            properties.max_aggregation_job_size,
+                            config.max_aggregation_job_size,
                         ),
-                        properties.effective_task_max_batch_size
-                            - largest_outstanding_batch.max_size(),
+                        config.effective_max_batch_size() - largest_outstanding_batch.max_size(),
                     );
-                    if (desired_aggregation_job_size >= properties.min_aggregation_job_size)
-                        || (largest_outstanding_batch.max_size() < properties.task_min_batch_size
+                    if (desired_aggregation_job_size >= config.min_aggregation_job_size)
+                        || (largest_outstanding_batch.max_size() < config.min_batch_size
                             && largest_outstanding_batch.max_size() + desired_aggregation_job_size
-                                >= properties.task_min_batch_size)
+                                >= config.min_batch_size)
                     {
                         // First condition: Create an aggregation job with between
                         // min_aggregation_job_size and max_aggregation_job_size reports.
@@ -228,7 +240,7 @@ where
                         // such an aggregation job.
 
                         Self::create_aggregation_job(
-                            properties.task_id,
+                            config.task_id,
                             *largest_outstanding_batch.id(),
                             desired_aggregation_job_size,
                             &mut bucket.unaggregated_reports,
@@ -251,13 +263,12 @@ where
                     // Create an aggregation job if there are enough reports that we couldn't use
                     // any more.
                     let desired_aggregation_job_size = min(
-                        properties.max_aggregation_job_size,
-                        properties.effective_task_max_batch_size
-                            - largest_outstanding_batch.max_size(),
+                        config.max_aggregation_job_size,
+                        config.effective_max_batch_size() - largest_outstanding_batch.max_size(),
                     );
                     if bucket.unaggregated_reports.len() >= desired_aggregation_job_size {
                         Self::create_aggregation_job(
-                            properties.task_id,
+                            config.task_id,
                             *largest_outstanding_batch.id(),
                             desired_aggregation_job_size,
                             &mut bucket.unaggregated_reports,
@@ -275,22 +286,22 @@ where
 
             // If there are enough reports, create a new batch and a new full aggregation job.
             let new_batch_threshold = if greedy {
-                properties.min_aggregation_job_size
+                config.min_aggregation_job_size
             } else {
-                properties.max_aggregation_job_size
+                config.max_aggregation_job_size
             };
             let desired_aggregation_job_size = min(
                 min(
                     bucket.unaggregated_reports.len(),
-                    properties.max_aggregation_job_size,
+                    config.max_aggregation_job_size,
                 ),
-                properties.effective_task_max_batch_size,
+                config.effective_max_batch_size(),
             );
             if desired_aggregation_job_size >= new_batch_threshold {
                 let batch_id = random();
                 new_batches.push((batch_id, *time_bucket_start));
                 let outstanding_batch = OutstandingBatch::new(
-                    properties.task_id,
+                    config.task_id,
                     batch_id,
                     RangeInclusive::new(0, desired_aggregation_job_size),
                 );
@@ -298,7 +309,7 @@ where
                     .outstanding_batches
                     .push(UpdatedOutstandingBatch::new(outstanding_batch));
                 Self::create_aggregation_job(
-                    properties.task_id,
+                    config.task_id,
                     batch_id,
                     desired_aggregation_job_size,
                     &mut bucket.unaggregated_reports,
@@ -401,7 +412,7 @@ where
         // remaining reports will be added to unaggregated_report_ids, to be marked as unaggregated.
         for (time_bucket_start, mut bucket) in self.buckets.into_iter() {
             Self::process_batches(
-                &self.properties,
+                &self.config,
                 self.aggregation_job_writer,
                 &mut self.report_ids_to_scrub,
                 &mut self.new_batches,
@@ -423,18 +434,18 @@ where
         // because they have a write-after-read antidependency on the report shares.
         try_join!(
             try_join_all(self.newly_filled_batches.iter().map(|batch_id| {
-                tx.mark_outstanding_batch_filled(&self.properties.task_id, batch_id)
+                tx.mark_outstanding_batch_filled(&self.config.task_id, batch_id)
             })),
             try_join_all(
                 self.report_ids_to_scrub
                     .iter()
-                    .map(|report_id| tx.scrub_client_report(&self.properties.task_id, report_id))
+                    .map(|report_id| tx.scrub_client_report(&self.config.task_id, report_id))
             ),
             try_join_all(
                 self.new_batches
                     .iter()
                     .map(|(batch_id, time_bucket_start)| tx.put_outstanding_batch(
-                        &self.properties.task_id,
+                        &self.config.task_id,
                         batch_id,
                         time_bucket_start,
                     ))
@@ -442,8 +453,7 @@ where
             try_join_all(
                 unaggregated_report_ids
                     .iter()
-                    .map(|report_id| tx
-                        .mark_report_unaggregated(&self.properties.task_id, report_id))
+                    .map(|report_id| tx.mark_report_unaggregated(&self.config.task_id, report_id))
             ),
         )?;
         Ok(())
