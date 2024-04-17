@@ -21,6 +21,7 @@ group "default" {
 group "janus" {
   targets = [
     "janus_aggregator",
+    "janus_garbage_collector",
     "janus_aggregation_job_creator",
     "janus_aggregation_job_driver",
     "janus_collection_job_driver",
@@ -44,6 +45,7 @@ group "release" {
 group "janus_release" {
   targets = [
     "janus_aggregator_release",
+    "janus_garbage_collector_release",
     "janus_aggregation_job_creator_release",
     "janus_aggregation_job_driver_release",
     "janus_collection_job_driver_release",
@@ -86,6 +88,27 @@ target "janus_aggregator_release" {
   tags = [
     "us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${VERSION}",
     "us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregator:${VERSION}",
+  ]
+}
+
+target "janus_garbage_collector" {
+  args = {
+    BINARY       = "garbage_collector"
+    GIT_REVISION = "${GIT_REVISION}"
+  }
+  cache-from = [
+    "type=gha,scope=main-janus",
+    "type=gha,scope=${GITHUB_BASE_REF}-janus",
+    "type=gha,scope=${GITHUB_REF_NAME}-janus",
+  ]
+  tags = ["janus_garbage_collector:${VERSION}"]
+}
+
+target "janus_garbage_collector_release" {
+  inherits = ["janus_garbage_collector"]
+  tags = [
+    "us-west2-docker.pkg.dev/janus-artifacts/janus/janus_garbage_collector:${VERSION}",
+    "us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_garbage_collector:${VERSION}",
   ]
 }
 

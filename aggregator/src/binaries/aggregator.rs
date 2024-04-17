@@ -1,5 +1,6 @@
 use crate::{
-    aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
+    aggregator::{self, http_handlers::aggregator_handler},
+    binaries::garbage_collector::run_garbage_collector,
     binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
     cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
@@ -22,8 +23,8 @@ use std::{
     pin::Pin,
 };
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{join, sync::watch, time::interval};
-use tracing::{error, info};
+use tokio::{join, sync::watch};
+use tracing::info;
 use trillium::Handler;
 use trillium_router::router;
 use url::Url;
@@ -77,24 +78,10 @@ async fn run_aggregator(
         let datastore = Arc::clone(&datastore);
         let gc_config = config.garbage_collection.take();
         let meter = meter.clone();
+        let stopper = stopper.clone();
         async move {
             if let Some(gc_config) = gc_config {
-                let gc = GarbageCollector::new(
-                    datastore,
-                    &meter,
-                    gc_config.report_limit,
-                    gc_config.aggregation_limit,
-                    gc_config.collection_limit,
-                    gc_config.tasks_per_tx,
-                    gc_config.concurrent_tx_limit,
-                );
-                let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
-                loop {
-                    interval.tick().await;
-                    if let Err(err) = gc.run().await {
-                        error!(?err, "GC error");
-                    }
-                }
+                run_garbage_collector(datastore, gc_config, meter, stopper).await;
             }
         }
     };

@@ -10,6 +10,7 @@ use janus_aggregator::{
         aggregation_job_driver::Config as AggregationJobDriverConfig,
         aggregator::{AggregatorApi, Config as AggregatorConfig, GarbageCollectorConfig},
         collection_job_driver::Config as CollectionJobDriverConfig,
+        garbage_collector::Config as GarbageCollectorBinaryConfig,
     },
     config::{
         default_max_transaction_retries, BinaryConfig, CommonConfig, DbConfig, JobDriverConfig,
@@ -286,6 +287,36 @@ async fn aggregator_shutdown() {
     };
 
     graceful_shutdown("aggregator", config).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+async fn garbage_collector_shutdown() {
+    let config = GarbageCollectorBinaryConfig {
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: "postgres://localhost".parse().unwrap(),
+                connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
+                check_schema_version: true,
+                tls_trust_store_path: None,
+            },
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+            health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+            max_transaction_retries: default_max_transaction_retries(),
+        },
+        garbage_collection: GarbageCollectorConfig {
+            gc_frequency_s: 60,
+            report_limit: 5000,
+            aggregation_limit: 500,
+            collection_limit: 50,
+            tasks_per_tx: 1,
+            concurrent_tx_limit: None,
+        },
+    };
+
+    graceful_shutdown("garbage_collector", config).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
