@@ -720,6 +720,8 @@ impl<C: Clock> Aggregator<C> {
         //
         // TODO(#238): once cache eviction is implemented, we can likely remove this step. We only
         // need to do this to avoid trivial DoS via a requestor spraying many nonexistent task IDs.
+        // However, we need to consider the taskprov case, where an aggregator can add a task and
+        // expect it to be immediately visible.
         if task_aggregator.is_none() {
             // Unwrap safety: mutex poisoning.
             let mut task_aggs = self.task_aggregators.lock().unwrap();
