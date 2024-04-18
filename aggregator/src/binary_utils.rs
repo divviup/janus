@@ -268,14 +268,14 @@ where
     runtime_builder.enable_all();
     if let Some(tokio_metrics_config) = config.common_config().metrics_config.tokio.as_ref() {
         if tokio_metrics_config.enabled {
-            #[cfg(tokio_unstable)]
+            #[cfg(all(tokio_unstable, feature = "prometheus"))]
             {
                 crate::metrics::tokio_runtime::configure_runtime(
                     &mut runtime_builder,
                     tokio_metrics_config,
                 );
             }
-            #[cfg(not(tokio_unstable))]
+            #[cfg(not(all(tokio_unstable, feature = "prometheus")))]
             {
                 return Err(anyhow!(
                     "Tokio runtime metrics were enabled in the configuration file, but support \
@@ -292,9 +292,10 @@ where
         let (_guards, trace_reload_handle) =
             install_trace_subscriber(&config.common_config().logging_config)
                 .context("couldn't install tracing subscriber")?;
-        let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
-            .await
-            .context("failed to install metrics exporter")?;
+        let _metrics_exporter =
+            install_metrics_exporter(&config.common_config().metrics_config, &runtime)
+                .await
+                .context("failed to install metrics exporter")?;
         let meter = opentelemetry::global::meter("janus_aggregator");
 
         // Register signal handler.
