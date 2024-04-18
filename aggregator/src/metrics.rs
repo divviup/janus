@@ -47,6 +47,9 @@ use {
     },
 };
 
+#[cfg(tokio_unstable)]
+mod tokio_runtime;
+
 #[cfg(all(test, feature = "prometheus"))]
 mod tests;
 
@@ -67,6 +70,10 @@ pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
     #[serde(default, with = "serde_yaml::with::singleton_map")]
     pub exporter: Option<MetricsExporterConfiguration>,
+
+    /// Configuration to expose metrics from the Tokio asynchronous runtime.
+    #[serde(default)]
+    pub tokio: Option<TokioMetricsConfiguration>,
 }
 
 /// Selection of an exporter for OpenTelemetry metrics.
@@ -85,6 +92,51 @@ pub enum MetricsExporterConfiguration {
 pub struct OtlpExporterConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
+}
+
+/// Configuration options for Tokio's (unstable) metrics feature.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokioMetricsConfiguration {
+    /// Enable collecting metrics from Tokio. The flag `--cfg tokio_unstable` must be passsed
+    /// to the compiler if this is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Enable Tokio's poll time histogram. This introduces some additional overhead by calling
+    /// [`Instant::now`](std::time::Instant::now) twice per task poll.
+    #[serde(default)]
+    pub enable_poll_time_histogram: bool,
+
+    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale.
+    /// If a linear scale is chosen, each histogram bucket will have an equal range. If a
+    /// logarithmic scale is chosen, an exponential histogram will be used, where each bucket
+    /// has double the width of the previous bucket.
+    #[serde(default)]
+    pub poll_time_histogram_scale: HistogramScale,
+
+    /// Resolution of the histogram tracking poll times. When using a linear scale, every bucket
+    /// will have this width. When using a logarithmic scale, the smallest bucket will have this
+    /// width.
+    #[serde(default)]
+    pub poll_time_histogram_resolution_microseconds: Option<u64>,
+
+    /// Chooses the number of buckets in the histogram used to track poll times. This number of
+    /// buckets includes the bucket with a range extending to positive infinity.
+    #[serde(default)]
+    pub poll_time_histogram_buckets: Option<usize>,
+}
+
+/// Selects whether to use a linear scale or a logarithmic scale for a histogram.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HistogramScale {
+    /// Linear histogram scale. Each bucket will cover a range of the same width.
+    #[default]
+    Linear,
+
+    /// Logarithmic histogram scale. Each successive bucket will cover a range twice as wide as its
+    /// predecessor.
+    Log,
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.

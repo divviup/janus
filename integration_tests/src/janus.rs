@@ -145,7 +145,10 @@ impl JanusInProcess {
                 tls_trust_store_path: None,
             },
             logging_config,
-            metrics_config: MetricsConfiguration { exporter: None },
+            metrics_config: MetricsConfiguration {
+                exporter: None,
+                tokio: None,
+            },
             health_check_listen_address: (Ipv4Addr::LOCALHOST, 0).into(),
             max_transaction_retries: default_max_transaction_retries(),
         };
