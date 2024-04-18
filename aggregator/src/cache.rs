@@ -5,8 +5,12 @@ use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
     taskprov::PeerAggregator,
 };
-use janus_core::{hpke::HpkeKeypair, time::Clock};
-use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
+use janus_core::{
+    hpke::HpkeKeypair,
+    time::{Clock, TimeExt},
+};
+use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
+use rand::{distributions::Uniform, thread_rng, Rng};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -207,70 +211,263 @@ impl PeerAggregatorCache {
     }
 }
 
+#[derive(Debug)]
 pub struct TaskAggregatorCache<C: Clock> {
+    clock: C,
     datastore: Arc<Datastore<C>>,
     report_writer: Arc<ReportWriteBatcher<C>>,
-    task_aggregators: StdMutex<HashMap<TaskId, Arc<Mutex<Option<Arc<TaskAggregator<C>>>>>>>,
+    entries: StdMutex<HashMap<TaskId, Arc<Mutex<TaskAggregatorCacheEntry<C>>>>>,
+    taskprov_enabled: bool,
+    ttl_seconds: Uniform<u64>,
 }
 
+#[derive(Debug)]
+struct TaskAggregatorCacheEntry<C: Clock> {
+    expiration: Time,
+    is_initialized: bool,
+    task_aggregator: Option<Arc<TaskAggregator<C>>>,
+}
+
+pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_seconds(600);
+
 impl<C: Clock> TaskAggregatorCache<C> {
-    pub fn new(datastore: Arc<Datastore<C>>, report_writer: ReportWriteBatcher<C>) -> Self {
+    pub fn new(
+        clock: C,
+        datastore: Arc<Datastore<C>>,
+        report_writer: ReportWriteBatcher<C>,
+        taskprov_enabled: bool,
+        ttl: Duration,
+    ) -> Self {
+        let ttl = ttl.as_seconds();
+        let jitter = (ttl as f64 * 0.1) as u64;
         Self {
+            clock,
             datastore,
             report_writer: Arc::new(report_writer),
-            task_aggregators: Default::default(),
+            entries: Default::default(),
+            taskprov_enabled,
+            ttl_seconds: Uniform::new(ttl - jitter, ttl + jitter),
         }
     }
 
-    pub async fn get(&self, task_id: &TaskId) -> Result<Option<Arc<TaskAggregator<C>>>, Error> {
-        // TODO(#238): don't cache forever (decide on & implement some cache eviction policy). This
-        // is important both to avoid ever-growing resource usage, and to allow aggregators to
-        // notice when a task changes (e.g. due to key rotation).
+    /// Calculates the next possible cache TTL. This contains jitter to prevent all tasks in the
+    /// cache from falling on the same deadline on application startup.
+    fn next_ttl(&self) -> Time {
+        self.clock.now().saturating_add(&Duration::from_seconds(
+            thread_rng().sample(self.ttl_seconds),
+        ))
+    }
 
+    pub async fn get(&self, task_id: &TaskId) -> Result<Option<Arc<TaskAggregator<C>>>, Error> {
         // Step one: grab the existing entry for this task, if one exists. If there is no existing
         // entry, write a new (empty) entry.
-        let cache_entry = {
+        let entry = {
             // Unwrap safety: mutex poisoning.
-            let mut task_aggs = self.task_aggregators.lock().unwrap();
-            Arc::clone(
-                task_aggs
-                    .entry(*task_id)
-                    .or_insert_with(|| Arc::new(Mutex::default())),
-            )
+            let mut entries = self.entries.lock().unwrap();
+            Arc::clone(entries.entry(*task_id).or_insert(Arc::new(Mutex::new(
+                TaskAggregatorCacheEntry {
+                    expiration: self.next_ttl(),
+                    is_initialized: false,
+                    task_aggregator: None,
+                },
+            ))))
         };
 
         // Step two: if the entry is empty, fill it via a database query. Concurrent callers
         // requesting the same task will contend over this lock while awaiting the result of the DB
         // query, ensuring that in the common case only a single query will be made for each task.
         let task_aggregator = {
-            let mut cache_entry = cache_entry.lock().await;
-            if cache_entry.is_none() {
-                *cache_entry = self
-                    .datastore
-                    .run_tx("task_aggregator_get_task", |tx| {
-                        let task_id = *task_id;
-                        Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-                    })
-                    .await?
-                    .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
-                    .transpose()?
-                    .map(Arc::new);
+            let mut entry = entry.lock().await;
+            if self.clock.now() > entry.expiration || !entry.is_initialized {
+                *entry = TaskAggregatorCacheEntry {
+                    expiration: self.next_ttl(),
+                    is_initialized: true,
+                    task_aggregator: self
+                        .datastore
+                        .run_tx("task_aggregator_get_task", |tx| {
+                            let task_id = *task_id;
+                            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+                        })
+                        .await?
+                        .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
+                        .transpose()?
+                        .map(Arc::new),
+                };
             }
-            cache_entry.as_ref().map(Arc::clone)
+            entry.task_aggregator.clone()
         };
 
-        // If the task doesn't exist, remove the task entry from the cache to avoid caching a
-        // negative result. Then return the result.
+        // If taskprov is enabled, we can never cache a None result, because any aggregator replica
+        // can at any time insert a new task and expect it to be immediately available across all
+        // replicas. Remove the None result.
         //
-        // TODO(#238): once cache eviction is implemented, we can likely remove this step. We only
-        // need to do this to avoid trivial DoS via a requestor spraying many nonexistent task IDs.
-        // However, we need to consider the taskprov case, where an aggregator can add a task and
-        // expect it to be immediately visible.
-        if task_aggregator.is_none() {
+        // This unfortunately means that for taskprov cases, tasks that are truly non-existent will
+        // always go down the slow path. It would be up to rate-limiting to mitigate this.
+        if self.taskprov_enabled && task_aggregator.is_none() {
             // Unwrap safety: mutex poisoning.
-            let mut task_aggs = self.task_aggregators.lock().unwrap();
+            let mut task_aggs = self.entries.lock().unwrap();
             task_aggs.remove(task_id);
         }
         Ok(task_aggregator)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration as StdDuration};
+
+    use janus_aggregator_core::{
+        datastore::test_util::ephemeral_datastore,
+        task::{test_util::TaskBuilder, QueryType},
+    };
+    use janus_core::{
+        test_util::{install_test_trace_subscriber, runtime::TestRuntime},
+        time::MockClock,
+        vdaf::VdafInstance,
+    };
+    use janus_messages::{Duration, Time};
+
+    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
+
+    #[tokio::test]
+    async fn task_aggregator_cache_taskprov() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        let ttl = Duration::from_seconds(600);
+        let task_aggregators = TaskAggregatorCache::new(
+            clock.clone(),
+            Arc::clone(&datastore),
+            ReportWriteBatcher::new(
+                Arc::clone(&datastore),
+                TestRuntime::default(),
+                100,                         // doesn't matter
+                100,                         // doesn't matter
+                StdDuration::from_secs(100), // doesn't matter
+            ),
+            true,
+            ttl,
+        );
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
+
+        assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
+        // We shouldn't have cached that last call.
+        assert!(task_aggregators.entries.lock().unwrap().is_empty());
+
+        // A wild task appears!
+        datastore.put_aggregator_task(&task).await.unwrap();
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(task_aggregator.task.id(), task.id());
+
+        // Modify the task.
+        let new_expiration = Time::from_seconds_since_epoch(100);
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move {
+                    tx.update_task_expiration(&task_id, Some(&new_expiration))
+                        .await
+                        .unwrap();
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // That change shouldn't be reflected yet because we've cached the previous task.
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(
+            task_aggregator.task.task_expiration(),
+            task.task_expiration()
+        );
+
+        clock.advance(&ttl);
+        clock.advance(&ttl);
+
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(
+            task_aggregator.task.task_expiration(),
+            Some(&new_expiration)
+        );
+    }
+
+    #[tokio::test]
+    async fn task_aggregator_cache() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        let ttl = Duration::from_seconds(600);
+        let task_aggregators = TaskAggregatorCache::new(
+            clock.clone(),
+            Arc::clone(&datastore),
+            ReportWriteBatcher::new(
+                Arc::clone(&datastore),
+                TestRuntime::default(),
+                100,                         // doesn't matter
+                100,                         // doesn't matter
+                StdDuration::from_secs(100), // doesn't matter
+            ),
+            false,
+            ttl,
+        );
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
+
+        assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
+
+        // A wild task appears!
+        datastore.put_aggregator_task(&task).await.unwrap();
+
+        // We shouldn't see the new task yet.
+        assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
+
+        clock.advance(&ttl);
+        clock.advance(&ttl);
+
+        // Now we should see it.
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(task_aggregator.task.id(), task.id());
+
+        // Modify the task.
+        let new_expiration = Time::from_seconds_since_epoch(100);
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move {
+                    tx.update_task_expiration(&task_id, Some(&new_expiration))
+                        .await
+                        .unwrap();
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // That change shouldn't be reflected yet because we've cached the previous run.
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(
+            task_aggregator.task.task_expiration(),
+            task.task_expiration()
+        );
+
+        clock.advance(&ttl);
+        clock.advance(&ttl);
+
+        let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
+        assert_eq!(
+            task_aggregator.task.task_expiration(),
+            Some(&new_expiration)
+        );
     }
 }

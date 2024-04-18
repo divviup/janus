@@ -13,7 +13,10 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
-    cache::{GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache},
+    cache::{
+        GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+    },
     config::TaskprovConfig,
     metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
 };
@@ -196,6 +199,10 @@ pub struct Config {
     /// becomes aware of key state changes.
     pub global_hpke_configs_refresh_interval: StdDuration,
 
+    /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
+    /// of task parameter changes.
+    pub task_cache_ttl: Duration,
+
     /// The key used to sign HPKE configurations.
     pub hpke_config_signing_key: Option<EcdsaKeyPair>,
 
@@ -212,6 +219,7 @@ impl Default for Config {
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
+            task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
         }
     }
 }
@@ -225,6 +233,7 @@ impl<C: Clock> Aggregator<C> {
         cfg: Config,
     ) -> Result<Self, Error> {
         let task_aggregators = TaskAggregatorCache::new(
+            clock.clone(),
             Arc::clone(&datastore),
             ReportWriteBatcher::new(
                 Arc::clone(&datastore),
@@ -233,6 +242,8 @@ impl<C: Clock> Aggregator<C> {
                 cfg.max_upload_batch_size,
                 cfg.max_upload_batch_write_delay,
             ),
+            cfg.taskprov_config.enabled,
+            cfg.task_cache_ttl,
         );
 
         let upload_decrypt_failure_counter = meter
@@ -362,7 +373,7 @@ impl<C: Clock> Aggregator<C> {
 
         let task_aggregator = self
             .task_aggregators
-            .get(&task_id)
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
@@ -386,7 +397,7 @@ impl<C: Clock> Aggregator<C> {
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregationJobResp, Error> {
-        let task_aggregator = match self.task_aggregators.get(&task_id).await? {
+        let task_aggregator = match self.task_aggregators.get(task_id).await? {
             Some(task_aggregator) => {
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
@@ -455,7 +466,7 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self
             .task_aggregators
-            .get(&task_id)
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
@@ -503,7 +514,7 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<(), Error> {
         let task_aggregator = self
             .task_aggregators
-            .get(&task_id)
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
@@ -825,9 +836,10 @@ impl<C: Clock> Aggregator<C> {
 /// TaskAggregator provides aggregation functionality for a single task.
 // TODO(#1307): refactor Aggregator to perform indepedent batched operations (e.g. report handling
 // in Aggregate requests) using a parallelized library like Rayon.
+#[derive(Debug)]
 pub struct TaskAggregator<C: Clock> {
     /// The task being aggregated.
-    task: Arc<AggregatorTask>,
+    pub(crate) task: Arc<AggregatorTask>,
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
     /// Report writer, with support for batching.
@@ -1105,6 +1117,7 @@ mod vdaf_ops_strategies {
     use janus_core::vdaf::vdaf_dp_strategies;
     use prio::dp::distributions::ZCdpDiscreteGaussian;
 
+    #[derive(Debug)]
     pub enum Prio3FixedPointBoundedL2VecSum {
         NoDifferentialPrivacy,
         ZCdpDiscreteGaussian(Arc<ZCdpDiscreteGaussian>),
@@ -1128,6 +1141,7 @@ mod vdaf_ops_strategies {
 
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
+#[derive(Debug)]
 enum VdafOps {
     Prio3Count(Arc<Prio3Count>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),

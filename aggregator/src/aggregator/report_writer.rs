@@ -36,6 +36,7 @@ type ResultSender = oneshot::Sender<Result<(), Arc<Error>>>;
 type ReportWriteBatcherSender<C> = mpsc::Sender<(ReportResult<C>, Option<ResultSender>)>;
 type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(ReportResult<C>, Option<ResultSender>)>;
 
+#[derive(Debug)]
 pub struct ReportWriteBatcher<C> {
     report_tx: ReportWriteBatcherSender<C>,
 }
