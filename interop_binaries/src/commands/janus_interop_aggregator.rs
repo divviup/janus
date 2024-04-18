@@ -253,7 +253,7 @@ impl BinaryConfig for Config {
 }
 
 impl Options {
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         janus_main::<_, _, Config, _, _>(self, RealClock::default(), true, |ctx| async move {
             let datastore = Arc::new(ctx.datastore);
 
@@ -275,7 +275,6 @@ impl Options {
 
             Ok(())
         })
-        .await
     }
 }
 

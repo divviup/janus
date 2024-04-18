@@ -33,7 +33,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::oneshot;
+use tokio::{runtime, sync::oneshot};
 use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
@@ -246,7 +246,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub stopper: Stopper,
 }
 
-pub async fn janus_main<C, Options, Config, F, Fut>(
+pub fn janus_main<C, Options, Config, F, Fut>(
     options: Options,
     clock: C,
     uses_rayon: bool,
@@ -264,70 +264,75 @@ where
     // Read and parse config.
     let config: Config = read_config(options.common_options())?;
 
-    // Install tracing/metrics handlers.
-    let (_guards, trace_reload_handle) =
-        install_trace_subscriber(&config.common_config().logging_config)
-            .context("couldn't install tracing subscriber")?;
-    let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
+    let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
+
+    runtime.block_on(async {
+        // Install tracing/metrics handlers.
+        let (_guards, trace_reload_handle) =
+            install_trace_subscriber(&config.common_config().logging_config)
+                .context("couldn't install tracing subscriber")?;
+        let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
+            .await
+            .context("failed to install metrics exporter")?;
+        let meter = opentelemetry::global::meter("janus_aggregator");
+
+        // Register signal handler.
+        let stopper = Stopper::new();
+        setup_signal_handler(stopper.clone())
+            .context("failed to register SIGTERM signal handler")?;
+
+        info!(
+            common_options = ?options.common_options(),
+            ?config,
+            version = env!("CARGO_PKG_VERSION"),
+            git_revision = git_revision(),
+            rust_version = env!("RUSTC_SEMVER"),
+            "Starting up"
+        );
+
+        // Connect to database.
+        let pool = database_pool(
+            &config.common_config().database,
+            options.common_options().database_password.as_deref(),
+        )
         .await
-        .context("failed to install metrics exporter")?;
-    let meter = opentelemetry::global::meter("janus_aggregator");
+        .context("couldn't create database connection pool")?;
+        let datastore = datastore(
+            pool.clone(),
+            clock.clone(),
+            &meter,
+            &options.common_options().datastore_keys,
+            config.common_config().database.check_schema_version,
+            config.common_config().max_transaction_retries,
+        )
+        .await
+        .context("couldn't create datastore")?;
 
-    // Register signal handler.
-    let stopper = Stopper::new();
-    setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
+        register_database_pool_status_metrics(pool, &meter)?;
 
-    info!(
-        common_options = ?options.common_options(),
-        ?config,
-        version = env!("CARGO_PKG_VERSION"),
-        git_revision = git_revision(),
-        rust_version = env!("RUSTC_SEMVER"),
-        "Starting up"
-    );
+        if uses_rayon {
+            initialize_rayon()?;
+        }
 
-    // Connect to database.
-    let pool = database_pool(
-        &config.common_config().database,
-        options.common_options().database_password.as_deref(),
-    )
-    .await
-    .context("couldn't create database connection pool")?;
-    let datastore = datastore(
-        pool.clone(),
-        clock.clone(),
-        &meter,
-        &options.common_options().datastore_keys,
-        config.common_config().database.check_schema_version,
-        config.common_config().max_transaction_retries,
-    )
-    .await
-    .context("couldn't create datastore")?;
+        let health_check_listen_address = config.common_config().health_check_listen_address;
+        let zpages_task_handle = tokio::task::spawn(async move {
+            zpages_server(health_check_listen_address, trace_reload_handle).await
+        });
 
-    register_database_pool_status_metrics(pool, &meter)?;
+        let result = f(BinaryContext {
+            clock,
+            options,
+            config,
+            datastore,
+            meter,
+            stopper,
+        })
+        .await;
 
-    if uses_rayon {
-        initialize_rayon()?;
-    }
+        zpages_task_handle.abort();
 
-    let health_check_listen_address = config.common_config().health_check_listen_address;
-    let zpages_task_handle = tokio::task::spawn(async move {
-        zpages_server(health_check_listen_address, trace_reload_handle).await
-    });
-
-    let result = f(BinaryContext {
-        clock,
-        options,
-        config,
-        datastore,
-        meter,
-        stopper,
+        result
     })
-    .await;
-
-    zpages_task_handle.abort();
-
-    result
 }
 
 /// Set up metrics to monitor the database connection pool's status.

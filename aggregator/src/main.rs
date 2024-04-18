@@ -48,37 +48,33 @@ enum Nested {
     JanusCli(janus_cli::CommandLineOptions),
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let clock = RealClock::default();
     match Options::parse() {
         Options::Aggregator(options) | Options::Default(Nested::Aggregator(options)) => {
-            janus_main(options, clock, true, aggregator::main_callback).await
+            janus_main(options, clock, true, aggregator::main_callback)
         }
         Options::GarbageCollector(options)
         | Options::Default(Nested::GarbageCollector(options)) => {
-            janus_main(options, clock, false, garbage_collector::main_callback).await
+            janus_main(options, clock, false, garbage_collector::main_callback)
         }
         Options::AggregationJobCreator(options)
-        | Options::Default(Nested::AggregationJobCreator(options)) => {
-            janus_main(
-                options,
-                clock,
-                false,
-                aggregation_job_creator::main_callback,
-            )
-            .await
-        }
+        | Options::Default(Nested::AggregationJobCreator(options)) => janus_main(
+            options,
+            clock,
+            false,
+            aggregation_job_creator::main_callback,
+        ),
         Options::AggregationJobDriver(options)
         | Options::Default(Nested::AggregationJobDriver(options)) => {
-            janus_main(options, clock, true, aggregation_job_driver::main_callback).await
+            janus_main(options, clock, true, aggregation_job_driver::main_callback)
         }
         Options::CollectionJobDriver(options)
         | Options::Default(Nested::CollectionJobDriver(options)) => {
-            janus_main(options, clock, false, collection_job_driver::main_callback).await
+            janus_main(options, clock, false, collection_job_driver::main_callback)
         }
         Options::JanusCli(options) | Options::Default(Nested::JanusCli(options)) => {
-            janus_cli::run(options).await
+            janus_cli::run(options)
         }
     }
 }

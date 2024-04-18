@@ -229,13 +229,12 @@ pub struct Options {
 }
 
 impl Options {
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         install_tracing_subscriber()?;
         trillium_tokio::config()
             .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
             .with_port(self.port)
-            .run_async(handler()?)
-            .await;
+            .run(handler()?);
         Ok(())
     }
 }
