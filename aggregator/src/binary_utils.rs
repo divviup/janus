@@ -264,7 +264,28 @@ where
     // Read and parse config.
     let config: Config = read_config(options.common_options())?;
 
-    let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
+    let mut runtime_builder = runtime::Builder::new_multi_thread();
+    runtime_builder.enable_all();
+    if let Some(tokio_metrics_config) = config.common_config().metrics_config.tokio.as_ref() {
+        if tokio_metrics_config.enabled {
+            #[cfg(tokio_unstable)]
+            {
+                crate::metrics::tokio_runtime::configure_runtime(
+                    &mut runtime_builder,
+                    tokio_metrics_config,
+                );
+            }
+            #[cfg(not(tokio_unstable))]
+            {
+                return Err(anyhow!(
+                    "Tokio runtime metrics were enabled in the configuration file, but support \
+                     was not enabled at compile time. Rebuild with \
+                     `RUSTFLAGS=\"--cfg tokio_unstable\"`."
+                ));
+            }
+        }
+    }
+    let runtime = runtime_builder.build()?;
 
     runtime.block_on(async {
         // Install tracing/metrics handlers.

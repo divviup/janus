@@ -48,7 +48,7 @@ use {
 };
 
 #[cfg(tokio_unstable)]
-mod tokio_runtime;
+pub(crate) mod tokio_runtime;
 
 #[cfg(all(test, feature = "prometheus"))]
 mod tests;
@@ -127,7 +127,7 @@ pub struct TokioMetricsConfiguration {
 }
 
 /// Selects whether to use a linear scale or a logarithmic scale for a histogram.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HistogramScale {
     /// Linear histogram scale. Each bucket will cover a range of the same width.
