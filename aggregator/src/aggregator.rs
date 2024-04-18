@@ -13,7 +13,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
-    cache::{GlobalHpkeKeypairCache, PeerAggregatorCache},
+    cache::{GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache},
     config::TaskprovConfig,
     metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
 };
@@ -100,10 +100,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{
-    sync::{
-        oneshot::{self, error::RecvError},
-        Mutex,
-    },
+    sync::oneshot::{self, error::RecvError},
     try_join,
 };
 use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
@@ -137,8 +134,6 @@ pub struct Aggregator<C: Clock> {
     clock: C,
     /// Configuration used for this aggregator.
     cfg: Config,
-    /// Report writer, with support for batching.
-    report_writer: Arc<ReportWriteBatcher<C>>,
     /// Cache of task aggregators.
     task_aggregators: TaskAggregatorCache<C>,
     /// Metrics.
@@ -150,9 +145,6 @@ pub struct Aggregator<C: Clock> {
     /// Cache of taskprov peer aggregators.
     peer_aggregators: PeerAggregatorCache,
 }
-
-type TaskAggregatorCache<C> =
-    SyncMutex<HashMap<TaskId, Arc<Mutex<Option<Arc<TaskAggregator<C>>>>>>>;
 
 #[derive(Clone)]
 struct AggregatorMetrics {
@@ -232,13 +224,16 @@ impl<C: Clock> Aggregator<C> {
         meter: &Meter,
         cfg: Config,
     ) -> Result<Self, Error> {
-        let report_writer = Arc::new(ReportWriteBatcher::new(
+        let task_aggregators = TaskAggregatorCache::new(
             Arc::clone(&datastore),
-            runtime,
-            cfg.task_counter_shard_count,
-            cfg.max_upload_batch_size,
-            cfg.max_upload_batch_write_delay,
-        ));
+            ReportWriteBatcher::new(
+                Arc::clone(&datastore),
+                runtime,
+                cfg.task_counter_shard_count,
+                cfg.max_upload_batch_size,
+                cfg.max_upload_batch_write_delay,
+            ),
+        );
 
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
@@ -273,8 +268,7 @@ impl<C: Clock> Aggregator<C> {
             datastore,
             clock,
             cfg,
-            report_writer,
-            task_aggregators: SyncMutex::new(HashMap::new()),
+            task_aggregators,
             metrics: AggregatorMetrics {
                 upload_decrypt_failure_counter,
                 upload_decode_failure_counter,
@@ -316,7 +310,8 @@ impl<C: Clock> Aggregator<C> {
                     let task_id = TaskId::get_decoded(&task_id_bytes)
                         .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
                     let task_aggregator = self
-                        .task_aggregator_for(&task_id)
+                        .task_aggregators
+                        .get(&task_id)
                         .await?
                         .ok_or(Error::UnrecognizedTask(task_id))?;
 
@@ -366,7 +361,8 @@ impl<C: Clock> Aggregator<C> {
             Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::MessageDecode(err)))?;
 
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(&task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
@@ -390,7 +386,7 @@ impl<C: Clock> Aggregator<C> {
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregationJobResp, Error> {
-        let task_aggregator = match self.task_aggregator_for(task_id).await? {
+        let task_aggregator = match self.task_aggregators.get(&task_id).await? {
             Some(task_aggregator) => {
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
@@ -426,7 +422,7 @@ impl<C: Clock> Aggregator<C> {
                     ?task_id,
                     "taskprov: opt-in successful, retrying task acquisition"
                 );
-                self.task_aggregator_for(task_id).await?.ok_or_else(|| {
+                self.task_aggregators.get(task_id).await?.ok_or_else(|| {
                     Error::Internal("unexpectedly failed to create task".to_string())
                 })?
             }
@@ -458,7 +454,8 @@ impl<C: Clock> Aggregator<C> {
         taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(&task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
@@ -505,7 +502,8 @@ impl<C: Clock> Aggregator<C> {
         taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<(), Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(&task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
@@ -542,7 +540,8 @@ impl<C: Clock> Aggregator<C> {
         auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
@@ -571,7 +570,8 @@ impl<C: Clock> Aggregator<C> {
         auth_token: Option<AuthenticationToken>,
     ) -> Result<Option<Vec<u8>>, Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
@@ -597,7 +597,8 @@ impl<C: Clock> Aggregator<C> {
         auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
@@ -627,7 +628,8 @@ impl<C: Clock> Aggregator<C> {
         taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
-            .task_aggregator_for(task_id)
+            .task_aggregators
+            .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
@@ -673,61 +675,6 @@ impl<C: Clock> Aggregator<C> {
                 collector_hpke_config,
             )
             .await
-    }
-
-    async fn task_aggregator_for(
-        &self,
-        task_id: &TaskId,
-    ) -> Result<Option<Arc<TaskAggregator<C>>>, Error> {
-        // TODO(#238): don't cache forever (decide on & implement some cache eviction policy). This
-        // is important both to avoid ever-growing resource usage, and to allow aggregators to
-        // notice when a task changes (e.g. due to key rotation).
-
-        // Step one: grab the existing entry for this task, if one exists. If there is no existing
-        // entry, write a new (empty) entry.
-        let cache_entry = {
-            // Unwrap safety: mutex poisoning.
-            let mut task_aggs = self.task_aggregators.lock().unwrap();
-            Arc::clone(
-                task_aggs
-                    .entry(*task_id)
-                    .or_insert_with(|| Arc::new(Mutex::default())),
-            )
-        };
-
-        // Step two: if the entry is empty, fill it via a database query. Concurrent callers
-        // requesting the same task will contend over this lock while awaiting the result of the DB
-        // query, ensuring that in the common case only a single query will be made for each task.
-        let task_aggregator = {
-            let mut cache_entry = cache_entry.lock().await;
-            if cache_entry.is_none() {
-                *cache_entry = self
-                    .datastore
-                    .run_tx("task_aggregator_get_task", |tx| {
-                        let task_id = *task_id;
-                        Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-                    })
-                    .await?
-                    .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
-                    .transpose()?
-                    .map(Arc::new);
-            }
-            cache_entry.as_ref().map(Arc::clone)
-        };
-
-        // If the task doesn't exist, remove the task entry from the cache to avoid caching a
-        // negative result. Then return the result.
-        //
-        // TODO(#238): once cache eviction is implemented, we can likely remove this step. We only
-        // need to do this to avoid trivial DoS via a requestor spraying many nonexistent task IDs.
-        // However, we need to consider the taskprov case, where an aggregator can add a task and
-        // expect it to be immediately visible.
-        if task_aggregator.is_none() {
-            // Unwrap safety: mutex poisoning.
-            let mut task_aggs = self.task_aggregators.lock().unwrap();
-            task_aggs.remove(task_id);
-        }
-        Ok(task_aggregator)
     }
 
     /// Opts in or out of a taskprov task.
@@ -890,7 +837,10 @@ pub struct TaskAggregator<C: Clock> {
 impl<C: Clock> TaskAggregator<C> {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
-    fn new(task: AggregatorTask, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
+    pub fn new(
+        task: AggregatorTask,
+        report_writer: Arc<ReportWriteBatcher<C>>,
+    ) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Count => {
                 let vdaf = Prio3::new_count(2)?;
