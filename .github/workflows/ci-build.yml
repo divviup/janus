@@ -158,6 +158,7 @@ jobs:
         targets: janus
         load: true
     - run: docker run --rm janus_aggregator --help
+    - run: docker run --rm janus_garbage_collector --help
     - run: docker run --rm janus_aggregation_job_creator --help
     - run: docker run --rm janus_aggregation_job_driver --help
     - run: docker run --rm janus_collection_job_driver --help

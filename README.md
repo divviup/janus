@@ -87,7 +87,7 @@ should not be depended on directly. If you find yourself needing to depend
 on it directly while using any other Janus crates, open a bug report.
 
 The following crates are stable on their external configuration, CLI arguments,
-and HTTP API. Their Rust API may arbitrarily change and should not be depended 
+and HTTP API. Their Rust API may arbitrarily change and should not be depended
 on. They are not published to crates.io.
 - `janus_aggregator`
 - `janus_tools`
@@ -105,9 +105,10 @@ subtle incompatibilities between the two that will cause tests to fail.
 ### Container image
 
 To build container images, run `docker buildx bake --load`. This will produce
-images tagged `janus_aggregator`, `janus_aggregation_job_creator`,
-`janus_aggregation_job_driver`, `janus_collection_job_driver`, `janus_cli`,
-`janus_db_migrator`, `janus_interop_client`, `janus_interop_aggregator`, and
+images tagged `janus_aggregator`, `janus_garbage_collector`,
+`janus_aggregation_job_creator`, `janus_aggregation_job_driver`,
+`janus_collection_job_driver`, `janus_cli`, `janus_db_migrator`,
+`janus_interop_client`, `janus_interop_aggregator`, and
 `janus_interop_collector` by default.
 
 Pre-built container images are available at

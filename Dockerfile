@@ -46,6 +46,7 @@ ARG GIT_REVISION=unknown
 LABEL revision ${GIT_REVISION}
 COPY --from=builder /src/target/release/janus_aggregator /janus_aggregator
 RUN ln -s /janus_aggregator /aggregator && \
+    ln -s /janus_aggregator /garbage_collector && \
     ln -s /janus_aggregator /aggregation_job_creator && \
     ln -s /janus_aggregator /aggregation_job_driver && \
     ln -s /janus_aggregator /collection_job_driver && \

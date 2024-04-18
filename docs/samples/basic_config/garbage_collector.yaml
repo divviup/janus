@@ -1,0 +1,25 @@
+# Common configuration parameters:
+
+database:
+  # Database URL. (required)
+  url: "postgres://postgres:postgres@localhost:5432/postgres"
+
+# Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
+health_check_listen_address: "0.0.0.0:8000"
+
+# Garbage collector-specific parameters:
+garbage_collection:
+  # How frequently to collect garbage, in seconds.
+  gc_frequency_s: 60
+
+  # The maximum number of client reports, per task, to delete in a single run of the garbage
+  # collector.
+  report_limit: 5000
+
+  # The maximum number of aggregation jobs (& related artifacts), per task, to delete in a single
+  # run of the garbage collector.
+  aggregation_limit: 500
+
+  # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
+  # of the garbage collector.
+  collection_limit: 50

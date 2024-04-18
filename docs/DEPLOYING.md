@@ -13,6 +13,7 @@
         - [Tracing](#tracing)
         - [`tokio-console`](#tokio-console)
     - [`aggregator` configuration](#aggregator-configuration)
+    - [`garbage_collector` configuration](#garbagecollector-configuration)
     - [`aggregation_job_creator` configuration](#aggregationjobcreator-configuration)
     - [`aggregation_job_driver` configuration](#aggregationjobdriver-configuration)
     - [`collection_job_driver` configuration](#collectionjobdriver-configuration)
@@ -117,6 +118,16 @@ The `aggregator` component requires a socket address to listen on for DAP
 requests, and additional parameters to customize batching of uploaded reports
 into database transactions. See the [sample configuration
 file](samples/basic_config/aggregator.yaml) for details.
+
+The `aggregator` component can optionally do garbage collection of old data as
+well, i.e. when running a single-service helper-only aggregator.
+
+### `garbage_collector` configuration
+
+The `garbage_collector` component requires configuration parameters to determine
+how frequently it scans for old data eligible for deletion, how many objects it
+deletes at a time, and how much concurrency to use. See the [sample
+configuration file](samples/basic_config/garbage_collector.yaml) for details.
 
 ### `aggregation_job_creator` configuration
 
