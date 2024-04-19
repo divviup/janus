@@ -49,9 +49,7 @@ http-api-problem.workspace = true
 janus_messages.workspace = true
 k8s-openapi = { workspace = true, optional = true }
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
-prio = { workspace = true, default-features = true, features = [
-    "experimental",
-] }
+prio = { workspace = true, default-features = true, features = ["experimental"] }
 rand.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
