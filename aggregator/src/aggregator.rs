@@ -2031,7 +2031,7 @@ impl VdafOps {
                     // associated with the task and computes the first state transition. [...] If either
                     // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
                     let init_rslt = shares.and_then(|(public_share, input_share)| {
-                        trace_span!("VDAF preparation").in_scope(|| {
+                        trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
                             vdaf.helper_initialized(
                                 verify_key.as_bytes(),
                                 &agg_param,
