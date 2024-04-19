@@ -394,7 +394,7 @@ where
                         }
                     };
 
-                    match trace_span!("VDAF preparation").in_scope(|| {
+                    match trace_span!("VDAF preparation (leader initialization)").in_scope(|| {
                         vdaf.leader_initialized(
                             verify_key.as_bytes(),
                             aggregation_job.aggregation_parameter(),
@@ -557,7 +557,9 @@ where
         for report_aggregation in report_aggregations {
             if let ReportAggregationState::WaitingLeader { transition } = report_aggregation.state()
             {
-                let (prep_state, message) = match transition.evaluate(vdaf.as_ref()) {
+                let result = trace_span!("VDAF preparation (leader transition evaluation)")
+                    .in_scope(|| transition.evaluate(vdaf.as_ref()));
+                let (prep_state, message) = match result {
                     Ok((state, message)) => (state, message),
                     Err(error) => {
                         let prepare_error = handle_ping_pong_error(
@@ -674,20 +676,22 @@ where
                 PrepareStepResult::Continue {
                     message: helper_prep_msg,
                 } => {
-                    let state_and_message = vdaf
-                        .leader_continued(
-                            stepped_aggregation.leader_state.clone(),
-                            aggregation_job.aggregation_parameter(),
-                            helper_prep_msg,
-                        )
-                        .map_err(|ping_pong_error| {
-                            handle_ping_pong_error(
-                                task.id(),
-                                Role::Leader,
-                                stepped_aggregation.report_aggregation.report_id(),
-                                ping_pong_error,
-                                &self.aggregate_step_failure_counter,
+                    let state_and_message = trace_span!("VDAF preparation (leader continuation)")
+                        .in_scope(|| {
+                            vdaf.leader_continued(
+                                stepped_aggregation.leader_state.clone(),
+                                aggregation_job.aggregation_parameter(),
+                                helper_prep_msg,
                             )
+                            .map_err(|ping_pong_error| {
+                                handle_ping_pong_error(
+                                    task.id(),
+                                    Role::Leader,
+                                    stepped_aggregation.report_aggregation.report_id(),
+                                    ping_pong_error,
+                                    &self.aggregate_step_failure_counter,
+                                )
+                            })
                         });
 
                     match state_and_message {

@@ -131,7 +131,7 @@ impl VdafOps {
                     };
 
                     let (report_aggregation_state, prepare_step_result, output_share) =
-                        trace_span!("VDAF preparation")
+                        trace_span!("VDAF preparation (helper continuation)")
                             .in_scope(|| {
                                 // Continue with the incoming message.
                                 vdaf.helper_continued(
