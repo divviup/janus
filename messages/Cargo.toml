@@ -20,7 +20,7 @@ hex = { workspace = true }
 num_enum = { workspace = true }
 # Make sure not to enable default-features on prio, as we want clients to be
 # able to get message definitions without pulling in prio/crypto-dependencies
-prio = { workspace = true, features = ["multithreaded", "experimental"] }
+prio = { workspace = true, features = ["experimental"] }
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true

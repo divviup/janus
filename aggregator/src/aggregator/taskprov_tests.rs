@@ -52,6 +52,7 @@ use janus_messages::{
     PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
+    flp::gadgets::ParallelSumMultithreaded,
     idpf::IdpfInput,
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
@@ -1266,7 +1267,10 @@ async fn end_to_end_poplar1() {
 
 #[tokio::test]
 async fn end_to_end_sumvec_hmac() {
-    let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(2, 8, 12, 14).unwrap();
+    let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+        ParallelSumMultithreaded<_, _>,
+    >(2, 8, 12, 14)
+    .unwrap();
     let vdaf_config = VdafConfig::new(
         DpConfig::new(DpMechanism::None),
         VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {

@@ -70,17 +70,19 @@ use opentelemetry::{
     KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
+use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 #[cfg(feature = "test-util")]
 use prio::vdaf::{dummy, PrepareTransition, VdafError};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
+    field::Field64,
+    flp::gadgets::{Mul, ParallelSum},
     topology::ping_pong::{PingPongState, PingPongTopology},
     vdaf::{
         self,
         poplar1::Poplar1,
-        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
         xof::XofTurboShake128,
     },
 };
@@ -909,7 +911,7 @@ impl<C: Clock> TaskAggregator<C> {
                 length,
                 chunk_length,
             } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length)?;
+                let vdaf = Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
@@ -920,12 +922,9 @@ impl<C: Clock> TaskAggregator<C> {
                 length,
                 chunk_length,
             } => {
-                let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
-                    *proofs,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?;
+                let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+                    ParallelSum<Field64, Mul<Field64>>,
+                >(*proofs, *bits, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(Arc::new(vdaf), verify_key)
             }
@@ -947,14 +946,14 @@ impl<C: Clock> TaskAggregator<C> {
             } => {
                 match bitsize {
                     Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                        let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                            Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
+                        let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
+                            Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
                         let verify_key = task.vdaf_verify_key()?;
                         VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(Arc::new(vdaf), verify_key, vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(dp_strategy.clone()))
                     }
                     Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                        let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                            Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
+                        let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
+                            Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
                         let verify_key = task.vdaf_verify_key()?;
                         VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(Arc::new(vdaf), verify_key, vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(dp_strategy.clone()))
                     }
@@ -1181,21 +1180,21 @@ mod vdaf_ops_strategies {
 enum VdafOps {
     Prio3Count(Arc<Prio3Count>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),
-    Prio3SumVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3SumVec(Arc<Prio3SumVec>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3SumVecField64MultiproofHmacSha256Aes128(
-        Arc<Prio3SumVecField64MultiproofHmacSha256Aes128>,
+        Arc<Prio3SumVecField64MultiproofHmacSha256Aes128<ParallelSum<Field64, Mul<Field64>>>>,
         VerifyKey<32>,
     ),
     Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<VERIFY_KEY_LENGTH>),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>,
+        Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>,
         VerifyKey<VERIFY_KEY_LENGTH>,
         vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint32BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>,
+        Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>,
         VerifyKey<VERIFY_KEY_LENGTH>,
         vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
     ),
@@ -1240,7 +1239,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
@@ -1251,7 +1250,12 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128;
+                type $Vdaf = ::janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
+                    ::prio::flp::gadgets::ParallelSum<
+                        ::prio::field::Field64,
+                        ::prio::flp::gadgets::Mul<::prio::field::Field64>
+                    >,
+                >;
                 const $VERIFY_KEY_LENGTH: usize = 32;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
@@ -1277,7 +1281,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(vdaf, verify_key, _dp_strategy) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
 
                 match _dp_strategy {
@@ -1303,7 +1307,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(vdaf, verify_key, _dp_strategy) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
 
                 match _dp_strategy {

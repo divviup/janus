@@ -18,7 +18,12 @@ use janus_core::vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, V
 use janus_messages::{Duration, TaskId, Time};
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
-use prio::{codec::Decode, vdaf::prio3::Prio3};
+use prio::{
+    codec::Decode,
+    field::Field64,
+    flp::gadgets::{Mul, ParallelSumMultithreaded},
+    vdaf::prio3::Prio3,
+};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
 use trillium::{Conn, Handler};
@@ -142,12 +147,9 @@ async fn handle_upload(
             chunk_length,
         } => {
             let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
-            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
-                proofs,
-                bits,
-                length,
-                chunk_length,
-            )
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+                ParallelSumMultithreaded<Field64, Mul<Field64>>,
+            >(proofs, bits, length, chunk_length)
             .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
@@ -157,7 +159,7 @@ async fn handle_upload(
             chunk_length,
         } => {
             let measurement = parse_primitive_measurement::<usize>(request.measurement.clone())?;
-            let vdaf = Prio3::new_histogram(2, length, chunk_length)
+            let vdaf = Prio3::new_histogram_multithreaded(2, length, chunk_length)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }

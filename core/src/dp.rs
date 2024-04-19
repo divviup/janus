@@ -3,7 +3,7 @@ use derivative::Derivative;
 use fixed::traits::Fixed;
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::flp::{
-    gadgets::{ParallelSumGadget, PolyEval},
+    gadgets::PolyEval,
     types::fixedpoint_l2::{compatible_float::CompatibleFloat, FixedPointBoundedL2VecSum},
 };
 #[cfg(feature = "test-util")]
@@ -15,7 +15,7 @@ use prio::{
     },
     field::{Field128, Field64},
     flp::{
-        gadgets::{Mul, ParallelSum, ParallelSumMultithreaded},
+        gadgets::{Mul, ParallelSumGadget},
         TypeWithNoise,
     },
     vdaf::{xof::XofTurboShake128, AggregatorWithNoise},
@@ -85,8 +85,9 @@ impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Count<Field64> {
     }
 }
 
-impl TypeWithNoise<NoDifferentialPrivacy>
-    for prio::flp::types::Histogram<Field128, ParallelSum<Field128, Mul<Field128>>>
+impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Histogram<Field128, PS>
+where
+    PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
 {
     fn add_noise_to_result(
         &self,
@@ -98,8 +99,9 @@ impl TypeWithNoise<NoDifferentialPrivacy>
     }
 }
 
-impl TypeWithNoise<NoDifferentialPrivacy>
-    for prio::flp::types::SumVec<Field128, ParallelSumMultithreaded<Field128, Mul<Field128>>>
+impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field128, PS>
+where
+    PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
 {
     fn add_noise_to_result(
         &self,
@@ -111,8 +113,9 @@ impl TypeWithNoise<NoDifferentialPrivacy>
     }
 }
 
-impl TypeWithNoise<NoDifferentialPrivacy>
-    for prio::flp::types::SumVec<Field64, ParallelSum<Field64, Mul<Field64>>>
+impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field64, PS>
+where
+    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
 {
     fn add_noise_to_result(
         &self,

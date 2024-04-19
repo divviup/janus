@@ -42,12 +42,14 @@ use opentelemetry::{
     KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
+use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     codec::Encode,
+    field::Field64,
+    flp::gadgets::{Mul, ParallelSum},
     vdaf::{
         self,
-        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
 use rand::{random, thread_rng, Rng};
@@ -321,13 +323,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     chunk_length,
                 },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
-                    2,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
+                let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVec>(task, vdaf)
                     .await
             }
 
@@ -340,15 +337,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     chunk_length,
                 },
             ) => {
-                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
-                    *proofs,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?);
+                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+                    ParallelSum<Field64, Mul<Field64>>,
+                >(*proofs, *bits, *length, *chunk_length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     VERIFY_KEY_LENGTH_HMACSHA256_AES128,
-                    Prio3SumVecField64MultiproofHmacSha256Aes128,
+                    Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
                 >(task, vdaf).await
             }
 
@@ -374,19 +368,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
             ) => match bitsize {
                 Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
-                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                            2, *length,
-                        )?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
+                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
+                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, vdaf)
                             .await
                 }
                 Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
-                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                            2, *length,
-                        )?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
+                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
+                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, vdaf)
                             .await
                 }
             },
@@ -443,17 +433,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     chunk_length,
                 },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
-                    2,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?);
+                let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded,
+                    Prio3SumVec,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
@@ -469,17 +454,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     chunk_length,
                 },
             ) => {
-                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
-                    *proofs,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?);
+                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+                    ParallelSum<Field64, Mul<Field64>>,
+                >(*proofs, *bits, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     VERIFY_KEY_LENGTH_HMACSHA256_AES128,
-                    Prio3SumVecField64MultiproofHmacSha256Aes128,
+                    Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
@@ -519,23 +501,19 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 match bitsize {
                     janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
-                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                                2, *length,
-                            )?);
+                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
+                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
                         self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                                 VERIFY_KEY_LENGTH,
-                            Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>,
+                            Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>,
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
                     }
                     janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
-                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                                2, *length,
-                            )?);
+                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
+                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
                         self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                                 VERIFY_KEY_LENGTH,
-                            Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>,
+                            Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>,
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
                     }
                 }
