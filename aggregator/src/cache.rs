@@ -216,17 +216,22 @@ pub struct TaskAggregatorCache<C: Clock> {
     clock: C,
     datastore: Arc<Datastore<C>>,
     report_writer: Arc<ReportWriteBatcher<C>>,
-    entries: StdMutex<HashMap<TaskId, Arc<Mutex<TaskAggregatorCacheEntry<C>>>>>,
-    taskprov_enabled: bool,
+    entries: StdMutex<HashMap<TaskId, TaskAggregatorCacheEntry<C>>>,
+    cache_none: bool,
     ttl_seconds: Uniform<u64>,
 }
 
+type TaskAggregatorCacheEntry<C> = Arc<Mutex<TaskAggregatorCacheEntryContents<C>>>;
+
 #[derive(Debug)]
-struct TaskAggregatorCacheEntry<C: Clock> {
+struct TaskAggregatorCacheEntryContents<C: Clock> {
+    /// When the entry expires.
     expiration: Time,
-    is_initialized: bool,
-    task_aggregator: Option<Arc<TaskAggregator<C>>>,
+    /// The outer Option is None when the task_aggregator hasn't been initialized yet.
+    task_aggregator: Option<TaskAggregatorRef<C>>,
 }
+
+type TaskAggregatorRef<C> = Option<Arc<TaskAggregator<C>>>;
 
 pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_seconds(600);
 
@@ -235,17 +240,18 @@ impl<C: Clock> TaskAggregatorCache<C> {
         clock: C,
         datastore: Arc<Datastore<C>>,
         report_writer: ReportWriteBatcher<C>,
-        taskprov_enabled: bool,
+        cache_none: bool,
         ttl: Duration,
     ) -> Self {
         let ttl = ttl.as_seconds();
+        // We don't need this to be precise, so floating point truncation is acceptable.
         let jitter = (ttl as f64 * 0.1) as u64;
         Self {
             clock,
             datastore,
             report_writer: Arc::new(report_writer),
             entries: Default::default(),
-            taskprov_enabled,
+            cache_none,
             ttl_seconds: Uniform::new(ttl - jitter, ttl + jitter),
         }
     }
@@ -258,56 +264,57 @@ impl<C: Clock> TaskAggregatorCache<C> {
         ))
     }
 
-    pub async fn get(&self, task_id: &TaskId) -> Result<Option<Arc<TaskAggregator<C>>>, Error> {
+    pub async fn get(&self, task_id: &TaskId) -> Result<TaskAggregatorRef<C>, Error> {
         // Step one: grab the existing entry for this task, if one exists. If there is no existing
-        // entry, write a new (empty) entry.
+        // entry, write a new uninitialized entry.
         let entry = {
             // Unwrap safety: mutex poisoning.
             let mut entries = self.entries.lock().unwrap();
             Arc::clone(entries.entry(*task_id).or_insert(Arc::new(Mutex::new(
-                TaskAggregatorCacheEntry {
+                TaskAggregatorCacheEntryContents {
                     expiration: self.next_ttl(),
-                    is_initialized: false,
                     task_aggregator: None,
                 },
             ))))
         };
 
-        // Step two: if the entry is empty, fill it via a database query. Concurrent callers
-        // requesting the same task will contend over this lock while awaiting the result of the DB
-        // query, ensuring that in the common case only a single query will be made for each task.
+        // Step two: if the entry is uninitialized or expired, fill it via a database query. Concurrent
+        // callers requesting the same task will contend over this lock while awaiting the result of
+        // the DB query, ensuring that in the common case only a single query will be made for each
+        // task.
         let task_aggregator = {
             let mut entry = entry.lock().await;
-            if self.clock.now() > entry.expiration || !entry.is_initialized {
-                *entry = TaskAggregatorCacheEntry {
+            if self.clock.now() > entry.expiration || entry.task_aggregator.is_none() {
+                *entry = TaskAggregatorCacheEntryContents {
                     expiration: self.next_ttl(),
-                    is_initialized: true,
-                    task_aggregator: self
-                        .datastore
-                        .run_tx("task_aggregator_get_task", |tx| {
-                            let task_id = *task_id;
-                            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-                        })
-                        .await?
-                        .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
-                        .transpose()?
-                        .map(Arc::new),
+                    task_aggregator: Some(
+                        self.datastore
+                            .run_tx("task_aggregator_get_task", |tx| {
+                                let task_id = *task_id;
+                                Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+                            })
+                            .await?
+                            .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
+                            .transpose()?
+                            .map(Arc::new),
+                    ),
                 };
             }
-            entry.task_aggregator.clone()
+            // Unwrap safety: we've ensured that the entry is initialized in the previous if statement.
+            entry
+                .task_aggregator
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .map(|entry| Arc::clone(&entry))
         };
 
-        // If taskprov is enabled, we can never cache a None result, because any aggregator replica
-        // can at any time insert a new task and expect it to be immediately available across all
-        // replicas. Remove the None result.
-        //
-        // This unfortunately means that for taskprov cases, tasks that are truly non-existent will
-        // always go down the slow path. It would be up to rate-limiting to mitigate this.
-        if self.taskprov_enabled && task_aggregator.is_none() {
+        if !self.cache_none && task_aggregator.is_none() {
             // Unwrap safety: mutex poisoning.
             let mut task_aggs = self.entries.lock().unwrap();
             task_aggs.remove(task_id);
         }
+
         Ok(task_aggregator)
     }
 }
@@ -330,7 +337,7 @@ mod tests {
     use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
 
     #[tokio::test]
-    async fn task_aggregator_cache_taskprov() {
+    async fn task_aggregator() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -347,7 +354,7 @@ mod tests {
                 100,                         // doesn't matter
                 StdDuration::from_secs(100), // doesn't matter
             ),
-            true,
+            false,
             ttl,
         );
 
@@ -398,7 +405,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_aggregator_cache() {
+    async fn task_aggregator_cache_none() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -415,7 +422,7 @@ mod tests {
                 100,                         // doesn't matter
                 StdDuration::from_secs(100), // doesn't matter
             ),
-            false,
+            true,
             ttl,
         );
 

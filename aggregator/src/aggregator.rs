@@ -242,7 +242,10 @@ impl<C: Clock> Aggregator<C> {
                 cfg.max_upload_batch_size,
                 cfg.max_upload_batch_write_delay,
             ),
-            cfg.taskprov_config.enabled,
+            // If we're in taskprov mode, we can never cache None entries for tasks, since aggregators
+            // could insert tasks at any time and expect them to be available across all aggregator
+            // replicas.
+            !cfg.taskprov_config.enabled,
             cfg.task_cache_ttl,
         );
 
