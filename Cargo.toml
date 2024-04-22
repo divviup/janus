@@ -71,6 +71,7 @@ opentelemetry-semantic-conventions = "0.14"
 pem = "3"
 postgres-protocol = "0.6.6"
 postgres-types = "0.2.6"
+pretty_assertions = "1.4.0"
 # Disable default features so that individual workspace crates can choose to
 # re-enable them
 prio = { version = "0.16.2", default-features = false, features = ["experimental"] }

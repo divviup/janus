@@ -28,4 +28,5 @@ url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
+pretty_assertions.workspace = true
 serde_test.workspace = true

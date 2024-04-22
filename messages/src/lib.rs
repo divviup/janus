@@ -2759,22 +2759,40 @@ pub(crate) fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
 where
     T: Encode + Decode + Debug + Eq,
 {
+    struct Wrapper<T>(T);
+
+    impl<T: PartialEq> PartialEq for Wrapper<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl<T: Eq> Eq for Wrapper<T> {}
+
+    impl<T: Debug> Debug for Wrapper<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            write!(f, "{:02x?}", &self.0)
+        }
+    }
+
     for (val, hex_encoding) in vals_and_encodings {
         let mut encoded_val = Vec::new();
         val.encode(&mut encoded_val).unwrap();
-        let encoding = hex::decode(hex_encoding).unwrap();
-        assert_eq!(
-            encoded_val, encoding,
-            "Couldn't roundtrip (encoded value differs): {val:?}
-encoded:\t\t{encoded_val:02x?}\nexpected encoding:\t{encoding:02x?}"
+        let expected = Wrapper(hex::decode(hex_encoding).unwrap());
+        let encoded_val = Wrapper(encoded_val);
+        pretty_assertions::assert_eq!(
+            encoded_val,
+            expected,
+            "Couldn't roundtrip (encoded value differs): {val:?}"
         );
-        let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
-        assert_eq!(
-            &decoded_val, val,
+        let decoded_val = T::get_decoded(&encoded_val.0).unwrap();
+        pretty_assertions::assert_eq!(
+            &decoded_val,
+            val,
             "Couldn't roundtrip (decoded value differs): {val:?}"
         );
-        assert_eq!(
-            encoded_val.len(),
+        pretty_assertions::assert_eq!(
+            encoded_val.0.len(),
             val.encoded_len().expect("No encoded length hint"),
             "Encoded length hint is incorrect: {val:?}"
         )
