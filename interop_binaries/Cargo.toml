@@ -32,7 +32,7 @@ janus_client.workspace = true
 janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
-prio.workspace = true
+prio = { workspace = true, features = ["multithreaded"] }
 rand.workspace = true
 regex = { workspace = true, optional = true }
 reqwest.workspace = true

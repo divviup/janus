@@ -16,7 +16,10 @@ use janus_messages::{
     query_type::{self, FixedSize},
     Duration, FixedSizeQuery, Interval, Query, Time,
 };
-use prio::vdaf::{self, dummy, prio3::Prio3};
+use prio::{
+    flp::gadgets::ParallelSumMultithreaded,
+    vdaf::{self, dummy, prio3::Prio3},
+};
 use rand::{random, thread_rng, Rng};
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
@@ -461,12 +464,9 @@ pub async fn submit_measurements_and_verify_aggregate(
             length,
             chunk_length,
         } => {
-            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
-                *proofs,
-                *bits,
-                *length,
-                *chunk_length,
-            )
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+                ParallelSumMultithreaded<_, _>,
+            >(*proofs, *bits, *length, *chunk_length)
             .unwrap();
 
             let measurements = iter::repeat_with(|| {
@@ -514,7 +514,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             length,
             chunk_length,
         } => {
-            let vdaf = Prio3::new_histogram(2, *length, *chunk_length).unwrap();
+            let vdaf = Prio3::new_histogram_multithreaded(2, *length, *chunk_length).unwrap();
 
             let mut aggregate_result = vec![0; *length];
             let measurements = iter::repeat_with(|| {

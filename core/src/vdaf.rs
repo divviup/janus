@@ -3,7 +3,7 @@ use janus_messages::taskprov;
 use prio::{
     field::Field64,
     flp::{
-        gadgets::{Mul, ParallelSum},
+        gadgets::{Mul, ParallelSumGadget},
         types::SumVec,
     },
     vdaf::{prio3::Prio3, xof::XofHmacSha256Aes128, VdafError},
@@ -170,17 +170,19 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
     }
 }
 
-pub type Prio3SumVecField64MultiproofHmacSha256Aes128 =
-    Prio3<SumVec<Field64, ParallelSum<Field64, Mul<Field64>>>, XofHmacSha256Aes128, 32>;
+pub type Prio3SumVecField64MultiproofHmacSha256Aes128<PS> =
+    Prio3<SumVec<Field64, PS>, XofHmacSha256Aes128, 32>;
 
 /// Construct a customized Prio3SumVec VDAF, using the [`Field64`] field, multiple proofs, and
 /// [`XofHmacSha256Aes128`] as the XOF.
-pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128<
+    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
+>(
     proofs: u8,
     bits: usize,
     length: usize,
     chunk_length: usize,
-) -> Result<Prio3SumVecField64MultiproofHmacSha256Aes128, VdafError> {
+) -> Result<Prio3SumVecField64MultiproofHmacSha256Aes128<PS>, VdafError> {
     if proofs < 2 {
         return Err(VdafError::Uncategorized(
             "Must use at least two proofs with Field64".into(),
@@ -222,13 +224,9 @@ macro_rules! vdaf_dispatch_impl_base {
                 length,
                 chunk_length,
             } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
-                    2,
-                    *bits,
-                    *length,
-                    *chunk_length,
-                )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
+                let $vdaf =
+                    ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
@@ -248,7 +246,12 @@ macro_rules! vdaf_dispatch_impl_base {
                         *length,
                         *chunk_length,
                     )?;
-                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128;
+                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
+                    ::prio::flp::gadgets::ParallelSum<
+                        ::prio::field::Field64,
+                        ::prio::flp::gadgets::Mul<::prio::field::Field64>,
+                    >,
+                >;
                 const $VERIFY_KEY_LEN: usize =
                     ::janus_core::vdaf::VERIFY_KEY_LENGTH_HMACSHA256_AES128;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
@@ -314,20 +317,20 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
         match $bitsize {
             janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
                 let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum(
                         2, *$length,
                     )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
+                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<
                     ::fixed::FixedI16<::fixed::types::extra::U15>,
                 >;
                 $body
             },
             janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
                 let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum(
                         2, *$length,
                     )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
+                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
                 >;
                 $body

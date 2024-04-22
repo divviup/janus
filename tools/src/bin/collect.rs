@@ -20,7 +20,7 @@ use janus_messages::{
     Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
+use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3, Vdaf},
@@ -504,16 +504,16 @@ macro_rules! options_vdaf_dispatch {
             }
             #[cfg(feature = "fpvec_bounded_l2")]
             (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
+                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
+                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
             #[cfg(feature = "fpvec_bounded_l2")]
             (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
+                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
+                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body

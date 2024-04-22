@@ -7,9 +7,11 @@ use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
 use janus_messages::{Duration, TaskId};
 use prio::{
     codec::Encode,
+    field::Field64,
+    flp::gadgets::{Mul, ParallelSumGadget},
     vdaf::{
         self, dummy,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{Prio3Count, Prio3HistogramMultithreaded, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
 use rand::random;
@@ -36,7 +38,7 @@ impl InteropClientEncoding for Prio3Sum {
     }
 }
 
-impl InteropClientEncoding for Prio3Histogram {
+impl InteropClientEncoding for Prio3HistogramMultithreaded {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
@@ -53,7 +55,10 @@ impl InteropClientEncoding for Prio3SumVecMultithreaded {
     }
 }
 
-impl InteropClientEncoding for Prio3SumVecField64MultiproofHmacSha256Aes128 {
+impl<PS> InteropClientEncoding for Prio3SumVecField64MultiproofHmacSha256Aes128<PS>
+where
+    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
+{
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::Array(
             measurement
