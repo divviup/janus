@@ -134,7 +134,7 @@ jobs:
     - name: Document
       run: cargo doc --profile ci --workspace
     - name: cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v1.6.2
+      uses: EmbarkStudios/cargo-deny-action@v1.6.3
       with:
         command: check bans licenses sources -A unmatched-organization
 
@@ -188,6 +188,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v1.6.2
+      uses: EmbarkStudios/cargo-deny-action@v1.6.3
       with:
         command: check advisories
