@@ -2780,16 +2780,18 @@ where
         val.encode(&mut encoded_val).unwrap();
         let expected = Wrapper(hex::decode(hex_encoding).unwrap());
         let encoded_val = Wrapper(encoded_val);
-        assert_eq!(
-            encoded_val, expected,
+        pretty_assertions::assert_eq!(
+            encoded_val,
+            expected,
             "Couldn't roundtrip (encoded value differs): {val:?}"
         );
         let decoded_val = T::get_decoded(&encoded_val.0).unwrap();
-        assert_eq!(
-            &decoded_val, val,
+        pretty_assertions::assert_eq!(
+            &decoded_val,
+            val,
             "Couldn't roundtrip (decoded value differs): {val:?}"
         );
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             encoded_val.0.len(),
             val.encoded_len().expect("No encoded length hint"),
             "Encoded length hint is incorrect: {val:?}"
