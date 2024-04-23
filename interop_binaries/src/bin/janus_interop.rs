@@ -30,15 +30,12 @@ enum Nested {
     Collector(janus_interop_collector::Options),
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), anyhow::Error> {
     match Options::parse() {
-        Options::Client(options) | Options::Default(Nested::Client(options)) => options.run().await,
+        Options::Client(options) | Options::Default(Nested::Client(options)) => options.run(),
         Options::Aggregator(options) | Options::Default(Nested::Aggregator(options)) => {
-            options.run().await
+            options.run()
         }
-        Options::Collector(options) | Options::Default(Nested::Collector(options)) => {
-            options.run().await
-        }
+        Options::Collector(options) | Options::Default(Nested::Collector(options)) => options.run(),
     }
 }

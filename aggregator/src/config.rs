@@ -288,6 +288,7 @@ pub mod test_util {
                 host: Some("prometheus_host".to_string()),
                 port: Some(6669),
             }),
+            tokio: None,
         }
     }
 }
@@ -300,7 +301,7 @@ mod tests {
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             CommonConfig, DbConfig, JobDriverConfig,
         },
-        metrics::MetricsExporterConfiguration,
+        metrics::{HistogramScale, MetricsExporterConfiguration},
         trace::OpenTelemetryTraceConfiguration,
     };
     use assert_matches::assert_matches;
@@ -389,5 +390,34 @@ connection_pool_max_size: 42",
                 assert_eq!(otlp_config.endpoint, "https://example.com/");
             }
         )
+    }
+
+    #[test]
+    fn tokio_metrics_config() {
+        let input = "---
+database:
+  url: postgres://postgres@localhost/postgres
+metrics_config:
+  exporter:
+    prometheus:
+      host: 0.0.0.0
+      port: 9464
+  tokio:
+    enabled: true
+    enable_poll_time_histogram: true
+    poll_time_histogram_scale: log
+    poll_time_histogram_resolution_microseconds: 100
+    poll_time_histogram_buckets: 15
+";
+        let config: CommonConfig = serde_yaml::from_str(input).unwrap();
+        let tokio_config = config.metrics_config.tokio.unwrap();
+        assert!(tokio_config.enabled);
+        assert!(tokio_config.enable_poll_time_histogram);
+        assert_eq!(tokio_config.poll_time_histogram_scale, HistogramScale::Log);
+        assert_eq!(
+            tokio_config.poll_time_histogram_resolution_microseconds,
+            Some(100)
+        );
+        assert_eq!(tokio_config.poll_time_histogram_buckets, Some(15));
     }
 }

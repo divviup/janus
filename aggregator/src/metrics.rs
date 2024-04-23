@@ -1,6 +1,5 @@
 //! Collection and exporting of application-level metrics for Janus.
 
-#[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
 use opentelemetry::{
     metrics::{Counter, Meter, Unit},
@@ -8,6 +7,7 @@ use opentelemetry::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::AddrParseError;
+use tokio::runtime::Runtime;
 
 #[cfg(feature = "prometheus")]
 use {
@@ -47,6 +47,9 @@ use {
     },
 };
 
+#[cfg(all(tokio_unstable, feature = "prometheus"))]
+pub(crate) mod tokio_runtime;
+
 #[cfg(all(test, feature = "prometheus"))]
 mod tests;
 
@@ -67,6 +70,10 @@ pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
     #[serde(default, with = "serde_yaml::with::singleton_map")]
     pub exporter: Option<MetricsExporterConfiguration>,
+
+    /// Configuration to expose metrics from the Tokio asynchronous runtime.
+    #[serde(default)]
+    pub tokio: Option<TokioMetricsConfiguration>,
 }
 
 /// Selection of an exporter for OpenTelemetry metrics.
@@ -85,6 +92,51 @@ pub enum MetricsExporterConfiguration {
 pub struct OtlpExporterConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
+}
+
+/// Configuration options for Tokio's (unstable) metrics feature.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokioMetricsConfiguration {
+    /// Enable collecting metrics from Tokio. The flag `--cfg tokio_unstable` must be passsed
+    /// to the compiler if this is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Enable Tokio's poll time histogram. This introduces some additional overhead by calling
+    /// [`Instant::now`](std::time::Instant::now) twice per task poll.
+    #[serde(default)]
+    pub enable_poll_time_histogram: bool,
+
+    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale.
+    /// If a linear scale is chosen, each histogram bucket will have an equal range. If a
+    /// logarithmic scale is chosen, an exponential histogram will be used, where each bucket
+    /// has double the width of the previous bucket.
+    #[serde(default)]
+    pub poll_time_histogram_scale: HistogramScale,
+
+    /// Resolution of the histogram tracking poll times. When using a linear scale, every bucket
+    /// will have this width. When using a logarithmic scale, the smallest bucket will have this
+    /// width.
+    #[serde(default)]
+    pub poll_time_histogram_resolution_microseconds: Option<u64>,
+
+    /// Chooses the number of buckets in the histogram used to track poll times. This number of
+    /// buckets includes the bucket with a range extending to positive infinity.
+    #[serde(default)]
+    pub poll_time_histogram_buckets: Option<usize>,
+}
+
+/// Selects whether to use a linear scale or a logarithmic scale for a histogram.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HistogramScale {
+    /// Linear histogram scale. Each bucket will cover a range of the same width.
+    #[default]
+    Linear,
+
+    /// Logarithmic histogram scale. Each successive bucket will cover a range twice as wide as its
+    /// predecessor.
+    Log,
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.
@@ -171,13 +223,26 @@ impl View for CustomView {
     }
 }
 
+/// Construct and return an opentelemetry-prometheus MeterProvider.
+///
+/// # Arguments
+///
+/// Takes a [`Registry`] used to communicate with the metrics server.
+///
+/// If a [`Runtime`] is provided, additional metrics from the Tokio runtime will be added.
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
+    _runtime_opt: Option<&Runtime>,
 ) -> Result<SdkMeterProvider, MetricsError> {
-    let reader = opentelemetry_prometheus::exporter()
-        .with_registry(registry)
-        .build()?;
+    let mut reader_builder = opentelemetry_prometheus::exporter();
+    reader_builder = reader_builder.with_registry(registry);
+    #[cfg(tokio_unstable)]
+    if let Some(runtime) = _runtime_opt {
+        reader_builder = reader_builder
+            .with_producer(tokio_runtime::TokioRuntimeMetrics::new(runtime.metrics()));
+    }
+    let reader = reader_builder.build()?;
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(reader)
         .with_view(CustomView::new()?)
@@ -221,6 +286,7 @@ async fn prometheus_metrics_server(
 /// returned handle should not be dropped until the application shuts down.
 pub async fn install_metrics_exporter(
     config: &MetricsConfiguration,
+    _runtime: &Runtime,
 ) -> Result<MetricsExporterHandle, Error> {
     match &config.exporter {
         #[cfg(feature = "prometheus")]
@@ -228,8 +294,20 @@ pub async fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
+            let runtime_opt = if config
+                .tokio
+                .as_ref()
+                .map(|tokio_metrics_config| tokio_metrics_config.enabled)
+                .unwrap_or_default()
+            {
+                Some(_runtime)
+            } else {
+                None
+            };
+
             let registry = Registry::new();
-            let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone())?;
+            let meter_provider =
+                build_opentelemetry_prometheus_meter_provider(registry.clone(), runtime_opt)?;
             set_meter_provider(meter_provider);
 
             let host = config_exporter_host
@@ -254,6 +332,17 @@ pub async fn install_metrics_exporter(
 
         #[cfg(feature = "otlp")]
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
+            if config
+                .tokio
+                .as_ref()
+                .map(|config| config.enabled)
+                .unwrap_or_default()
+            {
+                return Err(Error::Other(anyhow!(
+                    "Tokio runtime metrics are not yet supported with the OTLP metrics exporter"
+                )));
+            }
+
             let exporter = opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_endpoint(otlp_config.endpoint.clone())

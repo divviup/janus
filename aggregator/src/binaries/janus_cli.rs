@@ -34,35 +34,43 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use tokio::fs;
+use tokio::{
+    fs,
+    runtime::{self, Runtime},
+};
 use tracing::{debug, info};
 use url::Url;
 
-pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
+pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
     initialize_rustls();
 
     // Read and parse config.
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
+    let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
 
-    info!(
-        common_options = ?&command_line_options.common_options,
-        config = ?config_file,
-        version = env!("CARGO_PKG_VERSION"),
-        git_revision = git_revision(),
-        rust_version = env!("RUSTC_SEMVER"),
-        "Starting up"
-    );
+    runtime.block_on(async {
+        let _guards =
+            install_tracing_and_metrics_handlers(config_file.common_config(), &runtime).await?;
 
-    if command_line_options.dry_run {
-        info!("DRY RUN: no persistent changes will be made")
-    }
+        info!(
+            common_options = ?&command_line_options.common_options,
+            config = ?config_file,
+            version = env!("CARGO_PKG_VERSION"),
+            git_revision = git_revision(),
+            rust_version = env!("RUSTC_SEMVER"),
+            "Starting up"
+        );
 
-    command_line_options
-        .cmd
-        .execute(&command_line_options, &config_file)
-        .await
+        if command_line_options.dry_run {
+            info!("DRY RUN: no persistent changes will be made")
+        }
+
+        command_line_options
+            .cmd
+            .execute(&command_line_options, &config_file)
+            .await
+    })
 }
 
 #[derive(Debug, Parser)]
@@ -326,12 +334,13 @@ impl Command {
 
 async fn install_tracing_and_metrics_handlers(
     config: &CommonConfig,
+    runtime: &Runtime,
 ) -> Result<(TraceGuards, MetricsExporterHandle)> {
     // Discard the trace reload handler, since this program is short-lived.
     let (trace_guard, _) = install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
 
-    let metrics_guard = install_metrics_exporter(&config.metrics_config)
+    let metrics_guard = install_metrics_exporter(&config.metrics_config, runtime)
         .await
         .context("failed to install metrics exporter")?;
     Ok((trace_guard, metrics_guard))
