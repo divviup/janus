@@ -82,8 +82,9 @@ impl TryFrom<&taskprov::Query> for QueryType {
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
 /// maintain robustness, and it must be shared between aggregators.
-#[derive(Debug, Clone, Copy)]
-pub struct VerifyKey<const SEED_SIZE: usize>([u8; SEED_SIZE]);
+#[derive(Derivative, Clone, Copy)]
+#[derivative(Debug)]
+pub struct VerifyKey<const SEED_SIZE: usize>(#[derivative(Debug = "ignore")] [u8; SEED_SIZE]);
 
 impl<const SEED_SIZE: usize> VerifyKey<SEED_SIZE> {
     pub fn new(array: [u8; SEED_SIZE]) -> VerifyKey<SEED_SIZE> {
