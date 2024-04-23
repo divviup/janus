@@ -377,7 +377,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let ttl = Duration::from_secs(1);
+        let ttl = Duration::from_millis(500);
         let task_aggregators = TaskAggregatorCache::new(
             Arc::clone(&datastore),
             ReportWriteBatcher::new(
@@ -407,7 +407,7 @@ mod tests {
 
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
         // to sleeps to test TTL functionality.
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
 
         // Now we should see it.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -435,7 +435,7 @@ mod tests {
             task.task_expiration()
         );
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert_eq!(
