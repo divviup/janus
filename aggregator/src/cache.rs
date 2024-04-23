@@ -256,6 +256,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
         // task.
         let task_aggregator = {
             let mut entry = entry.lock().await;
+
             if entry.is_none() {
                 *entry = Some(
                     self.datastore
@@ -269,13 +270,14 @@ impl<C: Clock> TaskAggregatorCache<C> {
                         .map(Arc::new),
                 );
             }
-            // Unwrap safety: we've ensured that the entry is initialized in the previous if statement.
-            entry.as_ref().unwrap().clone()
-        };
 
-        if !self.cache_none && task_aggregator.is_none() {
-            self.cache.invalidate(task_id).await;
-        }
+            // Unwrap safety: we've ensured that the entry is initialized in the previous if statement.
+            let task_aggregator = entry.as_ref().unwrap();
+            if !self.cache_none && task_aggregator.is_none() {
+                self.cache.invalidate(task_id).await;
+            }
+            task_aggregator.clone()
+        };
 
         Ok(task_aggregator)
     }
