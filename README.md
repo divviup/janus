@@ -96,11 +96,7 @@ Any other crates not mentioned have no stability guarantees whatsoever.
 
 ## Building
 
-[`docker`](https://www.docker.com) must be installed at build time, and the
-`docker` daemon must be running. To build Janus, execute `cargo build`.
-
-Note that `podman` is not an acceptable substitute for `docker`. There are
-subtle incompatibilities between the two that will cause tests to fail.
+To build Janus, execute `cargo build`.
 
 ### Container image
 
@@ -133,6 +129,9 @@ To run Janus tests, execute `cargo test`. To run tests on Docker images, execute
 `cargo xtask test-docker`.
 
 [kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.20.0
+
+Note that `podman` is not an acceptable substitute for `docker`. There are
+subtle incompatibilities between the two that will cause tests to fail.
 
 ### inotify limits
 
