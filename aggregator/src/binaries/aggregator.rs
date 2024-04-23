@@ -2,7 +2,10 @@ use crate::{
     aggregator::{self, http_handlers::aggregator_handler},
     binaries::garbage_collector::run_garbage_collector,
     binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
-    cache::{GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_TTL},
+    cache::{
+        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+    },
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use anyhow::{anyhow, Context, Result};
@@ -11,7 +14,6 @@ use derivative::Derivative;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
-use janus_messages::Duration as JanusDuration;
 use opentelemetry::metrics::Meter;
 use ring::{
     rand::SystemRandom,
@@ -349,6 +351,12 @@ pub struct Config {
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_TTL`]. You shouldn't normally have to specify this.
     #[serde(default)]
     pub task_cache_ttl_seconds: Option<u64>,
+
+    /// Defines how many tasks can be cached. This affects how much memory the aggregator might use
+    /// to store cached tasks. If unspecified, default is defined by
+    /// [`TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY`]. You shouldn't normally have to specify this.
+    #[serde(default)]
+    pub task_cache_capacity: Option<u64>,
 }
 
 fn default_task_counter_shard_count() -> u64 {
@@ -406,9 +414,12 @@ impl Config {
                 .map(parse_pem_ec_private_key)
                 .transpose()?,
             task_cache_ttl: match self.task_cache_ttl_seconds {
-                Some(ttl) => JanusDuration::from_seconds(ttl),
+                Some(ttl) => Duration::from_secs(ttl),
                 None => TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             },
+            task_cache_capacity: self
+                .task_cache_capacity
+                .unwrap_or(TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY),
         })
     }
 }
@@ -514,6 +525,7 @@ mod tests {
             taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: Some(42),
             task_cache_ttl_seconds: None,
+            task_cache_capacity: None,
         })
     }
 

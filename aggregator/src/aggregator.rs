@@ -15,7 +15,7 @@ use crate::{
     },
     cache::{
         GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+        TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
     config::TaskprovConfig,
     metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
@@ -201,7 +201,11 @@ pub struct Config {
 
     /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
     /// of task parameter changes.
-    pub task_cache_ttl: Duration,
+    pub task_cache_ttl: StdDuration,
+
+    /// Defines how many tasks can be cached at once. This affects how much memory the aggregator may
+    /// consume for caching tasks.
+    pub task_cache_capacity: u64,
 
     /// The key used to sign HPKE configurations.
     pub hpke_config_signing_key: Option<EcdsaKeyPair>,
@@ -220,6 +224,7 @@ impl Default for Config {
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+            task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
         }
     }
 }
@@ -233,7 +238,6 @@ impl<C: Clock> Aggregator<C> {
         cfg: Config,
     ) -> Result<Self, Error> {
         let task_aggregators = TaskAggregatorCache::new(
-            clock.clone(),
             Arc::clone(&datastore),
             ReportWriteBatcher::new(
                 Arc::clone(&datastore),
@@ -246,7 +250,8 @@ impl<C: Clock> Aggregator<C> {
             // could insert tasks at any time and expect them to be available across all aggregator
             // replicas.
             !cfg.taskprov_config.enabled,
-            cfg.task_cache_ttl,
+            cfg.task_cache_capacity,
+            StdDuration::from_secs(1),
         );
 
         let upload_decrypt_failure_counter = meter

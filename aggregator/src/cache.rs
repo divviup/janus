@@ -5,17 +5,14 @@ use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
     taskprov::PeerAggregator,
 };
-use janus_core::{
-    hpke::HpkeKeypair,
-    time::{Clock, TimeExt},
-};
-use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
-use rand::{distributions::Uniform, thread_rng, Rng};
+use janus_core::{hpke::HpkeKeypair, time::Clock};
+use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
+use moka::future::{Cache, CacheBuilder};
 use std::{
     collections::HashMap,
     fmt::Debug,
     sync::{Arc, Mutex as StdMutex},
-    time::{Duration as StdDuration, Instant},
+    time::{Duration, Instant},
 };
 use tokio::{spawn, sync::Mutex, task::JoinHandle, time::sleep};
 use tracing::{debug, error};
@@ -39,12 +36,12 @@ pub struct GlobalHpkeKeypairCache {
 }
 
 impl GlobalHpkeKeypairCache {
-    pub const DEFAULT_REFRESH_INTERVAL: StdDuration =
-        StdDuration::from_secs(60 * 30 /* 30 minutes */);
+    pub const DEFAULT_REFRESH_INTERVAL: Duration =
+        Duration::from_secs(60 * 30 /* 30 minutes */);
 
     pub async fn new<C: Clock>(
         datastore: Arc<Datastore<C>>,
-        refresh_interval: StdDuration,
+        refresh_interval: Duration,
     ) -> Result<Self, Error> {
         let keypairs = Arc::new(StdMutex::new(HashMap::new()));
         let configs = Arc::new(StdMutex::new(Arc::new(Vec::new())));
@@ -213,70 +210,45 @@ impl PeerAggregatorCache {
 
 #[derive(Debug)]
 pub struct TaskAggregatorCache<C: Clock> {
-    clock: C,
     datastore: Arc<Datastore<C>>,
     report_writer: Arc<ReportWriteBatcher<C>>,
-    entries: StdMutex<HashMap<TaskId, TaskAggregatorCacheEntry<C>>>,
+    cache: Cache<TaskId, TaskAggregatorCacheEntry<C>>,
     cache_none: bool,
-    ttl_seconds: Uniform<u64>,
 }
 
-type TaskAggregatorCacheEntry<C> = Arc<Mutex<TaskAggregatorCacheEntryContents<C>>>;
+/// A cache entry. None indicates that the entry has not been initialized yet.
+type TaskAggregatorCacheEntry<C> = Arc<Mutex<Option<TaskAggregatorRef<C>>>>;
 
-#[derive(Debug)]
-struct TaskAggregatorCacheEntryContents<C: Clock> {
-    /// When the entry expires.
-    expiration: Time,
-    /// The outer Option is None when the task_aggregator hasn't been initialized yet.
-    task_aggregator: Option<TaskAggregatorRef<C>>,
-}
-
+/// An Arc reference to a TaskAggregator. None indicates that there is no such task aggregator in
+/// the database.
 type TaskAggregatorRef<C> = Option<Arc<TaskAggregator<C>>>;
 
-pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_seconds(600);
+pub const TASK_AGGREGATOR_CACHE_DEFAULT_TTL: Duration = Duration::from_secs(600);
+pub const TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY: u64 = 10_000;
 
 impl<C: Clock> TaskAggregatorCache<C> {
     pub fn new(
-        clock: C,
         datastore: Arc<Datastore<C>>,
         report_writer: ReportWriteBatcher<C>,
         cache_none: bool,
+        capacity: u64,
         ttl: Duration,
     ) -> Self {
-        let ttl = ttl.as_seconds();
-        // We don't need this to be precise, so floating point truncation is acceptable.
-        let jitter = (ttl as f64 * 0.1) as u64;
         Self {
-            clock,
             datastore,
             report_writer: Arc::new(report_writer),
-            entries: Default::default(),
+            cache: CacheBuilder::new(capacity).time_to_live(ttl).build(),
             cache_none,
-            ttl_seconds: Uniform::new(ttl - jitter, ttl + jitter),
         }
-    }
-
-    /// Calculates the next possible cache TTL. This contains jitter to prevent all tasks in the
-    /// cache from falling on the same deadline on application startup.
-    fn next_ttl(&self) -> Time {
-        self.clock.now().saturating_add(&Duration::from_seconds(
-            thread_rng().sample(self.ttl_seconds),
-        ))
     }
 
     pub async fn get(&self, task_id: &TaskId) -> Result<TaskAggregatorRef<C>, Error> {
         // Step one: grab the existing entry for this task, if one exists. If there is no existing
         // entry, write a new uninitialized entry.
-        let entry = {
-            // Unwrap safety: mutex poisoning.
-            let mut entries = self.entries.lock().unwrap();
-            Arc::clone(entries.entry(*task_id).or_insert(Arc::new(Mutex::new(
-                TaskAggregatorCacheEntryContents {
-                    expiration: self.next_ttl(),
-                    task_aggregator: None,
-                },
-            ))))
-        };
+        let entry = self
+            .cache
+            .get_with(*task_id, async { Default::default() })
+            .await;
 
         // Step two: if the entry is uninitialized or expired, fill it via a database query. Concurrent
         // callers requesting the same task will contend over this lock while awaiting the result of
@@ -284,35 +256,25 @@ impl<C: Clock> TaskAggregatorCache<C> {
         // task.
         let task_aggregator = {
             let mut entry = entry.lock().await;
-            if self.clock.now() > entry.expiration || entry.task_aggregator.is_none() {
-                *entry = TaskAggregatorCacheEntryContents {
-                    expiration: self.next_ttl(),
-                    task_aggregator: Some(
-                        self.datastore
-                            .run_tx("task_aggregator_get_task", |tx| {
-                                let task_id = *task_id;
-                                Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-                            })
-                            .await?
-                            .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
-                            .transpose()?
-                            .map(Arc::new),
-                    ),
-                };
+            if entry.is_none() {
+                *entry = Some(
+                    self.datastore
+                        .run_tx("task_aggregator_get_task", |tx| {
+                            let task_id = *task_id;
+                            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+                        })
+                        .await?
+                        .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
+                        .transpose()?
+                        .map(Arc::new),
+                );
             }
             // Unwrap safety: we've ensured that the entry is initialized in the previous if statement.
-            entry
-                .task_aggregator
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .map(|entry| Arc::clone(&entry))
+            entry.as_ref().unwrap().clone()
         };
 
         if !self.cache_none && task_aggregator.is_none() {
-            // Unwrap safety: mutex poisoning.
-            let mut task_aggs = self.entries.lock().unwrap();
-            task_aggs.remove(task_id);
+            self.cache.invalidate(task_id).await;
         }
 
         Ok(task_aggregator)
@@ -321,7 +283,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration as StdDuration};
+    use std::{sync::Arc, time::Duration};
 
     use janus_aggregator_core::{
         datastore::test_util::ephemeral_datastore,
@@ -332,29 +294,30 @@ mod tests {
         time::MockClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Duration, Time};
+    use janus_messages::Time;
+    use tokio::time::sleep;
 
     use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
 
     #[tokio::test]
-    async fn task_aggregator() {
+    async fn task_aggregator_cache() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let ttl = Duration::from_seconds(600);
+        let ttl = Duration::from_millis(500);
         let task_aggregators = TaskAggregatorCache::new(
-            clock.clone(),
             Arc::clone(&datastore),
             ReportWriteBatcher::new(
                 Arc::clone(&datastore),
                 TestRuntime::default(),
-                100,                         // doesn't matter
-                100,                         // doesn't matter
-                StdDuration::from_secs(100), // doesn't matter
+                100,                      // doesn't matter
+                100,                      // doesn't matter
+                Duration::from_secs(100), // doesn't matter
             ),
             false,
+            10000,
             ttl,
         );
 
@@ -365,7 +328,7 @@ mod tests {
 
         assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
         // We shouldn't have cached that last call.
-        assert!(task_aggregators.entries.lock().unwrap().is_empty());
+        assert_eq!(task_aggregators.cache.entry_count(), 0);
 
         // A wild task appears!
         datastore.put_aggregator_task(&task).await.unwrap();
@@ -394,8 +357,9 @@ mod tests {
             task.task_expiration()
         );
 
-        clock.advance(&ttl);
-        clock.advance(&ttl);
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
+        // to sleeps to test TTL functionality.
+        sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert_eq!(
@@ -411,18 +375,18 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let ttl = Duration::from_seconds(600);
+        let ttl = Duration::from_secs(1);
         let task_aggregators = TaskAggregatorCache::new(
-            clock.clone(),
             Arc::clone(&datastore),
             ReportWriteBatcher::new(
                 Arc::clone(&datastore),
                 TestRuntime::default(),
-                100,                         // doesn't matter
-                100,                         // doesn't matter
-                StdDuration::from_secs(100), // doesn't matter
+                100,                      // doesn't matter
+                100,                      // doesn't matter
+                Duration::from_secs(100), // doesn't matter
             ),
             true,
+            10000,
             ttl,
         );
 
@@ -439,8 +403,9 @@ mod tests {
         // We shouldn't see the new task yet.
         assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
 
-        clock.advance(&ttl);
-        clock.advance(&ttl);
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
+        // to sleeps to test TTL functionality.
+        sleep(Duration::from_secs(2)).await;
 
         // Now we should see it.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -468,8 +433,7 @@ mod tests {
             task.task_expiration()
         );
 
-        clock.advance(&ttl);
-        clock.advance(&ttl);
+        sleep(Duration::from_secs(2)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert_eq!(
