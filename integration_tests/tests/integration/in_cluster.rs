@@ -430,6 +430,13 @@ impl InClusterJanusPair {
                 QueryType::TimeInterval => None,
                 QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
+            batch_time_window_size_seconds: match task.query_type() {
+                QueryType::TimeInterval => None,
+                QueryType::FixedSize {
+                    batch_time_window_size,
+                    ..
+                } => batch_time_window_size.map(|window| window.as_seconds()),
+            },
             time_precision_seconds: task.time_precision().as_seconds(),
             collector_credential_id,
         };
