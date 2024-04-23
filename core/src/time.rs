@@ -193,9 +193,6 @@ pub trait TimeExt: Sized {
     /// Add the provided duration to this time.
     fn add(&self, duration: &Duration) -> Result<Self, Error>;
 
-    /// Add the provided duration to this time, saturating at the upper bound of u64.
-    fn saturating_add(&self, duration: &Duration) -> Self;
-
     /// Subtract the provided duration from this time.
     fn sub(&self, duration: &Duration) -> Result<Self, Error>;
 
@@ -248,13 +245,6 @@ impl TimeExt for Time {
             .checked_add(duration.as_seconds())
             .map(Self::from_seconds_since_epoch)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn saturating_add(&self, duration: &Duration) -> Self {
-        Self::from_seconds_since_epoch(
-            self.as_seconds_since_epoch()
-                .saturating_add(duration.as_seconds()),
-        )
     }
 
     fn sub(&self, duration: &Duration) -> Result<Self, Error> {
