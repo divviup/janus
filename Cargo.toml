@@ -116,7 +116,7 @@ trillium-api = { version = "0.2.0-rc.11", default-features = false }
 trillium-caching-headers = "0.2.3"
 trillium-head = "0.2.2"
 trillium-macros = "0.0.6"
-trillium-opentelemetry = "0.6.0"
+trillium-opentelemetry = "0.7.0"
 trillium-prometheus = "0.1.0"
 trillium-proxy = { version = "0.5.4", default-features = false }
 trillium-router = "0.3.6"
