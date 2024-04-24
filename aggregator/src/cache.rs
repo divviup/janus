@@ -7,14 +7,18 @@ use janus_aggregator_core::{
 };
 use janus_core::{hpke::HpkeKeypair, time::Clock};
 use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
-use moka::future::{Cache, CacheBuilder};
+use moka::{
+    future::{Cache, CacheBuilder},
+    ops::compute::Op,
+    Entry,
+};
 use std::{
     collections::HashMap,
     fmt::Debug,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
-use tokio::{spawn, sync::Mutex, task::JoinHandle, time::sleep};
+use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::{debug, error};
 use url::Url;
 
@@ -212,12 +216,9 @@ impl PeerAggregatorCache {
 pub struct TaskAggregatorCache<C: Clock> {
     datastore: Arc<Datastore<C>>,
     report_writer: Arc<ReportWriteBatcher<C>>,
-    cache: Cache<TaskId, TaskAggregatorCacheEntry<C>>,
+    cache: Cache<TaskId, TaskAggregatorRef<C>>,
     cache_none: bool,
 }
-
-/// A cache entry. None indicates that the entry has not been initialized yet.
-type TaskAggregatorCacheEntry<C> = Arc<Mutex<Option<TaskAggregatorRef<C>>>>;
 
 /// An Arc reference to a TaskAggregator. None indicates that there is no such task aggregator in
 /// the database.
@@ -243,43 +244,39 @@ impl<C: Clock> TaskAggregatorCache<C> {
     }
 
     pub async fn get(&self, task_id: &TaskId) -> Result<TaskAggregatorRef<C>, Error> {
-        // Step one: grab the existing entry for this task, if one exists. If there is no existing
-        // entry, write a new uninitialized entry.
-        let entry = self
+        Ok(self
             .cache
-            .get_with(*task_id, async { Default::default() })
-            .await;
-
-        // Step two: if the entry is uninitialized or expired, fill it via a database query. Concurrent
-        // callers requesting the same task will contend over this lock while awaiting the result of
-        // the DB query, ensuring that in the common case only a single query will be made for each
-        // task.
-        let task_aggregator = {
-            let mut entry = entry.lock().await;
-
-            if entry.is_none() {
-                *entry = Some(
-                    self.datastore
-                        .run_tx("task_aggregator_get_task", |tx| {
-                            let task_id = *task_id;
-                            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
-                        })
-                        .await?
-                        .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
-                        .transpose()?
-                        .map(Arc::new),
-                );
-            }
-
-            // Unwrap safety: we've ensured that the entry is initialized in the previous if statement.
-            let task_aggregator = entry.as_ref().unwrap();
-            if !self.cache_none && task_aggregator.is_none() {
-                self.cache.invalidate(task_id).await;
-            }
-            task_aggregator.clone()
-        };
-
-        Ok(task_aggregator)
+            .entry(*task_id)
+            .and_try_compute_with(|entry| async move {
+                match entry {
+                    Some(_) => Ok::<_, Error>(Op::Nop),
+                    None => {
+                        let task = self
+                            .datastore
+                            .run_tx("task_aggregator_get_task", |tx| {
+                                let task_id = *task_id;
+                                Box::pin(async move { tx.get_aggregator_task(&task_id).await })
+                            })
+                            .await?
+                            .map(|task| TaskAggregator::new(task, Arc::clone(&self.report_writer)))
+                            .transpose()?
+                            .map(Arc::new);
+                        match task {
+                            Some(task) => Ok(Op::Put(Some(task))),
+                            None => {
+                                if self.cache_none {
+                                    Ok(Op::Put(None))
+                                } else {
+                                    Ok(Op::Nop)
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .await?
+            .into_entry()
+            .map_or_else(|| None, Entry::into_value))
     }
 }
 
