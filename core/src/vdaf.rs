@@ -537,6 +537,7 @@ macro_rules! vdaf_dispatch {
 #[cfg(test)]
 mod tests {
     use super::VdafInstance;
+    use assert_matches::assert_matches;
     use serde_test::{assert_tokens, Token};
 
     #[test]
@@ -665,6 +666,16 @@ mod tests {
                 name: "VdafInstance",
                 variant: "FakeFailsPrepStep",
             }],
+        );
+
+        // Backwards compatibility
+        assert_matches!(
+            serde_yaml::from_str(
+                "---
+!Prio3Sum
+  bits: 12"
+            ),
+            Ok(VdafInstance::Prio3Sum { bits: 12 })
         );
     }
 }
