@@ -50,7 +50,7 @@ use {
 #[cfg(all(tokio_unstable, feature = "prometheus"))]
 pub(crate) mod tokio_runtime;
 
-#[cfg(all(test, feature = "prometheus"))]
+#[cfg(test)]
 mod tests;
 
 /// Errors from initializing metrics provider, registry, and exporter.

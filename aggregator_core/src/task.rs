@@ -1939,5 +1939,17 @@ mod tests {
                 batch_time_window_size: None,
             })
         );
+        assert_matches!(
+            serde_yaml::from_str(
+                "---
+!FixedSize
+  max_batch_size: 10
+  batch_time_window_size: 3600"
+            ),
+            Ok(QueryType::FixedSize {
+                max_batch_size: Some(10),
+                batch_time_window_size: Some(duration),
+            }) => assert_eq!(duration, Duration::from_seconds(3600))
+        );
     }
 }
