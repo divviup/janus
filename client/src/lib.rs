@@ -1,4 +1,41 @@
-//! DAP protocol client
+//! A [DAP](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/) client
+//!
+//! This library implements the client role of the DAP-PPM protocol. It uploads measurements to two
+//! DAP aggregator servers which in turn compute a statistical aggregate over data from many
+//! clients, while preserving the privacy of each client's data.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use url::Url;
+//! use prio::vdaf::prio3::Prio3Histogram;
+//! use janus_messages::{Duration, TaskId};
+//! use std::str::FromStr;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let leader_url = Url::parse("https://leader.example.com/").unwrap();
+//!     let helper_url = Url::parse("https://helper.example.com/").unwrap();
+//!     let vdaf = Prio3Histogram::new_histogram(
+//!         2,
+//!         12,
+//!         4
+//!     ).unwrap();
+//!     let taskid = "rc0jgm1MHH6Q7fcI4ZdNUxas9DAYLcJFK5CL7xUl-gU";
+//!     let task = TaskId::from_str(taskid).unwrap();
+//!
+//!     let client = janus_client::Client::new(
+//!         task,
+//!         leader_url,
+//!         helper_url,
+//!         Duration::from_seconds(300),
+//!         vdaf
+//!     )
+//!     .await
+//!     .unwrap();
+//!     client.upload(&5).await.unwrap();
+//! }
+//! ```
 
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
