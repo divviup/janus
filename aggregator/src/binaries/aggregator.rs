@@ -2,7 +2,10 @@ use crate::{
     aggregator::{self, http_handlers::aggregator_handler},
     binaries::garbage_collector::run_garbage_collector,
     binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
-    cache::GlobalHpkeKeypairCache,
+    cache::{
+        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+    },
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use anyhow::{anyhow, Context, Result};
@@ -342,6 +345,18 @@ pub struct Config {
     /// specify this.
     #[serde(default)]
     pub global_hpke_configs_refresh_interval: Option<u64>,
+
+    /// Defines how long to cache tasks for, in seconds. This affects how often the aggregator
+    /// becomes aware of task parameter changes. If unspecified, default is defined by
+    /// [`TASK_AGGREGATOR_CACHE_DEFAULT_TTL`]. You shouldn't normally have to specify this.
+    #[serde(default)]
+    pub task_cache_ttl_seconds: Option<u64>,
+
+    /// Defines how many tasks can be cached. This affects how much memory the aggregator might use
+    /// to store cached tasks. If unspecified, default is defined by
+    /// [`TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY`]. You shouldn't normally have to specify this.
+    #[serde(default)]
+    pub task_cache_capacity: Option<u64>,
 }
 
 fn default_task_counter_shard_count() -> u64 {
@@ -398,6 +413,13 @@ impl Config {
                 .as_deref()
                 .map(parse_pem_ec_private_key)
                 .transpose()?,
+            task_cache_ttl: match self.task_cache_ttl_seconds {
+                Some(ttl) => Duration::from_secs(ttl),
+                None => TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+            },
+            task_cache_capacity: self
+                .task_cache_capacity
+                .unwrap_or(TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY),
         })
     }
 }
@@ -502,6 +524,8 @@ mod tests {
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: Some(42),
+            task_cache_ttl_seconds: None,
+            task_cache_capacity: None,
         })
     }
 

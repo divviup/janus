@@ -56,7 +56,6 @@ janus_aggregator_core = { version = "0.7.5", path = "aggregator_core" }
 janus_client = { version = "0.7.5", path = "client" }
 janus_collector = { version = "0.7.5", path = "collector" }
 janus_core = { version = "0.7.5", path = "core" }
-janus_integration_tests = { version = "0.7.5", path = "integration_tests" }
 janus_interop_binaries = { version = "0.7.5", path = "interop_binaries" }
 janus_messages = { version = "0.7.5", path = "messages" }
 k8s-openapi = { version = "0.21.0", features = ["v1_26"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`

@@ -5409,7 +5409,9 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    /// Helper function to look up (cached) information about a given task.
+    /// Helper function to look up (cached) information about a given task. The cache is retained
+    /// indefinitely. It is assumed that the parameters stored in a [`TaskInfo`] are never changed
+    /// so this should be fine.
     async fn task_info_for(&self, task_id: &TaskId) -> Result<Option<TaskInfo>, Error> {
         // We fetch the task's primary key & task-level information in a separate query. This will
         // allow the query planner to make more accurate row count estimates, by comparing concrete
