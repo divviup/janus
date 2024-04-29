@@ -45,7 +45,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
-divviup-client = { version = "0.2", features = ["admin"] }
+divviup-client = { version = "0.3", features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 tempfile = "3"
