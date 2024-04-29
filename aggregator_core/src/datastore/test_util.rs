@@ -19,21 +19,19 @@ use sqlx::{
 use std::{
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Barrier, Weak},
-    thread::{self, JoinHandle},
+    sync::{Arc, Weak},
     time::Duration,
 };
-use testcontainers::{runners::SyncRunner, RunnableImage};
-use tokio::sync::{oneshot, Mutex};
+use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
+use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
 
 struct EphemeralDatabase {
+    _db_container: ContainerAsync<Postgres>,
     port_number: u16,
-    shutdown_barrier: Arc<Barrier>,
-    join_handle: Option<JoinHandle<()>>,
 }
 
 impl EphemeralDatabase {
@@ -51,29 +49,15 @@ impl EphemeralDatabase {
     }
 
     async fn start() -> Self {
-        let (port_tx, port_rx) = oneshot::channel();
-        let shutdown_barrier = Arc::new(Barrier::new(2));
-        let join_handle = thread::spawn({
-            let shutdown_barrier = Arc::clone(&shutdown_barrier);
-            move || {
-                // Start an instance of Postgres running in a container.
-                let db_container = RunnableImage::from(Postgres::default()).start();
-                const POSTGRES_DEFAULT_PORT: u16 = 5432;
-                let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
-                trace!("Postgres container is up with port {port_number}");
-                port_tx.send(port_number).unwrap();
-
-                // Wait for the barrier as a shutdown signal.
-                shutdown_barrier.wait();
-                trace!("Shutting down Postgres container with port {port_number}");
-            }
-        });
-        let port_number = port_rx.await.unwrap();
+        // Start an instance of Postgres running in a container.
+        let db_container = RunnableImage::from(Postgres::default()).start().await;
+        const POSTGRES_DEFAULT_PORT: u16 = 5432;
+        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
+        trace!("Postgres container is up with port {port_number}");
 
         Self {
+            _db_container: db_container,
             port_number,
-            shutdown_barrier,
-            join_handle: Some(join_handle),
         }
     }
 
@@ -82,17 +66,6 @@ impl EphemeralDatabase {
             "postgres://postgres:postgres@127.0.0.1:{}/{db_name}",
             self.port_number
         )
-    }
-}
-
-impl Drop for EphemeralDatabase {
-    fn drop(&mut self) {
-        // Wait on the shutdown barrier, which will cause the container-management thread to
-        // begin shutdown. Then wait for the container-management thread itself to terminate.
-        // This guarantees container shutdown finishes before dropping the EphemeralDatabase
-        // completes.
-        self.shutdown_barrier.wait();
-        self.join_handle.take().unwrap().join().unwrap();
     }
 }
 
