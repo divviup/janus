@@ -37,26 +37,21 @@ use janus_interop_binaries::{
 use janus_messages::Role;
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "testcontainer")]
-use testcontainers::{clients::Cli, RunnableImage};
+use testcontainers::{runners::AsyncRunner, RunnableImage};
 use trillium_tokio::Stopper;
 
 /// Represents a running Janus test instance in a container.
 #[cfg(feature = "testcontainer")]
-pub struct JanusContainer<'a> {
-    container: ContainerLogsDropGuard<'a, Aggregator>,
+pub struct JanusContainer {
+    _container: ContainerLogsDropGuard<Aggregator>,
+    port: u16,
 }
 
 #[cfg(feature = "testcontainer")]
-impl<'a> JanusContainer<'a> {
+impl JanusContainer {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(
-        test_name: &str,
-        container_client: &'a Cli,
-        network: &str,
-        task: &Task,
-        role: Role,
-    ) -> JanusContainer<'a> {
+    pub async fn new(test_name: &str, network: &str, task: &Task, role: Role) -> JanusContainer {
         // Start the Janus interop aggregator container running.
         let endpoint = match role {
             Role::Leader => task.leader_aggregator_endpoint(),
@@ -65,14 +60,16 @@ impl<'a> JanusContainer<'a> {
         };
         let container = ContainerLogsDropGuard::new_janus(
             test_name,
-            container_client.run(
-                RunnableImage::from(Aggregator::default())
-                    .with_network(network)
-                    .with_env_var(get_rust_log_level())
-                    .with_container_name(endpoint.host_str().unwrap()),
-            ),
+            RunnableImage::from(Aggregator::default())
+                .with_network(network)
+                .with_env_var(get_rust_log_level())
+                .with_container_name(endpoint.host_str().unwrap())
+                .start()
+                .await,
         );
-        let port = container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
+        let port = container
+            .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+            .await;
 
         // Wait for the container to start listening on its port.
         await_http_server(port).await;
@@ -80,13 +77,15 @@ impl<'a> JanusContainer<'a> {
         // Write the given task to the Janus instance we started.
         interop_api::aggregator_add_task(port, task.clone(), role).await;
 
-        Self { container }
+        Self {
+            _container: container,
+            port,
+        }
     }
 
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
-        self.container
-            .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+        self.port
     }
 }
 

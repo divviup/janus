@@ -6,10 +6,7 @@ use crate::{
     initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_core::{
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
-    vdaf::VdafInstance,
-};
+use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 use janus_integration_tests::{
     client::{ClientBackend, InteropClient},
     janus::JanusContainer,
@@ -17,13 +14,8 @@ use janus_integration_tests::{
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 use std::time::Duration;
-use testcontainers::clients::Cli;
 
-async fn run_divviup_ts_integration_test(
-    test_name: &str,
-    container_client: &Cli,
-    vdaf: VdafInstance,
-) {
+async fn run_divviup_ts_integration_test(test_name: &str, vdaf: VdafInstance) {
     let (task_parameters, task_builder) = build_test_task(
         TaskBuilder::new(QueryType::TimeInterval, vdaf),
         TestContext::VirtualNetwork,
@@ -32,13 +24,10 @@ async fn run_divviup_ts_integration_test(
     );
     let task = task_builder.build();
     let network = generate_network_name();
-    let leader =
-        JanusContainer::new(test_name, container_client, &network, &task, Role::Leader).await;
-    let helper =
-        JanusContainer::new(test_name, container_client, &network, &task, Role::Helper).await;
+    let leader = JanusContainer::new(test_name, &network, &task, Role::Leader).await;
+    let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
 
     let client_backend = ClientBackend::Container {
-        container_client,
         container_image: InteropClient::divviup_ts(),
         network: &network,
     };
@@ -57,12 +46,7 @@ async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    run_divviup_ts_integration_test(
-        "janus_divviup_ts_count",
-        &container_client(),
-        VdafInstance::Prio3Count,
-    )
-    .await;
+    run_divviup_ts_integration_test("janus_divviup_ts_count", VdafInstance::Prio3Count).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -71,12 +55,8 @@ async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    run_divviup_ts_integration_test(
-        "janus_divviup_ts_sum",
-        &container_client(),
-        VdafInstance::Prio3Sum { bits: 8 },
-    )
-    .await;
+    run_divviup_ts_integration_test("janus_divviup_ts_sum", VdafInstance::Prio3Sum { bits: 8 })
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -87,7 +67,6 @@ async fn janus_divviup_ts_histogram() {
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_histogram",
-        &container_client(),
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
@@ -104,7 +83,6 @@ async fn janus_divviup_ts_sumvec() {
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_sumvec",
-        &container_client(),
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,
