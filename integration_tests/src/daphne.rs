@@ -10,22 +10,23 @@ use std::{
     process::{Command, Stdio},
     thread::panicking,
 };
-use testcontainers::{clients::Cli, Container, GenericImage, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerAsync, GenericImage, RunnableImage};
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 
 /// Represents a running Daphne test instance.
-pub struct Daphne<'a> {
-    daphne_container: Container<'a, GenericImage>,
+pub struct Daphne {
+    daphne_container: ContainerAsync<GenericImage>,
     role: Role,
+    port: u16,
 }
 
-impl<'a> Daphne<'a> {
+impl Daphne {
     const INTERNAL_SERVING_PORT: u16 = 8080;
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Daphne<'a> {
+    pub async fn new(network: &str, task: &Task) -> Daphne {
         let image_name_and_tag = match task.role() {
             Role::Leader => panic!("A leader container image for Daphne is not yet available"),
             Role::Helper => DAPHNE_HELPER_IMAGE_NAME_AND_TAG,
@@ -38,8 +39,10 @@ impl<'a> Daphne<'a> {
         let runnable_image = RunnableImage::from(GenericImage::new(image_name, image_tag))
             .with_network(network)
             .with_container_name(endpoint.host_str().unwrap());
-        let daphne_container = container_client.run(runnable_image);
-        let port = daphne_container.get_host_port_ipv4(Self::INTERNAL_SERVING_PORT);
+        let daphne_container = runnable_image.start().await;
+        let port = daphne_container
+            .get_host_port_ipv4(Self::INTERNAL_SERVING_PORT)
+            .await;
 
         // Wait for Daphne container to begin listening on the port.
         await_http_server(port).await;
@@ -61,17 +64,17 @@ impl<'a> Daphne<'a> {
         Self {
             daphne_container,
             role,
+            port,
         }
     }
 
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
-        self.daphne_container
-            .get_host_port_ipv4(Self::INTERNAL_SERVING_PORT)
+        self.port
     }
 }
 
-impl<'a> Drop for Daphne<'a> {
+impl Drop for Daphne {
     fn drop(&mut self) {
         // We assume that if a Daphne value is dropped during a panic, we are in the middle of
         // test failure. In this case, export logs if logs_path() suggests doing so.
