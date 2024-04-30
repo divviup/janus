@@ -15,7 +15,7 @@ use prio::{
 use rand::random;
 use serde_json::{json, Value};
 use std::env;
-use testcontainers::{clients::Cli, core::WaitFor, Image, RunnableImage};
+use testcontainers::{core::WaitFor, runners::AsyncRunner, Image, RunnableImage};
 use url::Url;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
@@ -148,7 +148,6 @@ pub enum ClientBackend<'a> {
     /// Uploads reports by starting a containerized client implementation, and sending it requests
     /// using draft-dcook-ppm-dap-interop-test-design.
     Container {
-        container_client: &'a Cli,
         container_image: InteropClient,
         network: &'a str,
     },
@@ -161,7 +160,7 @@ impl<'a> ClientBackend<'a> {
         task_parameters: &TaskParameters,
         (leader_port, helper_port): (u16, u16),
         vdaf: V,
-    ) -> anyhow::Result<ClientImplementation<'a, V>>
+    ) -> anyhow::Result<ClientImplementation<V>>
     where
         V: vdaf::Client<16> + InteropClientEncoding,
     {
@@ -174,26 +173,25 @@ impl<'a> ClientBackend<'a> {
             .await
             .map_err(Into::into),
             ClientBackend::Container {
-                container_client,
                 container_image,
                 network,
             } => Ok(ClientImplementation::new_container(
                 test_name,
-                container_client,
                 container_image.clone(),
                 network,
                 task_parameters,
                 vdaf,
-            )),
+            )
+            .await),
         }
     }
 }
 
-pub struct ContainerClientImplementation<'d, V>
+pub struct ContainerClientImplementation<V>
 where
     V: vdaf::Client<16>,
 {
-    _container: ContainerLogsDropGuard<'d, InteropClient>,
+    _container: ContainerLogsDropGuard<InteropClient>,
     leader: Url,
     helper: Url,
     task_id: TaskId,
@@ -206,15 +204,15 @@ where
 
 /// A DAP client implementation, specialized to work with a particular VDAF. See also
 /// [`ClientBackend`].
-pub enum ClientImplementation<'d, V>
+pub enum ClientImplementation<V>
 where
     V: vdaf::Client<16>,
 {
     InProcess { client: Client<V> },
-    Container(Box<ContainerClientImplementation<'d, V>>),
+    Container(Box<ContainerClientImplementation<V>>),
 }
 
-impl<'d, V> ClientImplementation<'d, V>
+impl<V> ClientImplementation<V>
 where
     V: vdaf::Client<16> + InteropClientEncoding,
 {
@@ -222,7 +220,7 @@ where
         task_parameters: &TaskParameters,
         (leader_port, helper_port): (u16, u16),
         vdaf: V,
-    ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
+    ) -> Result<ClientImplementation<V>, janus_client::Error> {
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .endpoints_for_host_client(leader_port, helper_port);
@@ -237,9 +235,8 @@ where
         Ok(ClientImplementation::InProcess { client })
     }
 
-    pub fn new_container(
+    pub async fn new_container(
         test_name: &str,
-        container_client: &'d Cli,
         container_image: InteropClient,
         network: &str,
         task_parameters: &TaskParameters,
@@ -249,14 +246,14 @@ where
         let client_container_name = format!("client-{random_part}");
         let container = ContainerLogsDropGuard::new_janus(
             test_name,
-            container_client.run(
-                RunnableImage::from(container_image)
-                    .with_network(network)
-                    .with_env_var(get_rust_log_level())
-                    .with_container_name(client_container_name),
-            ),
+            RunnableImage::from(container_image)
+                .with_network(network)
+                .with_env_var(get_rust_log_level())
+                .with_container_name(client_container_name)
+                .start()
+                .await,
         );
-        let host_port = container.get_host_port_ipv4(8080);
+        let host_port = container.get_host_port_ipv4(8080).await;
         let http_client = reqwest::Client::new();
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments

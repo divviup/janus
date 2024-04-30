@@ -514,7 +514,7 @@ mod tests {
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
     use janus_core::test_util::{
         install_test_trace_subscriber,
-        testcontainers::{container_client, Postgres, Volume},
+        testcontainers::{Postgres, Volume},
     };
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::{
@@ -523,7 +523,7 @@ mod tests {
         testing::metrics::InMemoryMetricsExporter,
     };
     use std::{collections::HashMap, fs};
-    use testcontainers::RunnableImage;
+    use testcontainers::{core::Mount, runners::AsyncRunner, RunnableImage};
     use tokio::task::spawn_blocking;
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
@@ -604,7 +604,6 @@ mod tests {
     async fn postgres_tls_connection() {
         install_test_trace_subscriber();
 
-        let client = container_client();
         // We need to be careful about providing the certificate and private key to the Postgres
         // container. The key must have '-rw-------' permissions, and both must be readable by the
         // postgres user, which has UID 70 inside the container at time of writing. Merely mounting
@@ -629,7 +628,7 @@ mod tests {
                 .to_string(),
             ]),
         ))
-        .with_volume((
+        .with_mount(Mount::bind_mount(
             fs::canonicalize("tests/tls_files")
                 .unwrap()
                 .into_os_string()
@@ -637,8 +636,8 @@ mod tests {
                 .unwrap(),
             "/etc/ssl/postgresql_host",
         ))
-        .with_volume((volume.name(), "/etc/ssl/postgresql"));
-        let setup_container = client.run(setup_image);
+        .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
+        let setup_container = setup_image.start().await;
         drop(setup_container);
 
         let image = RunnableImage::from((
@@ -652,10 +651,10 @@ mod tests {
                 "ssl_key_file=/etc/ssl/postgresql/127.0.0.1-key.pem".to_string(),
             ]),
         ))
-        .with_volume((volume.name(), "/etc/ssl/postgresql"));
-        let db_container = client.run(image);
+        .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
+        let db_container = image.start().await;
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
+        let port = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
 
         let db_config = DbConfig {
             url: format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=require")
