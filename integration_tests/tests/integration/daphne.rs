@@ -3,10 +3,7 @@ use crate::{
     initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_core::{
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
-    vdaf::VdafInstance,
-};
+use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
 use janus_integration_tests::janus::JanusContainer;
 use janus_integration_tests::{
@@ -47,18 +44,8 @@ async fn daphne_janus() {
         .with_leader_aggregator_endpoint(leader_aggregator_endpoint)
         .build();
 
-    let container_client = container_client();
-    let leader = Daphne::new(
-        TEST_NAME,
-        &container_client,
-        &network,
-        &task,
-        Role::Leader,
-        true,
-    )
-    .await;
-    let helper =
-        JanusContainer::new(TEST_NAME, &container_client, &network, &task, Role::Helper).await;
+    let leader = Daphne::new(TEST_NAME, &network, &task, Role::Leader, true).await;
+    let helper = JanusContainer::new(TEST_NAME, &network, &task, Role::Helper).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -99,18 +86,8 @@ async fn janus_daphne() {
         .with_helper_aggregator_endpoint(helper_aggregator_endpoint)
         .build();
 
-    let container_client = container_client();
-    let leader =
-        JanusContainer::new(TEST_NAME, &container_client, &network, &task, Role::Leader).await;
-    let helper = Daphne::new(
-        TEST_NAME,
-        &container_client,
-        &network,
-        &task,
-        Role::Helper,
-        true,
-    )
-    .await;
+    let leader = JanusContainer::new(TEST_NAME, &network, &task, Role::Leader).await;
+    let helper = Daphne::new(TEST_NAME, &network, &task, Role::Helper, true).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -133,7 +110,6 @@ async fn janus_in_process_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let container_client = container_client();
     let (mut task_parameters, mut task_builder) = build_test_task(
         TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count),
         TestContext::VirtualNetwork,
@@ -149,7 +125,6 @@ async fn janus_in_process_daphne() {
         .set_path(VERSION_PATH.to_owned());
     let helper = Daphne::new(
         TEST_NAME,
-        &container_client,
         &network,
         &task_builder.clone().build(),
         Role::Helper,

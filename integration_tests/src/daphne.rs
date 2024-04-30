@@ -7,29 +7,29 @@ use janus_interop_binaries::{
 };
 use janus_messages::{Role, Time};
 use serde_json::json;
-use testcontainers::{clients::Cli, GenericImage, RunnableImage};
+use testcontainers::{runners::AsyncRunner, GenericImage, RunnableImage};
 use url::Url;
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 
 /// Represents a running Daphne test instance.
-pub struct Daphne<'a> {
-    daphne_container: Option<ContainerLogsDropGuard<'a, GenericImage>>,
+pub struct Daphne {
+    _daphne_container: Option<ContainerLogsDropGuard<GenericImage>>,
+    port: u16,
 }
 
-impl<'a> Daphne<'a> {
+impl Daphne {
     const INTERNAL_SERVING_PORT: u16 = 8788;
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
     pub async fn new(
         test_name: &str,
-        container_client: &'a Cli,
         network: &str,
         task: &Task,
         role: Role,
         start_container: bool,
-    ) -> Daphne<'a> {
+    ) -> Daphne {
         let (endpoint, image_name_and_tag) = match role {
             Role::Leader => panic!("A leader container image for Daphne is not yet available"),
             Role::Helper => (
@@ -51,10 +51,12 @@ impl<'a> Daphne<'a> {
                 .with_container_name(endpoint.host_str().unwrap());
             let daphne_container = ContainerLogsDropGuard::new(
                 test_name,
-                container_client.run(runnable_image),
+                runnable_image.start().await,
                 ContainerLogsSource::Path("/logs".into()),
             );
-            let port = daphne_container.get_host_port_ipv4(Self::INTERNAL_SERVING_PORT);
+            let port = daphne_container
+                .get_host_port_ipv4(Self::INTERNAL_SERVING_PORT)
+                .await;
             (port, Some(daphne_container))
         } else {
             (Self::INTERNAL_SERVING_PORT, None)
@@ -123,15 +125,14 @@ impl<'a> Daphne<'a> {
         // Write the given task to the Daphne instance we started.
         interop_api::aggregator_add_task(port, task, role).await;
 
-        Self { daphne_container }
+        Self {
+            _daphne_container: daphne_container,
+            port,
+        }
     }
 
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
-        self.daphne_container
-            .as_ref()
-            .map_or(Self::INTERNAL_SERVING_PORT, |container| {
-                container.get_host_port_ipv4(Self::INTERNAL_SERVING_PORT)
-            })
+        self.port
     }
 }
