@@ -27,7 +27,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use testcontainers::{Container, Image};
+use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
@@ -382,9 +382,9 @@ struct ContainerInspectEntry {
     name: String,
 }
 
-pub struct ContainerLogsDropGuard<'d, I: Image> {
+pub struct ContainerLogsDropGuard<I: Image> {
     test_name: String,
-    container: Container<'d, I>,
+    container: ContainerAsync<I>,
     source: ContainerLogsSource,
 }
 
@@ -395,12 +395,12 @@ pub enum ContainerLogsSource {
     Path(String),
 }
 
-impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
+impl<I: Image> ContainerLogsDropGuard<I> {
     pub fn new(
         test_name: &str,
-        container: Container<'d, I>,
+        container: ContainerAsync<I>,
         source: ContainerLogsSource,
-    ) -> ContainerLogsDropGuard<'d, I> {
+    ) -> ContainerLogsDropGuard<I> {
         ContainerLogsDropGuard {
             test_name: test_name.into(),
             container,
@@ -408,10 +408,7 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
         }
     }
 
-    pub fn new_janus(
-        test_name: &str,
-        container: Container<'d, I>,
-    ) -> ContainerLogsDropGuard<'d, I> {
+    pub fn new_janus(test_name: &str, container: ContainerAsync<I>) -> ContainerLogsDropGuard<I> {
         ContainerLogsDropGuard {
             test_name: test_name.into(),
             container,
@@ -420,7 +417,7 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
     }
 }
 
-impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
+impl<I: Image> Drop for ContainerLogsDropGuard<I> {
     fn drop(&mut self) {
         // The unwraps in this code block would induce a double panic, but we accept this risk
         // since it happens only in test code. This is also our main method of debugging
@@ -476,8 +473,8 @@ impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     }
 }
 
-impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
-    type Target = Container<'d, I>;
+impl<I: Image> Deref for ContainerLogsDropGuard<I> {
+    type Target = ContainerAsync<I>;
 
     fn deref(&self) -> &Self::Target {
         &self.container

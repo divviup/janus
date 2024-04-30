@@ -4,7 +4,7 @@ use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use janus_core::{
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
+    test_util::install_test_trace_subscriber,
     time::{Clock, RealClock, TimeExt},
     vdaf::VERIFY_KEY_LENGTH,
 };
@@ -23,7 +23,7 @@ use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
-use testcontainers::RunnableImage;
+use testcontainers::{runners::AsyncRunner, RunnableImage};
 use tokio::time::sleep;
 
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -61,54 +61,61 @@ async fn run(
     };
 
     // Create and start containers.
-    let container_client = container_client();
     let network = generate_network_name();
 
     let client_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        container_client.run(
-            RunnableImage::from(Client::default())
-                .with_network(&network)
-                .with_env_var(get_rust_log_level())
-                .with_container_name(generate_unique_name("client")),
-        ),
+        RunnableImage::from(Client::default())
+            .with_network(&network)
+            .with_env_var(get_rust_log_level())
+            .with_container_name(generate_unique_name("client"))
+            .start()
+            .await,
     );
-    let client_port = client_container.get_host_port_ipv4(Client::INTERNAL_SERVING_PORT);
+    let client_port = client_container
+        .get_host_port_ipv4(Client::INTERNAL_SERVING_PORT)
+        .await;
 
     let leader_name = generate_unique_name("leader");
     let leader_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        container_client.run(
-            RunnableImage::from(Aggregator::default())
-                .with_network(&network)
-                .with_env_var(get_rust_log_level())
-                .with_container_name(leader_name.clone()),
-        ),
+        RunnableImage::from(Aggregator::default())
+            .with_network(&network)
+            .with_env_var(get_rust_log_level())
+            .with_container_name(leader_name.clone())
+            .start()
+            .await,
     );
-    let leader_port = leader_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
+    let leader_port = leader_container
+        .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+        .await;
 
     let helper_name = generate_unique_name("helper");
     let helper_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        container_client.run(
-            RunnableImage::from(Aggregator::default())
-                .with_network(&network)
-                .with_env_var(get_rust_log_level())
-                .with_container_name(helper_name.clone()),
-        ),
+        RunnableImage::from(Aggregator::default())
+            .with_network(&network)
+            .with_env_var(get_rust_log_level())
+            .with_container_name(helper_name.clone())
+            .start()
+            .await,
     );
-    let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
+    let helper_port = helper_container
+        .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+        .await;
 
     let collector_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        container_client.run(
-            RunnableImage::from(Collector::default())
-                .with_network(&network)
-                .with_env_var(get_rust_log_level())
-                .with_container_name(generate_unique_name("collector")),
-        ),
+        RunnableImage::from(Collector::default())
+            .with_network(&network)
+            .with_env_var(get_rust_log_level())
+            .with_container_name(generate_unique_name("collector"))
+            .start()
+            .await,
     );
-    let collector_port = collector_container.get_host_port_ipv4(Collector::INTERNAL_SERVING_PORT);
+    let collector_port = collector_container
+        .get_host_port_ipv4(Collector::INTERNAL_SERVING_PORT)
+        .await;
 
     // Wait for all containers to sucessfully respond to HTTP requests.
     join_all(

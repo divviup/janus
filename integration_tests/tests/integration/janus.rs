@@ -2,8 +2,6 @@
 use crate::common::test_task_builder;
 use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
 use janus_aggregator_core::task::QueryType;
-#[cfg(feature = "testcontainer")]
-use janus_core::test_util::testcontainers::container_client;
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
 use janus_integration_tests::janus::JanusContainer;
@@ -12,32 +10,29 @@ use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, Task
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 use std::time::Duration;
-#[cfg(feature = "testcontainer")]
-use testcontainers::clients::Cli;
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 #[cfg(feature = "testcontainer")]
-struct JanusContainerPair<'a> {
+struct JanusContainerPair {
     /// Task parameters needed by the client and collector, for the task configured in both Janus
     /// aggregators.
     task_parameters: TaskParameters,
 
     /// Handle to the leader's resources, which are released on drop.
-    leader: JanusContainer<'a>,
+    leader: JanusContainer,
     /// Handle to the helper's resources, which are released on drop.
-    helper: JanusContainer<'a>,
+    helper: JanusContainer,
 }
 
 #[cfg(feature = "testcontainer")]
-impl<'a> JanusContainerPair<'a> {
+impl JanusContainerPair {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
     /// the given VDAF and query type.
     pub async fn new(
         test_name: &str,
-        container_client: &'a Cli,
         vdaf: VdafInstance,
         query_type: QueryType,
-    ) -> JanusContainerPair<'a> {
+    ) -> JanusContainerPair {
         let (task_parameters, task_builder) = test_task_builder(
             vdaf,
             query_type,
@@ -47,10 +42,8 @@ impl<'a> JanusContainerPair<'a> {
         let task = task_builder.build();
 
         let network = generate_network_name();
-        let leader =
-            JanusContainer::new(test_name, container_client, &network, &task, Role::Leader).await;
-        let helper =
-            JanusContainer::new(test_name, container_client, &network, &task, Role::Helper).await;
+        let leader = JanusContainer::new(test_name, &network, &task, Role::Leader).await;
+        let helper = JanusContainer::new(test_name, &network, &task, Role::Helper).await;
 
         Self {
             task_parameters,
@@ -107,14 +100,8 @@ async fn janus_janus_count() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let container_client = container_client();
-    let janus_pair = JanusContainerPair::new(
-        TEST_NAME,
-        &container_client,
-        VdafInstance::Prio3Count,
-        QueryType::TimeInterval,
-    )
-    .await;
+    let janus_pair =
+        JanusContainerPair::new(TEST_NAME, VdafInstance::Prio3Count, QueryType::TimeInterval).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -153,10 +140,8 @@ async fn janus_janus_sum_16() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let container_client = container_client();
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
-        &container_client,
         VdafInstance::Prio3Sum { bits: 16 },
         QueryType::TimeInterval,
     )
@@ -199,10 +184,8 @@ async fn janus_janus_histogram_4_buckets() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let container_client = container_client();
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
-        &container_client,
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
@@ -254,10 +237,8 @@ async fn janus_janus_fixed_size() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let container_client = container_client();
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
-        &container_client,
         VdafInstance::Prio3Count,
         QueryType::FixedSize {
             max_batch_size: 50,
@@ -308,10 +289,8 @@ async fn janus_janus_sum_vec() {
     static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
 
-    let container_client = container_client();
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
-        &container_client,
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,

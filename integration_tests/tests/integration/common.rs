@@ -209,7 +209,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     leader_port: u16,
     vdaf: V,
     test_case: &AggregationTestCase<V>,
-    client_implementation: &ClientImplementation<'_, V>,
+    client_implementation: &ClientImplementation<V>,
 ) where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
