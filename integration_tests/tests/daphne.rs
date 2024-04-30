@@ -1,9 +1,6 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator_core::task::{QueryType, Task};
-use janus_core::{
-    task::VdafInstance,
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
-};
+use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber};
 use janus_integration_tests::{client::ClientBackend, daphne::Daphne, janus::Janus};
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
@@ -34,9 +31,8 @@ async fn daphne_janus() {
         .try_into()
         .unwrap();
 
-    let container_client = container_client();
-    let leader = Daphne::new(&container_client, &network, &leader_task).await;
-    let helper = Janus::new(&container_client, &network, &helper_task).await;
+    let leader = Daphne::new(&network, &leader_task).await;
+    let helper = Janus::new(&network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -70,9 +66,8 @@ async fn janus_daphne() {
         .try_into()
         .unwrap();
 
-    let container_client = container_client();
-    let leader = Janus::new(&container_client, &network, &leader_task).await;
-    let helper = Daphne::new(&container_client, &network, &helper_task).await;
+    let leader = Janus::new(&network, &leader_task).await;
+    let helper = Daphne::new(&network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

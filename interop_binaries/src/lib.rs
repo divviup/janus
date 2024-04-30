@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     thread::panicking,
 };
-use testcontainers::{Container, Image};
+use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
@@ -392,17 +392,17 @@ struct ContainerInspectEntry {
     name: String,
 }
 
-pub struct ContainerLogsDropGuard<'d, I: Image> {
-    container: Container<'d, I>,
+pub struct ContainerLogsDropGuard<I: Image> {
+    container: ContainerAsync<I>,
 }
 
-impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
-    pub fn new(container: Container<I>) -> ContainerLogsDropGuard<I> {
+impl<I: Image> ContainerLogsDropGuard<I> {
+    pub fn new(container: ContainerAsync<I>) -> ContainerLogsDropGuard<I> {
         ContainerLogsDropGuard { container }
     }
 }
 
-impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
+impl<I: Image> Drop for ContainerLogsDropGuard<I> {
     fn drop(&mut self) {
         if !panicking() {
             return;
@@ -442,8 +442,8 @@ impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     }
 }
 
-impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
-    type Target = Container<'d, I>;
+impl<I: Image> Deref for ContainerLogsDropGuard<I> {
+    type Target = ContainerAsync<I>;
 
     fn deref(&self) -> &Self::Target {
         &self.container

@@ -10,26 +10,29 @@ use std::{
     process::{Command, Stdio},
     thread::panicking,
 };
-use testcontainers::{clients::Cli, Container, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
 
 /// Represents a running Janus test instance in a container.
-pub struct Janus<'a> {
+pub struct Janus {
     role: Role,
-    container: Container<'a, Aggregator>,
+    container: ContainerAsync<Aggregator>,
+    port: u16,
 }
 
-impl<'a> Janus<'a> {
+impl Janus {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Janus<'a> {
+    pub async fn new(network: &str, task: &Task) -> Janus {
         // Start the Janus interop aggregator container running.
         let endpoint = task.aggregator_url(task.role()).unwrap();
-        let container = container_client.run(
-            RunnableImage::from(Aggregator::default())
-                .with_network(network)
-                .with_container_name(endpoint.host_str().unwrap()),
-        );
-        let port = container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
+        let container = RunnableImage::from(Aggregator::default())
+            .with_network(network)
+            .with_container_name(endpoint.host_str().unwrap())
+            .start()
+            .await;
+        let port = container
+            .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+            .await;
 
         // Wait for the container to start listening on its port.
         await_http_server(port).await;
@@ -40,17 +43,17 @@ impl<'a> Janus<'a> {
         Self {
             role: *task.role(),
             container,
+            port,
         }
     }
 
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
-        self.container
-            .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+        self.port
     }
 }
 
-impl<'a> Drop for Janus<'a> {
+impl Drop for Janus {
     fn drop(&mut self) {
         // We assume that if a Janus value is dropped during a panic, we are in the middle of
         // test failure. In this case, export logs if log_export_path() suggests doing so.
