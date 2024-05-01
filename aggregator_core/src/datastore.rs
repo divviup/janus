@@ -1461,7 +1461,6 @@ WHERE client_reports.task_id = $1
                 "-- mark_report_aggregated()
 UPDATE client_reports
 SET aggregation_started = TRUE, updated_at = $4, updated_by = $5
-FROM tasks
 WHERE client_reports.task_id = $1
   AND client_reports.report_id = $2
   AND client_reports.client_timestamp >= $3",
