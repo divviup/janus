@@ -1,5 +1,7 @@
 //! Configures a tracing subscriber for Janus.
 
+#[cfg(feature = "otlp")]
+use opentelemetry_otlp::WithExportConfig;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{stdout, IsTerminal},
@@ -11,9 +13,6 @@ use tracing_log::LogTracer;
 use tracing_subscriber::{
     filter::FromEnvError, layer::SubscriberExt, reload, EnvFilter, Layer, Registry,
 };
-
-#[cfg(feature = "otlp")]
-use opentelemetry_otlp::WithExportConfig;
 
 /// Errors from initializing trace subscriber.
 #[derive(Debug, thiserror::Error)]

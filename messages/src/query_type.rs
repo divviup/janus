@@ -1,6 +1,5 @@
-use crate::{Collection, FixedSizeQuery, Query};
-
 use super::{BatchId, Interval};
+use crate::{Collection, FixedSizeQuery, Query};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{CodecError, Decode, Encode};

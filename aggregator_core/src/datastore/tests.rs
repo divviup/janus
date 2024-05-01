@@ -1,3 +1,6 @@
+// This function is only used when there are multiple supported versions.
+#[allow(unused_imports)]
+use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
 use crate::{
     datastore::{
         models::{
@@ -63,10 +66,6 @@ use std::{
 };
 use tokio::{time::timeout, try_join};
 use url::Url;
-
-// This function is only used when there are multiple supported versions.
-#[allow(unused_imports)]
-use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);

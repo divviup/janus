@@ -1,3 +1,4 @@
+use super::SUPPORTED_SCHEMA_VERSIONS;
 use crate::{
     datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
@@ -26,8 +27,6 @@ use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
 use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
-
-use super::SUPPORTED_SCHEMA_VERSIONS;
 
 struct EphemeralDatabase {
     _db_container: ContainerAsync<Postgres>,

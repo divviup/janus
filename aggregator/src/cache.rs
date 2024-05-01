@@ -282,8 +282,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
+    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
     use janus_aggregator_core::{
         datastore::test_util::ephemeral_datastore,
         task::{test_util::TaskBuilder, QueryType},
@@ -294,9 +293,8 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::Time;
+    use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
-
-    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
 
     #[tokio::test]
     async fn task_aggregator_cache() {

@@ -275,6 +275,7 @@ impl KeyType for VdafVerifyKeyLength {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use super::{PeerAggregator, VerifyKeyInit};
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::test_util::generate_test_hpke_config_and_private_key,
@@ -282,8 +283,6 @@ pub mod test_util {
     use janus_messages::{Duration, HpkeConfig, Role};
     use rand::random;
     use url::Url;
-
-    use super::{PeerAggregator, VerifyKeyInit};
 
     #[derive(Debug, Clone)]
     pub struct PeerAggregatorBuilder(PeerAggregator);

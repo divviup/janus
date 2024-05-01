@@ -243,9 +243,8 @@ impl Options {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-
     use super::Options;
+    use clap::CommandFactory;
 
     #[test]
     fn verify_clap_app() {

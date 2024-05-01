@@ -1,22 +1,19 @@
-use std::{sync::Arc, time::Duration};
-
+use super::aggregator::GarbageCollectorConfig;
+use crate::{
+    aggregator::garbage_collector::GarbageCollector,
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
+    config::{BinaryConfig, CommonConfig},
+};
 use anyhow::Result;
 use clap::Parser;
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::time::RealClock;
 use opentelemetry::metrics::Meter;
 use serde::{Deserialize, Serialize};
+use std::{sync::Arc, time::Duration};
 use tokio::time::interval;
 use tracing::error;
 use trillium_tokio::Stopper;
-
-use crate::{
-    aggregator::garbage_collector::GarbageCollector,
-    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
-    config::{BinaryConfig, CommonConfig},
-};
-
-use super::aggregator::GarbageCollectorConfig;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     let BinaryContext {
@@ -116,11 +113,7 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddr};
-
-    use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
-
+    use super::{Config, Options};
     use crate::{
         binaries::aggregator::GarbageCollectorConfig,
         config::{
@@ -129,8 +122,9 @@ mod tests {
             CommonConfig,
         },
     };
-
-    use super::{Config, Options};
+    use clap::CommandFactory;
+    use janus_core::test_util::roundtrip_encoding;
+    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn verify_app() {

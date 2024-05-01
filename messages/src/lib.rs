@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
+pub use prio::codec;
 use prio::{
     codec::{
         decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
@@ -28,8 +29,6 @@ use std::{
     str::FromStr,
     time::{SystemTime, SystemTimeError},
 };
-
-pub use prio::codec;
 
 pub mod problem_type;
 pub mod query_type;

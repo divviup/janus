@@ -1123,10 +1123,9 @@ impl<C: Clock> TaskAggregator<C> {
 
 #[cfg(feature = "fpvec_bounded_l2")]
 mod vdaf_ops_strategies {
-    use std::sync::Arc;
-
     use janus_core::vdaf::vdaf_dp_strategies;
     use prio::dp::distributions::ZCdpDiscreteGaussian;
+    use std::sync::Arc;
 
     #[derive(Debug)]
     pub enum Prio3FixedPointBoundedL2VecSum {
