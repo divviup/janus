@@ -600,8 +600,12 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "-- get_current_schema_migration_version()
-SELECT version, description FROM _sqlx_migrations
-WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
+SELECT version,
+    description
+FROM _sqlx_migrations
+WHERE success = TRUE
+ORDER BY version DESC
+LIMIT(1)",
             )
             .await?;
         let row = self.query_one(&stmt, &[]).await?;
@@ -626,17 +630,53 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
             .prepare_cached(
                 "-- put_aggregator_task()
 INSERT INTO tasks (
-    task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
-    aggregator_auth_token_hash, collector_auth_token_type,
-    collector_auth_token_hash, created_at, updated_at, updated_by)
+        task_id,
+        aggregator_role,
+        peer_aggregator_endpoint,
+        query_type,
+        vdaf,
+        max_batch_query_count,
+        task_expiration,
+        report_expiry_age,
+        min_batch_size,
+        time_precision,
+        tolerable_clock_skew,
+        collector_hpke_config,
+        vdaf_verify_key,
+        taskprov_task_info,
+        aggregator_auth_token_type,
+        aggregator_auth_token,
+        aggregator_auth_token_hash,
+        collector_auth_token_type,
+        collector_auth_token_hash,
+        created_at,
+        updated_at,
+        updated_by
+    )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22
-)
-ON CONFLICT DO NOTHING",
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+        $16,
+        $17,
+        $18,
+        $19,
+        $20,
+        $21,
+        $22
+    ) ON CONFLICT DO NOTHING",
             )
             .await?;
         check_insert(
@@ -747,11 +787,22 @@ ON CONFLICT DO NOTHING",
             .prepare_cached(
                 "-- put_aggregator_task()
 INSERT INTO task_hpke_keys (
-    task_id, created_at, updated_by, config_id, config, private_key
-)
-SELECT
-    (SELECT id FROM tasks WHERE task_id = $1), $2, $3,
-    * FROM UNNEST($4::SMALLINT[], $5::BYTEA[], $6::BYTEA[])",
+        task_id,
+        created_at,
+        updated_by,
+        config_id,
+        config,
+        private_key
+    )
+SELECT (
+        SELECT id
+        FROM tasks
+        WHERE task_id = $1
+    ),
+    $2,
+    $3,
+    *
+FROM UNNEST($4::SMALLINT [], $5::BYTEA [], $6::BYTEA [])",
             )
             .await?;
         let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
@@ -775,7 +826,8 @@ SELECT
         let stmt = self
             .prepare_cached(
                 "-- delete_task()
-DELETE FROM tasks WHERE task_id = $1",
+DELETE FROM tasks
+WHERE task_id = $1",
             )
             .await?;
         check_single_row_mutation(
@@ -795,8 +847,11 @@ DELETE FROM tasks WHERE task_id = $1",
         let stmt = self
             .prepare_cached(
                 "-- update_task_expiration()
-UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
-   WHERE task_id = $4",
+UPDATE tasks
+SET task_expiration = $1,
+    updated_at = $2,
+    updated_by = $3
+WHERE task_id = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -824,12 +879,26 @@ UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_task()
-SELECT aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
-    aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
-FROM tasks WHERE task_id = $1",
+SELECT aggregator_role,
+    peer_aggregator_endpoint,
+    query_type,
+    vdaf,
+    max_batch_query_count,
+    task_expiration,
+    report_expiry_age,
+    min_batch_size,
+    time_precision,
+    tolerable_clock_skew,
+    collector_hpke_config,
+    vdaf_verify_key,
+    taskprov_task_info,
+    aggregator_auth_token_type,
+    aggregator_auth_token,
+    aggregator_auth_token_hash,
+    collector_auth_token_type,
+    collector_auth_token_hash
+FROM tasks
+WHERE task_id = $1",
             )
             .await?;
         let task_row = self.query_opt(&stmt, params);
@@ -837,8 +906,15 @@ FROM tasks WHERE task_id = $1",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_task()
-SELECT config_id, config, private_key FROM task_hpke_keys
-WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+SELECT config_id,
+    config,
+    private_key
+FROM task_hpke_keys
+WHERE task_id = (
+        SELECT id
+        FROM tasks
+        WHERE task_id = $1
+    )",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, params);
@@ -855,11 +931,25 @@ WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_tasks()
-SELECT task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
-    aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
+SELECT task_id,
+    aggregator_role,
+    peer_aggregator_endpoint,
+    query_type,
+    vdaf,
+    max_batch_query_count,
+    task_expiration,
+    report_expiry_age,
+    min_batch_size,
+    time_precision,
+    tolerable_clock_skew,
+    collector_hpke_config,
+    vdaf_verify_key,
+    taskprov_task_info,
+    aggregator_auth_token_type,
+    aggregator_auth_token,
+    aggregator_auth_token_hash,
+    collector_auth_token_type,
+    collector_auth_token_hash
 FROM tasks",
             )
             .await?;
@@ -868,8 +958,15 @@ FROM tasks",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_tasks()
-SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_hpke_keys.task_id),
-config_id, config, private_key FROM task_hpke_keys",
+SELECT (
+        SELECT tasks.task_id
+        FROM tasks
+        WHERE tasks.id = task_hpke_keys.task_id
+    ),
+    config_id,
+    config,
+    private_key
+FROM task_hpke_keys",
             )
             .await?;
         let hpke_config_rows = self.query(&stmt, &[]);
@@ -1064,8 +1161,10 @@ config_id, config, private_key FROM task_hpke_keys",
         let stmt = self
             .prepare_cached(
                 "-- get_task_ids()
-SELECT task_id FROM tasks
-WHERE task_id > $1 OR $1 IS NULL
+SELECT task_id
+FROM tasks
+WHERE task_id > $1
+    OR $1 IS NULL
 ORDER BY task_id
 LIMIT 5000",
             )
@@ -1098,13 +1197,15 @@ LIMIT 5000",
         let stmt = self
             .prepare_cached(
                 "-- get_client_report()
-SELECT
-    client_timestamp, extensions, public_share, leader_input_share,
+SELECT client_timestamp,
+    extensions,
+    public_share,
+    leader_input_share,
     helper_encrypted_input_share
 FROM client_reports
 WHERE client_reports.task_id = $1
-  AND client_reports.report_id = $2
-  AND client_reports.client_timestamp >= $3",
+    AND client_reports.report_id = $2
+    AND client_reports.client_timestamp >= $3",
             )
             .await?;
         self.query_opt(
@@ -1134,10 +1235,11 @@ WHERE client_reports.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_report_metadatas_for_task()
-SELECT report_id, client_timestamp
+SELECT report_id,
+    client_timestamp
 FROM client_reports
 WHERE client_reports.task_id = $1
-  AND client_reports.client_timestamp >= $2",
+    AND client_reports.client_timestamp >= $2",
             )
             .await?;
         self.query(
@@ -1180,12 +1282,15 @@ WHERE client_reports.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_client_reports_for_task()
-SELECT
-    report_id, client_timestamp, extensions, public_share, leader_input_share,
+SELECT report_id,
+    client_timestamp,
+    extensions,
+    public_share,
+    leader_input_share,
     helper_encrypted_input_share
 FROM client_reports
 WHERE client_reports.task_id = $1
-  AND client_reports.client_timestamp >= $2",
+    AND client_reports.client_timestamp >= $2",
             )
             .await?;
         self.query(
@@ -1281,18 +1386,25 @@ WHERE client_reports.task_id = $1
             .prepare_cached(
                 "-- get_unaggregated_client_reports_for_task()
 WITH unaggregated_reports AS (
-    SELECT client_reports.id FROM client_reports
+    SELECT client_reports.id
+    FROM client_reports
     WHERE client_reports.task_id = $1
-      AND client_reports.aggregation_started = FALSE
-      AND client_reports.client_timestamp >= $2
-    ORDER BY client_timestamp DESC
-    FOR UPDATE OF client_reports SKIP LOCKED
+        AND client_reports.aggregation_started = FALSE
+        AND client_reports.client_timestamp >= $2
+    ORDER BY client_timestamp DESC FOR
+    UPDATE OF client_reports SKIP LOCKED
     LIMIT $5::BIGINT
 )
-UPDATE client_reports SET
-    aggregation_started = TRUE, updated_at = $3, updated_by = $4
-WHERE id IN (SELECT id FROM unaggregated_reports)
-RETURNING report_id, client_timestamp",
+UPDATE client_reports
+SET aggregation_started = TRUE,
+    updated_at = $3,
+    updated_by = $4
+WHERE id IN (
+        SELECT id
+        FROM unaggregated_reports
+    )
+RETURNING report_id,
+    client_timestamp",
             )
             .await?;
         let rows = self
@@ -1349,37 +1461,53 @@ RETURNING report_id, client_timestamp",
             .prepare_cached(
                 "-- get_unaggregated_client_report_ids_by_collect_for_task()
 WITH unaggregated_client_report_ids AS (
-    SELECT DISTINCT report_id, client_timestamp, collection_jobs.aggregation_param
+    SELECT DISTINCT report_id,
+        client_timestamp,
+        collection_jobs.aggregation_param
     FROM collection_jobs
-    INNER JOIN client_reports
-    ON collection_jobs.task_id = client_reports.task_id
-    AND client_reports.client_timestamp <@ collection_jobs.batch_interval
-    LEFT JOIN (
-        SELECT report_aggregations.id, report_aggregations.client_report_id,
-            aggregation_jobs.aggregation_param
-        FROM report_aggregations
-        INNER JOIN aggregation_jobs
-        ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-        WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-    ) AS report_aggs
-    ON report_aggs.client_report_id = client_reports.report_id
-    -- this join is very inefficient, fix before deploying in non-test scenario
-    AND report_aggs.aggregation_param = collection_jobs.aggregation_param
-    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-    AND collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-    AND collection_jobs.state = 'START'
-    AND report_aggs.id IS NULL
+        INNER JOIN client_reports ON collection_jobs.task_id = client_reports.task_id
+        AND client_reports.client_timestamp <@ collection_jobs.batch_interval
+        LEFT JOIN (
+            SELECT report_aggregations.id,
+                report_aggregations.client_report_id,
+                aggregation_jobs.aggregation_param
+            FROM report_aggregations
+                INNER JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+            WHERE aggregation_jobs.task_id = (
+                    SELECT id
+                    FROM tasks
+                    WHERE task_id = $1
+                )
+        ) AS report_aggs ON report_aggs.client_report_id = client_reports.report_id -- this join is very inefficient, fix before deploying in non-test scenario
+        AND report_aggs.aggregation_param = collection_jobs.aggregation_param
+    WHERE client_reports.task_id = (
+            SELECT id
+            FROM tasks
+            WHERE task_id = $1
+        )
+        AND collection_jobs.task_id = (
+            SELECT id
+            FROM tasks
+            WHERE task_id = $1
+        )
+        AND collection_jobs.state = 'START'
+        AND report_aggs.id IS NULL
     LIMIT $2::BIGINT
-),
-updated_client_reports AS (
-    UPDATE client_reports SET aggregation_started = TRUE
+), updated_client_reports AS (
+    UPDATE client_reports
+    SET aggregation_started = TRUE
     FROM unaggregated_client_report_ids
-    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-      AND client_reports.report_id = unaggregated_client_report_ids.report_id
-      AND client_reports.client_timestamp =
-        unaggregated_client_report_ids.client_timestamp
+    WHERE client_reports.task_id = (
+            SELECT id
+            FROM tasks
+            WHERE task_id = $1
+        )
+        AND client_reports.report_id = unaggregated_client_report_ids.report_id
+        AND client_reports.client_timestamp = unaggregated_client_report_ids.client_timestamp
 )
-SELECT report_id, client_timestamp, aggregation_param
+SELECT report_id,
+    client_timestamp,
+    aggregation_param
 FROM unaggregated_client_report_ids",
             )
             .await?;
@@ -1423,10 +1551,12 @@ FROM unaggregated_client_report_ids",
             .prepare_cached(
                 "-- mark_report_unaggregated()
 UPDATE client_reports
-SET aggregation_started = false, updated_at = $4, updated_by = $5
+SET aggregation_started = false,
+    updated_at = $4,
+    updated_by = $5
 WHERE client_reports.task_id = $1
-  AND client_reports.report_id = $2
-  AND client_reports.client_timestamp >= $3",
+    AND client_reports.report_id = $2
+    AND client_reports.client_timestamp >= $3",
             )
             .await?;
         check_single_row_mutation(
@@ -1460,10 +1590,12 @@ WHERE client_reports.task_id = $1
             .prepare_cached(
                 "-- mark_report_aggregated()
 UPDATE client_reports
-SET aggregation_started = TRUE, updated_at = $4, updated_by = $5
+SET aggregation_started = TRUE,
+    updated_at = $4,
+    updated_by = $5
 WHERE client_reports.task_id = $1
-  AND client_reports.report_id = $2
-  AND client_reports.client_timestamp >= $3",
+    AND client_reports.report_id = $2
+    AND client_reports.client_timestamp >= $3",
             )
             .await?;
         self.execute(
@@ -1497,13 +1629,14 @@ WHERE client_reports.task_id = $1
             .prepare_cached(
                 "-- interval_has_unaggregated_reports()
 SELECT EXISTS(
-    SELECT 1 FROM client_reports
-    WHERE client_reports.task_id = $1
-      AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
-      AND client_reports.client_timestamp < UPPER($2::TSRANGE)
-      AND client_reports.client_timestamp >= $3
-      AND client_reports.aggregation_started = FALSE
-) AS unaggregated_report_exists",
+        SELECT 1
+        FROM client_reports
+        WHERE client_reports.task_id = $1
+            AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
+            AND client_reports.client_timestamp < UPPER($2::TSRANGE)
+            AND client_reports.client_timestamp >= $3
+            AND client_reports.aggregation_started = FALSE
+    ) AS unaggregated_report_exists",
             )
             .await?;
         let row = self
@@ -1540,9 +1673,9 @@ SELECT EXISTS(
 SELECT COUNT(1) AS count
 FROM client_reports
 WHERE client_reports.task_id = $1
-  AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
-  AND client_reports.client_timestamp < UPPER($2::TSRANGE)
-  AND client_reports.client_timestamp >= $3",
+    AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
+    AND client_reports.client_timestamp < UPPER($2::TSRANGE)
+    AND client_reports.client_timestamp >= $3",
             )
             .await?;
         let row = self
@@ -1580,11 +1713,12 @@ WHERE client_reports.task_id = $1
                 "-- count_client_reports_for_batch_id()
 SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
 FROM report_aggregations
-JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
+    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+    JOIN tasks ON tasks.id = aggregation_jobs.task_id
+    AND tasks.id = report_aggregations.task_id
 WHERE report_aggregations.task_id = $1
-  AND aggregation_jobs.batch_id = $2
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
+    AND aggregation_jobs.batch_id = $2
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
             )
             .await?;
         let row = self
@@ -1634,23 +1768,39 @@ WHERE report_aggregations.task_id = $1
             .prepare_cached(
                 "-- put_client_report()
 INSERT INTO client_reports (
-    task_id, report_id, client_timestamp, extensions, public_share,
-    leader_input_share, helper_encrypted_input_share, created_at, updated_at,
-    updated_by
-)
-VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-)
-ON CONFLICT(task_id, report_id) DO UPDATE
-    SET (
-        client_timestamp, extensions, public_share, leader_input_share,
-        helper_encrypted_input_share, created_at, updated_at, updated_by
-    ) = (
-        excluded.client_timestamp, excluded.extensions, excluded.public_share,
-        excluded.leader_input_share, excluded.helper_encrypted_input_share,
-        excluded.created_at, excluded.updated_at, excluded.updated_by
+        task_id,
+        report_id,
+        client_timestamp,
+        extensions,
+        public_share,
+        leader_input_share,
+        helper_encrypted_input_share,
+        created_at,
+        updated_at,
+        updated_by
     )
-    WHERE client_reports.client_timestamp < $11",
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(task_id, report_id) DO
+UPDATE
+SET (
+        client_timestamp,
+        extensions,
+        public_share,
+        leader_input_share,
+        helper_encrypted_input_share,
+        created_at,
+        updated_at,
+        updated_by
+    ) = (
+        excluded.client_timestamp,
+        excluded.extensions,
+        excluded.public_share,
+        excluded.leader_input_share,
+        excluded.helper_encrypted_input_share,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
+    )
+WHERE client_reports.client_timestamp < $11",
             )
             .await?;
         check_insert(
@@ -1697,16 +1847,16 @@ ON CONFLICT(task_id, report_id) DO UPDATE
         let stmt = self
             .prepare_cached(
                 "-- scrub_client_report()
-UPDATE client_reports SET
-    extensions = NULL,
+UPDATE client_reports
+SET extensions = NULL,
     public_share = NULL,
     leader_input_share = NULL,
     helper_encrypted_input_share = NULL,
     updated_at = $1,
     updated_by = $2
 WHERE task_id = $3
-  AND report_id = $4
-  AND client_timestamp >= $5",
+    AND report_id = $4
+    AND client_timestamp >= $5",
             )
             .await?;
         check_single_row_mutation(
@@ -1735,12 +1885,14 @@ WHERE task_id = $3
         let row = self
             .query_one(
                 "-- verify_client_report_scrubbed()
-SELECT
-    extensions, public_share, leader_input_share, helper_encrypted_input_share
+SELECT extensions,
+    public_share,
+    leader_input_share,
+    helper_encrypted_input_share
 FROM client_reports
 WHERE task_id = $1
-  AND report_id = $2
-  AND client_timestamp >= $3",
+    AND report_id = $2
+    AND client_timestamp >= $3",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* report_id */ report_id.as_ref(),
@@ -1782,18 +1934,34 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_scrubbed_report()
 INSERT INTO client_reports (
-    task_id, report_id, client_timestamp, created_at, updated_at, updated_by
-)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT(task_id, report_id) DO UPDATE
+        task_id,
+        report_id,
+        client_timestamp,
+        created_at,
+        updated_at,
+        updated_by
+    )
+VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(task_id, report_id) DO
+UPDATE
 SET (
-    client_timestamp, extensions, public_share, leader_input_share,
-    helper_encrypted_input_share, created_at, updated_at, updated_by
-) = (
-    excluded.client_timestamp, excluded.extensions, excluded.public_share,
-    excluded.leader_input_share, excluded.helper_encrypted_input_share,
-    excluded.created_at, excluded.updated_at, excluded.updated_by
-)
+        client_timestamp,
+        extensions,
+        public_share,
+        leader_input_share,
+        helper_encrypted_input_share,
+        created_at,
+        updated_at,
+        updated_by
+    ) = (
+        excluded.client_timestamp,
+        excluded.extensions,
+        excluded.public_share,
+        excluded.leader_input_share,
+        excluded.helper_encrypted_input_share,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
+    )
 WHERE client_reports.client_timestamp < $7",
             )
             .await?;
@@ -1834,13 +2002,16 @@ WHERE client_reports.client_timestamp < $7",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregation_job()
-SELECT
-    aggregation_param, batch_id, client_timestamp_interval, state, step,
+SELECT aggregation_param,
+    batch_id,
+    client_timestamp_interval,
+    state,
+    step,
     last_request_hash
 FROM aggregation_jobs
 WHERE aggregation_jobs.task_id = $1
-  AND aggregation_jobs.aggregation_job_id = $2
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
+    AND aggregation_jobs.aggregation_job_id = $2
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $3",
             )
             .await?;
         self.query_opt(
@@ -1877,12 +2048,16 @@ WHERE aggregation_jobs.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_aggregation_jobs_for_task()
-SELECT
-    aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
-    state, step, last_request_hash
+SELECT aggregation_job_id,
+    aggregation_param,
+    batch_id,
+    client_timestamp_interval,
+    state,
+    step,
+    last_request_hash
 FROM aggregation_jobs
 WHERE aggregation_jobs.task_id = $1
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
             )
             .await?;
         self.query(
@@ -1960,28 +2135,37 @@ WHERE aggregation_jobs.task_id = $1
             .prepare_cached(
                 "-- acquire_incomplete_aggregation_jobs()
 WITH incomplete_jobs AS (
-    SELECT aggregation_jobs.id FROM aggregation_jobs
-    JOIN tasks ON tasks.id = aggregation_jobs.task_id
+    SELECT aggregation_jobs.id
+    FROM aggregation_jobs
+        JOIN tasks ON tasks.id = aggregation_jobs.task_id
     WHERE tasks.aggregator_role = 'LEADER'
-    AND aggregation_jobs.state = 'IN_PROGRESS'
-    AND aggregation_jobs.lease_expiry <= $2
-    AND UPPER(aggregation_jobs.client_timestamp_interval) >=
-        COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
-                 '-infinity'::TIMESTAMP)
-    FOR UPDATE OF aggregation_jobs SKIP LOCKED LIMIT $3
+        AND aggregation_jobs.state = 'IN_PROGRESS'
+        AND aggregation_jobs.lease_expiry <= $2
+        AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE(
+            $2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
+            '-infinity'::TIMESTAMP
+        ) FOR
+    UPDATE OF aggregation_jobs SKIP LOCKED
+    LIMIT $3
 )
-UPDATE aggregation_jobs SET
-    lease_expiry = $1,
+UPDATE aggregation_jobs
+SET lease_expiry = $1,
     lease_token = gen_random_bytes(16),
     lease_attempts = lease_attempts + 1,
     updated_at = $4,
     updated_by = $5
 FROM tasks
 WHERE tasks.id = aggregation_jobs.task_id
-AND aggregation_jobs.id IN (SELECT id FROM incomplete_jobs)
-RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
-          aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
-          aggregation_jobs.lease_attempts",
+    AND aggregation_jobs.id IN (
+        SELECT id
+        FROM incomplete_jobs
+    )
+RETURNING tasks.task_id,
+    tasks.query_type,
+    tasks.vdaf,
+    aggregation_jobs.aggregation_job_id,
+    aggregation_jobs.lease_token,
+    aggregation_jobs.lease_attempts",
             )
             .await?;
         self.query(
@@ -2037,10 +2221,10 @@ SET lease_expiry = '-infinity'::TIMESTAMP,
     updated_at = $1,
     updated_by = $2
 WHERE aggregation_jobs.task_id = $3
-  AND aggregation_jobs.aggregation_job_id = $4
-  AND aggregation_jobs.lease_expiry = $5
-  AND aggregation_jobs.lease_token = $6
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $7",
+    AND aggregation_jobs.aggregation_job_id = $4
+    AND aggregation_jobs.lease_expiry = $5
+    AND aggregation_jobs.lease_token = $6
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $7",
             )
             .await?;
         check_single_row_mutation(
@@ -2079,22 +2263,43 @@ WHERE aggregation_jobs.task_id = $3
         let stmt = self
             .prepare_cached(
                 "-- put_aggregation_job()
-INSERT INTO aggregation_jobs
-    (task_id, aggregation_job_id, aggregation_param, batch_id,
-    client_timestamp_interval, state, step, last_request_hash,
-    created_at, updated_at, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
-    SET (
-        aggregation_param, batch_id, client_timestamp_interval, state, step,
-        last_request_hash, created_at, updated_at, updated_by
+INSERT INTO aggregation_jobs (
+        task_id,
+        aggregation_job_id,
+        aggregation_param,
+        batch_id,
+        client_timestamp_interval,
+        state,
+        step,
+        last_request_hash,
+        created_at,
+        updated_at,
+        updated_by
+    )
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT(task_id, aggregation_job_id) DO
+UPDATE
+SET (
+        aggregation_param,
+        batch_id,
+        client_timestamp_interval,
+        state,
+        step,
+        last_request_hash,
+        created_at,
+        updated_at,
+        updated_by
     ) = (
-        excluded.aggregation_param, excluded.batch_id,
-        excluded.client_timestamp_interval, excluded.state, excluded.step,
-        excluded.last_request_hash, excluded.created_at, excluded.updated_at,
+        excluded.aggregation_param,
+        excluded.batch_id,
+        excluded.client_timestamp_interval,
+        excluded.state,
+        excluded.step,
+        excluded.last_request_hash,
+        excluded.created_at,
+        excluded.updated_at,
         excluded.updated_by
     )
-    WHERE UPPER(aggregation_jobs.client_timestamp_interval) < $12",
+WHERE UPPER(aggregation_jobs.client_timestamp_interval) < $12",
             )
             .await?;
         check_insert(
@@ -2141,15 +2346,15 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
         let stmt = self
             .prepare_cached(
                 "-- update_aggregation_job()
-UPDATE aggregation_jobs SET
-    state = $1,
+UPDATE aggregation_jobs
+SET state = $1,
     step = $2,
     last_request_hash = $3,
     updated_at = $4,
     updated_by = $5
 WHERE aggregation_jobs.task_id = $6
-  AND aggregation_jobs.aggregation_job_id = $7
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $8::TIMESTAMP",
+    AND aggregation_jobs.aggregation_job_id = $7
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $8::TIMESTAMP",
             )
             .await?;
         check_single_row_mutation(
@@ -2191,14 +2396,15 @@ WHERE aggregation_jobs.task_id = $6
         let stmt = self
             .prepare_cached(
                 "-- check_other_report_aggregation_exists()
-SELECT 1 FROM report_aggregations
-JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+SELECT 1
+FROM report_aggregations
+    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
-  AND aggregation_jobs.task_id = $1
-  AND report_aggregations.client_report_id = $2
-  AND aggregation_jobs.aggregation_param = $3
-  AND aggregation_jobs.aggregation_job_id != $4
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $5",
+    AND aggregation_jobs.task_id = $1
+    AND report_aggregations.client_report_id = $2
+    AND aggregation_jobs.aggregation_param = $3
+    AND aggregation_jobs.aggregation_job_id != $4
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $5",
             )
             .await?;
         Ok(self
@@ -2241,17 +2447,24 @@ WHERE report_aggregations.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_report_aggregations_for_aggregation_job()
-SELECT
-    ord, client_report_id, client_timestamp, last_prep_resp,
-    report_aggregations.state, public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
+SELECT ord,
+    client_report_id,
+    client_timestamp,
+    last_prep_resp,
+    report_aggregations.state,
+    public_share,
+    leader_extensions,
+    leader_input_share,
+    helper_encrypted_input_share,
+    leader_prep_transition,
+    helper_prep_state,
     error_code
 FROM report_aggregations
-JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
-  AND aggregation_jobs.task_id = $1
-  AND aggregation_jobs.aggregation_job_id = $2
-  AND UPPER(client_timestamp_interval) >= $3
+    AND aggregation_jobs.task_id = $1
+    AND aggregation_jobs.aggregation_job_id = $2
+    AND UPPER(client_timestamp_interval) >= $3
 ORDER BY ord ASC",
             )
             .await?;
@@ -2303,14 +2516,19 @@ ORDER BY ord ASC",
         let stmt = self
             .prepare_cached(
                 "-- get_report_aggregation_by_report_id()
-SELECT
-    ord, client_timestamp, last_prep_resp, report_aggregations.state,
-    public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
+SELECT ord,
+    client_timestamp,
+    last_prep_resp,
+    report_aggregations.state,
+    public_share,
+    leader_extensions,
+    leader_input_share,
+    helper_encrypted_input_share,
+    leader_prep_transition,
+    helper_prep_state,
     error_code
 FROM report_aggregations
-JOIN aggregation_jobs
-    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
     AND aggregation_jobs.task_id = $1
     AND aggregation_jobs.aggregation_job_id = $2
@@ -2365,16 +2583,24 @@ WHERE report_aggregations.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_report_aggregations_for_task()
-SELECT
-    aggregation_jobs.aggregation_job_id, ord, client_report_id, client_timestamp,
-    last_prep_resp, report_aggregations.state, public_share, leader_extensions,
-    leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    helper_prep_state, error_code
+SELECT aggregation_jobs.aggregation_job_id,
+    ord,
+    client_report_id,
+    client_timestamp,
+    last_prep_resp,
+    report_aggregations.state,
+    public_share,
+    leader_extensions,
+    leader_input_share,
+    helper_encrypted_input_share,
+    leader_prep_transition,
+    helper_prep_state,
+    error_code
 FROM report_aggregations
-JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
-  AND aggregation_jobs.task_id = $1
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
+    AND aggregation_jobs.task_id = $1
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
             )
             .await?;
         self.query(
@@ -2577,34 +2803,82 @@ WHERE report_aggregations.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- put_report_aggregation()
-INSERT INTO report_aggregations
-    (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    last_prep_resp, state, public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code, created_at, updated_at, updated_by)
-SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17
+INSERT INTO report_aggregations (
+        task_id,
+        aggregation_job_id,
+        ord,
+        client_report_id,
+        client_timestamp,
+        last_prep_resp,
+        state,
+        public_share,
+        leader_extensions,
+        leader_input_share,
+        helper_encrypted_input_share,
+        leader_prep_transition,
+        helper_prep_state,
+        error_code,
+        created_at,
+        updated_at,
+        updated_by
+    )
+SELECT $1,
+    aggregation_jobs.id,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    $15,
+    $16,
+    $17
 FROM aggregation_jobs
 WHERE task_id = $1
-  AND aggregation_job_id = $2
-ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
-    SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, helper_prep_state, error_code, created_at,
-        updated_at, updated_by
+    AND aggregation_job_id = $2 ON CONFLICT(task_id, aggregation_job_id, ord) DO
+UPDATE
+SET (
+        client_report_id,
+        client_timestamp,
+        last_prep_resp,
+        state,
+        public_share,
+        leader_extensions,
+        leader_input_share,
+        helper_encrypted_input_share,
+        leader_prep_transition,
+        helper_prep_state,
+        error_code,
+        created_at,
+        updated_at,
+        updated_by
     ) = (
-        excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.client_report_id,
+        excluded.client_timestamp,
+        excluded.last_prep_resp,
+        excluded.state,
+        excluded.public_share,
+        excluded.leader_extensions,
+        excluded.leader_input_share,
+        excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition,
+        excluded.helper_prep_state,
+        excluded.error_code,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
     )
-    WHERE (SELECT UPPER(client_timestamp_interval)
-           FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $18",
+WHERE (
+        SELECT UPPER(client_timestamp_interval)
+        FROM aggregation_jobs
+        WHERE id = report_aggregations.aggregation_job_id
+    ) >= $18",
             )
             .await?;
         check_insert(
@@ -2660,38 +2934,76 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 let stmt = self
                     .prepare_cached(
                         "-- put_leader_report_aggregation()
-INSERT INTO report_aggregations
-    (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    state, public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, created_at, updated_at, updated_by)
-SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
-    client_reports.public_share, client_reports.extensions,
+INSERT INTO report_aggregations (
+    task_id,
+    aggregation_job_id,
+    ord,
+    client_report_id,
+    client_timestamp,
+    state,
+    public_share,
+    leader_extensions,
+    leader_input_share,
+    helper_encrypted_input_share,
+    created_at,
+    updated_at,
+    updated_by
+)
+SELECT $1,
+    aggregation_jobs.id,
+    $3,
+    $4,
+    $5,
+    'START'::REPORT_AGGREGATION_STATE,
+    client_reports.public_share,
+    client_reports.extensions,
     client_reports.leader_input_share,
-    client_reports.helper_encrypted_input_share, $6, $7, $8
+    client_reports.helper_encrypted_input_share,
+    $6,
+    $7,
+    $8
 FROM aggregation_jobs
-JOIN client_reports
-    ON aggregation_jobs.task_id = client_reports.task_id
-AND client_reports.report_id = $4
+    JOIN client_reports ON aggregation_jobs.task_id = client_reports.task_id
+    AND client_reports.report_id = $4
 WHERE aggregation_jobs.task_id = $1
-AND aggregation_job_id = $2
-ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
-    SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, helper_prep_state, error_code, created_at,
-        updated_at, updated_by
+    AND aggregation_job_id = $2 ON CONFLICT(task_id, aggregation_job_id, ord) DO
+UPDATE
+SET (
+        client_report_id,
+        client_timestamp,
+        last_prep_resp,
+        state,
+        public_share,
+        leader_extensions,
+        leader_input_share,
+        helper_encrypted_input_share,
+        leader_prep_transition,
+        helper_prep_state,
+        error_code,
+        created_at,
+        updated_at,
+        updated_by
     ) = (
-        excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.client_report_id,
+        excluded.client_timestamp,
+        excluded.last_prep_resp,
+        excluded.state,
+        excluded.public_share,
+        excluded.leader_extensions,
+        excluded.leader_input_share,
+        excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition,
+        excluded.helper_prep_state,
+        excluded.error_code,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
     )
-    WHERE (SELECT UPPER(client_timestamp_interval)
+WHERE (
+        SELECT UPPER(client_timestamp_interval)
         FROM aggregation_jobs
-        WHERE id = report_aggregations.aggregation_job_id) >= $9",
+        WHERE id = report_aggregations.aggregation_job_id
+    ) >= $9",
                     )
                     .await?;
                 check_insert(
@@ -2720,35 +3032,70 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 let stmt = self
                     .prepare_cached(
                         "-- put_leader_report_aggregation()
-INSERT INTO report_aggregations
-    (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    state, error_code, created_at, updated_at, updated_by)
-SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, 'FAILED'::REPORT_AGGREGATION_STATE,
-    $6, $7, $8, $9
-FROM aggregation_jobs
-JOIN client_reports
-    ON client_reports.task_id = aggregation_jobs.task_id
-   AND client_reports.report_id = $4
-WHERE aggregation_jobs.task_id = $1
-AND aggregation_job_id = $2
-ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
-    SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, helper_prep_state, error_code, created_at,
-        updated_at, updated_by
-    ) = (
-        excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+INSERT INTO report_aggregations (
+        task_id,
+        aggregation_job_id,
+        ord,
+        client_report_id,
+        client_timestamp,
+        state,
+        error_code,
+        created_at,
+        updated_at,
+        updated_by
     )
-    WHERE (SELECT UPPER(client_timestamp_interval)
-           FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $10",
+SELECT $1,
+    aggregation_jobs.id,
+    $3,
+    $4,
+    $5,
+    'FAILED'::REPORT_AGGREGATION_STATE,
+    $6,
+    $7,
+    $8,
+    $9
+FROM aggregation_jobs
+    JOIN client_reports ON client_reports.task_id = aggregation_jobs.task_id
+    AND client_reports.report_id = $4
+WHERE aggregation_jobs.task_id = $1
+    AND aggregation_job_id = $2 ON CONFLICT(task_id, aggregation_job_id, ord) DO
+UPDATE
+SET (
+        client_report_id,
+        client_timestamp,
+        last_prep_resp,
+        state,
+        public_share,
+        leader_extensions,
+        leader_input_share,
+        helper_encrypted_input_share,
+        leader_prep_transition,
+        helper_prep_state,
+        error_code,
+        created_at,
+        updated_at,
+        updated_by
+    ) = (
+        excluded.client_report_id,
+        excluded.client_timestamp,
+        excluded.last_prep_resp,
+        excluded.state,
+        excluded.public_share,
+        excluded.leader_extensions,
+        excluded.leader_input_share,
+        excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition,
+        excluded.helper_prep_state,
+        excluded.error_code,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
+    )
+WHERE (
+        SELECT UPPER(client_timestamp_interval)
+        FROM aggregation_jobs
+        WHERE id = report_aggregations.aggregation_job_id
+    ) >= $10",
                     )
                     .await?;
                 check_insert(
@@ -2804,20 +3151,26 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
             .prepare_cached(
                 "-- update_report_aggregation()
 UPDATE report_aggregations
-SET
-    last_prep_resp = $1, state = $2, public_share = $3, leader_extensions = $4,
-    leader_input_share = $5, helper_encrypted_input_share = $6,
-    leader_prep_transition = $7, helper_prep_state = $8, error_code = $9,
-    updated_at = $10, updated_by = $11
+SET last_prep_resp = $1,
+    state = $2,
+    public_share = $3,
+    leader_extensions = $4,
+    leader_input_share = $5,
+    helper_encrypted_input_share = $6,
+    leader_prep_transition = $7,
+    helper_prep_state = $8,
+    error_code = $9,
+    updated_at = $10,
+    updated_by = $11
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
-  AND aggregation_jobs.aggregation_job_id = $12
-  AND aggregation_jobs.task_id = $13
-  AND report_aggregations.task_id = $13
-  AND report_aggregations.client_report_id = $14
-  AND report_aggregations.client_timestamp = $15
-  AND report_aggregations.ord = $16
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $17",
+    AND aggregation_jobs.aggregation_job_id = $12
+    AND aggregation_jobs.task_id = $13
+    AND report_aggregations.task_id = $13
+    AND report_aggregations.client_report_id = $14
+    AND report_aggregations.client_timestamp = $15
+    AND report_aggregations.ord = $16
+    AND UPPER(aggregation_jobs.client_timestamp_interval) >= $17",
             )
             .await?;
         check_single_row_mutation(
@@ -2870,20 +3223,28 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
         let stmt = self
             .prepare_cached(
                 "-- get_collection_job()
-SELECT
-    query, aggregation_param, batch_identifier, state, report_count,
-    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share
+SELECT query,
+    aggregation_param,
+    batch_identifier,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
+    leader_aggregate_share
 FROM collection_jobs
 WHERE collection_jobs.task_id = $1
-  AND collection_jobs.collection_job_id = $2
-  AND COALESCE(
-          LOWER(collection_jobs.batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations
-           WHERE batch_aggregations.task_id = collection_jobs.task_id
-             AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
-             AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $3",
+    AND collection_jobs.collection_job_id = $2
+    AND COALESCE(
+        LOWER(collection_jobs.batch_interval),
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations
+            WHERE batch_aggregations.task_id = collection_jobs.task_id
+                AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
+                AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $3",
             )
             .await?;
         self.query_opt(
@@ -2930,22 +3291,30 @@ WHERE collection_jobs.task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_finished_collection_job()
-SELECT
-    collection_job_id, query, aggregation_param, state, report_count,
-    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share
+SELECT collection_job_id,
+    query,
+    aggregation_param,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
+    leader_aggregate_share
 FROM collection_jobs
 WHERE collection_jobs.task_id = $1
-  AND collection_jobs.batch_identifier = $2
-  AND collection_jobs.aggregation_param = $3
-  AND collection_jobs.state = 'FINISHED'
-  AND COALESCE(
-          LOWER(collection_jobs.batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations
-           WHERE batch_aggregations.task_id = collection_jobs.task_id
-             AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
-             AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $4
+    AND collection_jobs.batch_identifier = $2
+    AND collection_jobs.aggregation_param = $3
+    AND collection_jobs.state = 'FINISHED'
+    AND COALESCE(
+        LOWER(collection_jobs.batch_interval),
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations
+            WHERE batch_aggregations.task_id = collection_jobs.task_id
+                AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
+                AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $4
 LIMIT 1",
             )
             .await?;
@@ -2995,14 +3364,19 @@ LIMIT 1",
         let stmt = self
             .prepare_cached(
                 "-- get_collection_jobs_including_time()
-SELECT
-    collection_job_id, query, aggregation_param, batch_identifier, state,
-    report_count, client_timestamp_interval, helper_aggregate_share,
+SELECT collection_job_id,
+    query,
+    aggregation_param,
+    batch_identifier,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
     leader_aggregate_share
 FROM collection_jobs
 WHERE task_id = $1
-  AND batch_interval @> $2::TIMESTAMP
-  AND LOWER(batch_interval) >= $3",
+    AND batch_interval @> $2::TIMESTAMP
+    AND LOWER(batch_interval) >= $3",
             )
             .await?;
         self.query(
@@ -3046,14 +3420,19 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_collection_jobs_intersecting_interval()
-SELECT
-    collection_job_id, query, aggregation_param, batch_identifier, state,
-    report_count, client_timestamp_interval, helper_aggregate_share,
+SELECT collection_job_id,
+    query,
+    aggregation_param,
+    batch_identifier,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
     leader_aggregate_share
 FROM collection_jobs
 WHERE task_id = $1
-  AND batch_interval && $2
-  AND LOWER(collection_jobs.batch_interval) >= $3",
+    AND batch_interval && $2
+    AND LOWER(collection_jobs.batch_interval) >= $3",
             )
             .await?;
         self.query(
@@ -3103,19 +3482,27 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_collection_jobs_by_batch_id()
-SELECT
-    collection_job_id, query, aggregation_param, state, report_count,
-    client_timestamp_interval, helper_aggregate_share, leader_aggregate_share
+SELECT collection_job_id,
+    query,
+    aggregation_param,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
+    leader_aggregate_share
 FROM collection_jobs
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND COALESCE(
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = collection_jobs.task_id
-             AND ba.batch_identifier = collection_jobs.batch_identifier
-             AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $3",
+    AND batch_identifier = $2
+    AND COALESCE(
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = collection_jobs.task_id
+                AND ba.batch_identifier = collection_jobs.batch_identifier
+                AND ba.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $3",
             )
             .await?;
         self.query(
@@ -3155,20 +3542,28 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_collection_jobs_for_task()
-SELECT
-    collection_job_id, query, aggregation_param, batch_identifier, state,
-    report_count, client_timestamp_interval, helper_aggregate_share,
+SELECT collection_job_id,
+    query,
+    aggregation_param,
+    batch_identifier,
+    state,
+    report_count,
+    client_timestamp_interval,
+    helper_aggregate_share,
     leader_aggregate_share
 FROM collection_jobs
 WHERE task_id = $1
-  AND COALESCE(
-          LOWER(batch_interval),
-          (SELECT MAX(UPPER(ba.client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = collection_jobs.task_id
-             AND ba.batch_identifier = collection_jobs.batch_identifier
-             AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $2",
+    AND COALESCE(
+        LOWER(batch_interval),
+        (
+            SELECT MAX(UPPER(ba.client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = collection_jobs.task_id
+                AND ba.batch_identifier = collection_jobs.batch_identifier
+                AND ba.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $2",
             )
             .await?;
         self.query(
@@ -3288,27 +3683,50 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- put_collection_job()
-INSERT INTO collection_jobs
-    (task_id, collection_job_id, query, aggregation_param, batch_identifier,
-    batch_interval, state, created_at, updated_at, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT(task_id, collection_job_id) DO UPDATE
-    SET (
-        query, aggregation_param, batch_identifier, batch_interval, state,
-        created_at, updated_at, updated_by
-    ) = (
-        excluded.query, excluded.aggregation_param, excluded.batch_identifier,
-        excluded.batch_interval, excluded.state, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+INSERT INTO collection_jobs (
+        task_id,
+        collection_job_id,
+        query,
+        aggregation_param,
+        batch_identifier,
+        batch_interval,
+        state,
+        created_at,
+        updated_at,
+        updated_by
     )
-    WHERE COALESCE(
-              LOWER(collection_jobs.batch_interval),
-              (SELECT MAX(UPPER(ba.client_timestamp_interval))
-               FROM batch_aggregations ba
-               WHERE ba.task_id = collection_jobs.task_id
-                 AND ba.batch_identifier = collection_jobs.batch_identifier
-                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP) < $11",
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(task_id, collection_job_id) DO
+UPDATE
+SET (
+        query,
+        aggregation_param,
+        batch_identifier,
+        batch_interval,
+        state,
+        created_at,
+        updated_at,
+        updated_by
+    ) = (
+        excluded.query,
+        excluded.aggregation_param,
+        excluded.batch_identifier,
+        excluded.batch_interval,
+        excluded.state,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
+    )
+WHERE COALESCE(
+        LOWER(collection_jobs.batch_interval),
+        (
+            SELECT MAX(UPPER(ba.client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = collection_jobs.task_id
+                AND ba.batch_identifier = collection_jobs.batch_identifier
+                AND ba.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) < $11",
             )
             .await?;
 
@@ -3352,41 +3770,51 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
             .prepare_cached(
                 "-- acquire_incomplete_collection_jobs()
 WITH incomplete_jobs AS (
-    SELECT
-        collection_jobs.id, collection_jobs.batch_identifier, tasks.task_id,
-        tasks.query_type, tasks.vdaf, tasks.time_precision
+    SELECT collection_jobs.id,
+        collection_jobs.batch_identifier,
+        tasks.task_id,
+        tasks.query_type,
+        tasks.vdaf,
+        tasks.time_precision
     FROM collection_jobs
-    JOIN tasks ON tasks.id = collection_jobs.task_id
+        JOIN tasks ON tasks.id = collection_jobs.task_id
     WHERE tasks.aggregator_role = 'LEADER'
-      AND collection_jobs.state = 'START'
-      AND collection_jobs.lease_expiry <= $4
-      AND COALESCE(
-              LOWER(batch_interval),
-              (SELECT MAX(UPPER(ba.client_timestamp_interval))
-               FROM batch_aggregations ba
-               WHERE ba.task_id = collection_jobs.task_id
-                 AND ba.batch_identifier = collection_jobs.batch_identifier
-                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP)
-          >= COALESCE(
-                 $4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
-                 '-infinity'::TIMESTAMP
-             )
-    FOR UPDATE OF collection_jobs SKIP LOCKED LIMIT $5
+        AND collection_jobs.state = 'START'
+        AND collection_jobs.lease_expiry <= $4
+        AND COALESCE(
+            LOWER(batch_interval),
+            (
+                SELECT MAX(UPPER(ba.client_timestamp_interval))
+                FROM batch_aggregations ba
+                WHERE ba.task_id = collection_jobs.task_id
+                    AND ba.batch_identifier = collection_jobs.batch_identifier
+                    AND ba.aggregation_param = collection_jobs.aggregation_param
+            ),
+            '-infinity'::TIMESTAMP
+        ) >= COALESCE(
+            $4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
+            '-infinity'::TIMESTAMP
+        ) FOR
+    UPDATE OF collection_jobs SKIP LOCKED
+    LIMIT $5
 )
-UPDATE collection_jobs SET
-    lease_expiry = $1,
+UPDATE collection_jobs
+SET lease_expiry = $1,
     lease_token = gen_random_bytes(16),
     lease_attempts = lease_attempts + 1,
     updated_at = $2,
     updated_by = $3
 FROM incomplete_jobs
 WHERE collection_jobs.id = incomplete_jobs.id
-RETURNING
-    incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
-    incomplete_jobs.time_precision, collection_jobs.collection_job_id,
-    collection_jobs.batch_identifier, collection_jobs.aggregation_param,
-    collection_jobs.lease_token, collection_jobs.lease_attempts,
+RETURNING incomplete_jobs.task_id,
+    incomplete_jobs.query_type,
+    incomplete_jobs.vdaf,
+    incomplete_jobs.time_precision,
+    collection_jobs.collection_job_id,
+    collection_jobs.batch_identifier,
+    collection_jobs.aggregation_param,
+    collection_jobs.lease_token,
+    collection_jobs.lease_attempts,
     collection_jobs.step_attempts",
             )
             .await?;
@@ -3467,23 +3895,26 @@ SET lease_expiry = $1,
     lease_token = NULL,
     lease_attempts = 0,
     step_attempts = CASE
-            WHEN $6 = '-infinity'::TIMESTAMP THEN 0
-            ELSE step_attempts + 1
-        END,
+        WHEN $6 = '-infinity'::TIMESTAMP THEN 0
+        ELSE step_attempts + 1
+    END,
     updated_at = $2,
     updated_by = $3
 WHERE task_id = $4
-  AND collection_job_id = $5
-  AND lease_expiry = $6
-  AND lease_token = $7
-  AND COALESCE(
-          LOWER(batch_interval),
-          (SELECT MAX(UPPER(ba.client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = collection_jobs.task_id
-             AND ba.batch_identifier = collection_jobs.batch_identifier
-             AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $8",
+    AND collection_job_id = $5
+    AND lease_expiry = $6
+    AND lease_token = $7
+    AND COALESCE(
+        LOWER(batch_interval),
+        (
+            SELECT MAX(UPPER(ba.client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = collection_jobs.task_id
+                AND ba.batch_identifier = collection_jobs.batch_identifier
+                AND ba.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $8",
             )
             .await?;
         check_single_row_mutation(
@@ -3557,8 +3988,8 @@ WHERE task_id = $4
         let stmt = self
             .prepare_cached(
                 "-- update_collection_job()
-UPDATE collection_jobs SET
-    state = $1,
+UPDATE collection_jobs
+SET state = $1,
     report_count = $2,
     client_timestamp_interval = $3,
     leader_aggregate_share = $4,
@@ -3566,15 +3997,18 @@ UPDATE collection_jobs SET
     updated_at = $6,
     updated_by = $7
 WHERE task_id = $8
-  AND collection_job_id = $9
-  AND COALESCE(
-          LOWER(batch_interval),
-          (SELECT MAX(UPPER(ba.client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = collection_jobs.task_id
-             AND ba.batch_identifier = collection_jobs.batch_identifier
-             AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $10",
+    AND collection_job_id = $9
+    AND COALESCE(
+        LOWER(batch_interval),
+        (
+            SELECT MAX(UPPER(ba.client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = collection_jobs.task_id
+                AND ba.batch_identifier = collection_jobs.batch_identifier
+                AND ba.aggregation_param = collection_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $10",
             )
             .await?;
 
@@ -3624,25 +4058,38 @@ WHERE task_id = $8
             .prepare_cached(
                 "-- get_batch_aggregation()
 WITH non_gc_batches AS (
-    SELECT batch_identifier, aggregation_param
+    SELECT batch_identifier,
+        aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-      AND batch_identifier = $2
-      AND aggregation_param = $3
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) >= $5
+        AND batch_identifier = $2
+        AND aggregation_param = $3
+    GROUP BY batch_identifier,
+        aggregation_param
+    HAVING MAX(
+            UPPER(
+                COALESCE(batch_interval, client_timestamp_interval)
+            )
+        ) >= $5
 )
-SELECT
-    client_timestamp_interval, batch_aggregations.state, aggregate_share,
-    report_count, checksum, aggregation_jobs_created, aggregation_jobs_terminated
+SELECT client_timestamp_interval,
+    batch_aggregations.state,
+    aggregate_share,
+    report_count,
+    checksum,
+    aggregation_jobs_created,
+    aggregation_jobs_terminated
 FROM batch_aggregations
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND aggregation_param = $3
-  AND ord = $4
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = $2
-               AND aggregation_param = $3)",
+    AND batch_identifier = $2
+    AND aggregation_param = $3
+    AND ord = $4
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = $2
+            AND aggregation_param = $3
+    )",
             )
             .await?;
 
@@ -3697,24 +4144,38 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_batch_aggregations_for_batch()
 WITH non_gc_batches AS (
-    SELECT batch_identifier, aggregation_param
+    SELECT batch_identifier,
+        aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-      AND batch_identifier = $2
-      AND aggregation_param = $3
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) >= $4
+        AND batch_identifier = $2
+        AND aggregation_param = $3
+    GROUP BY batch_identifier,
+        aggregation_param
+    HAVING MAX(
+            UPPER(
+                COALESCE(batch_interval, client_timestamp_interval)
+            )
+        ) >= $4
 )
-SELECT
-    ord, client_timestamp_interval, batch_aggregations.state, aggregate_share,
-    report_count, checksum, aggregation_jobs_created, aggregation_jobs_terminated
+SELECT ord,
+    client_timestamp_interval,
+    batch_aggregations.state,
+    aggregate_share,
+    report_count,
+    checksum,
+    aggregation_jobs_created,
+    aggregation_jobs_terminated
 FROM batch_aggregations
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND aggregation_param = $3
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = $2
-               AND aggregation_param = $3)",
+    AND batch_identifier = $2
+    AND aggregation_param = $3
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = $2
+            AND aggregation_param = $3
+    )",
             )
             .await?;
 
@@ -3768,24 +4229,32 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_batch_aggregation_job_count_for_batch()
 WITH non_gc_batches AS (
-    SELECT batch_identifier, aggregation_param
+    SELECT batch_identifier,
+        aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-      AND batch_identifier = $2
-      AND aggregation_param = $3
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) >= $4
+        AND batch_identifier = $2
+        AND aggregation_param = $3
+    GROUP BY batch_identifier,
+        aggregation_param
+    HAVING MAX(
+            UPPER(
+                COALESCE(batch_interval, client_timestamp_interval)
+            )
+        ) >= $4
 )
-SELECT
-    SUM(aggregation_jobs_created)::BIGINT AS created,
+SELECT SUM(aggregation_jobs_created)::BIGINT AS created,
     SUM(aggregation_jobs_terminated)::BIGINT AS terminated
 FROM batch_aggregations
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND aggregation_param = $3
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = $2
-               AND aggregation_param = $3)",
+    AND batch_identifier = $2
+    AND aggregation_param = $3
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = $2
+            AND aggregation_param = $3
+    )",
             )
             .await?;
 
@@ -3833,22 +4302,36 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_batch_aggregations_for_task()
 WITH non_gc_batches AS (
-    SELECT batch_identifier, aggregation_param
+    SELECT batch_identifier,
+        aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) >= $2
+    GROUP BY batch_identifier,
+        aggregation_param
+    HAVING MAX(
+            UPPER(
+                COALESCE(batch_interval, client_timestamp_interval)
+            )
+        ) >= $2
 )
-SELECT
-    client_timestamp_interval, batch_aggregations.batch_identifier,
-    batch_aggregations.aggregation_param, ord, batch_aggregations.state,
-    aggregate_share, report_count, checksum, aggregation_jobs_created,
+SELECT client_timestamp_interval,
+    batch_aggregations.batch_identifier,
+    batch_aggregations.aggregation_param,
+    ord,
+    batch_aggregations.state,
+    aggregate_share,
+    report_count,
+    checksum,
+    aggregation_jobs_created,
     aggregation_jobs_terminated
 FROM batch_aggregations
 WHERE task_id = $1
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = batch_aggregations.batch_identifier
-               AND aggregation_param = batch_aggregations.aggregation_param)",
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = batch_aggregations.batch_identifier
+            AND aggregation_param = batch_aggregations.aggregation_param
+    )",
             )
             .await?;
 
@@ -3998,32 +4481,90 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_batch_aggregation()
 INSERT INTO batch_aggregations (
-    task_id, batch_identifier, batch_interval, aggregation_param, ord,
-    client_timestamp_interval, state, aggregate_share, report_count, checksum,
-    aggregation_jobs_created, aggregation_jobs_terminated, created_at, updated_at,
-    updated_by
-)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
-    SET (
-        client_timestamp_interval, state, aggregate_share, report_count, checksum,
-        aggregation_jobs_created, aggregation_jobs_terminated, created_at,
-        updated_at, updated_by
-    ) = (
-        excluded.client_timestamp_interval, excluded.state,
-        excluded.aggregate_share, excluded.report_count, excluded.checksum,
-        excluded.aggregation_jobs_created, excluded.aggregation_jobs_terminated,
-        excluded.created_at, excluded.updated_at, excluded.updated_by
+        task_id,
+        batch_identifier,
+        batch_interval,
+        aggregation_param,
+        ord,
+        client_timestamp_interval,
+        state,
+        aggregate_share,
+        report_count,
+        checksum,
+        aggregation_jobs_created,
+        aggregation_jobs_terminated,
+        created_at,
+        updated_at,
+        updated_by
     )
-    WHERE GREATEST(
-              UPPER(COALESCE(batch_aggregations.batch_interval,
-                             batch_aggregations.client_timestamp_interval)),
-              (SELECT MAX(UPPER(COALESCE(ba.batch_interval,
-                                         ba.client_timestamp_interval)))
-               FROM batch_aggregations ba
-               WHERE ba.task_id = batch_aggregations.task_id
-                 AND ba.batch_identifier = batch_aggregations.batch_identifier
-                 AND ba.aggregation_param = batch_aggregations.aggregation_param)) < $16",
+VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15
+    ) ON CONFLICT(
+        task_id,
+        batch_identifier,
+        aggregation_param,
+        ord
+    ) DO
+UPDATE
+SET (
+        client_timestamp_interval,
+        state,
+        aggregate_share,
+        report_count,
+        checksum,
+        aggregation_jobs_created,
+        aggregation_jobs_terminated,
+        created_at,
+        updated_at,
+        updated_by
+    ) = (
+        excluded.client_timestamp_interval,
+        excluded.state,
+        excluded.aggregate_share,
+        excluded.report_count,
+        excluded.checksum,
+        excluded.aggregation_jobs_created,
+        excluded.aggregation_jobs_terminated,
+        excluded.created_at,
+        excluded.updated_at,
+        excluded.updated_by
+    )
+WHERE GREATEST(
+        UPPER(
+            COALESCE(
+                batch_aggregations.batch_interval,
+                batch_aggregations.client_timestamp_interval
+            )
+        ),
+        (
+            SELECT MAX(
+                    UPPER(
+                        COALESCE(
+                            ba.batch_interval,
+                            ba.client_timestamp_interval
+                        )
+                    )
+                )
+            FROM batch_aggregations ba
+            WHERE ba.task_id = batch_aggregations.task_id
+                AND ba.batch_identifier = batch_aggregations.batch_identifier
+                AND ba.aggregation_param = batch_aggregations.aggregation_param
+        )
+    ) < $16",
             )
             .await?;
         check_insert(
@@ -4083,8 +4624,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
             .prepare_cached(
                 "-- update_batch_aggregations()
 UPDATE batch_aggregations
-SET
-    client_timestamp_interval = $1,
+SET client_timestamp_interval = $1,
     state = $2,
     aggregate_share = $3,
     report_count = $4,
@@ -4094,16 +4634,23 @@ SET
     updated_at = $8,
     updated_by = $9
 WHERE task_id = $10
-  AND batch_identifier = $11
-  AND aggregation_param = $12
-  AND ord = $13
-  AND GREATEST(
-          UPPER($1::TSRANGE),
-          (SELECT MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval)))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = batch_aggregations.task_id
-             AND ba.batch_identifier = batch_aggregations.batch_identifier
-             AND ba.aggregation_param = batch_aggregations.aggregation_param)) >= $14",
+    AND batch_identifier = $11
+    AND aggregation_param = $12
+    AND ord = $13
+    AND GREATEST(
+        UPPER($1::TSRANGE),
+        (
+            SELECT MAX(
+                    UPPER(
+                        COALESCE(batch_interval, client_timestamp_interval)
+                    )
+                )
+            FROM batch_aggregations ba
+            WHERE ba.task_id = batch_aggregations.task_id
+                AND ba.batch_identifier = batch_aggregations.batch_identifier
+                AND ba.aggregation_param = batch_aggregations.aggregation_param
+        )
+    ) >= $14",
             )
             .await?;
         check_single_row_mutation(
@@ -4158,19 +4705,24 @@ WHERE task_id = $10
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_job()
-SELECT helper_aggregate_share, report_count, checksum
+SELECT helper_aggregate_share,
+    report_count,
+    checksum
 FROM aggregate_share_jobs
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND aggregation_param = $3
-  AND COALESCE(
-          LOWER(batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = aggregate_share_jobs.task_id
-             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $4",
+    AND batch_identifier = $2
+    AND aggregation_param = $3
+    AND COALESCE(
+        LOWER(batch_interval),
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = aggregate_share_jobs.task_id
+                AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
+                AND ba.aggregation_param = aggregate_share_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $4",
             )
             .await?;
         self.query_opt(
@@ -4216,13 +4768,15 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_jobs_intersecting_interval()
-SELECT
-    batch_identifier, aggregation_param, helper_aggregate_share, report_count,
+SELECT batch_identifier,
+    aggregation_param,
+    helper_aggregate_share,
+    report_count,
     checksum
 FROM aggregate_share_jobs
 WHERE task_id = $1
-  AND batch_interval && $2
-  AND LOWER(aggregate_share_jobs.batch_interval) >= $3",
+    AND batch_interval && $2
+    AND LOWER(aggregate_share_jobs.batch_interval) >= $3",
             )
             .await?;
         self.query(
@@ -4271,18 +4825,23 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_jobs_by_batch_id()
-SELECT
-    aggregation_param, helper_aggregate_share, report_count, checksum
+SELECT aggregation_param,
+    helper_aggregate_share,
+    report_count,
+    checksum
 FROM aggregate_share_jobs
 WHERE task_id = $1
-  AND batch_identifier = $2
-  AND COALESCE(
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = aggregate_share_jobs.task_id
-             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $3",
+    AND batch_identifier = $2
+    AND COALESCE(
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = aggregate_share_jobs.task_id
+                AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
+                AND ba.aggregation_param = aggregate_share_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $3",
             )
             .await?;
         self.query(
@@ -4321,19 +4880,24 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_jobs_for_task()
-SELECT
-    batch_identifier, aggregation_param, helper_aggregate_share, report_count,
+SELECT batch_identifier,
+    aggregation_param,
+    helper_aggregate_share,
+    report_count,
     checksum
 FROM aggregate_share_jobs
 WHERE task_id = $1
-  AND COALESCE(
-          LOWER(aggregate_share_jobs.batch_interval),
-          (SELECT MAX(UPPER(client_timestamp_interval))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = aggregate_share_jobs.task_id
-             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP) >= $2",
+    AND COALESCE(
+        LOWER(aggregate_share_jobs.batch_interval),
+        (
+            SELECT MAX(UPPER(client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = aggregate_share_jobs.task_id
+                AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
+                AND ba.aggregation_param = aggregate_share_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) >= $2",
             )
             .await?;
         self.query(
@@ -4405,25 +4969,42 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_aggregate_share_job()
 INSERT INTO aggregate_share_jobs (
-    task_id, batch_identifier, batch_interval, aggregation_param,
-    helper_aggregate_share, report_count, checksum, created_at, updated_by
-)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
-    SET (
-        helper_aggregate_share, report_count, checksum, created_at, updated_by
-    ) = (
-        excluded.helper_aggregate_share, excluded.report_count, excluded.checksum,
-        excluded.created_at, excluded.updated_by
+        task_id,
+        batch_identifier,
+        batch_interval,
+        aggregation_param,
+        helper_aggregate_share,
+        report_count,
+        checksum,
+        created_at,
+        updated_by
     )
-    WHERE COALESCE(
-              LOWER(aggregate_share_jobs.batch_interval),
-              (SELECT MAX(UPPER(ba.client_timestamp_interval))
-               FROM batch_aggregations ba
-               WHERE ba.task_id = aggregate_share_jobs.task_id
-                 AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
-                 AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP) < $10",
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT(task_id, batch_identifier, aggregation_param) DO
+UPDATE
+SET (
+        helper_aggregate_share,
+        report_count,
+        checksum,
+        created_at,
+        updated_by
+    ) = (
+        excluded.helper_aggregate_share,
+        excluded.report_count,
+        excluded.checksum,
+        excluded.created_at,
+        excluded.updated_by
+    )
+WHERE COALESCE(
+        LOWER(aggregate_share_jobs.batch_interval),
+        (
+            SELECT MAX(UPPER(ba.client_timestamp_interval))
+            FROM batch_aggregations ba
+            WHERE ba.task_id = aggregate_share_jobs.task_id
+                AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
+                AND ba.aggregation_param = aggregate_share_jobs.aggregation_param
+        ),
+        '-infinity'::TIMESTAMP
+    ) < $10",
             )
             .await?;
         check_insert(
@@ -4479,22 +5060,33 @@ WITH non_gc_batches AS (
     SELECT batch_identifier
     FROM batch_aggregations
     WHERE task_id = $1
-      AND batch_identifier = $2
+        AND batch_identifier = $2
     GROUP BY batch_identifier
     HAVING MAX(UPPER(client_timestamp_interval)) >= $6
 )
 INSERT INTO outstanding_batches (
-    task_id, batch_id, time_bucket_start, created_at, updated_by
-)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT(task_id, batch_id) DO UPDATE
-    SET (
-        time_bucket_start, created_at, updated_by
-    ) = (
-        excluded.time_bucket_start, excluded.created_at, excluded.updated_by
+        task_id,
+        batch_id,
+        time_bucket_start,
+        created_at,
+        updated_by
     )
-    WHERE NOT EXISTS(SELECT 1 FROM non_gc_batches
-                     WHERE batch_identifier = outstanding_batches.batch_id)",
+VALUES ($1, $2, $3, $4, $5) ON CONFLICT(task_id, batch_id) DO
+UPDATE
+SET (
+        time_bucket_start,
+        created_at,
+        updated_by
+    ) = (
+        excluded.time_bucket_start,
+        excluded.created_at,
+        excluded.updated_by
+    )
+WHERE NOT EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = outstanding_batches.batch_id
+    )",
             )
             .await?;
         check_insert(
@@ -4544,12 +5136,16 @@ WITH non_gc_batches AS (
     GROUP BY batch_identifier
     HAVING MAX(UPPER(client_timestamp_interval)) >= $3
 )
-SELECT batch_id FROM outstanding_batches
+SELECT batch_id
+FROM outstanding_batches
 WHERE task_id = $1
-  AND time_bucket_start = $2
-  AND state = 'FILLING'
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = outstanding_batches.batch_id)",
+    AND time_bucket_start = $2
+    AND state = 'FILLING'
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = outstanding_batches.batch_id
+    )",
                 )
                 .await?;
             self.query(
@@ -4576,12 +5172,16 @@ WITH non_gc_batches AS (
     GROUP BY batch_identifier
     HAVING MAX(UPPER(client_timestamp_interval)) >= $2
 )
-SELECT batch_id FROM outstanding_batches
+SELECT batch_id
+FROM outstanding_batches
 WHERE task_id = $1
-  AND time_bucket_start IS NULL
-  AND state = 'FILLING'
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = outstanding_batches.batch_id)",
+    AND time_bucket_start IS NULL
+    AND state = 'FILLING'
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = outstanding_batches.batch_id
+    )",
                 )
                 .await?;
             self.query(
@@ -4617,19 +5217,30 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- read_batch_size()
-WITH batch_report_aggregation_statuses AS
-    (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
-     JOIN aggregation_jobs
-        ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-     AND report_aggregations.task_id = aggregation_jobs.task_id
-     AND aggregation_jobs.batch_id = $2
-     GROUP BY report_aggregations.state)
-SELECT
-    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-     WHERE state IN ('FINISHED')) AS min_size,
-    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size",
+WITH batch_report_aggregation_statuses AS (
+    SELECT report_aggregations.state,
+        COUNT(*) AS count
+    FROM report_aggregations
+        JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+    WHERE aggregation_jobs.task_id = (
+            SELECT id
+            FROM tasks
+            WHERE task_id = $1
+        )
+        AND report_aggregations.task_id = aggregation_jobs.task_id
+        AND aggregation_jobs.batch_id = $2
+    GROUP BY report_aggregations.state
+)
+SELECT (
+        SELECT SUM(count)::BIGINT
+        FROM batch_report_aggregation_statuses
+        WHERE state IN ('FINISHED')
+    ) AS min_size,
+    (
+        SELECT SUM(count)::BIGINT
+        FROM batch_report_aggregation_statuses
+        WHERE state IN ('START', 'WAITING', 'FINISHED')
+    ) AS max_size",
             )
             .await?;
 
@@ -4673,7 +5284,8 @@ SELECT
             .prepare_cached(
                 "-- acquire_outstanding_batch_with_report_count()
 WITH non_gc_batches AS (
-    SELECT batch_identifier, SUM(report_count) AS report_count
+    SELECT batch_identifier,
+        SUM(report_count) AS report_count
     FROM batch_aggregations
     WHERE task_id = $1
     GROUP BY batch_identifier
@@ -4683,11 +5295,18 @@ selected_outstanding_batch AS (
     SELECT outstanding_batches.id
     FROM outstanding_batches
     WHERE task_id = $1
-    AND (SELECT report_count FROM non_gc_batches
-        WHERE batch_identifier = outstanding_batches.batch_id) >= $2::BIGINT
+        AND (
+            SELECT report_count
+            FROM non_gc_batches
+            WHERE batch_identifier = outstanding_batches.batch_id
+        ) >= $2::BIGINT
     LIMIT 1
 )
-DELETE FROM outstanding_batches WHERE id IN (SELECT id FROM selected_outstanding_batch)
+DELETE FROM outstanding_batches
+WHERE id IN (
+        SELECT id
+        FROM selected_outstanding_batch
+    )
 RETURNING batch_id",
             )
             .await?;
@@ -4727,15 +5346,19 @@ WITH non_gc_batches AS (
     SELECT batch_identifier
     FROM batch_aggregations
     WHERE task_id = $1
-    AND batch_identifier = $2
+        AND batch_identifier = $2
     GROUP BY batch_identifier
     HAVING MAX(UPPER(client_timestamp_interval)) >= $3
 )
 UPDATE outstanding_batches
 SET state = 'FILLED'
 WHERE task_id = $1
-AND batch_id = $2
-AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
+    AND batch_id = $2
+    AND EXISTS(
+        SELECT 1
+        FROM non_gc_batches
+        WHERE batch_identifier = $2
+    )",
             )
             .await?;
         check_single_row_mutation(
@@ -4769,13 +5392,13 @@ AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
             .prepare_cached(
                 "-- delete_expired_client_reports()
 WITH client_reports_to_delete AS (
-    SELECT client_reports.id FROM client_reports
+    SELECT client_reports.id
+    FROM client_reports
     WHERE client_reports.task_id = $1
         AND client_reports.client_timestamp < $2::TIMESTAMP
     LIMIT $3
 )
-DELETE FROM client_reports
-USING client_reports_to_delete
+DELETE FROM client_reports USING client_reports_to_delete
 WHERE client_reports.id = client_reports_to_delete.id",
             )
             .await?;
@@ -4812,17 +5435,23 @@ WHERE client_reports.id = client_reports_to_delete.id",
             .prepare_cached(
                 "-- delete_expired_aggregation_artifacts()
 WITH aggregation_jobs_to_delete AS (
-    SELECT aggregation_jobs.id FROM aggregation_jobs
+    SELECT aggregation_jobs.id
+    FROM aggregation_jobs
     WHERE task_id = $1
-      AND UPPER(aggregation_jobs.client_timestamp_interval) < $2
+        AND UPPER(aggregation_jobs.client_timestamp_interval) < $2
     LIMIT $3
-),
-deleted_report_aggregations AS (
+), deleted_report_aggregations AS (
     DELETE FROM report_aggregations
-    WHERE aggregation_job_id IN (SELECT id FROM aggregation_jobs_to_delete)
+    WHERE aggregation_job_id IN (
+            SELECT id
+            FROM aggregation_jobs_to_delete
+        )
 )
 DELETE FROM aggregation_jobs
-WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
+WHERE id IN (
+        SELECT id
+        FROM aggregation_jobs_to_delete
+    )",
             )
             .await?;
         self.execute(
@@ -4873,40 +5502,49 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
             .prepare_cached(
                 "-- delete_expired_collection_artifacts()
 WITH batches_to_delete AS (
-    SELECT batch_identifier, aggregation_param
+    SELECT batch_identifier,
+        aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) < $2
+    GROUP BY batch_identifier,
+        aggregation_param
+    HAVING MAX(
+            UPPER(
+                COALESCE(batch_interval, client_timestamp_interval)
+            )
+        ) < $2
     LIMIT $3
-),
-deleted_outstanding_batches AS (
-    DELETE FROM outstanding_batches
-    USING batches_to_delete
+), deleted_outstanding_batches AS (
+    DELETE FROM outstanding_batches USING batches_to_delete
     WHERE task_id = $1
-      AND outstanding_batches.batch_id = batches_to_delete.batch_identifier
+        AND outstanding_batches.batch_id = batches_to_delete.batch_identifier
 ),
 deleted_collection_jobs AS (
-    DELETE FROM collection_jobs
-    USING batches_to_delete
+    DELETE FROM collection_jobs USING batches_to_delete
     WHERE task_id = $1
-      AND (LOWER(batch_interval) < $2
-        OR (collection_jobs.batch_identifier = batches_to_delete.batch_identifier
-          AND collection_jobs.aggregation_param = batches_to_delete.aggregation_param))
+        AND (
+            LOWER(batch_interval) < $2
+            OR (
+                collection_jobs.batch_identifier = batches_to_delete.batch_identifier
+                AND collection_jobs.aggregation_param = batches_to_delete.aggregation_param
+            )
+        )
 ),
 deleted_aggregate_share_jobs AS (
-    DELETE FROM aggregate_share_jobs
-    USING batches_to_delete
+    DELETE FROM aggregate_share_jobs USING batches_to_delete
     WHERE task_id = $1
-      AND (LOWER(batch_interval) < $2
-        OR (aggregate_share_jobs.batch_identifier = batches_to_delete.batch_identifier
-          AND aggregate_share_jobs.aggregation_param = batches_to_delete.aggregation_param))
+        AND (
+            LOWER(batch_interval) < $2
+            OR (
+                aggregate_share_jobs.batch_identifier = batches_to_delete.batch_identifier
+                AND aggregate_share_jobs.aggregation_param = batches_to_delete.aggregation_param
+            )
+        )
 )
-DELETE FROM batch_aggregations
-USING batches_to_delete
+DELETE FROM batch_aggregations USING batches_to_delete
 WHERE task_id = $1
-  AND batch_aggregations.batch_identifier = batches_to_delete.batch_identifier
-  AND batch_aggregations.aggregation_param = batches_to_delete.aggregation_param",
+    AND batch_aggregations.batch_identifier = batches_to_delete.batch_identifier
+    AND batch_aggregations.aggregation_param = batches_to_delete.aggregation_param",
             )
             .await?;
         self.execute(
@@ -4928,7 +5566,12 @@ WHERE task_id = $1
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypairs()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
+SELECT config_id,
+    config,
+    private_key,
+    state,
+    updated_at
+FROM global_hpke_keys",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
@@ -4948,8 +5591,13 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypair()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
-    WHERE config_id = $1",
+SELECT config_id,
+    config,
+    private_key,
+    state,
+    updated_at
+FROM global_hpke_keys
+WHERE config_id = $1",
             )
             .await?;
         self.query_opt(&stmt, &[&(u8::from(*config_id) as i16)])
@@ -4983,7 +5631,8 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
         let stmt = self
             .prepare_cached(
                 "-- delete_global_hpke_keypair()
-DELETE FROM global_hpke_keys WHERE config_id = $1",
+DELETE FROM global_hpke_keys
+WHERE config_id = $1",
             )
             .await?;
         check_single_row_mutation(
@@ -5002,8 +5651,10 @@ DELETE FROM global_hpke_keys WHERE config_id = $1",
             .prepare_cached(
                 "-- set_global_hpke_keypair_state()
 UPDATE global_hpke_keys
-    SET state = $1, updated_at = $2, updated_by = $3
-    WHERE config_id = $4",
+SET state = $1,
+    updated_at = $2,
+    updated_by = $3
+WHERE config_id = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -5035,9 +5686,15 @@ UPDATE global_hpke_keys
         let stmt = self
             .prepare_cached(
                 "-- put_global_hpke_keypair()
-INSERT INTO global_hpke_keys
-    (config_id, config, private_key, created_at, updated_at, updated_by)
-    VALUES ($1, $2, $3, $4, $5, $6)",
+INSERT INTO global_hpke_keys (
+        config_id,
+        config,
+        private_key,
+        created_at,
+        updated_at,
+        updated_by
+    )
+VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .await?;
         check_insert(
@@ -5061,9 +5718,14 @@ INSERT INTO global_hpke_keys
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregators()
-SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
-        report_expiry_age, tolerable_clock_skew
-    FROM taskprov_peer_aggregators",
+SELECT id,
+    endpoint,
+    role,
+    verify_key_init,
+    collector_hpke_config,
+    report_expiry_age,
+    tolerable_clock_skew
+FROM taskprov_peer_aggregators",
             )
             .await?;
         let peer_aggregator_rows = self.query(&stmt, &[]);
@@ -5071,10 +5733,16 @@ SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregators()
-SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
-    WHERE p.id = a.peer_aggregator_id) AS peer_id,
-ord, type, token FROM taskprov_aggregator_auth_tokens AS a
-    ORDER BY ord ASC",
+SELECT (
+        SELECT p.id
+        FROM taskprov_peer_aggregators AS p
+        WHERE p.id = a.peer_aggregator_id
+    ) AS peer_id,
+    ord,
+    type,
+    token
+FROM taskprov_aggregator_auth_tokens AS a
+ORDER BY ord ASC",
             )
             .await?;
         let aggregator_auth_token_rows = self.query(&stmt, &[]);
@@ -5082,10 +5750,16 @@ ord, type, token FROM taskprov_aggregator_auth_tokens AS a
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregators()
-SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
-    WHERE p.id = a.peer_aggregator_id) AS peer_id,
-ord, type, token FROM taskprov_collector_auth_tokens AS a
-    ORDER BY ord ASC",
+SELECT (
+        SELECT p.id
+        FROM taskprov_peer_aggregators AS p
+        WHERE p.id = a.peer_aggregator_id
+    ) AS peer_id,
+    ord,
+    type,
+    token
+FROM taskprov_collector_auth_tokens AS a
+ORDER BY ord ASC",
             )
             .await?;
         let collector_auth_token_rows = self.query(&stmt, &[]);
@@ -5142,9 +5816,15 @@ ord, type, token FROM taskprov_collector_auth_tokens AS a
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregator()
-SELECT endpoint, role, verify_key_init, collector_hpke_config,
-        report_expiry_age, tolerable_clock_skew
-    FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+SELECT endpoint,
+    role,
+    verify_key_init,
+    collector_hpke_config,
+    report_expiry_age,
+    tolerable_clock_skew
+FROM taskprov_peer_aggregators
+WHERE endpoint = $1
+    AND role = $2",
             )
             .await?;
         let peer_aggregator_row = self.query_opt(&stmt, params);
@@ -5152,10 +5832,17 @@ SELECT endpoint, role, verify_key_init, collector_hpke_config,
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregator()
-SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
-    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
-        WHERE endpoint = $1 AND role = $2)
-    ORDER BY ord ASC",
+SELECT ord,
+    type,
+    token
+FROM taskprov_aggregator_auth_tokens
+WHERE peer_aggregator_id = (
+        SELECT id
+        FROM taskprov_peer_aggregators
+        WHERE endpoint = $1
+            AND role = $2
+    )
+ORDER BY ord ASC",
             )
             .await?;
         let aggregator_auth_token_rows = self.query(&stmt, params);
@@ -5163,10 +5850,17 @@ SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
         let stmt = self
             .prepare_cached(
                 "-- get_taskprov_peer_aggregator()
-SELECT ord, type, token FROM taskprov_collector_auth_tokens
-    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
-        WHERE endpoint = $1 AND role = $2)
-    ORDER BY ord ASC",
+SELECT ord,
+    type,
+    token
+FROM taskprov_collector_auth_tokens
+WHERE peer_aggregator_id = (
+        SELECT id
+        FROM taskprov_peer_aggregators
+        WHERE endpoint = $1
+            AND role = $2
+    )
+ORDER BY ord ASC",
             )
             .await?;
         let collector_auth_token_rows = self.query(&stmt, params);
@@ -5276,10 +5970,16 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
             .prepare_cached(
                 "-- put_taskprov_peer_aggregator()
 INSERT INTO taskprov_peer_aggregators (
-    endpoint, role, verify_key_init, tolerable_clock_skew, report_expiry_age,
-    collector_hpke_config, created_at, updated_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT DO NOTHING",
+        endpoint,
+        role,
+        verify_key_init,
+        tolerable_clock_skew,
+        report_expiry_age,
+        collector_hpke_config,
+        created_at,
+        updated_by
+    )
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
             )
             .await?;
         check_insert(
@@ -5339,11 +6039,23 @@ ON CONFLICT DO NOTHING",
             .prepare_cached(
                 "-- put_taskprov_peer_aggregator()
 INSERT INTO taskprov_aggregator_auth_tokens (
-    peer_aggregator_id, created_at, updated_by, ord, type, token
-)
-SELECT
-    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
-    $3, $4, * FROM UNNEST($5::BIGINT[], $6::AUTH_TOKEN_TYPE[], $7::BYTEA[])",
+        peer_aggregator_id,
+        created_at,
+        updated_by,
+        ord,
+        type,
+        token
+    )
+SELECT (
+        SELECT id
+        FROM taskprov_peer_aggregators
+        WHERE endpoint = $1
+            AND role = $2
+    ),
+    $3,
+    $4,
+    *
+FROM UNNEST($5::BIGINT [], $6::AUTH_TOKEN_TYPE [], $7::BYTEA [])",
             )
             .await?;
         let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
@@ -5366,11 +6078,23 @@ SELECT
             .prepare_cached(
                 "-- put_taskprov_peer_aggregator()
 INSERT INTO taskprov_collector_auth_tokens (
-    peer_aggregator_id, created_at, updated_by, ord,  type, token
-)
-SELECT
-    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
-    $3, $4, * FROM UNNEST($5::BIGINT[], $6::AUTH_TOKEN_TYPE[], $7::BYTEA[])",
+        peer_aggregator_id,
+        created_at,
+        updated_by,
+        ord,
+        type,
+        token
+    )
+SELECT (
+        SELECT id
+        FROM taskprov_peer_aggregators
+        WHERE endpoint = $1
+            AND role = $2
+    ),
+    $3,
+    $4,
+    *
+FROM UNNEST($5::BIGINT [], $6::AUTH_TOKEN_TYPE [], $7::BYTEA [])",
             )
             .await?;
         let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
@@ -5401,7 +6125,9 @@ SELECT
         let stmt = self
             .prepare_cached(
                 "-- delete_taskprov_peer_aggregator()
-DELETE FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+DELETE FROM taskprov_peer_aggregators
+WHERE endpoint = $1
+    AND role = $2",
             )
             .await?;
         check_single_row_mutation(self.execute(&stmt, &[&aggregator_url, &role]).await?)
@@ -5417,8 +6143,7 @@ DELETE FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
         let stmt = self
             .prepare_cached(
                 "-- get_task_upload_counter()
-SELECT
-    tasks.id,
+SELECT tasks.id,
     COALESCE(SUM(interval_collected)::BIGINT, 0) AS interval_collected,
     COALESCE(SUM(report_decode_failure)::BIGINT, 0) AS report_decode_failure,
     COALESCE(SUM(report_decrypt_failure)::BIGINT, 0) AS report_decrypt_failure,
@@ -5428,7 +6153,7 @@ SELECT
     COALESCE(SUM(report_too_early)::BIGINT, 0) AS report_too_early,
     COALESCE(SUM(task_expired)::BIGINT, 0) AS task_expired
 FROM task_upload_counters
-RIGHT JOIN tasks on tasks.id = task_upload_counters.task_id
+    RIGHT JOIN tasks on tasks.id = task_upload_counters.task_id
 WHERE tasks.task_id = $1
 GROUP BY tasks.id",
             )
@@ -5461,14 +6186,37 @@ GROUP BY tasks.id",
         ord: u64,
         counter: &TaskUploadCounter,
     ) -> Result<(), Error> {
-        let stmt =
-            "-- increment_task_upload_counter()
-INSERT INTO task_upload_counters (task_id, ord, interval_collected, report_decode_failure,
-        report_decrypt_failure, report_expired, report_outdated_key, report_success, report_too_early,
-        task_expired)
-VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (task_id, ord) DO UPDATE SET
-    interval_collected = task_upload_counters.interval_collected + $3,
+        let stmt = "-- increment_task_upload_counter()
+INSERT INTO task_upload_counters (
+        task_id,
+        ord,
+        interval_collected,
+        report_decode_failure,
+        report_decrypt_failure,
+        report_expired,
+        report_outdated_key,
+        report_success,
+        report_too_early,
+        task_expired
+    )
+VALUES (
+        (
+            SELECT id
+            FROM tasks
+            WHERE task_id = $1
+        ),
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10
+    ) ON CONFLICT (task_id, ord) DO
+UPDATE
+SET interval_collected = task_upload_counters.interval_collected + $3,
     report_decode_failure = task_upload_counters.report_decode_failure + $4,
     report_decrypt_failure = task_upload_counters.report_decrypt_failure + $5,
     report_expired = task_upload_counters.report_expired + $6,
@@ -5522,7 +6270,10 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
         let stmt = self
             .prepare_cached(
                 "-- task_info_for()
-SELECT id, report_expiry_age FROM tasks WHERE tasks.task_id = $1",
+SELECT id,
+    report_expiry_age
+FROM tasks
+WHERE tasks.task_id = $1",
             )
             .await?;
         let mut rows = self
