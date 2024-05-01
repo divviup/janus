@@ -730,9 +730,8 @@ mod rate_limits {
         let expected_429_rate = rate_limit_excess / (1.0 + rate_limit_excess);
         assert!(
             ratio > expected_429_rate - 0.05 && ratio <= expected_429_rate + 0.05,
-            "ratio: {ratio} expected 429 rate: {expected_429_rate} \
-            count of HTTP 429: {too_many_requests_count} \
-            count of HTTP 400: {acceptable_status_count}",
+            "ratio: {ratio} expected 429 rate: {expected_429_rate} count of HTTP 429: \
+             {too_many_requests_count} count of HTTP 400: {acceptable_status_count}",
         );
 
         let last_retry_after = assert_matches!(last_retry_after, Some(l) => l);

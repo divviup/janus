@@ -2090,8 +2090,8 @@ impl<'a> FromSql<'a> for SqlInterval {
             }
             Range::Nonempty(RangeBound::Exclusive(_), _)
             | Range::Nonempty(_, RangeBound::Inclusive(_)) => Err(Into::into(
-                "Interval can only represent timestamp ranges that are closed at the start \
-                     and open at the end",
+                "Interval can only represent timestamp ranges that are closed at the start and \
+                 open at the end",
             )),
             Range::Nonempty(
                 RangeBound::Inclusive(Some(start_raw)),
@@ -2108,8 +2108,7 @@ impl<'a> FromSql<'a> for SqlInterval {
                 let abs_start_duration = Duration::from_microseconds(abs_start_us);
                 let time = if negative {
                     SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| {
-                        "Interval cannot represent timestamp ranges starting before the Unix \
-                             epoch"
+                        "Interval cannot represent timestamp ranges starting before the Unix epoch"
                     })?
                 } else {
                     SQL_EPOCH_TIME

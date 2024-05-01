@@ -81,7 +81,7 @@ impl VdafOps {
                                 Error::InvalidMessage(
                                     Some(task_id),
                                     "leader sent unexpected, duplicate, or out-of-order prepare \
-                                    steps",
+                                     steps",
                                 )
                                 .into(),
                             )
@@ -113,7 +113,7 @@ impl VdafOps {
                             return Err(datastore::Error::User(
                                 Error::Internal(
                                     "helper encountered unexpected \
-                                    ReportAggregationState::WaitingLeader"
+                                     ReportAggregationState::WaitingLeader"
                                         .to_string(),
                                 )
                                 .into(),

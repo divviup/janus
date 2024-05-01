@@ -279,8 +279,8 @@ where
             {
                 return Err(anyhow!(
                     "Tokio runtime metrics were enabled in the configuration file, but support \
-                     was not enabled at compile time. Rebuild with \
-                     `RUSTFLAGS=\"--cfg tokio_unstable\"`."
+                     was not enabled at compile time. Rebuild with `RUSTFLAGS=\"--cfg \
+                     tokio_unstable\"`."
                 ));
             }
         }

@@ -227,7 +227,8 @@ impl StatusCounter {
             meter
                 .u64_counter("janus_aggregator_responses")
                 .with_description(
-                    "Count of requests handled by the aggregator, by method, route, and response status.",
+                    "Count of requests handled by the aggregator, by method, route, and response \
+                     status.",
                 )
                 .with_unit(Unit::new("{request}"))
                 .init(),

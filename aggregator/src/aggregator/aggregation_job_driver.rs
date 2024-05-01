@@ -268,7 +268,7 @@ where
 
             _ => Err(Error::Internal(format!(
                 "unexpected combination of report aggregation states (saw_start = {saw_start}, \
-                saw_waiting = {saw_waiting}, saw_finished = {saw_finished})",
+                 saw_waiting = {saw_waiting}, saw_finished = {saw_finished})",
             ))),
         }
     }

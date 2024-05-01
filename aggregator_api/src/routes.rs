@@ -184,23 +184,26 @@ pub(super) async fn post_task<C: Clock>(
         let task = Arc::clone(&task);
         Box::pin(async move {
             if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
-            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
-            // those fields that are randomly generated.
-            if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
-                && existing_task.query_type() == task.query_type()
-                && existing_task.vdaf() == task.vdaf()
-                && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
-                && existing_task.role() == task.role()
-                && existing_task.max_batch_query_count() == task.max_batch_query_count()
-                && existing_task.task_expiration() == task.task_expiration()
-                && existing_task.min_batch_size() == task.min_batch_size()
-                && existing_task.time_precision() == task.time_precision()
-                && existing_task.collector_hpke_config() == task.collector_hpke_config() {
-                    return Ok(())
+                // Check whether the existing task in the DB corresponds to the incoming task, ignoring
+                // those fields that are randomly generated.
+                if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
+                    && existing_task.query_type() == task.query_type()
+                    && existing_task.vdaf() == task.vdaf()
+                    && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
+                    && existing_task.role() == task.role()
+                    && existing_task.max_batch_query_count() == task.max_batch_query_count()
+                    && existing_task.task_expiration() == task.task_expiration()
+                    && existing_task.min_batch_size() == task.min_batch_size()
+                    && existing_task.time_precision() == task.time_precision()
+                    && existing_task.collector_hpke_config() == task.collector_hpke_config()
+                {
+                    return Ok(());
                 }
 
                 let err = Error::Conflict(
-                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                    "task with same VDAF verify key and task ID already exists with different \
+                     parameters"
+                        .to_string(),
                 );
                 return Err(datastore::Error::User(err.into()));
             }

@@ -3484,13 +3484,16 @@ mod tests {
                             // AggregationJob<_, _, A>::aggregation_parameter returns
                             // &A::AggregationParam, but we nonetheless need this cast or the
                             // compiler won't let us call clone
-                            let agg_param = (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
+                            let agg_param =
+                                (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
                             let want_ra_state = want_ra_states
                                 .get(&(*ra.report_id(), agg_param))
                                 .unwrap_or_else(|| {
                                     panic!(
-                                        "found report aggregation for unknown report {} aggregation param {:?}",
-                                        ra.report_id(), agg_job.aggregation_parameter(),
+                                        "found report aggregation for unknown report {} \
+                                         aggregation param {:?}",
+                                        ra.report_id(),
+                                        agg_job.aggregation_parameter(),
                                     )
                                 });
                             assert_eq!(want_ra_state, ra.state());

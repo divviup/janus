@@ -1811,9 +1811,9 @@ mod tests {
             .as_secs();
 
             assert_eq!(
-                want_delay_s,
-                got_delay_s,
-                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor}).compute_retry_delay({step_attempts})"
+                want_delay_s, got_delay_s,
+                "RetryDelay({min_delay_s}, {max_delay_s}, \
+                 {exponential_factor}).compute_retry_delay({step_attempts})"
             );
         }
 
