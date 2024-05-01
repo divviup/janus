@@ -347,8 +347,9 @@ async fn put_task_invalid_aggregator_auth_tokens(ephemeral_datastore: EphemeralD
                 let err = tx
                     .query_one(
                         &format!(
-                            "UPDATE tasks SET aggregator_auth_token = {auth_token},
-                            aggregator_auth_token_type = {auth_token_type}"
+                            "--
+UPDATE tasks SET aggregator_auth_token = {auth_token},
+aggregator_auth_token_type = {auth_token_type}"
                         ),
                         &[],
                     )
@@ -386,8 +387,9 @@ async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDa
                 let err = tx
                     .query_one(
                         &format!(
-                            "UPDATE tasks SET collector_auth_token_hash = {auth_token},
-                            collector_auth_token_type = {auth_token_type}"
+                            "--
+UPDATE tasks SET collector_auth_token_hash = {auth_token},
+collector_auth_token_type = {auth_token_type}"
                         ),
                         &[],
                     )
@@ -1482,15 +1484,16 @@ async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
 
                 let row = tx
                     .query_one(
-                        "SELECT
-                            tasks.task_id,
-                            client_reports.report_id,
-                            client_reports.client_timestamp,
-                            client_reports.extensions,
-                            client_reports.leader_input_share,
-                            client_reports.helper_encrypted_input_share
-                        FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
-                        WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
+                        "--
+SELECT
+    tasks.task_id,
+    client_reports.report_id,
+    client_reports.client_timestamp,
+    client_reports.extensions,
+    client_reports.leader_input_share,
+    client_reports.helper_encrypted_input_share
+FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
+WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
                         &[
                             /* task_id */ &task_id.as_ref(),
                             /* report_id */ &report_id.as_ref(),
@@ -2385,8 +2388,9 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
                     let row = tx
                         .query_one(
-                            "SELECT updated_at, updated_by FROM report_aggregations
-                            WHERE client_report_id = $1",
+                            "--
+SELECT updated_at, updated_by FROM report_aggregations
+WHERE client_report_id = $1",
                             &[&report_aggregation.report_id().as_ref()],
                         )
                         .await
@@ -2455,8 +2459,9 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
                 let row = tx
                     .query_one(
-                        "SELECT updated_at, updated_by FROM report_aggregations
-                            WHERE client_report_id = $1",
+                        "--
+SELECT updated_at, updated_by FROM report_aggregations
+    WHERE client_report_id = $1",
                         &[&want_report_aggregation.report_id().as_ref()],
                     )
                     .await
@@ -7283,11 +7288,12 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 
                 let ok = tx
                     .query_one(
-                        "SELECT (lower(interval) = '1972-07-21 05:30:00' AND
-                            upper(interval) = '1972-07-21 06:00:00' AND
-                            lower_inc(interval) AND
-                            NOT upper_inc(interval)) AS ok
-                            FROM (VALUES ($1::tsrange)) AS temp (interval)",
+                        "--
+SELECT (lower(interval) = '1972-07-21 05:30:00' AND
+    upper(interval) = '1972-07-21 06:00:00' AND
+    lower_inc(interval) AND
+    NOT upper_inc(interval)) AS ok
+    FROM (VALUES ($1::tsrange)) AS temp (interval)",
                         &[&SqlInterval::from(
                             Interval::new(
                                 Time::from_naive_date_time(
@@ -7308,11 +7314,12 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 
                 let ok = tx
                     .query_one(
-                        "SELECT (lower(interval) = '2021-10-05 00:00:00' AND
-                            upper(interval) = '2021-10-06 00:00:00' AND
-                            lower_inc(interval) AND
-                            NOT upper_inc(interval)) AS ok
-                            FROM (VALUES ($1::tsrange)) AS temp (interval)",
+                        "--
+SELECT (lower(interval) = '2021-10-05 00:00:00' AND
+    upper(interval) = '2021-10-06 00:00:00' AND
+    lower_inc(interval) AND
+    NOT upper_inc(interval)) AS ok
+    FROM (VALUES ($1::tsrange)) AS temp (interval)",
                         &[&SqlInterval::from(
                             Interval::new(
                                 Time::from_naive_date_time(
