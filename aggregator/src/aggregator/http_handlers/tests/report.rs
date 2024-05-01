@@ -1,12 +1,5 @@
-use crate::aggregator::{
-    error::ReportRejectionReason,
-    http_handlers::{
-        aggregator_handler,
-        test_util::{setup_http_handler_test, take_problem_details},
-    },
-    test_util::default_aggregator_config,
-    tests::{create_report, create_report_custom},
-};
+use std::{sync::Arc, time::Duration as StdDuration};
+
 use janus_aggregator_core::{
     datastore::test_util::EphemeralDatastoreBuilder,
     task::{test_util::TaskBuilder, QueryType},
@@ -28,10 +21,19 @@ use janus_messages::{
 use prio::codec::Encode;
 use rand::random;
 use serde_json::json;
-use std::{sync::Arc, time::Duration as StdDuration};
 use tokio::time::sleep;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::put, TestConn};
+
+use crate::aggregator::{
+    error::ReportRejectionReason,
+    http_handlers::{
+        aggregator_handler,
+        test_util::{setup_http_handler_test, take_problem_details},
+    },
+    test_util::default_aggregator_config,
+    tests::{create_report, create_report_custom},
+};
 
 #[tokio::test]
 async fn upload_handler() {

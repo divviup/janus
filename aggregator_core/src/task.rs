@@ -1,6 +1,7 @@
 //! Shared parameters for a DAP task.
 
-use crate::SecretBytes;
+use std::{array::TryFromSliceError, collections::HashMap};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
@@ -15,8 +16,9 @@ use janus_messages::{
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::{array::TryFromSliceError, collections::HashMap};
 use url::Url;
+
+use crate::SecretBytes;
 
 /// Errors that methods and functions in this module may return.
 #[derive(Debug, thiserror::Error)]
@@ -777,13 +779,8 @@ impl<'de> Deserialize<'de> for AggregatorTask {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::{
-        task::{
-            AggregatorTask, AggregatorTaskParameters, CommonTaskParameters, Error, QueryType,
-            VerifyKey,
-        },
-        SecretBytes,
-    };
+    use std::collections::HashMap;
+
     use derivative::Derivative;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -802,8 +799,15 @@ pub mod test_util {
         AggregationJobId, CollectionJobId, Duration, HpkeConfigId, Role, TaskId, Time,
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
-    use std::collections::HashMap;
     use url::Url;
+
+    use crate::{
+        task::{
+            AggregatorTask, AggregatorTaskParameters, CommonTaskParameters, Error, QueryType,
+            VerifyKey,
+        },
+        SecretBytes,
+    };
 
     /// All parameters and secrets for a task, for all participants.
     #[derive(Clone, Derivative, PartialEq, Eq)]
@@ -1332,13 +1336,6 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        task::{
-            test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType,
-            VdafInstance,
-        },
-        SecretBytes,
-    };
     use assert_matches::assert_matches;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -1352,6 +1349,14 @@ mod tests {
     use rand::random;
     use serde_json::json;
     use serde_test::{assert_de_tokens, assert_tokens, Token};
+
+    use crate::{
+        task::{
+            test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType,
+            VdafInstance,
+        },
+        SecretBytes,
+    };
 
     #[test]
     fn leader_task_serialization() {

@@ -1,10 +1,9 @@
-use crate::{
-    binary_utils::{database_pool, datastore, initialize_rustls, read_config, CommonBinaryOptions},
-    config::{BinaryConfig, CommonConfig},
-    git_revision,
-    metrics::{install_metrics_exporter, MetricsExporterHandle},
-    trace::{install_trace_subscriber, TraceGuards},
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
 };
+
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
@@ -29,17 +28,20 @@ use prio::codec::Decode as _;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
-};
 use tokio::{
     fs,
     runtime::{self, Runtime},
 };
 use tracing::{debug, info};
 use url::Url;
+
+use crate::{
+    binary_utils::{database_pool, datastore, initialize_rustls, read_config, CommonBinaryOptions},
+    config::{BinaryConfig, CommonConfig},
+    git_revision,
+    metrics::{install_metrics_exporter, MetricsExporterHandle},
+    trace::{install_trace_subscriber, TraceGuards},
+};
 
 pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
     initialize_rustls();
@@ -735,18 +737,12 @@ impl From<kube::Client> for LazyKubeClient {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        binaries::janus_cli::{
-            fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
-            LazyKubeClient,
-        },
-        binary_utils::{initialize_rustls, CommonBinaryOptions},
-        config::{
-            default_max_transaction_retries,
-            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig,
-        },
+    use std::{
+        collections::HashMap,
+        io::Write,
+        net::{Ipv4Addr, SocketAddr},
     };
+
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::CommandFactory;
     use janus_aggregator_core::{
@@ -768,14 +764,22 @@ mod tests {
     use prio::codec::Decode;
     use rand::random;
     use ring::aead::{UnboundKey, AES_128_GCM};
-    use std::{
-        collections::HashMap,
-        io::Write,
-        net::{Ipv4Addr, SocketAddr},
-    };
     use tempfile::{tempdir, NamedTempFile};
     use tokio::fs;
     use url::Url;
+
+    use crate::{
+        binaries::janus_cli::{
+            fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
+            LazyKubeClient,
+        },
+        binary_utils::{initialize_rustls, CommonBinaryOptions},
+        config::{
+            default_max_transaction_retries,
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
+            CommonConfig,
+        },
+    };
 
     #[test]
     fn verify_app() {

@@ -1,7 +1,11 @@
 #![cfg(feature = "testcontainer")]
 
+use std::time::Duration as StdDuration;
+
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed_macro::fixed;
 use futures::future::join_all;
 use janus_core::{
     test_util::install_test_trace_subscriber,
@@ -22,12 +26,8 @@ use prio::codec::Encode;
 use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
-use std::time::Duration as StdDuration;
 use testcontainers::{runners::AsyncRunner, RunnableImage};
 use tokio::time::sleep;
-
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed_macro::fixed;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;

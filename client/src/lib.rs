@@ -37,6 +37,8 @@
 //! }
 //! ```
 
+use std::{convert::Infallible, fmt::Debug, time::SystemTimeError};
+
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use http::header::CONTENT_TYPE;
@@ -57,7 +59,6 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use std::{convert::Infallible, fmt::Debug, time::SystemTimeError};
 use tokio::try_join;
 use url::Url;
 
@@ -501,7 +502,6 @@ impl<V: vdaf::Client<16>> Client<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{aggregator_hpke_config, default_http_client, Client, ClientParameters, Error};
     use assert_matches::assert_matches;
     use hex_literal::hex;
     use http::{header::CONTENT_TYPE, StatusCode};
@@ -517,6 +517,8 @@ mod tests {
     };
     use rand::random;
     use url::Url;
+
+    use crate::{aggregator_hpke_config, default_http_client, Client, ClientParameters, Error};
 
     fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
         let server_url = Url::parse(&server.url()).unwrap();

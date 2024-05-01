@@ -4,6 +4,8 @@ mod routes;
 #[cfg(test)]
 mod tests;
 
+use std::{borrow::Cow, str::FromStr, sync::Arc};
+
 use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -13,7 +15,6 @@ use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_to
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use opentelemetry::metrics::Meter;
 use routes::*;
-use std::{borrow::Cow, str::FromStr, sync::Arc};
 use tracing::error;
 use trillium::{
     Conn, Handler,

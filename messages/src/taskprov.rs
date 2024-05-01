@@ -2,14 +2,16 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url};
+use std::{fmt::Debug, io::Cursor};
+
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
     decode_u16_items, decode_u8_items, encode_u16_items, encode_u8_items, CodecError, Decode,
     Encode,
 };
-use std::{fmt::Debug, io::Cursor};
+
+use crate::{Duration, Error, Time, Url};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -571,9 +573,10 @@ impl Decode for DpMechanism {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+
     use super::*;
     use crate::roundtrip_encoding;
-    use assert_matches::assert_matches;
 
     #[test]
     fn roundtrip_dp_config() {

@@ -2,12 +2,19 @@
 
 pub mod job_driver;
 
-use crate::{
-    config::{BinaryConfig, DbConfig},
-    git_revision,
-    metrics::install_metrics_exporter,
-    trace::{install_trace_subscriber, TraceReloadHandle},
+use std::{
+    fmt::{self, Debug, Formatter},
+    fs::{self, File},
+    future::Future,
+    io::{self, BufReader},
+    net::SocketAddr,
+    panic,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
+
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -21,18 +28,6 @@ use opentelemetry::metrics::{Meter, MetricsError};
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use rustls::RootCertStore;
-use std::{
-    fmt::{self, Debug, Formatter},
-    fs::{self, File},
-    future::Future,
-    io::{self, BufReader},
-    net::SocketAddr,
-    panic,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{runtime, sync::oneshot};
 use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -43,6 +38,13 @@ use trillium_api::{api, State};
 use trillium_head::Head;
 use trillium_router::Router;
 use trillium_tokio::Stopper;
+
+use crate::{
+    config::{BinaryConfig, DbConfig},
+    git_revision,
+    metrics::install_metrics_exporter,
+    trace::{install_trace_subscriber, TraceReloadHandle},
+};
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
@@ -553,14 +555,8 @@ pub(crate) fn initialize_rustls() {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::http_handlers::test_util::take_response_body,
-        binary_utils::{
-            database_pool, initialize_rustls, register_database_pool_status_metrics,
-            zpages_handler, CommonBinaryOptions,
-        },
-        config::DbConfig,
-    };
+    use std::{collections::HashMap, fs};
+
     use clap::CommandFactory;
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
     use janus_core::test_util::{
@@ -573,12 +569,20 @@ mod tests {
         runtime::Tokio,
         testing::metrics::InMemoryMetricsExporter,
     };
-    use std::{collections::HashMap, fs};
     use testcontainers::{core::Mount, runners::AsyncRunner, RunnableImage};
     use tokio::task::spawn_blocking;
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
+
+    use crate::{
+        aggregator::http_handlers::test_util::take_response_body,
+        binary_utils::{
+            database_pool, initialize_rustls, register_database_pool_status_metrics,
+            zpages_handler, CommonBinaryOptions,
+        },
+        config::DbConfig,
+    };
 
     #[test]
     fn verify_app() {

@@ -1,9 +1,3 @@
-use crate::aggregator::{
-    error::BatchMismatch,
-    http_handlers::test_util::{
-        decode_response_body, setup_http_handler_test, take_problem_details,
-    },
-};
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -32,6 +26,13 @@ use prio::{
 use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::post, TestConn};
+
+use crate::aggregator::{
+    error::BatchMismatch,
+    http_handlers::test_util::{
+        decode_response_body, setup_http_handler_test, take_problem_details,
+    },
+};
 
 pub(crate) async fn post_aggregate_share_request<Q: query_type::QueryType>(
     task: &Task,

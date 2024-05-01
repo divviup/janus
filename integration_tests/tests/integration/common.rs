@@ -1,3 +1,5 @@
+use std::{iter, time::Duration as StdDuration};
+
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
@@ -21,7 +23,6 @@ use prio::{
     vdaf::{self, dummy, prio3::Prio3},
 };
 use rand::{random, thread_rng, Rng};
-use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
 

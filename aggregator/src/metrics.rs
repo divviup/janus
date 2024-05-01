@@ -1,14 +1,26 @@
 //! Collection and exporting of application-level metrics for Janus.
 
+use std::net::AddrParseError;
+
 use anyhow::anyhow;
 use opentelemetry::{
     metrics::{Counter, Meter, Unit},
     KeyValue,
 };
 use serde::{Deserialize, Serialize};
-use std::net::AddrParseError;
 use tokio::runtime::Runtime;
-
+#[cfg(any(feature = "otlp", feature = "prometheus"))]
+use {
+    crate::git_revision,
+    janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
+    opentelemetry::metrics::MetricsError,
+    opentelemetry_sdk::{
+        metrics::{
+            new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
+        },
+        Resource,
+    },
+};
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
@@ -21,7 +33,6 @@ use {
     tokio::{sync::oneshot, task::JoinHandle},
     trillium::{Info, Init},
 };
-
 #[cfg(feature = "otlp")]
 use {
     opentelemetry_otlp::WithExportConfig,
@@ -31,19 +42,6 @@ use {
             PeriodicReader,
         },
         runtime::Tokio,
-    },
-};
-
-#[cfg(any(feature = "otlp", feature = "prometheus"))]
-use {
-    crate::git_revision,
-    janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::metrics::MetricsError,
-    opentelemetry_sdk::{
-        metrics::{
-            new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
-        },
-        Resource,
     },
 };
 

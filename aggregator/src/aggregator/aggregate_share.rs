@@ -1,6 +1,5 @@
 //! Implements functionality for computing & validating aggregate shares.
 
-use super::Error;
 use janus_aggregator_core::{
     datastore::{
         self,
@@ -11,6 +10,8 @@ use janus_aggregator_core::{
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
 use janus_messages::{query_type::QueryType, Interval, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
+
+use super::Error;
 
 /// Computes the aggregate share over the provided batch aggregations.
 ///

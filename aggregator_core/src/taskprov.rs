@@ -1,4 +1,5 @@
-use crate::{task::Error, SecretBytes};
+use std::{fmt, str::FromStr, sync::OnceLock};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
@@ -9,8 +10,9 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
 };
-use std::{fmt, str::FromStr, sync::OnceLock};
 use url::Url;
+
+use crate::{task::Error, SecretBytes};
 
 #[derive(Derivative, Clone, Copy, PartialEq, Eq)]
 #[derivative(Debug)]

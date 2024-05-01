@@ -1,6 +1,11 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{datastore::Error, task};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+    ops::RangeInclusive,
+};
+
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use clap::ValueEnum;
@@ -29,11 +34,8 @@ use prio::{
 };
 use rand::{distributions::Standard, prelude::Distribution};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-    ops::RangeInclusive,
-};
+
+use crate::{datastore::Error, task};
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
 // implementations don't play nice with generic fields, even if those fields are constrained to

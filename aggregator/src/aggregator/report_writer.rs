@@ -1,8 +1,12 @@
-use crate::aggregator::{
-    error::{ReportRejection, ReportRejectionReason},
-    query_type::UploadableQueryType,
-    Error,
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    marker::PhantomData,
+    mem::{replace, take},
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
 };
+
 use async_trait::async_trait;
 use futures::future::{join_all, try_join_all};
 use janus_aggregator_core::datastore::{
@@ -14,20 +18,18 @@ use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
 use prio::vdaf;
 use rand::{thread_rng, Rng};
-use std::{
-    collections::BTreeMap,
-    fmt::Debug,
-    marker::PhantomData,
-    mem::{replace, take},
-    sync::{Arc, Mutex as StdMutex},
-    time::Duration,
-};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
     time::{sleep_until, Instant},
 };
 use tracing::{debug, error};
+
+use crate::aggregator::{
+    error::{ReportRejection, ReportRejectionReason},
+    query_type::UploadableQueryType,
+    Error,
+};
 
 type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
 

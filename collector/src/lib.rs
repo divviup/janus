@@ -53,6 +53,11 @@
 
 mod credential;
 
+use std::{
+    convert::TryFrom,
+    time::{Duration as StdDuration, SystemTime},
+};
+
 use backoff::backoff::Backoff;
 pub use backoff::ExponentialBackoff;
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -82,10 +87,6 @@ use reqwest::{
 };
 pub use retry_after;
 use retry_after::{FromHeaderValueError, RetryAfter};
-use std::{
-    convert::TryFrom,
-    time::{Duration as StdDuration, SystemTime},
-};
 use tokio::time::{sleep, Instant};
 use tracing::debug;
 use url::Url;
@@ -747,7 +748,6 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
@@ -779,6 +779,8 @@ mod tests {
         StatusCode, Url,
     };
     use retry_after::RetryAfter;
+
+    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
 
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();

@@ -1,7 +1,10 @@
-use crate::{
-    datastore::{Crypter, Datastore, Transaction},
-    test_util::noop_meter,
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, Weak},
+    time::Duration,
 };
+
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
@@ -16,18 +19,16 @@ use sqlx::{
     migrate::{Migrate, Migrator},
     Connection, PgConnection,
 };
-use std::{
-    path::PathBuf,
-    str::FromStr,
-    sync::{Arc, Weak},
-    time::Duration,
-};
 use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
 use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
+use crate::{
+    datastore::{Crypter, Datastore, Transaction},
+    test_util::noop_meter,
+};
 
 struct EphemeralDatabase {
     _db_container: ContainerAsync<Postgres>,

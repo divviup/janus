@@ -1,10 +1,7 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use crate::aggregator::{
-    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
-    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
-    send_request_to_helper, Error, RequestBody,
-};
+use std::{sync::Arc, time::Duration};
+
 use anyhow::bail;
 use backoff::backoff::Backoff;
 use bytes::Bytes;
@@ -33,9 +30,14 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
+
+use crate::aggregator::{
+    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
+    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
+    send_request_to_helper, Error, RequestBody,
+};
 
 /// Drives a collection job.
 #[derive(Derivative)]
@@ -783,14 +785,8 @@ impl RetryStrategy {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::{
-            collection_job_driver::{CollectionJobDriver, RetryStrategy},
-            test_util::BATCH_AGGREGATION_SHARD_COUNT,
-            Error,
-        },
-        binary_utils::job_driver::JobDriver,
-    };
+    use std::{sync::Arc, time::Duration as StdDuration};
+
     use assert_matches::assert_matches;
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_aggregator_core::{
@@ -826,8 +822,16 @@ mod tests {
         vdaf::dummy,
     };
     use rand::random;
-    use std::{sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
+
+    use crate::{
+        aggregator::{
+            collection_job_driver::{CollectionJobDriver, RetryStrategy},
+            test_util::BATCH_AGGREGATION_SHARD_COUNT,
+            Error,
+        },
+        binary_utils::job_driver::JobDriver,
+    };
 
     async fn setup_collection_job_test_case(
         server: &mut mockito::Server,

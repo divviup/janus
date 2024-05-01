@@ -1,21 +1,21 @@
 //! Janus datastore (durable storage) implementation.
 
-use self::models::{
-    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
-    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{Debug, Display},
+    future::Future,
+    io::Cursor,
+    mem::size_of,
+    ops::RangeInclusive,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration as StdDuration, Instant},
 };
-#[cfg(feature = "test-util")]
-use crate::VdafHasAggregationParameter;
-use crate::{
-    query_type::{AccumulableQueryType, CollectableQueryType},
-    task::{self, AggregatorTask, AggregatorTaskParameters},
-    taskprov::PeerAggregator,
-    SecretBytes,
-};
+
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -42,25 +42,27 @@ use prio::{
 };
 use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    fmt::{Debug, Display},
-    future::Future,
-    io::Cursor,
-    mem::size_of,
-    ops::RangeInclusive,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
 use tracing::{error, Level};
 use url::Url;
+
+use self::models::{
+    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
+    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
+    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+};
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
+use crate::{
+    query_type::{AccumulableQueryType, CollectableQueryType},
+    task::{self, AggregatorTask, AggregatorTaskParameters},
+    taskprov::PeerAggregator,
+    SecretBytes,
+};
 
 pub mod models;
 #[cfg(feature = "test-util")]

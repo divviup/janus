@@ -1,13 +1,15 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
-use crate::http::HttpErrorResponse;
+use std::{error::Error as StdError, time::Duration};
+
 use backoff::{backoff::Backoff, future::retry_notify, ExponentialBackoff, Notify};
 use bytes::Bytes;
 use futures::Future;
 use http::HeaderMap;
 use reqwest::StatusCode;
-use std::{error::Error as StdError, time::Duration};
 use tracing::{debug, warn};
+
+use crate::http::HttpErrorResponse;
 
 /// Traverse chain of source errors looking for an `std::io::Error`.
 fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
@@ -210,8 +212,9 @@ pub fn is_retryable_http_status(status: StatusCode) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use backoff::{backoff::Backoff, ExponentialBackoff};
     use std::time::Duration;
+
+    use backoff::{backoff::Backoff, ExponentialBackoff};
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
@@ -258,15 +261,17 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use backoff::Notify;
+    use reqwest::StatusCode;
+    use tokio::net::TcpListener;
+    use url::Url;
+
     use crate::{
         retries::{retry_http_request, retry_http_request_notify, test_util::LimitedRetryer},
         test_util::install_test_trace_subscriber,
     };
-    use backoff::Notify;
-    use reqwest::StatusCode;
-    use std::time::Duration;
-    use tokio::net::TcpListener;
-    use url::Url;
 
     #[derive(Default)]
     struct NotifyCounter {

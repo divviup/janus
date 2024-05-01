@@ -1,27 +1,15 @@
 //! Common functionality for DAP aggregators.
 
-pub use crate::aggregator::error::Error;
-use crate::{
-    aggregator::{
-        aggregate_share::compute_aggregate_share,
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
-            ReportAggregationUpdate as _, WritableReportAggregation,
-        },
-        error::{
-            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
-            ReportRejectionReason,
-        },
-        query_type::{CollectableQueryType, UploadableQueryType},
-        report_writer::{ReportWriteBatcher, WritableReport},
-    },
-    cache::{
-        GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
-        TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
-    },
-    config::TaskprovConfig,
-    metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    sync::{Arc, Mutex as SyncMutex},
+    time::{Duration as StdDuration, Instant},
 };
+
 use backoff::{backoff::Backoff, Notify};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
@@ -97,21 +85,35 @@ use ring::{
     rand::SystemRandom,
     signature::{EcdsaKeyPair, Signature},
 };
-use std::{
-    any::Any,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
-    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
-    sync::{Arc, Mutex as SyncMutex},
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{
     sync::oneshot::{self, error::RecvError},
     try_join,
 };
 use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
+
+pub use crate::aggregator::error::Error;
+use crate::{
+    aggregator::{
+        aggregate_share::compute_aggregate_share,
+        aggregation_job_writer::{
+            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
+            ReportAggregationUpdate as _, WritableReportAggregation,
+        },
+        error::{
+            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
+            ReportRejectionReason,
+        },
+        query_type::{CollectableQueryType, UploadableQueryType},
+        report_writer::{ReportWriteBatcher, WritableReport},
+    },
+    cache::{
+        GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
+        TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+    },
+    config::TaskprovConfig,
+    metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
+};
 
 #[cfg(test)]
 mod aggregate_init_tests;
@@ -3252,9 +3254,11 @@ async fn send_request_to_helper(
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub(crate) mod test_util {
-    use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
-    use ring::signature::EcdsaKeyPair;
     use std::time::Duration;
+
+    use ring::signature::EcdsaKeyPair;
+
+    use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
 
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
@@ -3300,10 +3304,8 @@ uKFxOelIgsiZJXKZNCX0FBmrfpCkKklCcg==
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        error::ReportRejectionReason, test_util::default_aggregator_config, Aggregator, Config,
-        Error,
-    };
+    use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
@@ -3341,7 +3343,11 @@ mod tests {
         vdaf::{self, prio3::Prio3Count, Client as _},
     };
     use rand::random;
-    use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+
+    use crate::aggregator::{
+        error::ReportRejectionReason, test_util::default_aggregator_config, Aggregator, Config,
+        Error,
+    };
 
     pub(super) fn create_report_custom(
         task: &AggregatorTask,

@@ -1,11 +1,5 @@
-use crate::{
-    datastore::{
-        self,
-        models::{BatchAggregation, CollectionJob},
-        Transaction,
-    },
-    task::AggregatorTask,
-};
+use std::iter;
+
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
@@ -14,7 +8,15 @@ use janus_messages::{
     Duration, FixedSizeQuery, Interval, Query, TaskId, Time,
 };
 use prio::vdaf;
-use std::iter;
+
+use crate::{
+    datastore::{
+        self,
+        models::{BatchAggregation, CollectionJob},
+        Transaction,
+    },
+    task::AggregatorTask,
+};
 
 #[async_trait]
 pub trait AccumulableQueryType: QueryType {
@@ -432,12 +434,13 @@ impl CollectableQueryType for FixedSize {
 
 #[cfg(test)]
 mod tests {
+    use janus_core::vdaf::VdafInstance;
+    use janus_messages::{query_type::TimeInterval, Duration, Interval, Time};
+
     use crate::{
         query_type::CollectableQueryType,
         task::{test_util::TaskBuilder, QueryType},
     };
-    use janus_core::vdaf::VdafInstance;
-    use janus_messages::{query_type::TimeInterval, Duration, Interval, Time};
 
     #[test]
     fn validate_collect_identifier() {

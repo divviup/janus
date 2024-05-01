@@ -1,15 +1,5 @@
-use crate::{
-    aggregator::{
-        http_handlers::{
-            aggregator_handler_with_aggregator,
-            test_util::{setup_http_handler_test, take_problem_details, take_response_body},
-            HPKE_CONFIG_SIGNATURE_HEADER,
-        },
-        test_util::{hpke_config_signing_key, hpke_config_verification_key},
-        Config,
-    },
-    config::TaskprovConfig,
-};
+use std::{collections::HashMap, sync::Arc};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use janus_aggregator_core::{
     datastore::models::HpkeKeyState,
@@ -28,9 +18,21 @@ use janus_messages::{HpkeConfigList, Role, TaskId};
 use prio::codec::Decode as _;
 use rand::random;
 use serde_json::json;
-use std::{collections::HashMap, sync::Arc};
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::get, TestConn};
+
+use crate::{
+    aggregator::{
+        http_handlers::{
+            aggregator_handler_with_aggregator,
+            test_util::{setup_http_handler_test, take_problem_details, take_response_body},
+            HPKE_CONFIG_SIGNATURE_HEADER,
+        },
+        test_util::{hpke_config_signing_key, hpke_config_verification_key},
+        Config,
+    },
+    config::TaskprovConfig,
+};
 
 #[tokio::test]
 async fn hpke_config() {

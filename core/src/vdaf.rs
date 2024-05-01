@@ -1,3 +1,5 @@
+use std::str;
+
 use derivative::Derivative;
 use janus_messages::taskprov;
 use prio::{
@@ -9,7 +11,6 @@ use prio::{
     vdaf::{prio3::Prio3, xof::XofHmacSha256Aes128, VdafError},
 };
 use serde::{Deserialize, Serialize};
-use std::str;
 
 /// The length of the verify key parameter for Prio3 and Poplar1 VDAF instantiations using
 /// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
@@ -536,9 +537,10 @@ macro_rules! vdaf_dispatch {
 
 #[cfg(test)]
 mod tests {
-    use super::VdafInstance;
     use assert_matches::assert_matches;
     use serde_test::{assert_tokens, Token};
+
+    use super::VdafInstance;
 
     #[test]
     fn vdaf_serialization() {

@@ -1,6 +1,12 @@
 //! Various in-memory caches that can be used by an aggregator.
 
-use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex as StdMutex},
+    time::{Duration, Instant},
+};
+
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
     taskprov::PeerAggregator,
@@ -12,15 +18,11 @@ use moka::{
     ops::compute::Op,
     Entry,
 };
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    sync::{Arc, Mutex as StdMutex},
-    time::{Duration, Instant},
-};
 use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::{debug, error};
 use url::Url;
+
+use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;

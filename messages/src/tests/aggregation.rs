@@ -1,10 +1,11 @@
+use prio::topology::ping_pong::PingPongMessage;
+
 use crate::{
     roundtrip_encoding, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchId, FixedSize, HpkeCiphertext, HpkeConfigId, PartialBatchSelector,
     PrepareContinue, PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportId,
     ReportMetadata, ReportShare, Time,
 };
-use prio::topology::ping_pong::PingPongMessage;
 
 #[test]
 fn roundtrip_report_share() {

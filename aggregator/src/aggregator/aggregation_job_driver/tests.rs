@@ -1,10 +1,5 @@
-use crate::{
-    aggregator::{
-        aggregation_job_driver::AggregationJobDriver, test_util::BATCH_AGGREGATION_SHARD_COUNT,
-        Error,
-    },
-    binary_utils::job_driver::JobDriver,
-};
+use std::{sync::Arc, time::Duration as StdDuration};
+
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use http::{header::CONTENT_TYPE, StatusCode};
@@ -51,8 +46,15 @@ use prio::{
     },
 };
 use rand::random;
-use std::{sync::Arc, time::Duration as StdDuration};
 use trillium_tokio::Stopper;
+
+use crate::{
+    aggregator::{
+        aggregation_job_driver::AggregationJobDriver, test_util::BATCH_AGGREGATION_SHARD_COUNT,
+        Error,
+    },
+    binary_utils::job_driver::JobDriver,
+};
 
 #[tokio::test]
 async fn aggregation_job_driver() {

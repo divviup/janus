@@ -1,3 +1,9 @@
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::{stdin, Read},
+};
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
@@ -6,11 +12,6 @@ use janus_messages::{
     AggregationJobResp, Collection, CollectionReq, HpkeConfig, HpkeConfigList, Report,
 };
 use prio::codec::Decode;
-use std::{
-    fmt::Debug,
-    fs::File,
-    io::{stdin, Read},
-};
 
 fn main() -> Result<()> {
     let options = Options::parse();
@@ -151,8 +152,9 @@ struct Options {
 
 #[cfg(test)]
 mod tests {
-    use crate::Options;
     use clap::CommandFactory;
+
+    use crate::Options;
 
     #[test]
     fn verify_clap_app() {

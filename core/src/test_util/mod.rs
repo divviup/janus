@@ -1,3 +1,5 @@
+use std::{fmt::Debug, sync::Once};
+
 use assert_matches::assert_matches;
 use janus_messages::{ReportId, Role};
 use prio::{
@@ -8,7 +10,6 @@ use prio::{
     vdaf,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, sync::Once};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 

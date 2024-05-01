@@ -1,7 +1,10 @@
-use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, InitialWrite},
-    batch_creator::BatchCreator,
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
 };
+
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     types::extra::{U15, U31},
@@ -53,18 +56,17 @@ use prio::{
     },
 };
 use rand::{random, thread_rng, Rng};
-use std::{
-    cmp::min,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{
     time::{self, sleep_until, Instant, MissedTickBehavior},
     try_join,
 };
 use tracing::{debug, error, info};
 use trillium_tokio::{CloneCounterObserver, Stopper};
+
+use crate::aggregator::{
+    aggregation_job_writer::{AggregationJobWriter, InitialWrite},
+    batch_creator::BatchCreator,
+};
 
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
@@ -911,9 +913,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
+    use std::{
+        any::{Any, TypeId},
+        collections::{HashMap, HashSet},
+        hash::Hash,
+        iter,
+        sync::Arc,
+        time::Duration,
+    };
 
-    use super::AggregationJobCreator;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -946,16 +954,11 @@ mod tests {
         prio3::{Prio3, Prio3Count},
     };
     use rand::random;
-    use std::{
-        any::{Any, TypeId},
-        collections::{HashMap, HashSet},
-        hash::Hash,
-        iter,
-        sync::Arc,
-        time::Duration,
-    };
     use tokio::{task, time, try_join};
     use trillium_tokio::Stopper;
+
+    use super::AggregationJobCreator;
+    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
 
     #[tokio::test]
     async fn aggregation_job_creator() {

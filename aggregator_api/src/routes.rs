@@ -1,12 +1,5 @@
-use crate::{
-    models::{
-        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
-        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq,
-        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf,
-        TaskResp, TaskprovPeerAggregatorResp,
-    },
-    Config, ConnExt, Error,
-};
+use std::{str::FromStr, sync::Arc, unreachable};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -24,9 +17,18 @@ use janus_messages::{
 use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
-use std::{str::FromStr, sync::Arc, unreachable};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
+
+use crate::{
+    models::{
+        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
+        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq,
+        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf,
+        TaskResp, TaskprovPeerAggregatorResp,
+    },
+    Config, ConnExt, Error,
+};
 
 pub(super) async fn get_config(
     _: &mut Conn,

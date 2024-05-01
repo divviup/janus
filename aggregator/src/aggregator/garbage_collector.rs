@@ -1,13 +1,14 @@
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
 use anyhow::{Context, Error, Result};
 use futures::future::{join_all, try_join_all, OptionFuture};
 use janus_aggregator_core::datastore::{self, Datastore};
 use janus_core::time::Clock;
 use janus_messages::TaskId;
 use opentelemetry::metrics::{Counter, Meter, Unit};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
 use tokio::{sync::Semaphore, try_join};
 use tracing::error;
 
@@ -173,7 +174,8 @@ impl<C: Clock> GarbageCollector<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::garbage_collector::GarbageCollector;
+    use std::sync::Arc;
+
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -198,7 +200,8 @@ mod tests {
     };
     use prio::vdaf::dummy;
     use rand::random;
-    use std::sync::Arc;
+
+    use crate::aggregator::garbage_collector::GarbageCollector;
 
     const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(500);

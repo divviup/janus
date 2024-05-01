@@ -1,4 +1,9 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
+use std::{
+    fmt::{self, Debug},
+    str::FromStr,
+};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
@@ -8,10 +13,6 @@ use janus_messages::{
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
-};
-use std::{
-    fmt::{self, Debug},
-    str::FromStr,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -265,9 +266,10 @@ impl HpkeKeypair {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::random;
+
+    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
 
     pub fn generate_test_hpke_config_and_private_key() -> HpkeKeypair {
         generate_hpke_config_and_private_key(
@@ -292,16 +294,18 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
-    #[allow(deprecated)]
-    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
+    use std::collections::HashSet;
+
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
         Role,
     };
     use serde::Deserialize;
-    use std::collections::HashSet;
+
+    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    #[allow(deprecated)]
+    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
 
     #[test]
     fn exchange_message() {

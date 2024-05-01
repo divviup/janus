@@ -1,12 +1,5 @@
-use crate::aggregator::{
-    aggregation_job_continue::test_util::{
-        post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-    },
-    empty_batch_aggregations,
-    http_handlers::test_util::setup_http_handler_test,
-    test_util::BATCH_AGGREGATION_SHARD_COUNT,
-    tests::generate_helper_report_share,
-};
+use std::sync::Arc;
+
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::models::{
@@ -38,8 +31,17 @@ use prio::{
     },
 };
 use rand::random;
-use std::sync::Arc;
 use trillium::Status;
+
+use crate::aggregator::{
+    aggregation_job_continue::test_util::{
+        post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    },
+    empty_batch_aggregations,
+    http_handlers::test_util::setup_http_handler_test,
+    test_util::BATCH_AGGREGATION_SHARD_COUNT,
+    tests::generate_helper_report_share,
+};
 
 #[tokio::test]
 async fn aggregate_continue() {

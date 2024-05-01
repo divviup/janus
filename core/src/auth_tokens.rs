@@ -1,3 +1,8 @@
+use std::{
+    str::{self, FromStr},
+    sync::OnceLock,
+};
+
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
@@ -9,10 +14,6 @@ use ring::{
     digest::{digest, SHA256, SHA256_OUTPUT_LEN},
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    str::{self, FromStr},
-    sync::OnceLock,
-};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -433,9 +434,11 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
 
 #[cfg(test)]
 mod tests {
-    use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
-    use rand::random;
     use std::str::FromStr as _;
+
+    use rand::random;
+
+    use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
 
     #[test]
     fn valid_dap_auth_token() {

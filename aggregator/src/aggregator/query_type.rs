@@ -1,7 +1,5 @@
-use super::{
-    error::{ReportRejection, ReportRejectionReason},
-    Error,
-};
+use std::{collections::HashSet, hash::Hash};
+
 use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, models::LeaderStoredReport, Transaction},
@@ -14,7 +12,11 @@ use janus_messages::{
     Role,
 };
 use prio::vdaf;
-use std::{collections::HashSet, hash::Hash};
+
+use super::{
+    error::{ReportRejection, ReportRejectionReason},
+    Error,
+};
 
 #[async_trait]
 pub trait UploadableQueryType: QueryType {

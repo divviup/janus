@@ -1,6 +1,7 @@
 //! Testing functionality that interacts with the testcontainers library.
 
 use std::{collections::HashMap, process::Command};
+
 use testcontainers::{core::WaitFor, Image};
 
 /// A [`testcontainers::Image`] that provides a Postgres server.

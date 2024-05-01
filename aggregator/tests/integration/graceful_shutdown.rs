@@ -3,6 +3,14 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
+use std::{
+    future::Future,
+    io::{ErrorKind, Write},
+    net::{Ipv4Addr, SocketAddr},
+    process::{Child, Command, Stdio},
+    time::Instant,
+};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator::{
     binaries::{
@@ -26,13 +34,6 @@ use janus_aggregator_core::{
 use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
 use reqwest::Url;
 use serde::Serialize;
-use std::{
-    future::Future,
-    io::{ErrorKind, Write},
-    net::{Ipv4Addr, SocketAddr},
-    process::{Child, Command, Stdio},
-    time::Instant,
-};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     join,

@@ -1,9 +1,7 @@
 #![cfg(feature = "in-cluster")]
 
-use crate::{
-    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
-    initialize_rustls,
-};
+use std::{env, str::FromStr, time::Duration};
+
 use chrono::prelude::*;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
@@ -23,11 +21,15 @@ use janus_core::{
 };
 use janus_integration_tests::{client::ClientBackend, TaskParameters};
 use janus_messages::{Duration as JanusDuration, TaskId};
-use std::{env, str::FromStr, time::Duration};
 use trillium_rustls::RustlsConfig;
 use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
+
+use crate::{
+    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
+    initialize_rustls,
+};
 
 /// Options for running tests.
 #[derive(Debug, Parser)]
@@ -595,8 +597,13 @@ async fn in_cluster_time_bucketed_fixed_size() {
 
 #[cfg(feature = "in-cluster-rate-limits")]
 mod rate_limits {
-    use super::InClusterJanusPair;
-    use crate::initialize_rustls;
+    use std::{
+        env,
+        fs::File,
+        sync::{Arc, OnceLock},
+        time::Duration,
+    };
+
     use assert_matches::assert_matches;
     use http::Method;
     use janus_aggregator_core::task::QueryType;
@@ -605,14 +612,11 @@ mod rate_limits {
     use rand::random;
     use reqwest::StatusCode;
     use serde::Deserialize;
-    use std::{
-        env,
-        fs::File,
-        sync::{Arc, OnceLock},
-        time::Duration,
-    };
     use tokio::sync::Semaphore;
     use url::Url;
+
+    use super::InClusterJanusPair;
+    use crate::initialize_rustls;
 
     /// Configuration for the rate limit test. We need to know the QPS and the window over which
     /// it is enforced so that we can send the appropriate number of requests. We load this config

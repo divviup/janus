@@ -1,3 +1,5 @@
+use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
+
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
@@ -26,7 +28,6 @@ use prio::{
     vdaf::{self, prio3::Prio3, Vdaf},
 };
 use rand::random;
-use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -720,10 +721,8 @@ impl QueryTypeExt for FixedSize {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        run, AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, Subcommands, VdafType,
-    };
+    use std::io::Write;
+
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
@@ -736,8 +735,12 @@ mod tests {
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
-    use std::io::Write;
     use tempfile::NamedTempFile;
+
+    use crate::{
+        run, AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
+        QueryOptions, Subcommands, VdafType,
+    };
 
     const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
   "aead": "AesGcm128",

@@ -1,8 +1,5 @@
-use super::{
-    error::{ArcError, ReportRejectionReason},
-    Aggregator, Config, Error,
-};
-use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
+use std::{borrow::Cow, io::Cursor, sync::Arc, time::Duration as StdDuration};
+
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
@@ -26,13 +23,18 @@ use opentelemetry::{
 use prio::codec::Encode;
 use ring::digest::{digest, SHA256};
 use serde::Deserialize;
-use std::{borrow::Cow, io::Cursor, sync::Arc, time::Duration as StdDuration};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
+
+use super::{
+    error::{ArcError, ReportRejectionReason},
+    Aggregator, Config, Error,
+};
+use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 
 #[cfg(test)]
 mod tests;
@@ -708,8 +710,8 @@ fn parse_taskprov_header<C: Clock>(
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::aggregator_handler;
-    use crate::aggregator::test_util::default_aggregator_config;
+    use std::sync::Arc;
+
     use janus_aggregator_core::{
         datastore::{
             test_util::{ephemeral_datastore, EphemeralDatastore},
@@ -722,9 +724,11 @@ pub mod test_util {
         time::MockClock,
     };
     use janus_messages::codec::Decode;
-    use std::sync::Arc;
     use trillium::Handler;
     use trillium_testing::{assert_headers, TestConn};
+
+    use super::aggregator_handler;
+    use crate::aggregator::test_util::default_aggregator_config;
 
     pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn

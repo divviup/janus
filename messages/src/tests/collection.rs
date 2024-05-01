@@ -1,10 +1,11 @@
+use prio::codec::Decode;
+
 use crate::{
     roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
     BatchSelector, Collection, CollectionReq, Duration, FixedSize, FixedSizeQuery, HpkeCiphertext,
     HpkeConfigId, Interval, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time,
     TimeInterval,
 };
-use prio::codec::Decode;
 
 #[test]
 fn roundtrip_collection_req() {

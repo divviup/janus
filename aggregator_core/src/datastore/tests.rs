@@ -1,25 +1,14 @@
-use crate::{
-    datastore::{
-        models::{
-            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-            AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-            CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
-            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval, TaskUploadCounter,
-        },
-        schema_versions_template,
-        test_util::{
-            ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
-            EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
-        },
-        Crypter, Datastore, Error, RowExt, Transaction, SUPPORTED_SCHEMA_VERSIONS,
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+    ops::RangeInclusive,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
     },
-    query_type::CollectableQueryType,
-    task::{self, test_util::TaskBuilder, AggregatorTask},
-    taskprov::test_util::PeerAggregatorBuilder,
-    test_util::noop_meter,
+    time::Duration as StdDuration,
 };
+
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -51,22 +40,34 @@ use prio::{
     },
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
-use std::{
-    collections::{HashMap, HashSet},
-    iter,
-    ops::RangeInclusive,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration as StdDuration,
-};
 use tokio::{time::timeout, try_join};
 use url::Url;
 
 // This function is only used when there are multiple supported versions.
 #[allow(unused_imports)]
 use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
+use crate::{
+    datastore::{
+        models::{
+            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+            AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
+            CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
+            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
+            SqlInterval, TaskUploadCounter,
+        },
+        schema_versions_template,
+        test_util::{
+            ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
+            EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+        },
+        Crypter, Datastore, Error, RowExt, Transaction, SUPPORTED_SCHEMA_VERSIONS,
+    },
+    query_type::CollectableQueryType,
+    task::{self, test_util::TaskBuilder, AggregatorTask},
+    taskprov::test_util::PeerAggregatorBuilder,
+    test_util::noop_meter,
+};
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);

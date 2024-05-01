@@ -1,8 +1,10 @@
-use crate::{
-    install_tracing_subscriber,
-    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    net::Ipv4Addr,
+    sync::Arc,
+    time::Duration as StdDuration,
 };
+
 use anyhow::Context;
 use backoff::ExponentialBackoffBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -34,16 +36,16 @@ use prio::{
 use rand::{distributions::Standard, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    net::Ipv4Addr,
-    sync::Arc,
-    time::Duration as StdDuration,
-};
 use tokio::{sync::Mutex, task::JoinHandle};
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json, State};
 use trillium_router::Router;
+
+use crate::{
+    install_tracing_subscriber,
+    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
+    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
+};
 
 #[derive(Derivative, Deserialize)]
 #[derivative(Debug)]

@@ -1,13 +1,11 @@
-use crate::aggregator::{
-    aggregate_step_failure_counter,
-    aggregation_job_writer::{
-        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
-    },
-    error::handle_ping_pong_error,
-    http_handlers::AGGREGATION_JOB_ROUTE,
-    query_type::CollectableQueryType,
-    report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
+use std::{
+    any::Any,
+    collections::HashSet,
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    sync::Arc,
+    time::Duration,
 };
+
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
 use bytes::Bytes;
@@ -41,18 +39,22 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{
-    any::Any,
-    collections::HashSet,
-    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{
     sync::oneshot::{self, error::RecvError},
     try_join,
 };
 use tracing::{debug, error, info, info_span, trace_span, warn, Span};
+
+use crate::aggregator::{
+    aggregate_step_failure_counter,
+    aggregation_job_writer::{
+        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
+    },
+    error::handle_ping_pong_error,
+    http_handlers::AGGREGATION_JOB_ROUTE,
+    query_type::CollectableQueryType,
+    report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
+};
 
 #[cfg(test)]
 mod tests;
