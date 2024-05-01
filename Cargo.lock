@@ -2032,7 +2032,7 @@ checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2116,7 +2116,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2201,14 +2201,14 @@ dependencies = [
 
 [[package]]
 name = "janus_build_script_utils"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "zstd",
 ]
 
 [[package]]
 name = "janus_client"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2231,7 +2231,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2300,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "janus_tools"
-version = "0.5.47"
+version = "0.5.48"
 dependencies = [
  "anyhow",
  "assert_matches",
