@@ -8,8 +8,10 @@ use crate::{
             AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
             ReportAggregationUpdate as _, WritableReportAggregation,
         },
-        error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
-        error::{BatchMismatch, OptOutReason},
+        error::{
+            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
+            ReportRejectionReason,
+        },
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },

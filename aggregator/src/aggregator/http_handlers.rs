@@ -26,8 +26,7 @@ use opentelemetry::{
 use prio::codec::Encode;
 use ring::digest::{digest, SHA256};
 use serde::Deserialize;
-use std::{borrow::Cow, time::Duration as StdDuration};
-use std::{io::Cursor, sync::Arc};
+use std::{borrow::Cow, io::Cursor, sync::Arc, time::Duration as StdDuration};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
