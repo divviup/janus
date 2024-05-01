@@ -124,9 +124,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust-toolchain }}
-        components: clippy, rustfmt
-    - name: Format
-      run: cargo fmt --message-format human -- --check
+        components: clippy
     - name: Clippy
       run: cargo clippy --profile ci --workspace --all-targets
     - name: Clippy (all features)
@@ -137,6 +135,18 @@ jobs:
       uses: EmbarkStudios/cargo-deny-action@v1.6.3
       with:
         command: check bans licenses sources -A unmatched-organization
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust nightly toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: nightly
+        components: rustfmt
+    - name: Format
+      run: cargo fmt --message-format human -- --check
 
   janus_docker:
     runs-on: ubuntu-latest
