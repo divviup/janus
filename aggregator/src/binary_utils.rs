@@ -662,8 +662,8 @@ mod tests {
         // a host directory in the container would be insufficient, because the files' owner UIDs
         // will not match the postgres user's UID. Instead, we create a temporary Docker volume, run
         // a setup container with both the volume and a host directory mounted in, copy the
-        // certificate and key into the volume, and fix up their ownership (and permissions, in
-        // case those were lost on a non-POSIX host). Then, we run a second container with the volume
+        // certificate and key into the volume, and fix up their ownership (and permissions, in case
+        // those were lost on a non-POSIX host). Then, we run a second container with the volume
         // mounted in, and use the fixed files in the volume in database configuration.
         let volume = Volume::new();
         let setup_image = RunnableImage::from((

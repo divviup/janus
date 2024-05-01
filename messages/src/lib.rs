@@ -527,8 +527,8 @@ impl Role {
     }
 
     /// Returns a VDAF aggregator ID if this [`Role`] is one of the aggregators, or `None` if the
-    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and earlier
-    /// to index into the `aggregator_endpoints` array.
+    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and
+    /// earlier to index into the `aggregator_endpoints` array.
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#section-3-4
     pub fn index(&self) -> Option<usize> {
@@ -1155,12 +1155,14 @@ impl HpkeConfig {
         &self.id
     }
 
-    /// Retrieve the key encapsulation mechanism algorithm identifier associated with this HPKE configuration.
+    /// Retrieve the key encapsulation mechanism algorithm identifier associated with this HPKE
+    /// configuration.
     pub fn kem_id(&self) -> &HpkeKemId {
         &self.kem_id
     }
 
-    /// Retrieve the key derivation function algorithm identifier associated with this HPKE configuration.
+    /// Retrieve the key derivation function algorithm identifier associated with this HPKE
+    /// configuration.
     pub fn kdf_id(&self) -> &HpkeKdfId {
         &self.kdf_id
     }

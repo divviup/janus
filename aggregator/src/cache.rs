@@ -356,8 +356,8 @@ mod tests {
             task.task_expiration()
         );
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -402,8 +402,8 @@ mod tests {
         // We shouldn't see the new task yet.
         assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         // Now we should see it.

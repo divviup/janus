@@ -402,8 +402,8 @@ pub struct Collector<V: vdaf::Collector> {
 }
 
 impl<V: vdaf::Collector> Collector<V> {
-    /// Construct a new collector. This requires certain DAP task parameters and an implementation of
-    /// the task's VDAF.
+    /// Construct a new collector. This requires certain DAP task parameters and an implementation
+    /// of the task's VDAF.
     pub fn new(
         task_id: TaskId,
         leader_endpoint: Url,

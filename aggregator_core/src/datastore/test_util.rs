@@ -231,8 +231,8 @@ impl EphemeralDatastoreBuilder {
 
         // Create Postgres DB.
         //
-        // Since this is the first connection we're establishing since the container has been created,
-        // retry this a few times. The database may not be ready yet.
+        // Since this is the first connection we're establishing since the container has been
+        // created, retry this a few times. The database may not be ready yet.
         let backoff = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(500))
             .with_max_interval(Duration::from_millis(500))

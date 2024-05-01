@@ -247,8 +247,9 @@ pub async fn verify_aggregate_generic<V>(
                 before_timestamp
                     .to_batch_interval_start(&task_parameters.time_precision)
                     .unwrap(),
-                // Use two time precisions as the interval duration in order to avoid a race condition if
-                // this test happens to run very close to the end of a batch window.
+                // Use two time precisions as the interval duration in order to avoid a race
+                // condition if this test happens to run very close to the end of a
+                // batch window.
                 Duration::from_seconds(2 * task_parameters.time_precision.as_seconds()),
             )
             .unwrap();

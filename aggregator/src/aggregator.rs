@@ -161,8 +161,8 @@ struct AggregatorMetrics {
     upload_decode_failure_counter: Counter<u64>,
     /// Counter tracking the number of successfully-aggregated reports.
     report_aggregation_success_counter: Counter<u64>,
-    /// Counters tracking the number of failures to step client reports through the aggregation
-    /// process.
+    /// Counters tracking the number of failures to step client reports through
+    /// the aggregation process.
     aggregate_step_failure_counter: Counter<u64>,
 }
 
@@ -182,8 +182,8 @@ pub struct Config {
     /// transaction.
     pub max_upload_batch_size: usize,
 
-    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`. This is the maximum delay added to the
+    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not
+    /// yet reached `max_batch_upload_size`. This is the maximum delay added to the
     /// `tasks/{task-id}/reports` endpoint due to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 
@@ -197,16 +197,16 @@ pub struct Config {
     /// of getting task metrics.
     pub task_counter_shard_count: u64,
 
-    /// Defines how often to refresh the global HPKE configs cache. This affects how often an aggregator
-    /// becomes aware of key state changes.
+    /// Defines how often to refresh the global HPKE configs cache. This affects how often an
+    /// aggregator becomes aware of key state changes.
     pub global_hpke_configs_refresh_interval: StdDuration,
 
-    /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
-    /// of task parameter changes.
+    /// Defines how long tasks should be cached for. This affects how often an aggregator becomes
+    /// aware of task parameter changes.
     pub task_cache_ttl: StdDuration,
 
-    /// Defines how many tasks can be cached at once. This affects how much memory the aggregator may
-    /// consume for caching tasks.
+    /// Defines how many tasks can be cached at once. This affects how much memory the aggregator
+    /// may consume for caching tasks.
     pub task_cache_capacity: u64,
 
     /// The key used to sign HPKE configurations.
@@ -248,9 +248,9 @@ impl<C: Clock> Aggregator<C> {
                 cfg.max_upload_batch_size,
                 cfg.max_upload_batch_write_delay,
             ),
-            // If we're in taskprov mode, we can never cache None entries for tasks, since aggregators
-            // could insert tasks at any time and expect them to be available across all aggregator
-            // replicas.
+            // If we're in taskprov mode, we can never cache None entries for tasks, since
+            // aggregators could insert tasks at any time and expect them to be available across
+            // all aggregator replicas.
             !cfg.taskprov_config.enabled,
             cfg.task_cache_capacity,
             StdDuration::from_secs(1),
@@ -339,10 +339,10 @@ impl<C: Clock> Aggregator<C> {
                     match task_aggregator.handle_hpke_config() {
                         Some(hpke_config_list) => hpke_config_list,
                         // Assuming something hasn't gone horribly wrong with the database, this
-                        // should only happen in the case where the system has been moved from taskprov
-                        // mode to non-taskprov mode. Thus there's still taskprov tasks in the database.
-                        // This isn't a supported use case, so the operator needs to delete these tasks
-                        // or move the system back into taskprov mode.
+                        // should only happen in the case where the system has been moved from
+                        // taskprov mode to non-taskprov mode. Thus there's still taskprov tasks in
+                        // the database. This isn't a supported use case, so the operator needs to
+                        // delete these tasks or move the system back into taskprov mode.
                         None => {
                             return Err(Error::Internal("task has no HPKE configs".to_string()))
                         }
@@ -580,10 +580,10 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for the
-    /// collection job parsed out of the request URI. Returns an encoded [`Collection`] if the collect
-    /// job has been run to completion, `None` if the collection job has not yet run, or an error
-    /// otherwise.
+    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for
+    /// the collection job parsed out of the request URI. Returns an encoded [`Collection`] if the
+    /// collect job has been run to completion, `None` if the collection job has not yet run, or an
+    /// error otherwise.
     async fn handle_get_collection_job(
         &self,
         task_id: &TaskId,
@@ -657,8 +657,9 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
-        // have to use the peer aggregator's collector config rather than the main task.
+        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov
+        // task, we have to use the peer aggregator's collector config rather than the main
+        // task.
         let collector_hpke_config =
             if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
                 let (peer_aggregator, _, _) = self
@@ -768,9 +769,9 @@ impl<C: Clock> Aggregator<C> {
             .await
             .or_else(|error| -> Result<(), Error> {
                 match error {
-                    // If the task is already in the datastore, then some other request or aggregator
-                    // replica beat us to inserting it. They _should_ have inserted all the same parameters
-                    // as we would have, so we can proceed as normal.
+                    // If the task is already in the datastore, then some other request or
+                    // aggregator replica beat us to inserting it. They _should_ have inserted all
+                    // the same parameters as we would have, so we can proceed as normal.
                     DatastoreError::MutationTargetAlreadyExists => {
                         warn!(
                             ?task_id,
@@ -972,7 +973,8 @@ impl<C: Clock> TaskAggregator<C> {
     fn handle_hpke_config(&self) -> Option<HpkeConfigList> {
         // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
-        // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
+        // trouble if we ever need to wrap-around, which we may since config IDs are effectively a
+        // u8.
         Some(HpkeConfigList::new(Vec::from([self
             .task
             .hpke_keys()
@@ -1781,7 +1783,8 @@ impl VdafOps {
                 // Decrypt shares & prepare initialization states. (§4.4.4.1)
                 let mut report_share_data = Vec::new();
                 for (ord, prepare_init) in req.prepare_inits().iter().enumerate() {
-                    // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+                    // If decryption fails, then the aggregator MUST fail with error
+                    // `hpke-decrypt-error`. (§4.4.2.2)
                     let global_hpke_keypair = global_hpke_keypairs.keypair(
                         prepare_init
                             .report_share()
@@ -2003,9 +2006,10 @@ impl VdafOps {
                         Ok(shares)
                     });
 
-                    // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
-                    // associated with the task and computes the first state transition. [...] If either
-                    // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
+                    // Next, the aggregator runs the preparation-state initialization algorithm for
+                    // the VDAF associated with the task and computes the first state transition.
+                    // [...] If either step fails, then the aggregator MUST fail with error
+                    // `vdaf-prep-error`. (§4.4.2.2)
                     let init_rslt = shares.and_then(|(public_share, input_share)| {
                         trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
                             vdaf.helper_initialized(
@@ -2033,8 +2037,8 @@ impl VdafOps {
                     let (report_aggregation_state, prepare_step_result, output_share) =
                         match init_rslt {
                             Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
-                                // Helper is not finished. Await the next message from the Leader to advance to
-                                // the next step.
+                                // Helper is not finished. Await the next message from the Leader to
+                                // advance to the next step.
                                 (
                                     ReportAggregationState::WaitingHelper { prepare_state },
                                     PrepareStepResult::Continue {
@@ -2199,7 +2203,8 @@ impl VdafOps {
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
-                    // TODO(#225): on repeated aggregation, verify input share matches previously-received input share
+                    // TODO(#225): on repeated aggregation, verify input share matches
+                    // previously-received input share
                     try_join_all(report_share_data.iter_mut().map(|rsd| {
                         let task = Arc::clone(&task);
                         let aggregation_job = Arc::clone(&aggregation_job);
@@ -2366,8 +2371,8 @@ impl VdafOps {
                                 .collect(),
                         ));
                     } else if aggregation_job.step().increment() != req.step() {
-                        // If this is not a replay, the leader should be advancing our state to the next
-                        // step and no further.
+                        // If this is not a replay, the leader should be advancing our state to the
+                        // next step and no further.
                         return Err(datastore::Error::User(
                             Error::StepMismatch {
                                 task_id: *task.id(),
@@ -2513,7 +2518,8 @@ impl VdafOps {
                     Arc::clone(&aggregation_param),
                 );
                 Box::pin(async move {
-                    // Check if this collection job already exists, ensuring that all parameters match.
+                    // Check if this collection job already exists, ensuring that all parameters
+                    // match.
                     if let Some(collection_job) = tx
                         .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
@@ -2680,9 +2686,9 @@ impl VdafOps {
             } => {
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached
-                // results to the collector HPKE config valid when the current collection job request
-                // was made, and not whatever was valid at the time the aggregate share was first
-                // computed.
+                // results to the collector HPKE config valid when the current collection job
+                // request was made, and not whatever was valid at the time the
+                // aggregate share was first computed.
                 // However we store the helper's *encrypted* share.
 
                 // TODO(#240): consider fetching freshly encrypted helper aggregate share if it has
@@ -2694,9 +2700,9 @@ impl VdafOps {
                     "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
-                    // Unwrap safety: collector_hpke_config is only None for taskprov tasks. Taskprov
-                    // is not currently supported for Janus operating as the Leader, so this unwrap
-                    // is not reachable.
+                    // Unwrap safety: collector_hpke_config is only None for taskprov tasks.
+                    // Taskprov is not currently supported for Janus operating
+                    // as the Leader, so this unwrap is not reachable.
                     task.collector_hpke_config().unwrap(),
                     &HpkeApplicationInfo::new(
                         &Label::AggregateShare,

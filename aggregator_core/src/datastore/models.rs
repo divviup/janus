@@ -1725,8 +1725,8 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.state
     }
 
-    /// Returns a new [`CollectionJob`] corresponding to this collection job updated to have the given
-    /// state.
+    /// Returns a new [`CollectionJob`] corresponding to this collection job updated to have the
+    /// given state.
     pub fn with_state(self, state: CollectionJobState<SEED_SIZE, A>) -> Self {
         Self { state, ..self }
     }

@@ -222,7 +222,8 @@ where
             })
             .await?;
 
-        // Figure out the next step based on the non-error report aggregation states, and dispatch accordingly.
+        // Figure out the next step based on the non-error report aggregation states, and dispatch
+        // accordingly.
         let (mut saw_start, mut saw_waiting, mut saw_finished) = (false, false, false);
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
@@ -326,8 +327,8 @@ where
                 );
                 let _entered = span.enter();
 
-                // Compute report shares to send to helper, and decrypt our input shares & initialize
-                // preparation state.
+                // Compute report shares to send to helper, and decrypt our input shares &
+                // initialize preparation state.
                 let mut report_aggregations_to_write = Vec::new();
                 let mut prepare_inits = Vec::new();
                 let mut stepped_aggregations = Vec::new();
@@ -351,8 +352,8 @@ where
                             helper_encrypted_input_share,
                         ),
 
-                        // Panic safety: this can't happen because we filter to only StartLeader-state
-                        // report aggregations before this loop.
+                        // Panic safety: this can't happen because we filter to only
+                        // StartLeader-state report aggregations before this loop.
                         _ => panic!(
                             "Unexpected report aggregation state: {:?}",
                             report_aggregation.state()
@@ -494,8 +495,8 @@ where
                     content_type: AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
                     body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
                 }),
-                // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
-                // case, and Janus never acts as the leader with taskprov enabled.
+                // The only way a task wouldn't have an aggregator auth token in it is in the
+                // taskprov case, and Janus never acts as the leader with taskprov enabled.
                 task.aggregator_auth_token().ok_or_else(|| {
                     Error::InvalidConfiguration("no aggregator auth token in task")
                 })?,
@@ -741,7 +742,8 @@ where
 
                 PrepareStepResult::Reject(err) => {
                     // If the helper failed, we move to FAILED immediately.
-                    // TODO(#236): is it correct to just record the transition error that the helper reports?
+                    // TODO(#236): is it correct to just record the transition error that the helper
+                    // reports?
                     info!(
                         report_id = %stepped_aggregation.report_aggregation.report_id(),
                         helper_error = ?err,

@@ -73,8 +73,8 @@ impl VdafOps {
                 let mut report_aggregations_iter = report_aggregations.into_iter();
                 let mut report_aggregations_to_write = Vec::new();
                 for prep_step in req.prepare_steps() {
-                    // Match preparation step received from leader to stored report aggregation, and extract
-                    // the stored preparation step.
+                    // Match preparation step received from leader to stored report aggregation, and
+                    // extract the stored preparation step.
                     let report_aggregation = loop {
                         let report_agg = report_aggregations_iter.next().ok_or_else(|| {
                             datastore::Error::User(
@@ -87,8 +87,9 @@ impl VdafOps {
                             )
                         })?;
                         if report_agg.report_id() != prep_step.report_id() {
-                            // This report was omitted by the leader because of a prior failure. Note that
-                            // the report was dropped (if it's not already in an error state) and continue.
+                            // This report was omitted by the leader because of a prior failure.
+                            // Note that the report was dropped (if it's
+                            // not already in an error state) and continue.
                             if matches!(
                                 report_agg.state(),
                                 ReportAggregationState::WaitingHelper { .. }

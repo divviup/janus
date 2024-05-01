@@ -423,8 +423,8 @@ async fn run(
                 .to_batch_interval_start(&Duration::from_seconds(TIME_PRECISION))
                 .unwrap()
                 .as_seconds_since_epoch();
-            // Span the aggregation over two time precisions, just in case our measurements spilled over a
-            // batch boundary.
+            // Span the aggregation over two time precisions, just in case our measurements spilled
+            // over a batch boundary.
             let batch_interval_duration = TIME_PRECISION * 2;
             json!({
                 "type": query_type_json,
@@ -493,7 +493,8 @@ async fn run(
             .as_str()
             .expect("\"handle\" value is not a string");
 
-        // Send /internal/test/collection_poll requests to the collector, polling until it is completed.
+        // Send /internal/test/collection_poll requests to the collector, polling until it is
+        // completed.
         let mut collection_poll_backoff = ExponentialBackoffBuilder::new()
             .with_initial_interval(StdDuration::from_millis(500))
             .with_max_interval(StdDuration::from_millis(500))

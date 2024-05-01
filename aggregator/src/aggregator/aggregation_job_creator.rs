@@ -118,7 +118,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
-        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e.
+        // sharding).
 
         // Create metric instruments.
         let task_update_time_histogram = self
@@ -711,9 +712,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    /// Look for combinations of client reports and collection job aggregation parameters that do not
-    /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
-    /// be used with VDAFs that have non-unit type aggregation parameters.
+    /// Look for combinations of client reports and collection job aggregation parameters that do
+    /// not yet have a report aggregation, and batch them into new aggregation jobs. This should
+    /// only be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
     #[cfg(feature = "test-util")]
     async fn create_aggregation_jobs_for_time_interval_task_with_param<const SEED_SIZE: usize, A>(
@@ -3189,7 +3190,8 @@ mod tests {
         }
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
+        // two aggregation jobs per overlapping collection job. (and there are two such collection
+        // jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))

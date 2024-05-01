@@ -3717,8 +3717,8 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         .run_tx("test-acquire-leases", |tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
-                // Try to re-acquire collection jobs. Nothing should happen because the lease is still
-                // valid.
+                // Try to re-acquire collection jobs. Nothing should happen because the lease is
+                // still valid.
                 assert!(tx
                     .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
@@ -3903,8 +3903,8 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
         .run_unnamed_tx(|tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
-                // Try to re-acquire collection jobs. Nothing should happen because the lease is still
-                // valid.
+                // Try to re-acquire collection jobs. Nothing should happen because the lease is
+                // still valid.
                 assert!(tx
                     .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
                     .await
@@ -6487,7 +6487,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Leader, time-interval collection artifacts with old & new reports. [collection job GC'ed, remainder not GC'ed]
+                // Leader, time-interval collection artifacts with old & new reports. [collection
+                // job GC'ed, remainder not GC'ed]
                 let (
                     _,
                     aggregate_share_job_id,
@@ -6556,7 +6557,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Helper, time-interval collection artifacts with old & new reports. [aggregate share job job GC'ed, remainder not GC'ed]
+                // Helper, time-interval collection artifacts with old & new reports. [aggregate
+                // share job job GC'ed, remainder not GC'ed]
                 let (_, _, batch_id, outstanding_batch_id, batch_aggregation_id, _) =
                     write_collect_artifacts::<TimeInterval>(
                         tx,
