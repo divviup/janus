@@ -109,7 +109,7 @@ impl CollectionJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -117,7 +117,6 @@ impl CollectionJobDriver {
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,

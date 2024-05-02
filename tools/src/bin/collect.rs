@@ -464,9 +464,9 @@ async fn run(options: Options) -> Result<(), Error> {
     }
 }
 
-async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error>
+async fn run_with_query<Q>(options: Options, query: Query<Q>) -> Result<(), Error>
 where
-    Q: QueryTypeExt,
+    Q: QueryType + QueryTypeExt,
 {
     let authentication = match (
         &options.authentication.dap_auth_token,
