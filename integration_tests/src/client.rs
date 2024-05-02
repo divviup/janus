@@ -28,7 +28,11 @@ pub trait InteropClientEncoding: vdaf::Client<16> {
 
 impl InteropClientEncoding for Prio3Count {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
-        Value::String(format!("{measurement}"))
+        if *measurement {
+            Value::String("0".into())
+        } else {
+            Value::String("1".into())
+        }
     }
 }
 
