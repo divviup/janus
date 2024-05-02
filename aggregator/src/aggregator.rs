@@ -2264,7 +2264,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -2277,7 +2277,7 @@ impl VdafOps {
         request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error>
     where
-        A: 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync,
@@ -2402,7 +2402,7 @@ impl VdafOps {
     async fn handle_aggregate_delete_generic<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -2410,7 +2410,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error>
     where
-        A: 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,

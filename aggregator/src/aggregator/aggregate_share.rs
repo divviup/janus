@@ -91,7 +91,7 @@ pub(crate) async fn compute_aggregate_share<
                     .map(|other| share.merge(other))
                     .transpose()?;
             }
-            None => total_aggregate_share = aggregate_share.clone(),
+            None => total_aggregate_share.clone_from(aggregate_share),
         }
     }
 

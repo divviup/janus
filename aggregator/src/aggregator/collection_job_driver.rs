@@ -126,7 +126,7 @@ where
         C: Clock,
         Q: CollectableQueryType,
         S: DifferentialPrivacyStrategy,
-        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync,
+        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -135,7 +135,6 @@ where
         dp_strategy: S,
     ) -> Result<(), Error>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
