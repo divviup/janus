@@ -538,16 +538,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    async fn create_aggregation_jobs_for_time_interval_task_no_param<
-        const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
-    >(
+    async fn create_aggregation_jobs_for_time_interval_task_no_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
-        A: Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync + PartialEq,
         A::PrepareMessage: Send + Sync,
@@ -838,10 +835,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    async fn create_aggregation_jobs_for_fixed_size_task_no_param<
-        const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
-    >(
+    async fn create_aggregation_jobs_for_fixed_size_task_no_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
@@ -849,7 +843,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task_batch_time_window_size: Option<janus_messages::Duration>,
     ) -> anyhow::Result<bool>
     where
-        A: Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync + PartialEq,
         A::PrepareMessage: Send + Sync,

@@ -149,7 +149,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -157,7 +157,7 @@ where
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error>
     where
-        A: 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
@@ -290,7 +290,6 @@ where
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<(), Error>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::InputShare: PartialEq + Send + Sync,
@@ -542,7 +541,6 @@ where
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync,
@@ -648,7 +646,6 @@ where
         helper_prep_resps: &[PrepareResp],
     ) -> Result<(), Error>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + Eq + PartialEq,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync,
@@ -834,7 +831,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A,
     >(
         &self,
         vdaf: A,
@@ -842,7 +839,7 @@ where
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error>
     where
-        A: Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::InputShare: Send + Sync,

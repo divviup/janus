@@ -3900,7 +3900,7 @@ WHERE task_id = $1
             let aggregate_share = row
                 .get::<_, Option<Vec<u8>>>("aggregate_share")
                 .map(|bytes| {
-                    A::AggregateShare::get_decoded_with_param(&(vdaf, &aggregation_param), &bytes)
+                    A::AggregateShare::get_decoded_with_param(&(vdaf, aggregation_param), &bytes)
                 })
                 .transpose()
                 .map_err(|_| Error::DbState("aggregate_share couldn't be parsed".to_string()))?;
