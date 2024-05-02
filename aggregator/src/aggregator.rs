@@ -2207,7 +2207,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -2220,7 +2220,7 @@ impl VdafOps {
         request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error>
     where
-        A: 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         A::InputShare: Send + Sync,
@@ -2934,7 +2934,7 @@ impl VdafOps {
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        S: DifferentialPrivacyStrategy + Send + Clone + Sync + 'static,
+        S: DifferentialPrivacyStrategy + Clone + Send + Sync + 'static,
         A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
         C: Clock,
     >(
@@ -2950,7 +2950,6 @@ impl VdafOps {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
         A::AggregateShare: Send + Sync,
-        S: Send + Sync,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.

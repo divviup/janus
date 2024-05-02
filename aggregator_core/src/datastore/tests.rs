@@ -3248,10 +3248,6 @@ trait TestQueryTypeExt: CollectableQueryType {
 
     fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier;
 
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier;
-
     async fn write_outstanding_batch(
         tx: &Transaction<MockClock>,
         task_id: &TaskId,
@@ -3282,16 +3278,6 @@ impl TestQueryTypeExt for TimeInterval {
         .unwrap()
     }
 
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier {
-        Interval::new(
-            *batch_identifier.start(),
-            Duration::from_seconds(batch_identifier.duration().as_seconds() / 2),
-        )
-        .unwrap()
-    }
-
     async fn write_outstanding_batch(
         _: &Transaction<MockClock>,
         _: &TaskId,
@@ -3311,12 +3297,6 @@ impl TestQueryTypeExt for FixedSize {
 
     fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
         random()
-    }
-
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier {
-        *batch_identifier
     }
 
     async fn write_outstanding_batch(
