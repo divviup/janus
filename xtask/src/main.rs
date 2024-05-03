@@ -88,7 +88,7 @@ fn build_container_images() -> Result<ContainerImages> {
         .args([
             "buildx",
             "bake",
-            "interop_binaries_small",
+            "interop_binaries_ci",
             "--load",
             "--metadata-file",
         ])
@@ -103,18 +103,18 @@ fn build_container_images() -> Result<ContainerImages> {
     let metadata: HashMap<String, DockerBakeTargetMetadata> = serde_json::from_reader(file)?;
 
     let client = metadata
-        .get("janus_interop_client_small")
-        .context("missing metadata for janus_interop_client_small")?
+        .get("janus_interop_client_ci")
+        .context("missing metadata for janus_interop_client_ci")?
         .digest
         .clone();
     let aggregator = metadata
-        .get("janus_interop_aggregator_small")
-        .context("missing metadata for janus_interop_aggregator_small")?
+        .get("janus_interop_aggregator_ci")
+        .context("missing metadata for janus_interop_aggregator_ci")?
         .digest
         .clone();
     let collector = metadata
-        .get("janus_interop_collector_small")
-        .context("missing metadata for janus_interop_collector_small")?
+        .get("janus_interop_collector_ci")
+        .context("missing metadata for janus_interop_collector_ci")?
         .digest
         .clone();
 
