@@ -137,8 +137,7 @@ incremental = false
 
 [profile.small]
 # We define a profile intended to minimize the eventual binary size, while still allowing for
-# relatively fast compilation. It is intended for use in size-constrained testing scenarios, e.g.
-# building a binary artifact that ends up embedded in another binary.
+# relatively fast compilation. It is intended for use in size-constrained testing scenarios.
 inherits = "dev"
 opt-level = "z"   # Optimize for size.
 debug = false     # Do not generate debug info.
