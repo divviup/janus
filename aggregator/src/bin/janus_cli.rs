@@ -508,7 +508,9 @@ mod tests {
 
         // Keys provided at command line, not present in k8s
         let mut common_options = CommonBinaryOptions::default();
-        common_options.datastore_keys = expected_datastore_keys.clone();
+        common_options
+            .datastore_keys
+            .clone_from(&expected_datastore_keys);
 
         let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),

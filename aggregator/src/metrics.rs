@@ -2,6 +2,7 @@
 
 #[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
+#[cfg(any(feature = "prometheus", feature = "otlp"))]
 use opentelemetry_sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::AddrParseError};
@@ -89,9 +90,11 @@ pub enum MetricsExporterHandle {
     Noop,
 }
 
+#[cfg(any(feature = "prometheus", feature = "otlp"))]
 #[derive(Debug)]
 struct CustomAggregationSelector;
 
+#[cfg(any(feature = "prometheus", feature = "otlp"))]
 impl AggregationSelector for CustomAggregationSelector {
     fn aggregation(&self, kind: InstrumentKind) -> Aggregation {
         /// These boundaries are intended to be able to capture the length of short-lived operations
