@@ -70,6 +70,14 @@ group "interop_binaries_small" {
   ]
 }
 
+group "interop_binaries_ci" {
+  targets = [
+    "janus_interop_client_ci",
+    "janus_interop_aggregator_ci",
+    "janus_interop_collector_ci",
+  ]
+}
+
 target "janus_aggregator" {
   args = {
     GIT_REVISION = "${GIT_REVISION}"
@@ -280,10 +288,6 @@ target "janus_interop_collector_release" {
   ]
 }
 
-# These targets should match the `docker build` commands run in the
-# janus_interop_binaries build script. They are run separately in CI for
-# caching purposes.
-
 target "janus_interop_client_small" {
   args = {
     PROFILE = "small"
@@ -319,6 +323,45 @@ target "janus_interop_collector_small" {
     "type=gha,scope=main-interop-small",
     "type=gha,scope=${GITHUB_BASE_REF}-interop-small",
     "type=gha,scope=${GITHUB_REF_NAME}-interop-small",
+  ]
+  dockerfile = "Dockerfile.interop"
+}
+
+target "janus_interop_client_ci" {
+  args = {
+    PROFILE = "ci"
+    BINARY  = "janus_interop_client"
+  }
+  cache-from = [
+    "type=gha,scope=main-interop-ci",
+    "type=gha,scope=${GITHUB_BASE_REF}-interop-ci",
+    "type=gha,scope=${GITHUB_REF_NAME}-interop-ci",
+  ]
+  dockerfile = "Dockerfile.interop"
+}
+
+target "janus_interop_aggregator_ci" {
+  args = {
+    PROFILE = "ci"
+  }
+  cache-from = [
+    "type=gha,scope=main-interop-ci",
+    "type=gha,scope=${GITHUB_BASE_REF}-interop-ci",
+    "type=gha,scope=${GITHUB_REF_NAME}-interop-ci",
+  ]
+  cache-to   = ["type=gha,scope=${GITHUB_REF_NAME}-interop-ci,mode=max,ignore-error=true"]
+  dockerfile = "Dockerfile.interop_aggregator"
+}
+
+target "janus_interop_collector_ci" {
+  args = {
+    PROFILE = "ci"
+    BINARY  = "janus_interop_collector"
+  }
+  cache-from = [
+    "type=gha,scope=main-interop-ci",
+    "type=gha,scope=${GITHUB_BASE_REF}-interop-ci",
+    "type=gha,scope=${GITHUB_REF_NAME}-interop-ci",
   ]
   dockerfile = "Dockerfile.interop"
 }

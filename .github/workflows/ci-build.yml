@@ -181,7 +181,7 @@ jobs:
       with:
         files: docker-bake.hcl
         workdir: .
-        targets: interop_binaries_small
+        targets: interop_binaries_ci
 
   rustsec_advisories:
     runs-on: ubuntu-latest
