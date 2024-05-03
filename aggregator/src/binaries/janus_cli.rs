@@ -784,6 +784,7 @@ mod tests {
 
     #[tokio::test]
     async fn options_datastore_keys() {
+        initialize_rustls();
         // Prep: create a Kubernetes cluster and put a secret in it
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
