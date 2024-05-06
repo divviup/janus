@@ -45,7 +45,7 @@ serde_yaml = "0.9.34"
 rand = "0.8"
 reqwest = { version = "0.12.4", default-features = false, features = ["rustls-tls"] }
 rstest = "0.18.2"
-testcontainers = "0.16.5"
+testcontainers = "0.16.7"
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["full", "tracing"] }
 trillium = "0.2.19"
