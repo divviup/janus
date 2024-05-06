@@ -1282,13 +1282,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c22499b1b8d1a129935c73f2b5b0deaea57697f185fd88e3a3c0f558bb83fba0"
+checksum = "6f0e0c0fe4107993989ee8f49887ed44792cd8845be7968d7401ff7fb3836ddf"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.5",
+ "janus_messages 0.7.7",
  "log",
  "pad-adapter",
  "serde",
@@ -1502,9 +1502,9 @@ dependencies = [
 
 [[package]]
 name = "fiat-crypto"
-version = "0.2.6"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1676f435fc1dadde4d03e43f5d62b259e1ce5f40bd4ffb21db2b42ebe59c1382"
+checksum = "38793c55593b33412e3ae40c2c9781ffaa6f438f6f8c10f24e71846fbd7ae01e"
 
 [[package]]
 name = "filetime"
@@ -1770,9 +1770,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.12"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "190092ea657667030ac6a35e305e62fc4dd69fd98ac98631e5d3a2b1575a12b5"
+checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -2748,16 +2748,16 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.5"
+version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd629c85e8ff09303b2bfccb15e7ae07adb716a998d9124b312f988afbd8b5b5"
+checksum = "31c6c35fffd82f3c0d43560d2e635ed5e34353c2713d33dee3948e195c5e2fb3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "derivative",
  "hex",
  "num_enum",
- "prio 0.16.2",
+ "prio 0.16.3",
  "rand",
  "serde",
  "thiserror",
@@ -2957,9 +2957,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.153"
+version = "0.2.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
+checksum = "ae743338b92ff9146ce83992f766a31066a91a8c84a45e0e9f21e7cf6de6d346"
 
 [[package]]
 name = "libloading"
@@ -3810,9 +3810,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.16.2"
+version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cec5eb0d28eee4ea74be34b28ed4c625e88c54ff83c21b412a5ea7cc48624ae"
+checksum = "45132fa96e2ec8581b8c6f047dd831795dcec1ebbe45101b66f34277790d60bb"
 dependencies = [
  "bitvec",
  "byteorder",
@@ -3826,7 +3826,6 @@ dependencies = [
  "num-traits",
  "rand",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "sha3",
  "subtle",
