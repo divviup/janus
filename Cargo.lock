@@ -564,9 +564,9 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
-version = "0.22.0"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9475866fec1451be56a3c2400fd081ff546538961565ccb5b7142cbd22bc7a51"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"
@@ -665,7 +665,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0aed08d3adb6ebe0eff737115056652670ae290f177759aac19c30456135f94c"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "bollard-stubs",
  "bytes",
  "futures-core",
@@ -1286,7 +1286,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c22499b1b8d1a129935c73f2b5b0deaea57697f185fd88e3a3c0f558bb83fba0"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "email_address",
  "janus_messages 0.7.5",
  "log",
@@ -2393,7 +2393,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "clap",
@@ -2473,7 +2473,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
- "base64 0.22.0",
+ "base64 0.22.1",
  "derivative",
  "futures",
  "janus_aggregator_core",
@@ -2506,7 +2506,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "deadpool",
@@ -2580,7 +2580,7 @@ version = "0.6.27"
 dependencies = [
  "assert_matches",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "chrono",
  "derivative",
  "fixed",
@@ -2609,7 +2609,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "derivative",
@@ -2654,7 +2654,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "divviup-client",
@@ -2692,7 +2692,7 @@ version = "0.6.27"
 dependencies = [
  "anyhow",
  "backoff",
- "base64 0.22.0",
+ "base64 0.22.1",
  "clap",
  "derivative",
  "fixed",
@@ -2734,7 +2734,7 @@ version = "0.6.27"
 dependencies = [
  "anyhow",
  "assert_matches",
- "base64 0.22.0",
+ "base64 0.22.1",
  "derivative",
  "hex",
  "num_enum",
@@ -2753,7 +2753,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd629c85e8ff09303b2bfccb15e7ae07adb716a998d9124b312f988afbd8b5b5"
 dependencies = [
  "anyhow",
- "base64 0.22.0",
+ "base64 0.22.1",
  "derivative",
  "hex",
  "num_enum",
@@ -2770,7 +2770,7 @@ version = "0.6.27"
 dependencies = [
  "anyhow",
  "assert_matches",
- "base64 0.22.0",
+ "base64 0.22.1",
  "cfg-if",
  "clap",
  "derivative",
@@ -4100,7 +4100,7 @@ version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "566cafdd92868e0939d3fb961bd0dc25fcfaaed179291093b3d43e6b3150ea10"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "futures-util",
@@ -4387,7 +4387,7 @@ version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29993a25686778eb88d4189742cd713c9bce943bc54251a33509dc63cbacf73d"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "rustls-pki-types",
 ]
 
@@ -4643,7 +4643,7 @@ version = "3.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ad483d2ab0149d5a5ebcd9972a3852711e0153d863bf5a5d0391d28883c4a20"
 dependencies = [
- "base64 0.22.0",
+ "base64 0.22.1",
  "chrono",
  "hex",
  "indexmap 1.9.3",
