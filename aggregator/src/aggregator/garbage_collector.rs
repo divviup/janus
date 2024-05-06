@@ -75,7 +75,8 @@ impl<C: Clock> GarbageCollector<C> {
 
     #[tracing::instrument(name = "GarbageCollector::run", skip(self))]
     pub async fn run(&self) -> Result<()> {
-        // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#224): add support for handling only a subset of tasks in a single job (i.e.
+        // sharding).
 
         // Retrieve tasks.
         let task_ids: Vec<_> = self

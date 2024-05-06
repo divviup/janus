@@ -38,9 +38,10 @@ use uuid::Uuid;
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// If set, the integration tests will be run against remote instances of `divviup-api`, a Janus
-    /// leader and a Janus helper. If not set, the integration tests will be run against instances
-    /// of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes cluster.
+    /// If set, the integration tests will be run against remote instances of `divviup-api`, a
+    /// Janus leader and a Janus helper. If not set, the integration tests will be run against
+    /// instances of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes
+    /// cluster.
     ///
     /// See doccomments on InClusterJanusPair::new_in_cloud and InClusterJanusPair::new_in_kind for
     /// discussion of how to configure this test setup.
@@ -227,12 +228,12 @@ impl InClusterJanusPair {
     ///  - `JANUS_E2E_KUBECTL_CONTEXT_NAME`: The name of a context in the kubeconfig file.
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_LEADER_AGGREGATOR_API_AUTH_TOKEN`: Credential with which requests to the
-    ///     leader's aggregator API are authenticated.
+    ///    leader's aggregator API are authenticated.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
     ///  - `JANUS_E2E_HELPER_AGGREGATOR_API_AUTH_TOKEN`: Credential with which requests to the
-    ///     helper's aggregator API are authenticated.
+    ///    helper's aggregator API are authenticated.
     ///  - `JANUS_E2E_DIVVIUP_API_NAMESPACE`: The Kubernetes namespace where `divviup-api` is
-    ///     deployed.
+    ///    deployed.
     async fn new_in_kind(vdaf: VdafInstance, query_type: QueryType) -> Self {
         let (
             kubeconfig_path,
@@ -730,9 +731,8 @@ mod rate_limits {
         let expected_429_rate = rate_limit_excess / (1.0 + rate_limit_excess);
         assert!(
             ratio > expected_429_rate - 0.05 && ratio <= expected_429_rate + 0.05,
-            "ratio: {ratio} expected 429 rate: {expected_429_rate} \
-            count of HTTP 429: {too_many_requests_count} \
-            count of HTTP 400: {acceptable_status_count}",
+            "ratio: {ratio} expected 429 rate: {expected_429_rate} count of HTTP 429: \
+             {too_many_requests_count} count of HTTP 400: {acceptable_status_count}",
         );
 
         let last_retry_after = assert_matches!(last_retry_after, Some(l) => l);

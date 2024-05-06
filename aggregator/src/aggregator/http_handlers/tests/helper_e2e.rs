@@ -1,3 +1,10 @@
+use crate::aggregator::{
+    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
+    http_handlers::{
+        test_util::{setup_http_handler_test, take_response_body},
+        tests::aggregate_share::post_aggregate_share_request,
+    },
+};
 use assert_matches::assert_matches;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
@@ -11,14 +18,6 @@ use prio::{
 };
 use rand::random;
 use trillium_testing::assert_status;
-
-use crate::aggregator::{
-    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
-    http_handlers::{
-        test_util::{setup_http_handler_test, take_response_body},
-        tests::aggregate_share::post_aggregate_share_request,
-    },
-};
 
 /// Send multiple aggregation job requests and aggregate share requests for a negative test that
 /// reports cannot be aggregated with the same aggregation parameter into multiple batches.

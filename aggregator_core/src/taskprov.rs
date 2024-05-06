@@ -100,8 +100,8 @@ pub struct PeerAggregator {
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     endpoint: Url,
 
-    /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or [`Role::Helper`].
-    /// This, along with `endpoint`, uniquely represents the peer aggregator.
+    /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or
+    /// [`Role::Helper`]. This, along with `endpoint`, uniquely represents the peer aggregator.
     role: Role,
 
     /// The preshared key used to derive the VDAF verify key for each task.
@@ -115,8 +115,8 @@ pub struct PeerAggregator {
     /// copied into the definition for a provisioned task.
     report_expiry_age: Option<Duration>,
 
-    /// The maximum allowable clock skew between peers. This value is copied into the definition for
-    /// a provisioned task.
+    /// The maximum allowable clock skew between peers. This value is copied into the definition
+    /// for a provisioned task.
     tolerable_clock_skew: Duration,
 
     /// Auth tokens used for authenticating Leader to Helper requests.
@@ -275,6 +275,7 @@ impl KeyType for VdafVerifyKeyLength {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use super::{PeerAggregator, VerifyKeyInit};
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::test_util::generate_test_hpke_config_and_private_key,
@@ -282,8 +283,6 @@ pub mod test_util {
     use janus_messages::{Duration, HpkeConfig, Role};
     use rand::random;
     use url::Url;
-
-    use super::{PeerAggregator, VerifyKeyInit};
 
     #[derive(Debug, Clone)]
     pub struct PeerAggregatorBuilder(PeerAggregator);

@@ -277,7 +277,8 @@ async fn collection_job_success_fixed_size() {
         let test_conn = test_case.post_collection_job(&collection_job_id).await;
         assert_eq!(test_conn.status(), Some(Status::Accepted));
 
-        // Update the collection job with the aggregate shares. collection job should now be complete.
+        // Update the collection job with the aggregate shares. collection job should now be
+        // complete.
         let batch_id = test_case
             .datastore
             .run_unnamed_tx(|tx| {

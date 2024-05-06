@@ -1,0 +1,5 @@
+format_strings = true
+wrap_comments = true
+comment_width = 100
+imports_granularity = "Crate"
+group_imports = "One"

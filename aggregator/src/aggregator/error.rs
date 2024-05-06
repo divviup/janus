@@ -97,7 +97,8 @@ pub enum Error {
     #[error("{0}")]
     BatchMismatch(Box<BatchMismatch>),
     /// Corresponds to `batchQueriedTooManyTimes` in DAP. A collect or aggregate share request was
-    /// rejected because the queries against a single batch exceed the task's `max_batch_query_count`.
+    /// rejected because the queries against a single batch exceed the task's
+    /// `max_batch_query_count`.
     #[error("task {0}: batch queried too many times ({1})")]
     BatchQueriedTooManyTimes(TaskId, u64),
     /// A collect or aggregate share request was rejected because the batch overlaps with a

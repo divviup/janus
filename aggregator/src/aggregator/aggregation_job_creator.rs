@@ -118,7 +118,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
-        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e.
+        // sharding).
 
         // Create metric instruments.
         let task_update_time_histogram = self
@@ -708,9 +709,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    /// Look for combinations of client reports and collection job aggregation parameters that do not
-    /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
-    /// be used with VDAFs that have non-unit type aggregation parameters.
+    /// Look for combinations of client reports and collection job aggregation parameters that do
+    /// not yet have a report aggregation, and batch them into new aggregation jobs. This should
+    /// only be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
     #[cfg(feature = "test-util")]
     async fn create_aggregation_jobs_for_time_interval_task_with_param<const SEED_SIZE: usize, A>(
@@ -904,9 +905,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
-
     use super::AggregationJobCreator;
+    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -3183,7 +3183,8 @@ mod tests {
         }
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
+        // two aggregation jobs per overlapping collection job. (and there are two such collection
+        // jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
@@ -3478,13 +3479,16 @@ mod tests {
                             // AggregationJob<_, _, A>::aggregation_parameter returns
                             // &A::AggregationParam, but we nonetheless need this cast or the
                             // compiler won't let us call clone
-                            let agg_param = (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
+                            let agg_param =
+                                (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
                             let want_ra_state = want_ra_states
                                 .get(&(*ra.report_id(), agg_param))
                                 .unwrap_or_else(|| {
                                     panic!(
-                                        "found report aggregation for unknown report {} aggregation param {:?}",
-                                        ra.report_id(), agg_job.aggregation_parameter(),
+                                        "found report aggregation for unknown report {} \
+                                         aggregation param {:?}",
+                                        ra.report_id(),
+                                        agg_job.aggregation_parameter(),
                                     )
                                 });
                             assert_eq!(want_ra_state, ra.state());

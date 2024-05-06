@@ -214,7 +214,8 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     if let Some(result_tx) = result_tx {
                         if result_tx.send(result.map_err(Arc::new)).is_err() {
                             debug!(
-                                "ReportWriter couldn't send result to requester (request cancelled?)"
+                                "ReportWriter couldn't send result to requester (request \
+                                 cancelled?)"
                             );
                         }
                     }
@@ -319,8 +320,8 @@ where
     }
 }
 
-/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it across
-/// futures.
+/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it
+/// across futures.
 #[derive(Debug, Default, Clone)]
 pub struct TaskUploadCounters(Arc<StdMutex<BTreeMap<TaskId, TaskUploadCounter>>>);
 

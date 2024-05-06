@@ -133,8 +133,8 @@ enum Command {
         #[arg(long, env = "VERIFY_KEY_INIT", hide_env_values = true)]
         verify_key_init: VerifyKeyInit,
 
-        /// The location of the collector HPKE config file, which contains an encoded DAP HpkeConfig
-        /// (i.e. public key & metadata) used to encrypt to the collector.
+        /// The location of the collector HPKE config file, which contains an encoded DAP
+        /// HpkeConfig (i.e. public key & metadata) used to encrypt to the collector.
         #[arg(long)]
         collector_hpke_config_file: PathBuf,
 
@@ -654,9 +654,9 @@ struct KubernetesSecretOptions {
 }
 
 impl KubernetesSecretOptions {
-    /// Fetch the datastore keys from the options. If --secrets-k8s-namespace is set, keys are fetched
-    /// from a secret therein. Otherwise, returns the keys provided to --datastore-keys. If neither was
-    /// set, returns an error.
+    /// Fetch the datastore keys from the options. If --secrets-k8s-namespace is set, keys are
+    /// fetched from a secret therein. Otherwise, returns the keys provided to --datastore-keys.
+    /// If neither was set, returns an error.
     async fn datastore_keys(
         &self,
         options: &CommonBinaryOptions,

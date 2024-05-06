@@ -282,8 +282,7 @@ impl<C: Clock> TaskAggregatorCache<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
+    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
     use janus_aggregator_core::{
         datastore::test_util::ephemeral_datastore,
         task::{test_util::TaskBuilder, QueryType},
@@ -294,9 +293,8 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::Time;
+    use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
-
-    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
 
     #[tokio::test]
     async fn task_aggregator_cache() {
@@ -356,8 +354,8 @@ mod tests {
             task.task_expiration()
         );
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -402,8 +400,8 @@ mod tests {
         // We shouldn't see the new task yet.
         assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         // Now we should see it.

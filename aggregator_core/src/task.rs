@@ -38,8 +38,8 @@ pub enum QueryType {
     TimeInterval,
 
     /// Fixed-size: used to support collection of batches as quickly as possible, without the
-    /// latency of waiting for batch time intervals to pass, and with direct control over the number
-    /// of reports per batch.
+    /// latency of waiting for batch time intervals to pass, and with direct control over the
+    /// number of reports per batch.
     FixedSize {
         /// If present, the maximum number of reports in a batch to allow it to be collected. If
         /// absent, then there is no limit to the number of reports that Janus will include in a
@@ -819,8 +819,8 @@ pub mod test_util {
         helper_aggregator_endpoint: Url,
         /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
         collector_hpke_keypair: HpkeKeypair,
-        /// Token used to authenticate messages exchanged between the aggregators in the aggregation
-        /// sub-protocol.
+        /// Token used to authenticate messages exchanged between the aggregators in the
+        /// aggregation sub-protocol.
         aggregator_auth_token: AuthenticationToken,
         /// Token used to authenticate messages exchanged between the collector and leader in the
         /// collection sub-protocol.

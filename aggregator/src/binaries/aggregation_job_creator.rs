@@ -7,8 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     // Start creating aggregation jobs.

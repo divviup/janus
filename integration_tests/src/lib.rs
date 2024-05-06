@@ -71,8 +71,8 @@ impl AggregatorEndpointFragments {
                 Url::parse(&format!("http://{host}:8080{path}")).unwrap()
             }
             AggregatorEndpointFragments::Localhost { .. } => panic!(
-                "cannot combine an aggregator running on localhost with a client or leader running \
-                 in a virtual network"
+                "cannot combine an aggregator running on localhost with a client or leader \
+                 running in a virtual network"
             ),
             AggregatorEndpointFragments::Remote { .. } => {
                 panic!("Cannot connect to remote aggregator on virtual network")

@@ -1,5 +1,4 @@
-use std::time::{Duration, SystemTime};
-
+use crate::metrics::{HistogramScale as ConfigHistogramScale, TokioMetricsConfiguration};
 use derivative::Derivative;
 use opentelemetry::{
     metrics::{MetricsError, Unit},
@@ -14,9 +13,8 @@ use opentelemetry_sdk::{
     },
     AttributeSet,
 };
+use std::time::{Duration, SystemTime};
 use tokio::runtime::{self, HistogramScale, RuntimeMetrics};
-
-use crate::metrics::{HistogramScale as ConfigHistogramScale, TokioMetricsConfiguration};
 
 impl From<ConfigHistogramScale> for HistogramScale {
     fn from(value: ConfigHistogramScale) -> Self {

@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.cargo.features": [
+        "prometheus",
+        "otlp",
+	"testcontainer"
+    ],
+    "rust-analyzer.rustfmt.extraArgs": [
+        "+nightly"
+    ]
+}

@@ -1,3 +1,4 @@
+use super::SUPPORTED_SCHEMA_VERSIONS;
 use crate::{
     datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
@@ -26,8 +27,6 @@ use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
 use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
-
-use super::SUPPORTED_SCHEMA_VERSIONS;
 
 struct EphemeralDatabase {
     _db_container: ContainerAsync<Postgres>,
@@ -231,8 +230,8 @@ impl EphemeralDatastoreBuilder {
 
         // Create Postgres DB.
         //
-        // Since this is the first connection we're establishing since the container has been created,
-        // retry this a few times. The database may not be ready yet.
+        // Since this is the first connection we're establishing since the container has been
+        // created, retry this a few times. The database may not be ready yet.
         let backoff = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(500))
             .with_max_interval(Duration::from_millis(500))

@@ -85,7 +85,7 @@ fn roundtrip_collection_req() {
                     concat!(
                         // query_body
                         "00", // query_type
-                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", /* batch_id */
                     ),
                 ),
                 concat!(

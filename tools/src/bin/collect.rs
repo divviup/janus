@@ -327,8 +327,8 @@ struct Options {
         display_order = 0
     )]
     vdaf: VdafType,
-    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when
-    /// used with --vdaf=histogram
+    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets,
+    /// when used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec

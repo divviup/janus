@@ -508,7 +508,8 @@ mod tests {
         // See https://github.com/cfrg/draft-irtf-cfrg-hpke/blob/5f503c564da00b0687b3de75f1dfbdfc4079ad31/test-vectors.json
         //
         // The file was processed with the following command:
-        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions: [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
+        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions:
+        // [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
         let test_vectors: Vec<TestVector> =
             serde_json::from_str(include_str!("test-vectors.json")).unwrap();
         let mut algorithms_tested = HashSet::new();

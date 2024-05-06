@@ -44,9 +44,9 @@ pub struct CommonConfig {
     #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
 
-    /// The maximum number of times a transaction can be retried. The intent is to guard against bugs
-    /// that induce infinite retries. It should be set to a reasonably high limit to prevent legitimate
-    /// work from being cancelled.
+    /// The maximum number of times a transaction can be retried. The intent is to guard against
+    /// bugs that induce infinite retries. It should be set to a reasonably high limit to
+    /// prevent legitimate work from being cancelled.
     #[serde(default = "default_max_transaction_retries")]
     pub max_transaction_retries: u64,
 }
@@ -176,13 +176,13 @@ pub struct JobDriverConfig {
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
     pub max_concurrent_job_workers: usize,
-    /// The length of time, in seconds, workers will acquire a lease for the jobs they are stepping.
-    /// Along with worker_lease_clock_skew_allowance, determines the effective timeout of stepping a
-    /// single job.
+    /// The length of time, in seconds, workers will acquire a lease for the jobs they are
+    /// stepping. Along with worker_lease_clock_skew_allowance, determines the effective
+    /// timeout of stepping a single job.
     pub worker_lease_duration_secs: u64,
     /// The length of time, in seconds, workers decrease their timeouts from the lease length in
-    /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
-    /// determines the effective timeout of stepping a single job.
+    /// order to guard against the possibility of clock skew. Along with
+    /// worker_lease_duration_secs, determines the effective timeout of stepping a single job.
     pub worker_lease_clock_skew_allowance_secs: u64,
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
