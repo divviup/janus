@@ -4,4 +4,5 @@ fn main() {
     let rustc_semver = version().expect("could not parse rustc version");
     println!("cargo:rustc-env=RUSTC_SEMVER={rustc_semver}");
     println!("cargo:rerun-if-env-changed=RUSTC");
+    println!("cargo:rustc-check-cfg=cfg(tokio_unstable)");
 }
