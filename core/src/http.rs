@@ -115,7 +115,7 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
             .split_once(char::is_whitespace)
             .ok_or_else(|| anyhow!("invalid bearer token"))?;
 
-        if !(bearer.to_lowercase() == "bearer") {
+        if bearer.to_lowercase() != "bearer" {
             return Err(anyhow!("authorization header value is not a bearer token"));
         }
 
