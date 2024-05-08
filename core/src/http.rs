@@ -1,12 +1,12 @@
 use crate::auth_tokens::AuthenticationToken;
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use http::StatusCode;
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
 use reqwest::{header::CONTENT_TYPE, Response};
 use std::fmt::{self, Display, Formatter};
 use tracing::warn;
-use trillium::Conn;
+use trillium::{Conn, HeaderValue};
 
 /// This captures an HTTP status code and parsed problem details document from an HTTP response.
 #[derive(Debug)]
@@ -106,16 +106,78 @@ impl Display for HttpErrorResponse {
 /// value. Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.
 pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
-    if let Some(authorization_value) = conn.request_headers().get("authorization") {
-        if let Some(received_token) = authorization_value.to_string().strip_prefix("Bearer ") {
-            return Ok(Some(
-                AuthenticationToken::new_bearer_token_from_string(received_token)
-                    .context("invalid bearer token")?,
-            ));
-        } else {
+    if let Some(authorization) = conn
+        .request_headers()
+        .get("authorization")
+        .map(HeaderValue::to_string)
+    {
+        let (bearer, token) = authorization
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| anyhow!("invalid bearer token"))?;
+
+        if !(bearer.to_lowercase() == "bearer") {
             return Err(anyhow!("authorization header value is not a bearer token"));
         }
+
+        return Ok(Some(AuthenticationToken::new_bearer_token_from_string(
+            token.trim_start(),
+        )?));
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use assert_matches::assert_matches;
+    use trillium_testing::TestConn;
+
+    use super::extract_bearer_token;
+
+    #[test]
+    fn authorization_header() {
+        assert_matches!(
+            extract_bearer_token(
+                &TestConn::build("get", "/", "body")
+                    .with_request_header("authorization", "bearer gVfRUu9krhxrUgFsEo-P5w"),
+            ),
+            Ok(Some(_))
+        );
+        assert_matches!(
+            extract_bearer_token(
+                &TestConn::build("get", "/", "body")
+                    .with_request_header("authorization", "BeArEr     gVfRUu9krhxrUgFsEo-P5w"),
+            ),
+            Ok(Some(_))
+        );
+
+        assert_matches!(
+            extract_bearer_token(
+                &TestConn::build("get", "/", "body").with_request_header(
+                    "Authorization",
+                    "Bearer    gVfRUu9krhxrUgFsEo-P5w    asdf"
+                ),
+            ),
+            Err(_)
+        );
+        assert_matches!(
+            extract_bearer_token(
+                &TestConn::build("get", "/", "body")
+                    .with_request_header("Authorization", "BearergVfRUu9krhxrUgFsEo-P5w"),
+            ),
+            Err(_)
+        );
+        assert_matches!(
+            extract_bearer_token(
+                &TestConn::build("get", "/", "body")
+                    .with_request_header("Authorization", "Bearer gVfRUu9krhxrUgFsEo(#@(#)*#)-P5w"),
+            ),
+            Err(_)
+        );
+
+        assert_matches!(
+            extract_bearer_token(&TestConn::build("get", "/", "body")),
+            Ok(None)
+        );
+    }
 }
