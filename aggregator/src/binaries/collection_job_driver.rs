@@ -1,13 +1,15 @@
+use std::{fmt::Debug, sync::Arc, time::Duration};
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use janus_core::{time::RealClock, TokioRuntime};
+use serde::{Deserialize, Serialize};
+
 use crate::{
     aggregator::collection_job_driver::{CollectionJobDriver, RetryStrategy},
     binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
-use anyhow::{Context, Result};
-use clap::Parser;
-use janus_core::{time::RealClock, TokioRuntime};
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, sync::Arc, time::Duration};
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     const CLIENT_USER_AGENT: &str = concat!(
@@ -170,15 +172,17 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use clap::CommandFactory;
+    use janus_core::test_util::roundtrip_encoding;
+
     use super::{Config, Options};
     use crate::config::{
         default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         CommonConfig, JobDriverConfig,
     };
-    use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
-    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn verify_app() {

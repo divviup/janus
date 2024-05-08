@@ -1,7 +1,5 @@
-use crate::{
-    status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
-};
+use std::{net::SocketAddr, sync::Arc};
+
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
@@ -23,7 +21,6 @@ use janus_messages::{Duration, HpkeConfig, Time};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use trillium::{Conn, Handler, Status};
 use trillium_api::{api, ApiConnExt, Json};
@@ -31,6 +28,11 @@ use trillium_proxy::{upstream::IntoUpstreamSelector, Client, Proxy};
 use trillium_router::Router;
 use trillium_tokio::ClientConfig;
 use url::Url;
+
+use crate::{
+    status::{ERROR, SUCCESS},
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
+};
 
 #[derive(Debug, Serialize)]
 struct EndpointResponse {
@@ -280,8 +282,9 @@ impl Options {
 
 #[cfg(test)]
 mod tests {
-    use super::Options;
     use clap::CommandFactory;
+
+    use super::Options;
 
     #[test]
     fn verify_clap_app() {

@@ -1,3 +1,17 @@
+use std::{
+    collections::HashMap,
+    env::{self, VarError},
+    fmt::Display,
+    fs::{create_dir_all, File},
+    io::{stderr, Write},
+    marker::PhantomData,
+    ops::Deref,
+    path::PathBuf,
+    process::{Command, Stdio},
+    str::FromStr,
+    sync::Arc,
+};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_aggregator_core::task::{test_util::Task, QueryType};
@@ -14,19 +28,6 @@ use janus_messages::{
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    env::{self, VarError},
-    fmt::Display,
-    fs::{create_dir_all, File},
-    io::{stderr, Write},
-    marker::PhantomData,
-    ops::Deref,
-    path::PathBuf,
-    process::{Command, Stdio},
-    str::FromStr,
-    sync::Arc,
-};
 use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
@@ -381,8 +382,9 @@ impl HpkeConfigRegistry {
                 // Unwrap safety: we always use a supported KEM.
                 generate_hpke_config_and_private_key(
                     id,
-                    // These algorithms should be broadly compatible with other DAP implementations, since they
-                    // are required by section 6 of draft-ietf-ppm-dap-02.
+                    // These algorithms should be broadly compatible with other DAP
+                    // implementations, since they are required by section 6 of
+                    // draft-ietf-ppm-dap-02.
                     HpkeKemId::X25519HkdfSha256,
                     HpkeKdfId::HkdfSha256,
                     HpkeAeadId::Aes128Gcm,
@@ -565,10 +567,11 @@ pub fn get_rust_log_level() -> (&'static str, String) {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
+    use std::{fmt::Debug, sync::OnceLock, time::Duration};
+
     use backoff::{future::retry, ExponentialBackoff};
     use futures::{Future, TryFutureExt};
     use rand::random;
-    use std::{fmt::Debug, sync::OnceLock, time::Duration};
     use url::Url;
 
     async fn await_readiness_condition<

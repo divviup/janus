@@ -1,21 +1,21 @@
 //! Janus datastore (durable storage) implementation.
 
-use self::models::{
-    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
-    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{Debug, Display},
+    future::Future,
+    io::Cursor,
+    mem::size_of,
+    ops::RangeInclusive,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration as StdDuration, Instant},
 };
-#[cfg(feature = "test-util")]
-use crate::VdafHasAggregationParameter;
-use crate::{
-    query_type::{AccumulableQueryType, CollectableQueryType},
-    task::{self, AggregatorTask, AggregatorTaskParameters},
-    taskprov::PeerAggregator,
-    SecretBytes,
-};
+
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -42,25 +42,27 @@ use prio::{
 };
 use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    fmt::{Debug, Display},
-    future::Future,
-    io::Cursor,
-    mem::size_of,
-    ops::RangeInclusive,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
 use tracing::{error, Level};
 use url::Url;
+
+use self::models::{
+    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
+    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
+    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+};
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
+use crate::{
+    query_type::{AccumulableQueryType, CollectableQueryType},
+    task::{self, AggregatorTask, AggregatorTaskParameters},
+    taskprov::PeerAggregator,
+    SecretBytes,
+};
 
 pub mod models;
 #[cfg(feature = "test-util")]
@@ -444,7 +446,8 @@ pub struct Transaction<'a, C: Clock> {
     task_infos: Arc<Mutex<HashMap<TaskId, TaskInfo>>>,
 
     retry: AtomicBool,
-    op_group: Mutex<Arc<Mutex<OperationGroup>>>, // locking discipline: outer lock before inner lock
+    op_group: Mutex<Arc<Mutex<OperationGroup>>>, /* locking discipline: outer lock before inner
+                                                  * lock */
 }
 
 enum OperationGroup {
@@ -2447,14 +2450,15 @@ WHERE report_aggregations.task_id = $1
                                 .to_string(),
                         )
                     })?;
-                let helper_encrypted_input_share_bytes =
-                    row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
-                        .ok_or_else(|| {
-                            Error::DbState(
-                            "report aggregation in state START but helper_encrypted_input_share is NULL"
+                let helper_encrypted_input_share_bytes = row
+                    .get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state START but helper_encrypted_input_share \
+                             is NULL"
                                 .to_string(),
                         )
-                        })?;
+                    })?;
 
                 let public_share =
                     A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
@@ -2482,7 +2486,8 @@ WHERE report_aggregations.task_id = $1
                             .get::<_, Option<Vec<u8>>>("leader_prep_transition")
                             .ok_or_else(|| {
                                 Error::DbState(
-                                    "report aggregation in state WAITING but leader_prep_transition is NULL"
+                                    "report aggregation in state WAITING but \
+                                     leader_prep_transition is NULL"
                                         .to_string(),
                                 )
                             })?;
@@ -2500,7 +2505,8 @@ WHERE report_aggregations.task_id = $1
                             .get::<_, Option<Vec<u8>>>("helper_prep_state")
                             .ok_or_else(|| {
                                 Error::DbState(
-                                    "report aggregation in state WAITING but helper_prep_state is NULL"
+                                    "report aggregation in state WAITING but helper_prep_state is \
+                                     NULL"
                                         .to_string(),
                                 )
                             })?;
@@ -3219,9 +3225,14 @@ WHERE task_id = $1
                     )
                 })?)?;
                 let client_timestamp_interval = client_timestamp_interval
-                    .ok_or_else(|| Error::DbState(
-                        "collection job in state FINISHED but client_timestamp_interval is NULL".to_string())
-                    )?.as_interval();
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "collection job in state FINISHED but client_timestamp_interval is \
+                             NULL"
+                                .to_string(),
+                        )
+                    })?
+                    .as_interval();
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -4471,7 +4482,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
         // Note that this ignores aggregation parameter, as `outstanding_batches` does not need to
         // worry about aggregation parameters.
         //
-        // TODO(#225): reevaluate whether we can ignore aggregation parameter here once we have experience with VDAFs requiring multiple aggregations per batch.
+        // TODO(#225): reevaluate whether we can ignore aggregation parameter here once we have
+        // experience with VDAFs requiring multiple aggregations per batch.
         let stmt = self
             .prepare_cached(
                 "-- put_outstanding_batch()
@@ -5451,9 +5463,9 @@ GROUP BY tasks.id",
             .transpose()
     }
 
-    /// Add a `TaskUploadCounter` to the counter associated with the given [`TaskId`]. This is sharded,
-    /// requiring an `ord` parameter to determine which shard to add to. `ord` should be randomly
-    /// generated by the caller.
+    /// Add a `TaskUploadCounter` to the counter associated with the given [`TaskId`]. This is
+    /// sharded, requiring an `ord` parameter to determine which shard to add to. `ord` should
+    /// be randomly generated by the caller.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn increment_task_upload_counter(
         &self,
@@ -5461,11 +5473,10 @@ GROUP BY tasks.id",
         ord: u64,
         counter: &TaskUploadCounter,
     ) -> Result<(), Error> {
-        let stmt =
-            "-- increment_task_upload_counter()
+        let stmt = "-- increment_task_upload_counter()
 INSERT INTO task_upload_counters (task_id, ord, interval_collected, report_decode_failure,
-        report_decrypt_failure, report_expired, report_outdated_key, report_success, report_too_early,
-        task_expired)
+        report_decrypt_failure, report_expired, report_outdated_key, report_success,
+        report_too_early, task_expired)
 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (task_id, ord) DO UPDATE SET
     interval_collected = task_upload_counters.interval_collected + $3,

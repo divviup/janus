@@ -1,7 +1,5 @@
-use crate::{
-    aggregator::{http_handlers::aggregator_handler, test_util::default_aggregator_config},
-    metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
-};
+use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
+
 use http::StatusCode;
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
@@ -14,8 +12,12 @@ use prometheus::{
     proto::{Metric, MetricType},
     Registry,
 };
-use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
 use trillium_testing::prelude::get;
+
+use crate::{
+    aggregator::{http_handlers::aggregator_handler, test_util::default_aggregator_config},
+    metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
+};
 
 #[tokio::test]
 async fn prometheus_metrics_pull() {

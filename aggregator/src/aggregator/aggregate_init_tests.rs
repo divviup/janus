@@ -1,11 +1,5 @@
-use crate::aggregator::{
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, take_problem_details},
-    },
-    tests::generate_helper_report_share,
-    Config,
-};
+use std::sync::Arc;
+
 use assert_matches::assert_matches;
 use http::StatusCode;
 use janus_aggregator_core::{
@@ -39,9 +33,17 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{prelude::put, TestConn};
+
+use crate::aggregator::{
+    http_handlers::{
+        aggregator_handler,
+        test_util::{decode_response_body, take_problem_details},
+    },
+    tests::generate_helper_report_share,
+    Config,
+};
 
 #[derive(Clone)]
 pub(super) struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>

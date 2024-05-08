@@ -1,12 +1,5 @@
-use crate::{
-    models::{
-        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
-        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq,
-        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf,
-        TaskResp, TaskprovPeerAggregatorResp,
-    },
-    Config, ConnExt, Error,
-};
+use std::{str::FromStr, sync::Arc, unreachable};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -17,17 +10,25 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::AuthenticationTokenHash, hpke::generate_hpke_config_and_private_key, time::Clock,
 };
-use janus_messages::HpkeConfigId;
 use janus_messages::{
-    query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
-    TaskId,
+    query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId,
+    HpkeKemId, Role, TaskId,
 };
 use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
-use std::{str::FromStr, sync::Arc, unreachable};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
+
+use crate::{
+    models::{
+        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
+        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq,
+        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf,
+        TaskResp, TaskprovPeerAggregatorResp,
+    },
+    Config, ConnExt, Error,
+};
 
 pub(super) async fn get_config(
     _: &mut Conn,
@@ -184,23 +185,26 @@ pub(super) async fn post_task<C: Clock>(
         let task = Arc::clone(&task);
         Box::pin(async move {
             if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
-            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
-            // those fields that are randomly generated.
-            if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
-                && existing_task.query_type() == task.query_type()
-                && existing_task.vdaf() == task.vdaf()
-                && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
-                && existing_task.role() == task.role()
-                && existing_task.max_batch_query_count() == task.max_batch_query_count()
-                && existing_task.task_expiration() == task.task_expiration()
-                && existing_task.min_batch_size() == task.min_batch_size()
-                && existing_task.time_precision() == task.time_precision()
-                && existing_task.collector_hpke_config() == task.collector_hpke_config() {
-                    return Ok(())
+                // Check whether the existing task in the DB corresponds to the incoming task,
+                // ignoring those fields that are randomly generated.
+                if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
+                    && existing_task.query_type() == task.query_type()
+                    && existing_task.vdaf() == task.vdaf()
+                    && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
+                    && existing_task.role() == task.role()
+                    && existing_task.max_batch_query_count() == task.max_batch_query_count()
+                    && existing_task.task_expiration() == task.task_expiration()
+                    && existing_task.min_batch_size() == task.min_batch_size()
+                    && existing_task.time_precision() == task.time_precision()
+                    && existing_task.collector_hpke_config() == task.collector_hpke_config()
+                {
+                    return Ok(());
                 }
 
                 let err = Error::Conflict(
-                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                    "task with same VDAF verify key and task ID already exists with different \
+                     parameters"
+                        .to_string(),
                 );
                 return Err(datastore::Error::User(err.into()));
             }

@@ -1,7 +1,8 @@
-use crate::{roundtrip_encoding, Duration, Interval, Role, TaskId, Time, Url};
 use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode, Encode};
 use serde_test::{assert_de_tokens_error, assert_tokens, Token};
+
+use crate::{roundtrip_encoding, Duration, Interval, Role, TaskId, Time, Url};
 
 #[test]
 fn roundtrip_url() {

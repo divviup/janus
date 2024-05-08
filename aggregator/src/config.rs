@@ -1,16 +1,18 @@
 //! Configuration for various Janus binaries.
 
-use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
-use derivative::Derivative;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     time::Duration,
 };
+
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use derivative::Derivative;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use url::Url;
+
+use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 
 /// Configuration options common to all Janus binaries.
 ///
@@ -44,9 +46,9 @@ pub struct CommonConfig {
     #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
 
-    /// The maximum number of times a transaction can be retried. The intent is to guard against bugs
-    /// that induce infinite retries. It should be set to a reasonably high limit to prevent legitimate
-    /// work from being cancelled.
+    /// The maximum number of times a transaction can be retried. The intent is to guard against
+    /// bugs that induce infinite retries. It should be set to a reasonably high limit to
+    /// prevent legitimate work from being cancelled.
     #[serde(default = "default_max_transaction_retries")]
     pub max_transaction_retries: u64,
 }
@@ -176,13 +178,13 @@ pub struct JobDriverConfig {
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
     pub max_concurrent_job_workers: usize,
-    /// The length of time, in seconds, workers will acquire a lease for the jobs they are stepping.
-    /// Along with worker_lease_clock_skew_allowance, determines the effective timeout of stepping a
-    /// single job.
+    /// The length of time, in seconds, workers will acquire a lease for the jobs they are
+    /// stepping. Along with worker_lease_clock_skew_allowance, determines the effective
+    /// timeout of stepping a single job.
     pub worker_lease_duration_secs: u64,
     /// The length of time, in seconds, workers decrease their timeouts from the lease length in
-    /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
-    /// determines the effective timeout of stepping a single job.
+    /// order to guard against the possibility of clock skew. Along with
+    /// worker_lease_duration_secs, determines the effective timeout of stepping a single job.
     pub worker_lease_clock_skew_allowance_secs: u64,
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
@@ -244,6 +246,8 @@ impl JobDriverConfig {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use reqwest::Url;
+
     use super::DbConfig;
     use crate::{
         metrics::{MetricsConfiguration, MetricsExporterConfiguration},
@@ -252,7 +256,6 @@ pub mod test_util {
             TraceConfiguration,
         },
     };
-    use reqwest::Url;
 
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
@@ -295,6 +298,11 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use assert_matches::assert_matches;
+    use janus_core::test_util::roundtrip_encoding;
+
     use crate::{
         config::{
             default_max_transaction_retries,
@@ -304,9 +312,6 @@ mod tests {
         metrics::{HistogramScale, MetricsExporterConfiguration},
         trace::OpenTelemetryTraceConfiguration,
     };
-    use assert_matches::assert_matches;
-    use janus_core::test_util::roundtrip_encoding;
-    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn roundtrip_db_config() {

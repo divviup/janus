@@ -1,7 +1,10 @@
-use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, InitialWrite},
-    batch_creator::BatchCreator,
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
 };
+
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     types::extra::{U15, U31},
@@ -53,18 +56,17 @@ use prio::{
     },
 };
 use rand::{random, thread_rng, Rng};
-use std::{
-    cmp::min,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{
     time::{self, sleep_until, Instant, MissedTickBehavior},
     try_join,
 };
 use tracing::{debug, error, info};
 use trillium_tokio::{CloneCounterObserver, Stopper};
+
+use crate::aggregator::{
+    aggregation_job_writer::{AggregationJobWriter, InitialWrite},
+    batch_creator::BatchCreator,
+};
 
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
@@ -118,7 +120,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
-        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e.
+        // sharding).
 
         // Create metric instruments.
         let task_update_time_histogram = self
@@ -708,9 +711,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    /// Look for combinations of client reports and collection job aggregation parameters that do not
-    /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
-    /// be used with VDAFs that have non-unit type aggregation parameters.
+    /// Look for combinations of client reports and collection job aggregation parameters that do
+    /// not yet have a report aggregation, and batch them into new aggregation jobs. This should
+    /// only be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
     #[cfg(feature = "test-util")]
     async fn create_aggregation_jobs_for_time_interval_task_with_param<const SEED_SIZE: usize, A>(
@@ -904,9 +907,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
+    use std::{
+        any::{Any, TypeId},
+        collections::{HashMap, HashSet},
+        hash::Hash,
+        iter,
+        sync::Arc,
+        time::Duration,
+    };
 
-    use super::AggregationJobCreator;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -939,16 +948,11 @@ mod tests {
         prio3::{Prio3, Prio3Count},
     };
     use rand::random;
-    use std::{
-        any::{Any, TypeId},
-        collections::{HashMap, HashSet},
-        hash::Hash,
-        iter,
-        sync::Arc,
-        time::Duration,
-    };
     use tokio::{task, time, try_join};
     use trillium_tokio::Stopper;
+
+    use super::AggregationJobCreator;
+    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
 
     #[tokio::test]
     async fn aggregation_job_creator() {
@@ -3183,7 +3187,8 @@ mod tests {
         }
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
+        // two aggregation jobs per overlapping collection job. (and there are two such collection
+        // jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
@@ -3478,13 +3483,16 @@ mod tests {
                             // AggregationJob<_, _, A>::aggregation_parameter returns
                             // &A::AggregationParam, but we nonetheless need this cast or the
                             // compiler won't let us call clone
-                            let agg_param = (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
+                            let agg_param =
+                                (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
                             let want_ra_state = want_ra_states
                                 .get(&(*ra.report_id(), agg_param))
                                 .unwrap_or_else(|| {
                                     panic!(
-                                        "found report aggregation for unknown report {} aggregation param {:?}",
-                                        ra.report_id(), agg_job.aggregation_parameter(),
+                                        "found report aggregation for unknown report {} \
+                                         aggregation param {:?}",
+                                        ra.report_id(),
+                                        agg_job.aggregation_parameter(),
                                     )
                                 });
                             assert_eq!(want_ra_state, ra.state());

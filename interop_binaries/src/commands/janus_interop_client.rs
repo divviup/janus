@@ -1,8 +1,5 @@
-use crate::{
-    install_tracing_subscriber,
-    status::{ERROR, SUCCESS},
-    ErrorHandler, NumberAsString, VdafObject,
-};
+use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
@@ -25,11 +22,16 @@ use prio::{
     vdaf::prio3::Prio3,
 };
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json, State};
 use trillium_router::Router;
 use url::Url;
+
+use crate::{
+    install_tracing_subscriber,
+    status::{ERROR, SUCCESS},
+    ErrorHandler, NumberAsString, VdafObject,
+};
 
 /// Parse a numeric measurement from its intermediate JSON representation.
 fn parse_primitive_measurement<T>(value: serde_json::Value) -> anyhow::Result<T>

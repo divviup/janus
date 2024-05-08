@@ -1,12 +1,14 @@
-use crate::auth_tokens::AuthenticationToken;
+use std::fmt::{self, Display, Formatter};
+
 use anyhow::{anyhow, Context};
 use http::StatusCode;
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
 use reqwest::{header::CONTENT_TYPE, Response};
-use std::fmt::{self, Display, Formatter};
 use tracing::warn;
 use trillium::Conn;
+
+use crate::auth_tokens::AuthenticationToken;
 
 /// This captures an HTTP status code and parsed problem details document from an HTTP response.
 #[derive(Debug)]

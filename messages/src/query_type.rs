@@ -1,15 +1,16 @@
-use crate::{Collection, FixedSizeQuery, Query};
-
-use super::{BatchId, Interval};
-use anyhow::anyhow;
-use num_enum::TryFromPrimitive;
-use prio::codec::{CodecError, Decode, Encode};
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
     io::Cursor,
 };
+
+use anyhow::anyhow;
+use num_enum::TryFromPrimitive;
+use prio::codec::{CodecError, Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use super::{BatchId, Interval};
+use crate::{Collection, FixedSizeQuery, Query};
 
 /// QueryType represents a DAP query type. This is a task-level configuration setting which
 /// determines how individual client reports are grouped together into batches for collection.

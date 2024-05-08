@@ -1,14 +1,5 @@
-use crate::{
-    aggregator::{
-        aggregate_init_tests::PrepareInitGenerator,
-        http_handlers::{
-            aggregator_handler,
-            test_util::{decode_response_body, take_problem_details},
-        },
-        Config,
-    },
-    config::TaskprovConfig,
-};
+use std::sync::Arc;
+
 use assert_matches::assert_matches;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
@@ -63,13 +54,24 @@ use prio::{
 use rand::random;
 use ring::digest::{digest, SHA256};
 use serde_json::json;
-use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
     prelude::{post, put},
 };
 use url::Url;
+
+use crate::{
+    aggregator::{
+        aggregate_init_tests::PrepareInitGenerator,
+        http_handlers::{
+            aggregator_handler,
+            test_util::{decode_response_body, take_problem_details},
+        },
+        Config,
+    },
+    config::TaskprovConfig,
+};
 
 type TestVdaf = Poplar1<XofTurboShake128, 16>;
 

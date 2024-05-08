@@ -1,4 +1,9 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
+use std::{
+    fmt::{self, Debug},
+    str::FromStr,
+};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
@@ -8,10 +13,6 @@ use janus_messages::{
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
-};
-use std::{
-    fmt::{self, Debug},
-    str::FromStr,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -265,9 +266,10 @@ impl HpkeKeypair {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::random;
+
+    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
 
     pub fn generate_test_hpke_config_and_private_key() -> HpkeKeypair {
         generate_hpke_config_and_private_key(
@@ -292,16 +294,18 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
-    #[allow(deprecated)]
-    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
+    use std::collections::HashSet;
+
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
         Role,
     };
     use serde::Deserialize;
-    use std::collections::HashSet;
+
+    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    #[allow(deprecated)]
+    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
 
     #[test]
     fn exchange_message() {
@@ -508,7 +512,8 @@ mod tests {
         // See https://github.com/cfrg/draft-irtf-cfrg-hpke/blob/5f503c564da00b0687b3de75f1dfbdfc4079ad31/test-vectors.json
         //
         // The file was processed with the following command:
-        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions: [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
+        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions:
+        // [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
         let test_vectors: Vec<TestVector> =
             serde_json::from_str(include_str!("test-vectors.json")).unwrap();
         let mut algorithms_tested = HashSet::new();

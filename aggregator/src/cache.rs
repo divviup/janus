@@ -1,6 +1,12 @@
 //! Various in-memory caches that can be used by an aggregator.
 
-use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex as StdMutex},
+    time::{Duration, Instant},
+};
+
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
     taskprov::PeerAggregator,
@@ -12,15 +18,11 @@ use moka::{
     ops::compute::Op,
     Entry,
 };
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    sync::{Arc, Mutex as StdMutex},
-    time::{Duration, Instant},
-};
 use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::{debug, error};
 use url::Url;
+
+use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;
@@ -356,8 +358,8 @@ mod tests {
             task.task_expiration()
         );
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -402,8 +404,8 @@ mod tests {
         // We shouldn't see the new task yet.
         assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         // Now we should see it.

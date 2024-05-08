@@ -1,5 +1,12 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
+use std::{
+    fmt::{Debug, Display},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
+
 use anyhow::Context as _;
 use chrono::NaiveDateTime;
 use janus_aggregator_core::datastore::{self, models::Lease};
@@ -9,12 +16,6 @@ use opentelemetry::{
     KeyValue,
 };
 use rand::{thread_rng, Rng};
-use std::{
-    fmt::{Debug, Display},
-    future::Future,
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{
     sync::{Semaphore, SemaphorePermit},
     time::{self, Instant},
@@ -142,7 +143,8 @@ where
                 break;
             }
 
-            // Wait until we are able to start at least one worker. (permit will be immediately released)
+            // Wait until we are able to start at least one worker. (permit will be immediately
+            // released)
             //
             // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
             // semaphore is closed, and we never close this semaphore.
@@ -192,8 +194,8 @@ where
                         &[KeyValue::new("status", "error")],
                     );
 
-                    // Go ahead and provide a delay in this error case to ensure we don't tightly loop
-                    // running transactions that will fail without any delay.
+                    // Go ahead and provide a delay in this error case to ensure we don't tightly
+                    // loop running transactions that will fail without any delay.
                     next_run_instant += self.job_discovery_interval;
                     error!(?error, "Couldn't acquire jobs");
                     continue;
@@ -267,7 +269,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::JobDriver;
+    use std::{sync::Arc, time::Duration};
+
     use chrono::{DateTime, NaiveDateTime, Utc};
     use janus_aggregator_core::{
         datastore::{self, models::Lease},
@@ -281,9 +284,10 @@ mod tests {
     };
     use janus_messages::{AggregationJobId, TaskId};
     use rand::random;
-    use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
     use trillium_tokio::Stopper;
+
+    use super::JobDriver;
 
     #[tokio::test]
     async fn job_driver() {
@@ -383,8 +387,9 @@ mod tests {
 
                             let incomplete_jobs = incomplete_jobs
                                 .get(test_state.job_acquire_counter)
-                                // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
-                                // would be impossible to return from Option::unwrap_or_default.
+                                // Clone here so that incomplete_jobs will be Vec<_> and not
+                                // &Vec<_>, which would be impossible to return from
+                                // Option::unwrap_or_default.
                                 .cloned()
                                 .unwrap_or_default();
 

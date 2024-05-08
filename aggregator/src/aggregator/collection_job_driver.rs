@@ -1,10 +1,7 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use crate::aggregator::{
-    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
-    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
-    send_request_to_helper, Error, RequestBody,
-};
+use std::{sync::Arc, time::Duration};
+
 use anyhow::bail;
 use backoff::backoff::Backoff;
 use bytes::Bytes;
@@ -33,9 +30,14 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
+
+use crate::aggregator::{
+    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
+    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
+    send_request_to_helper, Error, RequestBody,
+};
 
 /// Drives a collection job.
 #[derive(Derivative)]
@@ -78,15 +80,15 @@ where
     /// Step the provided collection job, for which a lease should have been acquired (though this
     /// should be idempotent). If the collection job runs to completion, the leader share, helper
     /// share, report count and report ID checksum will be written to the `collection_jobs` table,
-    /// and a subsequent request to the collection job URI will yield the aggregate shares. The collect
-    /// job's lease is released, though it won't matter since the job will no longer be eligible to
-    /// be run.
+    /// and a subsequent request to the collection job URI will yield the aggregate shares. The
+    /// collect job's lease is released, though it won't matter since the job will no longer be
+    /// eligible to be run.
     ///
     /// If some error occurs (including a failure getting the helper's aggregate share), neither
     /// aggregate share is written to the datastore. A subsequent request to the collection job URI
-    /// will not yield a result. The collection job lease will eventually expire, allowing a later run
-    /// of the collection job driver to try again. Both aggregate shares will be recomputed at that
-    /// time.
+    /// will not yield a result. The collection job lease will eventually expire, allowing a later
+    /// run of the collection job driver to try again. Both aggregate shares will be recomputed
+    /// at that time.
     #[tracing::instrument(skip(self, datastore), err)]
     pub async fn step_collection_job<C: Clock>(
         &self,
@@ -782,14 +784,8 @@ impl RetryStrategy {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::{
-            collection_job_driver::{CollectionJobDriver, RetryStrategy},
-            test_util::BATCH_AGGREGATION_SHARD_COUNT,
-            Error,
-        },
-        binary_utils::job_driver::JobDriver,
-    };
+    use std::{sync::Arc, time::Duration as StdDuration};
+
     use assert_matches::assert_matches;
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_aggregator_core::{
@@ -825,8 +821,16 @@ mod tests {
         vdaf::dummy,
     };
     use rand::random;
-    use std::{sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
+
+    use crate::{
+        aggregator::{
+            collection_job_driver::{CollectionJobDriver, RetryStrategy},
+            test_util::BATCH_AGGREGATION_SHARD_COUNT,
+            Error,
+        },
+        binary_utils::job_driver::JobDriver,
+    };
 
     async fn setup_collection_job_test_case(
         server: &mut mockito::Server,
@@ -1471,7 +1475,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify: check that the collection job was abandoned, and that it can no longer be acquired.
+        // Verify: check that the collection job was abandoned, and that it can no longer be
+        // acquired.
         let (abandoned_collection_job, leases) = ds
             .run_unnamed_tx(|tx| {
                 let collection_job = collection_job.clone();
@@ -1758,7 +1763,8 @@ mod tests {
 
         mocked_aggregate_share.assert_async().await;
 
-        // Verify: check that the collection job was abandoned, and that it can no longer be acquired.
+        // Verify: check that the collection job was abandoned, and that it can no longer be
+        // acquired.
         ds.run_unnamed_tx(|tx| {
             let collection_job = collection_job.clone();
             Box::pin(async move {
@@ -1810,9 +1816,9 @@ mod tests {
             .as_secs();
 
             assert_eq!(
-                want_delay_s,
-                got_delay_s,
-                "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor}).compute_retry_delay({step_attempts})"
+                want_delay_s, got_delay_s,
+                "RetryDelay({min_delay_s}, {max_delay_s}, \
+                 {exponential_factor}).compute_retry_delay({step_attempts})"
             );
         }
 

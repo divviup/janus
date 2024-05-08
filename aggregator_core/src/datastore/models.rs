@@ -1,6 +1,11 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{datastore::Error, task};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+    ops::RangeInclusive,
+};
+
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use clap::ValueEnum;
@@ -29,11 +34,8 @@ use prio::{
 };
 use rand::{distributions::Standard, prelude::Distribution};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-    ops::RangeInclusive,
-};
+
+use crate::{datastore::Error, task};
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
 // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -1725,8 +1727,8 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.state
     }
 
-    /// Returns a new [`CollectionJob`] corresponding to this collection job updated to have the given
-    /// state.
+    /// Returns a new [`CollectionJob`] corresponding to this collection job updated to have the
+    /// given state.
     pub fn with_state(self, state: CollectionJobState<SEED_SIZE, A>) -> Self {
         Self { state, ..self }
     }
@@ -2090,8 +2092,8 @@ impl<'a> FromSql<'a> for SqlInterval {
             }
             Range::Nonempty(RangeBound::Exclusive(_), _)
             | Range::Nonempty(_, RangeBound::Inclusive(_)) => Err(Into::into(
-                "Interval can only represent timestamp ranges that are closed at the start \
-                     and open at the end",
+                "Interval can only represent timestamp ranges that are closed at the start and \
+                 open at the end",
             )),
             Range::Nonempty(
                 RangeBound::Inclusive(Some(start_raw)),
@@ -2108,8 +2110,7 @@ impl<'a> FromSql<'a> for SqlInterval {
                 let abs_start_duration = Duration::from_microseconds(abs_start_us);
                 let time = if negative {
                     SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| {
-                        "Interval cannot represent timestamp ranges starting before the Unix \
-                             epoch"
+                        "Interval cannot represent timestamp ranges starting before the Unix epoch"
                     })?
                 } else {
                     SQL_EPOCH_TIME

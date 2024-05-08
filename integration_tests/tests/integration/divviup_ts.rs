@@ -1,10 +1,8 @@
 #![cfg(feature = "testcontainer")]
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
-use crate::{
-    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
-    initialize_rustls,
-};
+use std::time::Duration;
+
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 use janus_integration_tests::{
@@ -13,7 +11,11 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
-use std::time::Duration;
+
+use crate::{
+    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
+    initialize_rustls,
+};
 
 async fn run_divviup_ts_integration_test(test_name: &str, vdaf: VdafInstance) {
     let (task_parameters, task_builder) = build_test_task(

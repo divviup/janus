@@ -1,13 +1,12 @@
-use crate::{
-    aggregator::{self, http_handlers::aggregator_handler},
-    binaries::garbage_collector::run_garbage_collector,
-    binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
-    cache::{
-        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
-    },
-    config::{BinaryConfig, CommonConfig, TaskprovConfig},
+use std::{
+    future::{ready, Future},
+    iter::Iterator,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
 };
+
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use derivative::Derivative;
@@ -21,16 +20,22 @@ use ring::{
 };
 use sec1::EcPrivateKey;
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::{
-    future::{ready, Future},
-    pin::Pin,
-};
-use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{join, sync::watch};
 use tracing::info;
 use trillium::Handler;
 use trillium_router::router;
 use url::Url;
+
+use crate::{
+    aggregator::{self, http_handlers::aggregator_handler},
+    binaries::garbage_collector::run_garbage_collector,
+    binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    cache::{
+        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+    },
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
+};
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     let (sender, _) = watch::channel(None);
@@ -339,10 +344,10 @@ pub struct Config {
     #[serde(default = "default_task_counter_shard_count")]
     pub task_counter_shard_count: u64,
 
-    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects how
-    /// often an aggregator becomes aware of key state changes. If unspecified, default is defined
-    /// by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
-    /// specify this.
+    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects
+    /// how often an aggregator becomes aware of key state changes. If unspecified, default is
+    /// defined by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
+    /// have to specify this.
     #[serde(default)]
     pub global_hpke_configs_refresh_interval: Option<u64>,
 
@@ -368,8 +373,8 @@ pub struct GarbageCollectorConfig {
     /// How frequently garbage collection is run, in seconds.
     pub gc_frequency_s: u64,
 
-    /// The limit to the number of client report artifacts deleted for a single task by a single run
-    /// of the garbage collector.
+    /// The limit to the number of client report artifacts deleted for a single task by a single
+    /// run of the garbage collector.
     pub report_limit: u64,
 
     /// The limit to the number of aggregation jobs, and related aggregation artifacts, deleted for
@@ -453,6 +458,20 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        time::Duration,
+    };
+
+    use assert_matches::assert_matches;
+    use clap::CommandFactory;
+    use janus_core::test_util::roundtrip_encoding;
+    use rand::random;
+    use ring::{
+        rand::SystemRandom,
+        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
+    };
+
     use super::{AggregatorApi, Config, GarbageCollectorConfig, Options};
     use crate::{
         aggregator::{
@@ -468,18 +487,6 @@ mod tests {
         trace::{
             OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
         },
-    };
-    use assert_matches::assert_matches;
-    use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
-    use rand::random;
-    use ring::{
-        rand::SystemRandom,
-        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
-    };
-    use std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        time::Duration,
     };
 
     #[test]

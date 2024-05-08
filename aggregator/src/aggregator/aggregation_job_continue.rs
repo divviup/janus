@@ -1,10 +1,11 @@
 //! Implements portions of aggregation job continuation for the helper.
 
-use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
-    error::handle_ping_pong_error,
-    AggregatorMetrics, Error, VdafOps,
+use std::{
+    any::Any,
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    sync::Arc,
 };
+
 use janus_aggregator_core::{
     datastore::{
         self,
@@ -24,13 +25,14 @@ use prio::{
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
-use std::{
-    any::Any,
-    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
-    sync::Arc,
-};
 use tokio::sync::oneshot::{self, error::RecvError};
 use tracing::{info_span, trace_span, Span};
+
+use crate::aggregator::{
+    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
+    error::handle_ping_pong_error,
+    AggregatorMetrics, Error, VdafOps,
+};
 
 impl VdafOps {
     /// Step the helper's aggregation job to the next step using the step `n` ping pong state in
@@ -73,22 +75,23 @@ impl VdafOps {
                 let mut report_aggregations_iter = report_aggregations.into_iter();
                 let mut report_aggregations_to_write = Vec::new();
                 for prep_step in req.prepare_steps() {
-                    // Match preparation step received from leader to stored report aggregation, and extract
-                    // the stored preparation step.
+                    // Match preparation step received from leader to stored report aggregation, and
+                    // extract the stored preparation step.
                     let report_aggregation = loop {
                         let report_agg = report_aggregations_iter.next().ok_or_else(|| {
                             datastore::Error::User(
                                 Error::InvalidMessage(
                                     Some(task_id),
                                     "leader sent unexpected, duplicate, or out-of-order prepare \
-                                    steps",
+                                     steps",
                                 )
                                 .into(),
                             )
                         })?;
                         if report_agg.report_id() != prep_step.report_id() {
-                            // This report was omitted by the leader because of a prior failure. Note that
-                            // the report was dropped (if it's not already in an error state) and continue.
+                            // This report was omitted by the leader because of a prior failure.
+                            // Note that the report was dropped (if it's
+                            // not already in an error state) and continue.
                             if matches!(
                                 report_agg.state(),
                                 ReportAggregationState::WaitingHelper { .. }
@@ -113,7 +116,7 @@ impl VdafOps {
                             return Err(datastore::Error::User(
                                 Error::Internal(
                                     "helper encountered unexpected \
-                                    ReportAggregationState::WaitingLeader"
+                                     ReportAggregationState::WaitingLeader"
                                         .to_string(),
                                 )
                                 .into(),
@@ -275,7 +278,6 @@ impl VdafOps {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use assert_matches::assert_matches;
     use janus_aggregator_core::task::test_util::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
@@ -283,6 +285,8 @@ pub mod test_util {
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::{assert_headers, prelude::post, TestConn};
+
+    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -370,18 +374,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-            post_aggregation_job_expecting_status,
-        },
-        http_handlers::{
-            aggregator_handler,
-            test_util::{setup_http_handler_test, take_problem_details},
-        },
-        test_util::default_aggregator_config,
-    };
+    use std::sync::Arc;
+
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -417,9 +411,21 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::sync::Arc;
     use trillium::{Handler, Status};
     use trillium_testing::prelude::delete;
+
+    use crate::aggregator::{
+        aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
+        aggregation_job_continue::test_util::{
+            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            post_aggregation_job_expecting_status,
+        },
+        http_handlers::{
+            aggregator_handler,
+            test_util::{setup_http_handler_test, take_problem_details},
+        },
+        test_util::default_aggregator_config,
+    };
 
     struct AggregationJobContinueTestCase<
         const VERIFY_KEY_LENGTH: usize,

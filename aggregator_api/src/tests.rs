@@ -1,12 +1,5 @@
-use crate::{
-    aggregator_api_handler,
-    models::{
-        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskUploadMetricsResp,
-        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
-    },
-    Config, CONTENT_TYPE,
-};
+use std::{iter, sync::Arc};
+
 use assert_matches::assert_matches;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::try_join_all;
@@ -41,12 +34,21 @@ use janus_messages::{
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde_test::{assert_ser_tokens, assert_tokens, Token};
-use std::{iter, sync::Arc};
 use trillium::{Handler, Status};
 use trillium_testing::{
     assert_response, assert_status,
     prelude::{delete, get, patch, post, put},
     Url,
+};
+
+use crate::{
+    aggregator_api_handler,
+    models::{
+        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskUploadMetricsResp,
+        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
+    },
+    Config, CONTENT_TYPE,
 };
 
 const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";

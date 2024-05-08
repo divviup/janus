@@ -1,13 +1,3 @@
-use crate::aggregator::{
-    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
-    empty_batch_aggregations,
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
-    },
-    test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
-    tests::{generate_helper_report_share, generate_helper_report_share_for_plaintext},
-};
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -41,6 +31,17 @@ use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::put, TestConn};
+
+use crate::aggregator::{
+    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
+    empty_batch_aggregations,
+    http_handlers::{
+        aggregator_handler,
+        test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
+    },
+    test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
+    tests::{generate_helper_report_share, generate_helper_report_share_for_plaintext},
+};
 
 #[tokio::test]
 async fn aggregate_leader() {

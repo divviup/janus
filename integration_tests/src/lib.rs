@@ -1,10 +1,11 @@
 //! This crate contains functionality useful for Janus integration tests.
 
+use std::time;
+
 use janus_aggregator_core::task::QueryType;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{Duration, TaskId};
-use std::time;
 use url::Url;
 
 pub mod client;
@@ -71,8 +72,8 @@ impl AggregatorEndpointFragments {
                 Url::parse(&format!("http://{host}:8080{path}")).unwrap()
             }
             AggregatorEndpointFragments::Localhost { .. } => panic!(
-                "cannot combine an aggregator running on localhost with a client or leader running \
-                 in a virtual network"
+                "cannot combine an aggregator running on localhost with a client or leader \
+                 running in a virtual network"
             ),
             AggregatorEndpointFragments::Remote { .. } => {
                 panic!("Cannot connect to remote aggregator on virtual network")

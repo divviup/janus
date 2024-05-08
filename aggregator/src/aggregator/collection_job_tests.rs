@@ -1,11 +1,5 @@
-use crate::aggregator::{
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, take_problem_details},
-    },
-    test_util::BATCH_AGGREGATION_SHARD_COUNT,
-    Config,
-};
+use std::{collections::HashSet, sync::Arc};
+
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
@@ -40,12 +34,20 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
     prelude::{post, put},
     TestConn,
+};
+
+use crate::aggregator::{
+    http_handlers::{
+        aggregator_handler,
+        test_util::{decode_response_body, take_problem_details},
+    },
+    test_util::BATCH_AGGREGATION_SHARD_COUNT,
+    Config,
 };
 
 pub(crate) struct CollectionJobTestCase {
@@ -277,7 +279,8 @@ async fn collection_job_success_fixed_size() {
         let test_conn = test_case.post_collection_job(&collection_job_id).await;
         assert_eq!(test_conn.status(), Some(Status::Accepted));
 
-        // Update the collection job with the aggregate shares. collection job should now be complete.
+        // Update the collection job with the aggregate shares. collection job should now be
+        // complete.
         let batch_id = test_case
             .datastore
             .run_unnamed_tx(|tx| {

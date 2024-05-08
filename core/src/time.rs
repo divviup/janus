@@ -1,11 +1,12 @@
 //! Utilities for timestamps and durations.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
-use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
 };
+
+use chrono::{DateTime, NaiveDateTime, Utc};
+use janus_messages::{Duration, Error, Interval, Time};
 
 /// A clock knows what time it currently is.
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
@@ -337,8 +338,9 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{DurationExt, IntervalExt};
     use janus_messages::{Duration, Interval, Time};
+
+    use crate::time::{DurationExt, IntervalExt};
 
     #[test]
     fn round_up_duration() {

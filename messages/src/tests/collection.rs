@@ -1,10 +1,11 @@
+use prio::codec::Decode;
+
 use crate::{
     roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
     BatchSelector, Collection, CollectionReq, Duration, FixedSize, FixedSizeQuery, HpkeCiphertext,
     HpkeConfigId, Interval, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time,
     TimeInterval,
 };
-use prio::codec::Decode;
 
 #[test]
 fn roundtrip_collection_req() {
@@ -85,7 +86,7 @@ fn roundtrip_collection_req() {
                     concat!(
                         // query_body
                         "00", // query_type
-                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", /* batch_id */
                     ),
                 ),
                 concat!(

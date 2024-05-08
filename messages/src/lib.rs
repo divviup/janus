@@ -3,11 +3,20 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::query_type::{FixedSize, QueryType, TimeInterval};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    io::{Cursor, Read},
+    num::TryFromIntError,
+    str,
+    str::FromStr,
+    time::{SystemTime, SystemTimeError},
+};
+
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
+pub use prio::codec;
 use prio::{
     codec::{
         decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
@@ -20,16 +29,8 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
 };
-use std::{
-    fmt::{self, Debug, Display, Formatter},
-    io::{Cursor, Read},
-    num::TryFromIntError,
-    str,
-    str::FromStr,
-    time::{SystemTime, SystemTimeError},
-};
 
-pub use prio::codec;
+use self::query_type::{FixedSize, QueryType, TimeInterval};
 
 pub mod problem_type;
 pub mod query_type;
@@ -527,8 +528,8 @@ impl Role {
     }
 
     /// Returns a VDAF aggregator ID if this [`Role`] is one of the aggregators, or `None` if the
-    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and earlier
-    /// to index into the `aggregator_endpoints` array.
+    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and
+    /// earlier to index into the `aggregator_endpoints` array.
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#section-3-4
     pub fn index(&self) -> Option<usize> {
@@ -1155,12 +1156,14 @@ impl HpkeConfig {
         &self.id
     }
 
-    /// Retrieve the key encapsulation mechanism algorithm identifier associated with this HPKE configuration.
+    /// Retrieve the key encapsulation mechanism algorithm identifier associated with this HPKE
+    /// configuration.
     pub fn kem_id(&self) -> &HpkeKemId {
         &self.kem_id
     }
 
-    /// Retrieve the key derivation function algorithm identifier associated with this HPKE configuration.
+    /// Retrieve the key derivation function algorithm identifier associated with this HPKE
+    /// configuration.
     pub fn kdf_id(&self) -> &HpkeKdfId {
         &self.kdf_id
     }

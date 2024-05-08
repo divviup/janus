@@ -118,10 +118,8 @@ impl ProblemDetailsConnExt for Conn {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        error::{BatchMismatch, ReportRejection, ReportRejectionReason},
-        send_request_to_helper, Error, RequestBody,
-    };
+    use std::{borrow::Cow, sync::Arc};
+
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::future::join_all;
@@ -138,8 +136,12 @@ mod tests {
     use opentelemetry::metrics::Unit;
     use rand::random;
     use reqwest::Client;
-    use std::{borrow::Cow, sync::Arc};
     use trillium_testing::prelude::post;
+
+    use crate::aggregator::{
+        error::{BatchMismatch, ReportRejection, ReportRejectionReason},
+        send_request_to_helper, Error, RequestBody,
+    };
 
     #[test]
     fn dap_problem_type_round_trip() {

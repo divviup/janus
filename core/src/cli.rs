@@ -1,7 +1,8 @@
 //! Types useful for creating CLI tools.
+use std::fmt::Display;
+
 use clap::ValueEnum;
 use janus_messages::{HpkeAeadId, HpkeKdfId, HpkeKemId};
-use std::fmt::Display;
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
 #[value()]

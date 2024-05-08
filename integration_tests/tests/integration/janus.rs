@@ -1,10 +1,5 @@
-use crate::{
-    common::{
-        build_test_task, submit_measurements_and_verify_aggregate,
-        submit_measurements_and_verify_aggregate_varying_aggregation_parameter, TestContext,
-    },
-    initialize_rustls,
-};
+use std::time::Duration;
+
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
@@ -14,7 +9,14 @@ use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, Task
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 use prio::vdaf::dummy;
-use std::time::Duration;
+
+use crate::{
+    common::{
+        build_test_task, submit_measurements_and_verify_aggregate,
+        submit_measurements_and_verify_aggregate_varying_aggregation_parameter, TestContext,
+    },
+    initialize_rustls,
+};
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 #[cfg(feature = "testcontainer")]

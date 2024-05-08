@@ -1,3 +1,5 @@
+use std::{iter, time::Duration as StdDuration};
+
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
@@ -21,7 +23,6 @@ use prio::{
     vdaf::{self, dummy, prio3::Prio3},
 };
 use rand::{random, thread_rng, Rng};
-use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
 
@@ -247,8 +248,9 @@ pub async fn verify_aggregate_generic<V>(
                 before_timestamp
                     .to_batch_interval_start(&task_parameters.time_precision)
                     .unwrap(),
-                // Use two time precisions as the interval duration in order to avoid a race condition if
-                // this test happens to run very close to the end of a batch window.
+                // Use two time precisions as the interval duration in order to avoid a race
+                // condition if this test happens to run very close to the end of a
+                // batch window.
                 Duration::from_seconds(2 * task_parameters.time_precision.as_seconds()),
             )
             .unwrap();
