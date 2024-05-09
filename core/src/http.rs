@@ -111,12 +111,12 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
         .get("authorization")
         .map(HeaderValue::to_string)
     {
-        let (bearer, token) = authorization
+        let (auth_scheme, token) = authorization
             .split_once(char::is_whitespace)
-            .ok_or_else(|| anyhow!("invalid bearer token"))?;
+            .ok_or_else(|| anyhow!("invalid authorization header"))?;
 
-        if bearer.to_lowercase() != "bearer" {
-            return Err(anyhow!("authorization header value is not a bearer token"));
+        if auth_scheme.to_lowercase() != "bearer" {
+            return Err(anyhow!("authorization scheme is not bearer"));
         }
 
         return Ok(Some(AuthenticationToken::new_bearer_token_from_string(
@@ -132,23 +132,29 @@ mod tests {
     use assert_matches::assert_matches;
     use trillium_testing::TestConn;
 
+    use crate::auth_tokens::AuthenticationToken;
+
     use super::extract_bearer_token;
 
     #[test]
     fn authorization_header() {
-        assert_matches!(
+        let good_token = "gVfRUu9krhxrUgFsEo-P5w";
+        let expected = AuthenticationToken::new_bearer_token_from_string(good_token).unwrap();
+        assert_eq!(
             extract_bearer_token(
                 &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", "bearer gVfRUu9krhxrUgFsEo-P5w"),
-            ),
-            Ok(Some(_))
+                    .with_request_header("authorization", format!("bearer {good_token}")),
+            )
+            .unwrap(),
+            Some(expected.clone())
         );
-        assert_matches!(
+        assert_eq!(
             extract_bearer_token(
                 &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", "BeArEr     gVfRUu9krhxrUgFsEo-P5w"),
-            ),
-            Ok(Some(_))
+                    .with_request_header("authorization", format!("BeArEr     {good_token}")),
+            )
+            .unwrap(),
+            Some(expected)
         );
 
         assert_matches!(
