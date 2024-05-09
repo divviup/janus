@@ -2689,6 +2689,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "trillium",
+ "trillium-testing",
  "url",
 ]
 

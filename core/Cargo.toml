@@ -77,3 +77,4 @@ mockito = { workspace = true }
 rstest.workspace = true
 rustls.workspace = true
 serde_test.workspace = true
+trillium-testing.workspace = true
