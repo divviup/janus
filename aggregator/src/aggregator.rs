@@ -89,6 +89,7 @@ use prio::{
         xof::XofTurboShake128,
     },
 };
+use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefIterator as _, ParallelIterator};
 use reqwest::Client;
 use ring::{
     digest::{digest, SHA256},
@@ -96,19 +97,14 @@ use ring::{
     signature::{EcdsaKeyPair, Signature},
 };
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
-    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{
-    sync::oneshot::{self, error::RecvError},
-    try_join,
-};
-use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
+use tokio::try_join;
+use tracing::{debug, info, trace_span, warn, Level};
 use url::Url;
 
 #[cfg(test)]
@@ -1739,10 +1735,8 @@ impl VdafOps {
             AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
                 .map_err(Error::MessageDecode)?,
         );
-        let agg_param = Arc::new(
-            A::AggregationParam::get_decoded(req.aggregation_parameter())
-                .map_err(Error::MessageDecode)?,
-        );
+        let agg_param = A::AggregationParam::get_decoded(req.aggregation_parameter())
+            .map_err(Error::MessageDecode)?;
 
         let report_deadline = clock
             .now()
@@ -1761,358 +1755,318 @@ impl VdafOps {
             }
         }
 
-        let prep_closure = {
-            let parent_span = Span::current();
-            let global_hpke_keypairs = global_hpke_keypairs.view();
-            let vdaf = Arc::clone(&vdaf);
-            let task = Arc::clone(&task);
-            let metrics = metrics.clone();
-            let req = Arc::clone(&req);
-            let aggregation_job_id = *aggregation_job_id;
-            let verify_key = *verify_key;
-            let agg_param = Arc::clone(&agg_param);
-            move || -> Result<Vec<ReportShareData<SEED_SIZE, A>>, Error> {
-                let span = info_span!(
-                    parent: parent_span,
-                    "handle_aggregate_init_generic threadpool task"
+        // We validate that each prepare_init can be represented by a `u64` ord value here, so that
+        // inside the parallel iterator we can unwrap. A conversion failure here will fail the
+        // entire aggregation. However, this is desirable: this can only happen if we receive too
+        // many report shares in an aggregation job for us to store, which is a whole-aggregation
+        // problem rather than a per-report problem. (separately, this would require more than
+        // u64::MAX report shares in a single aggregation job, which is practically impossible.)
+        u64::try_from(req.prepare_inits().len())?;
+
+        let mut report_share_data = Vec::new();
+        req
+            .prepare_inits()
+            .par_iter()
+            .enumerate()
+            .map(|(ord, prepare_init)| {
+                // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+                let global_hpke_keypair = global_hpke_keypairs.keypair(
+                    prepare_init
+                        .report_share()
+                        .encrypted_input_share()
+                        .config_id(),
                 );
-                let _entered = span.enter();
 
-                // Decrypt shares & prepare initialization states. (§4.4.4.1)
-                let mut report_share_data = Vec::new();
-                for (ord, prepare_init) in req.prepare_inits().iter().enumerate() {
-                    // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-                    let global_hpke_keypair = global_hpke_keypairs.keypair(
-                        prepare_init
-                            .report_share()
-                            .encrypted_input_share()
-                            .config_id(),
+                let task_hpke_keypair = task.hpke_keys().get(
+                    prepare_init
+                        .report_share()
+                        .encrypted_input_share()
+                        .config_id(),
+                );
+
+                let check_keypairs = if task_hpke_keypair.is_none()
+                    && global_hpke_keypair.is_none()
+                {
+                    debug!(
+                        config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
+                        "Helper encrypted input share references unknown HPKE config ID"
                     );
+                    metrics
+                        .aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
+                    Err(PrepareError::HpkeUnknownConfigId)
+                } else {
+                    Ok(())
+                };
 
-                    let task_hpke_keypair = task.hpke_keys().get(
-                        prepare_init
-                            .report_share()
-                            .encrypted_input_share()
-                            .config_id(),
-                    );
-
-                    let check_keypairs = if task_hpke_keypair.is_none()
-                        && global_hpke_keypair.is_none()
-                    {
+                let input_share_aad = check_keypairs.and_then(|_| {
+                    InputShareAad::new(
+                        *task.id(),
+                        prepare_init.report_share().metadata().clone(),
+                        prepare_init.report_share().public_share().to_vec(),
+                    )
+                    .get_encoded()
+                    .map_err(|err| {
                         debug!(
-                            config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
-                            "Helper encrypted input share references unknown HPKE config ID"
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            ?err,
+                            "Couldn't encode input share AAD"
+                        );
+                        metrics.aggregate_step_failure_counter.add(
+                            1,
+                            &[KeyValue::new("type", "input_share_aad_encode_failure")],
+                        );
+                        // HpkeDecryptError isn't strictly accurate, but given that this
+                        // fallible encoding is part of the HPKE decryption process, I think
+                        // this is as close as we can get to a meaningful error signal.
+                        PrepareError::HpkeDecryptError
+                    })
+                });
+
+                let plaintext = input_share_aad.and_then(|input_share_aad| {
+                    let try_hpke_open = |hpke_keypair| {
+                        hpke::open(
+                            hpke_keypair,
+                            &HpkeApplicationInfo::new(
+                                &Label::InputShare,
+                                &Role::Client,
+                                &Role::Helper,
+                            ),
+                            prepare_init.report_share().encrypted_input_share(),
+                            &input_share_aad,
+                        )
+                    };
+
+                    match (task_hpke_keypair, global_hpke_keypair) {
+                        (None, None) => unreachable!("already checked this condition"),
+                        (None, Some(global_hpke_keypair)) => {
+                            try_hpke_open(&global_hpke_keypair)
+                        }
+                        (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
+                        (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                            try_hpke_open(task_hpke_keypair).or_else(|error| match error {
+                                // Only attempt second trial if _decryption_ fails, and not some
+                                // error in server-side HPKE configuration.
+                                hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
+                                error => Err(error),
+                            })
+                        }
+                    }
+                    .map_err(|error| {
+                        debug!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            ?error,
+                            "Couldn't decrypt helper's report share"
                         );
                         metrics
                             .aggregate_step_failure_counter
-                            .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
-                        Err(PrepareError::HpkeUnknownConfigId)
-                    } else {
-                        Ok(())
-                    };
+                            .add(1, &[KeyValue::new("type", "decrypt_failure")]);
+                        PrepareError::HpkeDecryptError
+                    })
+                });
 
-                    let input_share_aad = check_keypairs.and_then(|_| {
-                        InputShareAad::new(
-                            *task.id(),
-                            prepare_init.report_share().metadata().clone(),
-                            prepare_init.report_share().public_share().to_vec(),
-                        )
-                        .get_encoded()
-                        .map_err(|err| {
+                let plaintext_input_share = plaintext.and_then(|plaintext| {
+                    let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
+                        .map_err(|error| {
                             debug!(
                                 task_id = %task.id(),
                                 metadata = ?prepare_init.report_share().metadata(),
-                                ?err,
-                                "Couldn't encode input share AAD"
+                                ?error, "Couldn't decode helper's plaintext input share",
                             );
                             metrics.aggregate_step_failure_counter.add(
                                 1,
-                                &[KeyValue::new("type", "input_share_aad_encode_failure")],
+                                &[KeyValue::new(
+                                    "type",
+                                    "plaintext_input_share_decode_failure",
+                                )],
                             );
-                            // HpkeDecryptError isn't strictly accurate, but given that this
-                            // fallible encoding is part of the HPKE decryption process, I think
-                            // this is as close as we can get to a meaningful error signal.
-                            PrepareError::HpkeDecryptError
-                        })
-                    });
-
-                    let plaintext = input_share_aad.and_then(|input_share_aad| {
-                        let try_hpke_open = |hpke_keypair| {
-                            hpke::open(
-                                hpke_keypair,
-                                &HpkeApplicationInfo::new(
-                                    &Label::InputShare,
-                                    &Role::Client,
-                                    &Role::Helper,
-                                ),
-                                prepare_init.report_share().encrypted_input_share(),
-                                &input_share_aad,
-                            )
-                        };
-
-                        match (task_hpke_keypair, global_hpke_keypair) {
-                            (None, None) => unreachable!("already checked this condition"),
-                            (None, Some(global_hpke_keypair)) => {
-                                try_hpke_open(&global_hpke_keypair)
-                            }
-                            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-                            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                                try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-                                    // Only attempt second trial if _decryption_ fails, and not some
-                                    // error in server-side HPKE configuration.
-                                    hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-                                    error => Err(error),
-                                })
-                            }
-                        }
-                        .map_err(|error| {
-                            debug!(
-                                task_id = %task.id(),
-                                metadata = ?prepare_init.report_share().metadata(),
-                                ?error,
-                                "Couldn't decrypt helper's report share"
-                            );
-                            metrics
-                                .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "decrypt_failure")]);
-                            PrepareError::HpkeDecryptError
-                        })
-                    });
-
-                    let plaintext_input_share = plaintext.and_then(|plaintext| {
-                        let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
-                            .map_err(|error| {
-                                debug!(
-                                    task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
-                                    ?error, "Couldn't decode helper's plaintext input share",
-                                );
-                                metrics.aggregate_step_failure_counter.add(
-                                    1,
-                                    &[KeyValue::new(
-                                        "type",
-                                        "plaintext_input_share_decode_failure",
-                                    )],
-                                );
-                                PrepareError::InvalidMessage
-                            })?;
-
-                        // Build map of extension type to extension data, checking for duplicates.
-                        let mut extensions = HashMap::new();
-                        if !plaintext_input_share.extensions().iter().all(|extension| {
-                            extensions
-                                .insert(*extension.extension_type(), extension.extension_data())
-                                .is_none()
-                        }) {
-                            debug!(
-                                task_id = %task.id(),
-                                metadata = ?prepare_init.report_share().metadata(),
-                                "Received report share with duplicate extensions",
-                            );
-                            metrics
-                                .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                            return Err(PrepareError::InvalidMessage);
-                        }
-
-                        if require_taskprov_extension {
-                            let valid_taskprov_extension_present = extensions
-                                .get(&ExtensionType::Taskprov)
-                                .map(|data| data.is_empty())
-                                .unwrap_or(false);
-                            if !valid_taskprov_extension_present {
-                                debug!(
-                                    task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
-                                    "Taskprov task received report with missing or malformed \
-                                    taskprov extension",
-                                );
-                                metrics.aggregate_step_failure_counter.add(
-                                    1,
-                                    &[KeyValue::new(
-                                        "type",
-                                        "missing_or_malformed_taskprov_extension",
-                                    )],
-                                );
-                                return Err(PrepareError::InvalidMessage);
-                            }
-                        } else if extensions.contains_key(&ExtensionType::Taskprov) {
-                            // taskprov not enabled, but the taskprov extension is present.
-                            debug!(
-                                task_id = %task.id(),
-                                metadata = ?prepare_init.report_share().metadata(),
-                                "Non-taskprov task received report with unexpected taskprov \
-                                extension",
-                            );
-                            metrics
-                                .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
-                            return Err(PrepareError::InvalidMessage);
-                        }
-
-                        Ok(plaintext_input_share)
-                    });
-
-                    let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
-                        A::InputShare::get_decoded_with_param(
-                            &(&vdaf, Role::Helper.index().unwrap()),
-                            plaintext_input_share.payload(),
-                        )
-                        .map_err(|error| {
-                            debug!(
-                                task_id = %task.id(),
-                                metadata = ?prepare_init.report_share().metadata(),
-                                ?error, "Couldn't decode helper's input share",
-                            );
-                            metrics
-                                .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                             PrepareError::InvalidMessage
-                        })
-                    });
+                        })?;
 
-                    let public_share = A::PublicShare::get_decoded_with_param(
-                        &vdaf,
-                        prepare_init.report_share().public_share(),
+                    // Build map of extension type to extension data, checking for duplicates.
+                    let mut extensions = HashMap::new();
+                    if !plaintext_input_share.extensions().iter().all(|extension| {
+                        extensions
+                            .insert(*extension.extension_type(), extension.extension_data())
+                            .is_none()
+                    }) {
+                        debug!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            "Received report share with duplicate extensions",
+                        );
+                        metrics
+                            .aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                        return Err(PrepareError::InvalidMessage);
+                    }
+
+                    if require_taskprov_extension {
+                        let valid_taskprov_extension_present = extensions
+                            .get(&ExtensionType::Taskprov)
+                            .map(|data| data.is_empty())
+                            .unwrap_or(false);
+                        if !valid_taskprov_extension_present {
+                            debug!(
+                                task_id = %task.id(),
+                                metadata = ?prepare_init.report_share().metadata(),
+                                "Taskprov task received report with missing or malformed \
+                                taskprov extension",
+                            );
+                            metrics.aggregate_step_failure_counter.add(
+                                1,
+                                &[KeyValue::new(
+                                    "type",
+                                    "missing_or_malformed_taskprov_extension",
+                                )],
+                            );
+                            return Err(PrepareError::InvalidMessage);
+                        }
+                    } else if extensions.contains_key(&ExtensionType::Taskprov) {
+                        // taskprov not enabled, but the taskprov extension is present.
+                        debug!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            "Non-taskprov task received report with unexpected taskprov \
+                            extension",
+                        );
+                        metrics
+                            .aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
+                        return Err(PrepareError::InvalidMessage);
+                    }
+
+                    Ok(plaintext_input_share)
+                });
+
+                let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
+                    A::InputShare::get_decoded_with_param(
+                        &(&vdaf, Role::Helper.index().unwrap()),
+                        plaintext_input_share.payload(),
                     )
                     .map_err(|error| {
                         debug!(
                             task_id = %task.id(),
                             metadata = ?prepare_init.report_share().metadata(),
-                            ?error, "Couldn't decode public share",
+                            ?error, "Couldn't decode helper's input share",
                         );
                         metrics
                             .aggregate_step_failure_counter
-                            .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                            .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         PrepareError::InvalidMessage
-                    });
+                    })
+                });
 
-                    let shares =
-                        input_share.and_then(|input_share| Ok((public_share?, input_share)));
+                let public_share = A::PublicShare::get_decoded_with_param(
+                    &vdaf,
+                    prepare_init.report_share().public_share(),
+                )
+                .map_err(|error| {
+                    debug!(
+                        task_id = %task.id(),
+                        metadata = ?prepare_init.report_share().metadata(),
+                        ?error, "Couldn't decode public share",
+                    );
+                    metrics
+                        .aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                    PrepareError::InvalidMessage
+                });
 
-                    // Reject reports from too far in the future.
-                    let shares = shares.and_then(|shares| {
-                        if prepare_init
-                            .report_share()
-                            .metadata()
-                            .time()
-                            .is_after(&report_deadline)
-                        {
-                            return Err(PrepareError::ReportTooEarly);
-                        }
-                        Ok(shares)
-                    });
+                let shares =
+                    input_share.and_then(|input_share| Ok((public_share?, input_share)));
 
-                    // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
-                    // associated with the task and computes the first state transition. [...] If either
-                    // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
-                    let init_rslt = shares.and_then(|(public_share, input_share)| {
-                        trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
-                            vdaf.helper_initialized(
-                                verify_key.as_bytes(),
-                                &agg_param,
-                                /* report ID is used as VDAF nonce */
-                                prepare_init.report_share().metadata().id().as_ref(),
-                                &public_share,
-                                &input_share,
-                                prepare_init.message(),
+                // Reject reports from too far in the future.
+                let shares = shares.and_then(|shares| {
+                    if prepare_init
+                        .report_share()
+                        .metadata()
+                        .time()
+                        .is_after(&report_deadline)
+                    {
+                        return Err(PrepareError::ReportTooEarly);
+                    }
+                    Ok(shares)
+                });
+
+                // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
+                // associated with the task and computes the first state transition. [...] If either
+                // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
+                let init_rslt = shares.and_then(|(public_share, input_share)| {
+                    trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
+                        vdaf.helper_initialized(
+                            verify_key.as_bytes(),
+                            &agg_param,
+                            /* report ID is used as VDAF nonce */
+                            prepare_init.report_share().metadata().id().as_ref(),
+                            &public_share,
+                            &input_share,
+                            prepare_init.message(),
+                        )
+                        .and_then(|transition| transition.evaluate(&vdaf))
+                        .map_err(|error| {
+                            handle_ping_pong_error(
+                                task.id(),
+                                Role::Helper,
+                                prepare_init.report_share().metadata().id(),
+                                error,
+                                &metrics.aggregate_step_failure_counter,
                             )
-                            .and_then(|transition| transition.evaluate(&vdaf))
-                            .map_err(|error| {
-                                handle_ping_pong_error(
-                                    task.id(),
-                                    Role::Helper,
-                                    prepare_init.report_share().metadata().id(),
-                                    error,
-                                    &metrics.aggregate_step_failure_counter,
-                                )
-                            })
                         })
-                    });
+                    })
+                });
 
-                    let (report_aggregation_state, prepare_step_result, output_share) =
-                        match init_rslt {
-                            Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
-                                // Helper is not finished. Await the next message from the Leader to advance to
-                                // the next step.
-                                (
-                                    ReportAggregationState::WaitingHelper { prepare_state },
-                                    PrepareStepResult::Continue {
-                                        message: outgoing_message,
-                                    },
-                                    None,
-                                )
-                            }
-                            Ok((PingPongState::Finished(output_share), outgoing_message)) => (
-                                ReportAggregationState::Finished,
+                let (report_aggregation_state, prepare_step_result, output_share) =
+                    match init_rslt {
+                        Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
+                            // Helper is not finished. Await the next message from the Leader to advance to
+                            // the next step.
+                            (
+                                ReportAggregationState::WaitingHelper { prepare_state },
                                 PrepareStepResult::Continue {
                                     message: outgoing_message,
                                 },
-                                Some(output_share),
-                            ),
-                            Err(prepare_error) => (
-                                ReportAggregationState::Failed { prepare_error },
-                                PrepareStepResult::Reject(prepare_error),
                                 None,
-                            ),
-                        };
-
-                    report_share_data.push(ReportShareData {
-                        report_share: prepare_init.report_share().clone(),
-                        report_aggregation: WritableReportAggregation::new(
-                            ReportAggregation::<SEED_SIZE, A>::new(
-                                *task.id(),
-                                aggregation_job_id,
-                                *prepare_init.report_share().metadata().id(),
-                                *prepare_init.report_share().metadata().time(),
-                                // A conversion failure here will fail the entire aggregation.
-                                // However, this is desirable: this can only happen if we receive
-                                // too many report shares in an aggregation job for us to store,
-                                // which is a whole-aggregation problem rather than a per-report
-                                // problem. (separately, this would require more than u64::MAX
-                                // report shares in a single aggregation job, which is practically
-                                // impossible.)
-                                ord.try_into()?,
-                                Some(PrepareResp::new(
-                                    *prepare_init.report_share().metadata().id(),
-                                    prepare_step_result,
-                                )),
-                                report_aggregation_state,
-                            ),
-                            output_share,
+                            )
+                        }
+                        Ok((PingPongState::Finished(output_share), outgoing_message)) => (
+                            ReportAggregationState::Finished,
+                            PrepareStepResult::Continue {
+                                message: outgoing_message,
+                            },
+                            Some(output_share),
                         ),
-                    });
-                }
-                Ok(report_share_data)
-            }
-        };
-        let (sender, receiver) = oneshot::channel();
-        rayon::spawn(|| {
-            // Do nothing if the result cannot be sent back. This would happen if the initiating
-            // future is cancelled.
-            //
-            // We need to catch panics here because rayon's default threadpool panic handler will
-            // abort, and it would be preferable to propagate the panic in the original future to
-            // avoid behavior changes.
-            //
-            // Using `AssertUnwindSafe` is OK here, because the only interior mutability we make use
-            // of is OTel instruments, which can't be put into inconsistent states merely by
-            // incrementing counters, and the global HPKE keypair cache, which we only read from.
-            // Using `AssertUnwindSafe` is easier than adding infectious `UnwindSafe` trait bounds
-            // to various VDAF associated types throughout the codebase.
-            let _ = sender.send(catch_unwind(AssertUnwindSafe(prep_closure)));
-        });
-        let report_share_data = receiver
-            .await
-            .map_err(|_recv_error: RecvError| {
-                Error::Internal("threadpool failed to send VDAF preparation result".into())
-            })?
-            .unwrap_or_else(|panic_cause: Box<dyn Any + Send>| {
-                resume_unwind(panic_cause);
-            })?;
+                        Err(prepare_error) => (
+                            ReportAggregationState::Failed { prepare_error },
+                            PrepareStepResult::Reject(prepare_error),
+                            None,
+                        ),
+                    };
 
-        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
-        let agg_param = Arc::try_unwrap(agg_param).unwrap_or_else(|arc| arc.as_ref().clone());
+                ReportShareData {
+                    report_share: prepare_init.report_share().clone(),
+                    report_aggregation: WritableReportAggregation::new(
+                        ReportAggregation::<SEED_SIZE, A>::new(
+                            *task.id(),
+                            *aggregation_job_id,
+                            *prepare_init.report_share().metadata().id(),
+                            *prepare_init.report_share().metadata().time(),
+                            // Unwrap safety: we checked that all ordinal values are representable
+                            // as a u64 before entering the parallel iterator.
+                            ord.try_into().unwrap(),
+                            Some(PrepareResp::new(
+                                *prepare_init.report_share().metadata().id(),
+                                prepare_step_result,
+                            )),
+                            report_aggregation_state,
+                        ),
+                        output_share,
+                    ),
+                }
+            })
+            .collect_into_vec(&mut report_share_data);
 
         // Store data to datastore.
         let min_client_timestamp = req
