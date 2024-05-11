@@ -153,6 +153,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
+        Error::ClientDisconnected => conn,
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -373,9 +374,12 @@ async fn hpke_config<C: Clock>(
 ) -> Result<(), Error> {
     let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
         .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
-    let (encoded_hpke_config_list, signature) = aggregator
-        .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
-        .await?;
+    let (encoded_hpke_config_list, signature) = conn
+        .cancel_on_disconnect(
+            aggregator.handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref)),
+        )
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -425,7 +429,9 @@ async fn upload<C: Clock>(
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(conn).map_err(Arc::new)?;
-    aggregator.handle_upload(&task_id, &body).await?;
+    conn.cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
+        .await
+        .ok_or(Arc::new(Error::ClientDisconnected))??;
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -471,15 +477,16 @@ async fn aggregation_jobs_put<C: Clock>(
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_init(
+    let response = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_init(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        )
-        .await?;
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
 }
@@ -495,15 +502,16 @@ async fn aggregation_jobs_post<C: Clock>(
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_continue(
+    let response = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_continue(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        )
-        .await?;
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
 }
@@ -518,14 +526,14 @@ async fn aggregation_jobs_delete<C: Clock>(
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
 
-    aggregator
-        .handle_aggregate_delete(
-            &task_id,
-            &aggregation_job_id,
-            auth_token,
-            taskprov_task_config.as_ref(),
-        )
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_aggregate_delete(
+        &task_id,
+        &aggregation_job_id,
+        auth_token,
+        taskprov_task_config.as_ref(),
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
     Ok(Status::NoContent)
 }
 
@@ -539,9 +547,14 @@ async fn collection_jobs_put<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    aggregator
-        .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_create_collection_job(
+        &task_id,
+        &collection_job_id,
+        &body,
+        auth_token,
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
 
     Ok(Status::Created)
 }
@@ -554,9 +567,14 @@ async fn collection_jobs_post<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let response_opt = aggregator
-        .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
-        .await?;
+    let response_opt = conn
+        .cancel_on_disconnect(aggregator.handle_get_collection_job(
+            &task_id,
+            &collection_job_id,
+            auth_token,
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
     match response_opt {
         Some(response_bytes) => {
             conn.response_headers_mut().insert(
@@ -579,9 +597,13 @@ async fn collection_jobs_delete<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    aggregator
-        .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_delete_collection_job(
+        &task_id,
+        &collection_job_id,
+        auth_token,
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
     Ok(Status::NoContent)
 }
 
@@ -595,9 +617,15 @@ async fn aggregate_shares<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
-        .await?;
+    let share = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_share(
+            &task_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
 }
