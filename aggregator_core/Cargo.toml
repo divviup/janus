@@ -19,8 +19,8 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.22.1"
 bytes = "1.6.0"
 chrono = "0.4"
-deadpool = { version = "0.12.0", features = ["rt_tokio_1"] }
-deadpool-postgres = "0.13.1"
+deadpool = { version = "0.12.1", features = ["rt_tokio_1"] }
+deadpool-postgres = "0.13.2"
 derivative.workspace = true
 futures = "0.3.30"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
