@@ -33,7 +33,6 @@ test-util = [
     "janus_core/test-util",
     "janus_messages/test-util",
     "dep:assert_matches",
-    "dep:hex",
     "dep:testcontainers",
     "dep:trillium-testing",
 ]
@@ -54,7 +53,7 @@ derivative.workspace = true
 fixed = { workspace = true, optional = true }
 futures = { workspace = true }
 git-version = { workspace = true }
-hex = { workspace = true, features = ["serde"], optional = true }
+hex = { workspace = true, features = ["serde"] }
 http.workspace = true
 http-api-problem.workspace = true
 itertools.workspace = true
