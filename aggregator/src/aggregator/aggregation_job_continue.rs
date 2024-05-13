@@ -24,8 +24,9 @@ use prio::{
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
-use rayon::iter::{IntoParallelIterator as _, ParallelExtend as _, ParallelIterator as _};
-use std::sync::Arc;
+use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
+use std::{panic, sync::Arc};
+use tokio::sync::mpsc;
 use tracing::trace_span;
 
 impl VdafOps {
@@ -57,9 +58,9 @@ impl VdafOps {
 
         // Match preparation step received from leader to stored report aggregation, and extract
         // the stored preparation step.
-        let mut prep_steps_and_ras = Vec::new();
-        let mut report_aggregations_iter = report_aggregations.iter();
-        let mut report_aggregations_to_write = Vec::new();
+        let mut prep_steps_and_ras = Vec::with_capacity(req.prepare_steps().len()); // matched to prep_steps
+        let mut report_aggregations_to_write = Vec::with_capacity(report_aggregations.len());
+        let mut report_aggregations_iter = report_aggregations.into_iter();
 
         for prep_step in req.prepare_steps() {
             let report_aggregation = loop {
@@ -95,7 +96,7 @@ impl VdafOps {
             };
 
             let prep_state = match report_aggregation.state() {
-                ReportAggregationState::WaitingHelper { prepare_state } => prepare_state,
+                ReportAggregationState::WaitingHelper { prepare_state } => prepare_state.clone(),
                 ReportAggregationState::WaitingLeader { .. } => {
                     return Err(datastore::Error::User(
                         Error::Internal(
@@ -116,7 +117,7 @@ impl VdafOps {
                 }
             };
 
-            prep_steps_and_ras.push((prep_step, report_aggregation, prep_state));
+            prep_steps_and_ras.push((prep_step.clone(), report_aggregation, prep_state));
         }
 
         for report_aggregation in report_aggregations_iter {
@@ -138,91 +139,129 @@ impl VdafOps {
             }
         }
 
-        report_aggregations_to_write.par_extend(prep_steps_and_ras.into_par_iter().map(
-            |(prep_step, report_aggregation, prep_state)| {
-                let (report_aggregation_state, prepare_step_result, output_share) =
-                    trace_span!("VDAF preparation (helper continuation)")
-                        .in_scope(|| {
-                            // Continue with the incoming message.
-                            vdaf.helper_continued(
-                                PingPongState::Continued(prep_state.clone()),
-                                aggregation_job.aggregation_parameter(),
-                                prep_step.message(),
-                            )
-                            .and_then(|continued_value| {
-                                match continued_value {
-                                    PingPongContinuedValue::WithMessage { transition } => {
-                                        let (new_state, message) =
-                                            transition.evaluate(vdaf.as_ref())?;
-                                        let (report_aggregation_state, output_share) =
-                                            match new_state {
-                                                // Helper did not finish. Store the new state and
-                                                // await the next message from the Leader to advance
-                                                // preparation.
-                                                PingPongState::Continued(prepare_state) => (
-                                                    ReportAggregationState::WaitingHelper {
-                                                        prepare_state,
-                                                    },
-                                                    None,
-                                                ),
-                                                // Helper finished. Commit the output share.
-                                                PingPongState::Finished(output_share) => (
+        // Compute the next aggregation step.
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let aggregation_job = Arc::new(aggregation_job);
+        let producer_fut = tokio::task::spawn_blocking({
+            let metrics = metrics.clone();
+            let task = Arc::clone(&task);
+            let vdaf = Arc::clone(&vdaf);
+            let aggregation_job = Arc::clone(&aggregation_job);
+
+            move || {
+                prep_steps_and_ras.into_par_iter().try_for_each_with(
+                    sender,
+                    |sender, (prep_step, report_aggregation, prep_state)| {
+                        let (report_aggregation_state, prepare_step_result, output_share) =
+                            trace_span!("VDAF preparation (helper continuation)")
+                                .in_scope(|| {
+                                    // Continue with the incoming message.
+                                    vdaf.helper_continued(
+                                        PingPongState::Continued(prep_state.clone()),
+                                        aggregation_job.aggregation_parameter(),
+                                        prep_step.message(),
+                                    )
+                                    .and_then(
+                                        |continued_value| {
+                                            match continued_value {
+                                                PingPongContinuedValue::WithMessage {
+                                                    transition,
+                                                } => {
+                                                    let (new_state, message) =
+                                                        transition.evaluate(vdaf.as_ref())?;
+                                                    let (report_aggregation_state, output_share) =
+                                                        match new_state {
+                                                            // Helper did not finish. Store the new
+                                                            // state and await the next message from
+                                                            // the Leader to advance preparation.
+                                                            PingPongState::Continued(prepare_state) => (
+                                                                ReportAggregationState::WaitingHelper {
+                                                                    prepare_state,
+                                                                },
+                                                                None,
+                                                            ),
+                                                            // Helper finished. Commit the output
+                                                            // share.
+                                                            PingPongState::Finished(output_share) => (
+                                                                ReportAggregationState::Finished,
+                                                                Some(output_share),
+                                                            ),
+                                                        };
+
+                                                    Ok((
+                                                        report_aggregation_state,
+                                                        // Helper has an outgoing message for Leader
+                                                        PrepareStepResult::Continue { message },
+                                                        output_share,
+                                                    ))
+                                                }
+
+                                                PingPongContinuedValue::FinishedNoMessage {
+                                                    output_share,
+                                                } => Ok((
                                                     ReportAggregationState::Finished,
+                                                    PrepareStepResult::Finished,
                                                     Some(output_share),
-                                                ),
-                                            };
+                                                )),
+                                            }
+                                        },
+                                    )
+                                })
+                                .map_err(|error| {
+                                    handle_ping_pong_error(
+                                        task.id(),
+                                        Role::Leader,
+                                        prep_step.report_id(),
+                                        error,
+                                        &metrics.aggregate_step_failure_counter,
+                                    )
+                                })
+                                .unwrap_or_else(|prepare_error| {
+                                    (
+                                        ReportAggregationState::Failed { prepare_error },
+                                        PrepareStepResult::Reject(prepare_error),
+                                        None,
+                                    )
+                                });
 
-                                        Ok((
-                                            report_aggregation_state,
-                                            // Helper has an outgoing message for Leader
-                                            PrepareStepResult::Continue { message },
-                                            output_share,
-                                        ))
-                                    }
-                                    PingPongContinuedValue::FinishedNoMessage { output_share } => {
-                                        Ok((
-                                            ReportAggregationState::Finished,
-                                            PrepareStepResult::Finished,
-                                            Some(output_share),
-                                        ))
-                                    }
-                                }
-                            })
-                        })
-                        .map_err(|error| {
-                            handle_ping_pong_error(
-                                task.id(),
-                                Role::Leader,
-                                prep_step.report_id(),
-                                error,
-                                &metrics.aggregate_step_failure_counter,
-                            )
-                        })
-                        .unwrap_or_else(|prepare_error| {
-                            (
-                                ReportAggregationState::Failed { prepare_error },
-                                PrepareStepResult::Reject(prepare_error),
-                                None,
-                            )
-                        });
-
-                WritableReportAggregation::new(
-                    report_aggregation
-                        .clone()
-                        .with_state(report_aggregation_state)
-                        .with_last_prep_resp(Some(PrepareResp::new(
-                            *prep_step.report_id(),
-                            prepare_step_result,
-                        ))),
-                    output_share,
+                        sender.send(WritableReportAggregation::new(
+                            report_aggregation
+                                .clone()
+                                .with_state(report_aggregation_state)
+                                .with_last_prep_resp(Some(PrepareResp::new(
+                                    *prep_step.report_id(),
+                                    prepare_step_result,
+                                ))),
+                            output_share,
+                        ))
+                    },
                 )
-            },
-        ));
+            }
+        });
+
+        while receiver
+            .recv_many(&mut report_aggregations_to_write, usize::MAX)
+            .await
+            > 0
+        {}
+
+        // Await the producer task to resume any panics that may have occurred, and to ensure we can
+        // unwrap the aggregation job's Arc in a few lines. The only other errors that can occur
+        // are: a `JoinError` indicating cancellation, which is impossible because we do not cancel
+        // the task; and a `SendError`, which can only happen if this future is cancelled (in which
+        // case we will not run this code at all).
+        let _ = producer_fut.await.map_err(|join_error| {
+            if let Ok(reason) = join_error.try_into_panic() {
+                panic::resume_unwind(reason);
+            }
+        });
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
         let aggregation_job_id = *aggregation_job.id();
-        let aggregation_job = aggregation_job
+        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
+        let aggregation_job = Arc::try_unwrap(aggregation_job)
+            .unwrap_or_else(|arc| arc.as_ref().clone())
             .with_step(request_step) // Advance the job to the leader's step
             .with_last_request_hash(request_hash);
         let mut aggregation_job_writer =
