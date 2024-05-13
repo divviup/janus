@@ -130,6 +130,17 @@ taskprov_config:
   # Whether to enable the taskprov extension. Defaults to false.
   enabled: false
 
+# Whether forbidden mutations should be logged. In DAP, it's permitted to retry HTTP requests like
+# aggregation job creation/initialization, but it's not legal to mutate the resource, for example by
+# changing which reports are included in an aggregation job. Janus always rejects such forbidden
+# mutations. If this option is enabled, then it will log the hash of the request that created the
+# resource, the hash of the incoming request that attempted to mutate it, and the list of report
+# metadatas in both. Janus does not unconditionally log this information because retrieving the
+# report metadata for the existing request is expensive.
+#
+# Optional; the default is false.
+log_forbidden_mutations: false
+
 # Configuration for garbage collection. If omitted, old data is never deleted. (optional)
 garbage_collection:
   # How frequently to collect garbage, in seconds.

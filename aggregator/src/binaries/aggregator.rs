@@ -309,6 +309,11 @@ pub struct Config {
     #[serde(default)]
     pub taskprov_config: TaskprovConfig,
 
+    /// Whether forbidden mutations of resources (e.g., re-using the same aggregation job ID but
+    /// with different reports in it) should be logged when detected.
+    #[serde(default)]
+    pub log_forbidden_mutations: bool,
+
     #[serde(default)]
     pub garbage_collection: Option<GarbageCollectorConfig>,
 
@@ -420,6 +425,7 @@ impl Config {
             task_cache_capacity: self
                 .task_cache_capacity
                 .unwrap_or(TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY),
+            log_forbidden_mutations: self.log_forbidden_mutations,
         })
     }
 }
@@ -526,6 +532,7 @@ mod tests {
             global_hpke_configs_refresh_interval: Some(42),
             task_cache_ttl_seconds: None,
             task_cache_capacity: None,
+            log_forbidden_mutations: true,
         })
     }
 

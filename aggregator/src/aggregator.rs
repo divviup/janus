@@ -108,7 +108,7 @@ use tokio::{
     sync::oneshot::{self, error::RecvError},
     try_join,
 };
-use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
+use tracing::{debug, debug_span, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
 
 #[cfg(test)]
@@ -212,7 +212,12 @@ pub struct Config {
     /// The key used to sign HPKE configurations.
     pub hpke_config_signing_key: Option<EcdsaKeyPair>,
 
+    /// Configuration for the taskprov extension.
     pub taskprov_config: TaskprovConfig,
+
+    /// Whether forbidden mutations of resources (e.g., re-using the same aggregation job ID but
+    /// with different reports in it) should be logged when detected.
+    pub log_forbidden_mutations: bool,
 }
 
 impl Default for Config {
@@ -227,6 +232,7 @@ impl Default for Config {
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+            log_forbidden_mutations: false,
         }
     }
 }
@@ -461,6 +467,7 @@ impl<C: Clock> Aggregator<C> {
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
+                self.cfg.log_forbidden_mutations,
                 req_bytes,
             )
             .await
@@ -1010,6 +1017,7 @@ impl<C: Clock> TaskAggregator<C> {
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
+        log_forbidden_mutations: bool,
         require_taskprov_extension: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -1022,6 +1030,7 @@ impl<C: Clock> TaskAggregator<C> {
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 aggregation_job_id,
+                log_forbidden_mutations,
                 require_taskprov_extension,
                 req_bytes,
             )
@@ -1387,6 +1396,7 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
+        log_forbidden_mutations: bool,
         require_taskprov_extension: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -1403,6 +1413,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
+                        log_forbidden_mutations,
                         require_taskprov_extension,
                         req_bytes,
                     )
@@ -1421,6 +1432,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
+                        log_forbidden_mutations,
                         require_taskprov_extension,
                         req_bytes,
                     )
@@ -1717,6 +1729,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
         require_taskprov_extension: bool,
+        log_forbidden_mutations: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error>
     where
@@ -2173,6 +2186,39 @@ impl VdafOps {
                         if aggregation_job.last_request_hash()
                             != existing_aggregation_job.last_request_hash()
                         {
+                            if log_forbidden_mutations {
+                                let span = debug_span!(
+                                    parent: Span::current(),
+                                    "aggregation_job_init_forbidden_mutation_span",
+                                );
+                                let _span_entered = span.enter();
+                                let existing_report_metadatas: Vec<_> = tx
+                                    .get_report_aggregations_for_aggregation_job(
+                                        vdaf.as_ref(),
+                                        &Role::Helper,
+                                        task.id(),
+                                        aggregation_job.id(),
+                                    )
+                                    .await?
+                                    .iter()
+                                    .map(|ra| ra.report_metadata())
+                                    .collect();
+                                let incoming_request_report_metadatas: Vec<_> = report_share_data
+                                    .iter()
+                                    .map(|rsd| rsd.report_share.metadata())
+                                    .collect();
+                                tracing::event!(
+                                    Level::DEBUG,
+                                    existing_request_hash = existing_aggregation_job
+                                        .last_request_hash()
+                                        .map(hex::encode),
+                                    ?existing_report_metadatas,
+                                    incoming_request_hash =
+                                        aggregation_job.last_request_hash().map(hex::encode),
+                                    ?incoming_request_report_metadatas,
+                                    "request hash mismatch on retried aggregation job request",
+                                );
+                            }
                             return Err(datastore::Error::User(
                                 Error::ForbiddenMutation {
                                     resource_type: "aggregation job",
