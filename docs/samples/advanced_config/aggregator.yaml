@@ -144,7 +144,7 @@ taskprov_config:
 # promises.
 #
 # Optional; the default is not to log events.
-log_forbidden_mutations:
+log_forbidden_mutations: "/tmp/event-storage"
 
 # Configuration for garbage collection. If omitted, old data is never deleted. (optional)
 garbage_collection:
