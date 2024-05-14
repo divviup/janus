@@ -219,6 +219,8 @@ pub struct Config {
 
     /// If set, forbidden mutations of resources (e.g., re-using the same aggregation job ID but
     /// with different reports in it) will be logged to files under this path when detected.
+    ///
+    /// This option is not stable, and not subject to Janus' typical API/config stability promises.
     pub log_forbidden_mutations: Option<PathBuf>,
 }
 
@@ -2206,6 +2208,7 @@ impl VdafOps {
                                     .map(|rsd| rsd.report_share.metadata().clone())
                                     .collect();
                                 let event = AggregationJobInitForbiddenMutationEvent {
+                                    task_id: *task.id(),
                                     aggregation_job_id: *aggregation_job.id(),
                                     original_request_hash: existing_aggregation_job
                                         .last_request_hash(),
@@ -2232,9 +2235,15 @@ impl VdafOps {
                                 let event_id = crate::diagnostic::write_event(
                                     log_forbidden_mutations,
                                     "agg-job-illegal-mutation",
-                                    Box::new(event),
+                                    event,
                                 )
-                                .map_err(|e| datastore::Error::User(e.into()))?;
+                                .await
+                                .map(|event_id| format!("{event_id:?}"))
+                                .unwrap_or_else(|error| {
+                                    tracing::error!(?error, "failed to write hash mismatch event");
+                                    "no event id".to_string()
+                                });
+
                                 tracing::info!(
                                     ?event_id,
                                     original_request_hash = existing_aggregation_job

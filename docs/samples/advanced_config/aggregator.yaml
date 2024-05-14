@@ -140,6 +140,9 @@ taskprov_config:
 # Janus does not unconditionally log this information because retrieving the report metadata for the
 # existing request is expensive and the resulting event is large.
 #
+# This option is not stable and not subject to Janus' typical API and configuration stability
+# promises.
+#
 # Optional; the default is not to log events.
 log_forbidden_mutations:
 
