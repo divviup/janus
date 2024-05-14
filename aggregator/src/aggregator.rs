@@ -107,7 +107,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::mpsc, try_join};
-use tracing::{debug, info, trace_span, warn, Level};
+use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
 
 #[cfg(test)]
@@ -1931,6 +1931,7 @@ impl VdafOps {
 
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let producer_task = tokio::task::spawn_blocking({
+            let parent_span = Span::current();
             let global_hpke_keypairs = global_hpke_keypairs.view();
             let vdaf = Arc::clone(&vdaf);
             let task = Arc::clone(&task);
@@ -1941,6 +1942,9 @@ impl VdafOps {
             let agg_param = Arc::clone(&agg_param);
 
             move || {
+                let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
+                let _entered = span.enter();
+
                 req
                     .prepare_inits()
                     .par_iter()
@@ -2247,7 +2251,7 @@ impl VdafOps {
         });
 
         let mut report_share_data = Vec::with_capacity(req.prepare_inits().len());
-        while receiver.recv_many(&mut report_share_data, usize::MAX).await > 0 {}
+        while receiver.recv_many(&mut report_share_data, 10).await > 0 {}
 
         // Await the producer task to resume any panics that may have occurred, and to ensure we can
         // unwrap the aggregation parameter's Arc in a few lines. The only other errors that can
