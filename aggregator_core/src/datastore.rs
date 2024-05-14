@@ -4888,13 +4888,22 @@ SELECT COUNT(1) AS batch_count FROM batches_to_delete",
         row.get_bigint_and_convert("batch_count")
     }
 
+    /// Take an ExclusiveLock on the global_hpke_keys table.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn lock_global_hpke_keypairs(&self) -> Result<(), Error> {
+        self.raw_tx
+            .batch_execute("LOCK TABLE global_hpke_keys IN EXCLUSIVE MODE")
+            .await
+            .map_err(|err| err.into())
+    }
+
     /// Retrieve all global HPKE keypairs.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<GlobalHpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypairs()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
+SELECT config_id, config, private_key, state, created_at, updated_at FROM global_hpke_keys",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
@@ -4914,7 +4923,7 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypair()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
+SELECT config_id, config, private_key, state, created_at, updated_at FROM global_hpke_keys
     WHERE config_id = $1",
             )
             .await?;
@@ -4938,6 +4947,7 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
         Ok(GlobalHpkeKeypair::new(
             HpkeKeypair::new(config, private_key),
             row.get("state"),
+            Time::from_naive_date_time(&row.get("created_at")),
             Time::from_naive_date_time(&row.get("updated_at")),
         ))
     }

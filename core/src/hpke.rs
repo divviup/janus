@@ -262,6 +262,46 @@ impl HpkeKeypair {
     }
 }
 
+/// The algorithms used for each HPKE primitive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HpkeCiphersuite {
+    kem_id: HpkeKemId,
+    kdf_id: HpkeKdfId,
+    aead_id: HpkeAeadId,
+}
+
+impl HpkeCiphersuite {
+    pub fn new(kem_id: HpkeKemId, kdf_id: HpkeKdfId, aead_id: HpkeAeadId) -> Self {
+        Self {
+            kem_id,
+            kdf_id,
+            aead_id,
+        }
+    }
+
+    pub fn kem_id(&self) -> HpkeKemId {
+        self.kem_id
+    }
+
+    pub fn kdf_id(&self) -> HpkeKdfId {
+        self.kdf_id
+    }
+
+    pub fn aead_id(&self) -> HpkeAeadId {
+        self.aead_id
+    }
+}
+
+impl From<&HpkeConfig> for HpkeCiphersuite {
+    fn from(value: &HpkeConfig) -> Self {
+        Self {
+            kem_id: *value.kem_id(),
+            kdf_id: *value.kdf_id(),
+            aead_id: *value.aead_id(),
+        }
+    }
+}
+
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {

@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::HpkeKeypair,
+    hpke::{HpkeCiphersuite, HpkeKeypair},
     report_id::ReportIdChecksumExt,
     time::{DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
@@ -15,8 +15,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, TaskId, Time,
+    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
+    ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
     range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -2204,14 +2204,21 @@ pub enum HpkeKeyState {
 pub struct GlobalHpkeKeypair {
     hpke_keypair: HpkeKeypair,
     state: HpkeKeyState,
+    created_at: Time,
     updated_at: Time,
 }
 
 impl GlobalHpkeKeypair {
-    pub(super) fn new(hpke_keypair: HpkeKeypair, state: HpkeKeyState, updated_at: Time) -> Self {
+    pub(super) fn new(
+        hpke_keypair: HpkeKeypair,
+        state: HpkeKeyState,
+        created_at: Time,
+        updated_at: Time,
+    ) -> Self {
         Self {
             hpke_keypair,
             state,
+            created_at,
             updated_at,
         }
     }
@@ -2224,8 +2231,20 @@ impl GlobalHpkeKeypair {
         &self.state
     }
 
+    pub fn created_at(&self) -> &Time {
+        &self.created_at
+    }
+
     pub fn updated_at(&self) -> &Time {
         &self.updated_at
+    }
+
+    pub fn ciphersuite(&self) -> HpkeCiphersuite {
+        HpkeCiphersuite::from(self.hpke_keypair().config())
+    }
+
+    pub fn id(&self) -> &HpkeConfigId {
+        self.hpke_keypair.config().id()
     }
 }
 

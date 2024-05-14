@@ -199,6 +199,10 @@ pub trait TimeExt: Sized {
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
     fn difference(&self, other: &Self) -> Result<Duration, Error>;
 
+    /// Get the difference between the provided `other` and `self` using saturating arithmetic. If
+    /// `self` is before `other`, the result is zero.
+    fn saturating_difference(&self, other: &Self) -> Duration;
+
     /// Returns true if this [`Time`] occurs after `time`.
     fn is_after(&self, time: &Time) -> bool;
 }
@@ -259,6 +263,13 @@ impl TimeExt for Time {
             .checked_sub(other.as_seconds_since_epoch())
             .map(Duration::from_seconds)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    fn saturating_difference(&self, other: &Self) -> Duration {
+        Duration::from_seconds(
+            self.as_seconds_since_epoch()
+                .saturating_sub(other.as_seconds_since_epoch()),
+        )
     }
 
     fn is_after(&self, time: &Time) -> bool {
