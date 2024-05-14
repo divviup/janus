@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use derivative::Derivative;
-use janus_messages::{AggregationJobId, BatchId, ReportMetadata};
+use janus_messages::{AggregationJobId, ReportMetadata};
 use std::{fmt::Debug, fs::File, io::Write, path::Path, time::SystemTime};
 use uuid::Uuid;
 

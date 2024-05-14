@@ -96,8 +96,7 @@ Any other crates not mentioned have no stability guarantees whatsoever.
 
 ## Building
 
-To build Janus, ensure that you have [`cmake`](https://cmake.org/) installed and
-execute `cargo build`.
+To build Janus, execute `cargo build`.
 
 ### Container image
 
