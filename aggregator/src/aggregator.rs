@@ -263,7 +263,7 @@ impl<C: Clock> Aggregator<C> {
             // replicas.
             !cfg.taskprov_config.enabled,
             cfg.task_cache_capacity,
-            StdDuration::from_secs(1),
+            cfg.task_cache_ttl,
         );
 
         let upload_decrypt_failure_counter = meter
