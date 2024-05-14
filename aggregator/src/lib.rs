@@ -8,6 +8,7 @@ pub mod binaries;
 pub mod binary_utils;
 pub mod cache;
 pub mod config;
+pub mod diagnostic;
 pub mod metrics;
 pub mod trace;
 

@@ -2506,6 +2506,7 @@ dependencies = [
  "trillium-tokio",
  "trycmd",
  "url",
+ "uuid",
  "wait-timeout",
 ]
 
