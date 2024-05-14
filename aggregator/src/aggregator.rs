@@ -18,6 +18,7 @@ use crate::{
         TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
     config::TaskprovConfig,
+    diagnostic::AggregationJobInitForbiddenMutationEvent,
     metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
 };
 use backoff::{backoff::Backoff, Notify};
@@ -101,6 +102,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    path::PathBuf,
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
@@ -108,7 +110,7 @@ use tokio::{
     sync::oneshot::{self, error::RecvError},
     try_join,
 };
-use tracing::{debug, debug_span, info, info_span, trace_span, warn, Level, Span};
+use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
 
 #[cfg(test)]
@@ -215,9 +217,9 @@ pub struct Config {
     /// Configuration for the taskprov extension.
     pub taskprov_config: TaskprovConfig,
 
-    /// Whether forbidden mutations of resources (e.g., re-using the same aggregation job ID but
-    /// with different reports in it) should be logged when detected.
-    pub log_forbidden_mutations: bool,
+    /// If set, forbidden mutations of resources (e.g., re-using the same aggregation job ID but
+    /// with different reports in it) will be logged to files under this path when detected.
+    pub log_forbidden_mutations: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -232,7 +234,7 @@ impl Default for Config {
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-            log_forbidden_mutations: false,
+            log_forbidden_mutations: None,
         }
     }
 }
@@ -467,7 +469,7 @@ impl<C: Clock> Aggregator<C> {
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
-                self.cfg.log_forbidden_mutations,
+                self.cfg.log_forbidden_mutations.clone(),
                 req_bytes,
             )
             .await
@@ -1017,8 +1019,8 @@ impl<C: Clock> TaskAggregator<C> {
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
-        log_forbidden_mutations: bool,
         require_taskprov_extension: bool,
+        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
         self.vdaf_ops
@@ -1030,8 +1032,8 @@ impl<C: Clock> TaskAggregator<C> {
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 aggregation_job_id,
-                log_forbidden_mutations,
                 require_taskprov_extension,
+                log_forbidden_mutations,
                 req_bytes,
             )
             .await
@@ -1396,8 +1398,8 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
-        log_forbidden_mutations: bool,
         require_taskprov_extension: bool,
+        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
         match task.query_type() {
@@ -1413,8 +1415,8 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
-                        log_forbidden_mutations,
                         require_taskprov_extension,
+                        log_forbidden_mutations,
                         req_bytes,
                     )
                     .await
@@ -1432,8 +1434,8 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
-                        log_forbidden_mutations,
                         require_taskprov_extension,
+                        log_forbidden_mutations,
                         req_bytes,
                     )
                     .await
@@ -1729,7 +1731,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
         require_taskprov_extension: bool,
-        log_forbidden_mutations: bool,
+        log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error>
     where
@@ -2168,6 +2170,7 @@ impl VdafOps {
                 let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let mut report_share_data = report_share_data.clone();
+                let log_forbidden_mutations = log_forbidden_mutations.clone();
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
@@ -2186,13 +2189,8 @@ impl VdafOps {
                         if aggregation_job.last_request_hash()
                             != existing_aggregation_job.last_request_hash()
                         {
-                            if log_forbidden_mutations {
-                                let span = debug_span!(
-                                    parent: Span::current(),
-                                    "aggregation_job_init_forbidden_mutation_span",
-                                );
-                                let _span_entered = span.enter();
-                                let existing_report_metadatas: Vec<_> = tx
+                            if let Some(log_forbidden_mutations) = log_forbidden_mutations {
+                                let original_report_metadatas: Vec<_> = tx
                                     .get_report_aggregations_for_aggregation_job(
                                         vdaf.as_ref(),
                                         &Role::Helper,
@@ -2203,19 +2201,47 @@ impl VdafOps {
                                     .iter()
                                     .map(|ra| ra.report_metadata())
                                     .collect();
-                                let incoming_request_report_metadatas: Vec<_> = report_share_data
+                                let mutating_request_report_metadatas: Vec<_> = report_share_data
                                     .iter()
-                                    .map(|rsd| rsd.report_share.metadata())
+                                    .map(|rsd| rsd.report_share.metadata().clone())
                                     .collect();
-                                tracing::event!(
-                                    Level::DEBUG,
-                                    existing_request_hash = existing_aggregation_job
+                                let event = AggregationJobInitForbiddenMutationEvent {
+                                    aggregation_job_id: *aggregation_job.id(),
+                                    original_request_hash: existing_aggregation_job
+                                        .last_request_hash(),
+                                    original_report_metadatas,
+                                    original_batch_id: format!(
+                                        "{:?}",
+                                        existing_aggregation_job.partial_batch_identifier()
+                                    ),
+                                    original_aggregation_parameter: existing_aggregation_job
+                                        .aggregation_parameter()
+                                        .get_encoded()
+                                        .map_err(|e| datastore::Error::User(e.into()))?,
+                                    mutating_request_hash: aggregation_job.last_request_hash(),
+                                    mutating_request_report_metadatas,
+                                    mutating_request_batch_id: format!(
+                                        "{:?}",
+                                        aggregation_job.partial_batch_identifier()
+                                    ),
+                                    mutating_request_aggregation_parameter: aggregation_job
+                                        .aggregation_parameter()
+                                        .get_encoded()
+                                        .map_err(|e| datastore::Error::User(e.into()))?,
+                                };
+                                let event_id = crate::diagnostic::write_event(
+                                    log_forbidden_mutations,
+                                    "agg-job-illegal-mutation",
+                                    Box::new(event),
+                                )
+                                .map_err(|e| datastore::Error::User(e.into()))?;
+                                tracing::info!(
+                                    ?event_id,
+                                    original_request_hash = existing_aggregation_job
                                         .last_request_hash()
                                         .map(hex::encode),
-                                    ?existing_report_metadatas,
-                                    incoming_request_hash =
+                                    mutating_request_hash =
                                         aggregation_job.last_request_hash().map(hex::encode),
-                                    ?incoming_request_report_metadatas,
                                     "request hash mismatch on retried aggregation job request",
                                 );
                             }

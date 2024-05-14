@@ -169,7 +169,7 @@ impl JanusInProcess {
             global_hpke_configs_refresh_interval: None,
             task_cache_ttl_seconds: None,
             task_cache_capacity: None,
-            log_forbidden_mutations: false,
+            log_forbidden_mutations: None,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {
             common: common_binary_options.clone(),
