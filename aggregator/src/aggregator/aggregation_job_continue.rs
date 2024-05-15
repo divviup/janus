@@ -58,10 +58,11 @@ impl VdafOps {
 
         // Match preparation step received from leader to stored report aggregation, and extract
         // the stored preparation step.
-        let mut prep_steps_and_ras = Vec::with_capacity(req.prepare_steps().len()); // matched to prep_steps
-        let mut report_aggregations_to_write = Vec::with_capacity(report_aggregations.len());
+        let report_aggregation_count = report_aggregations.len();
         let mut report_aggregations_iter = report_aggregations.into_iter();
 
+        let mut prep_steps_and_ras = Vec::with_capacity(req.prepare_steps().len()); // matched to prep_steps
+        let mut report_aggregations_to_write = Vec::with_capacity(report_aggregation_count);
         for prep_step in req.prepare_steps() {
             let report_aggregation = loop {
                 let report_agg = report_aggregations_iter.next().ok_or_else(|| {
@@ -140,6 +141,11 @@ impl VdafOps {
         }
 
         // Compute the next aggregation step.
+        //
+        // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
+        // This will cause any attempts to send on `sender` to return a `SendError`, which will be
+        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
+        // terminate early on receiving an error.
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let aggregation_job = Arc::new(aggregation_job);
         let producer_task = tokio::task::spawn_blocking({
@@ -151,11 +157,12 @@ impl VdafOps {
 
             move || {
                 let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
-                let _entered = span.enter();
 
                 prep_steps_and_ras.into_par_iter().try_for_each_with(
-                    sender,
-                    |sender, (prep_step, report_aggregation, prep_state)| {
+                    (sender, span),
+                    |(sender, span), (prep_step, report_aggregation, prep_state)| {
+                        let _entered = span.enter();
+
                         let (report_aggregation_state, prepare_step_result, output_share) =
                             trace_span!("VDAF preparation (helper continuation)")
                                 .in_scope(|| {
@@ -259,6 +266,7 @@ impl VdafOps {
                 panic::resume_unwind(reason);
             }
         });
+        assert_eq!(report_aggregations_to_write.len(), report_aggregation_count);
 
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.

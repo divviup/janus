@@ -1929,6 +1929,10 @@ impl VdafOps {
         // u64::MAX report shares in a single aggregation job, which is practically impossible.)
         u64::try_from(req.prepare_inits().len())?;
 
+        // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
+        // This will cause any attempts to send on `sender` to return a `SendError`, which will be
+        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
+        // terminate early on receiving an error.
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let producer_task = tokio::task::spawn_blocking({
             let parent_span = Span::current();
@@ -1943,13 +1947,14 @@ impl VdafOps {
 
             move || {
                 let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
-                let _entered = span.enter();
 
                 req
                     .prepare_inits()
                     .par_iter()
                     .enumerate()
-                    .try_for_each_with(sender, |sender, (ord, prepare_init)| {
+                    .try_for_each_with((sender, span), |(sender, span), (ord, prepare_init)| {
+                        let _entered = span.enter();
+
                         // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
                         let global_hpke_keypair = global_hpke_keypairs.keypair(
                             prepare_init
@@ -2263,6 +2268,7 @@ impl VdafOps {
                 panic::resume_unwind(reason);
             }
         });
+        assert_eq!(report_share_data.len(), req.prepare_inits().len());
 
         // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
         let agg_param = Arc::try_unwrap(agg_param).unwrap_or_else(|arc| arc.as_ref().clone());
