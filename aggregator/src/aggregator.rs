@@ -40,7 +40,7 @@ use janus_aggregator_core::{
             BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
             ReportAggregation, ReportAggregationState,
         },
-        Datastore, Error as DatastoreError,
+        Datastore, Error as DatastoreError, Transaction,
     },
     query_type::AccumulableQueryType,
     task::{self, AggregatorTask, VerifyKey},
@@ -1719,6 +1719,121 @@ where
 }
 
 impl VdafOps {
+    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, Q, A, C>(
+        tx: &Transaction<'_, C>,
+        vdaf: &A,
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+        req: &AggregationJobInitializeReq<Q>,
+        request_hash: [u8; 32],
+        log_forbidden_mutations: Option<PathBuf>,
+    ) -> Result<Option<AggregationJobResp>, datastore::Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        C: Clock,
+        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
+    {
+        if let Some(existing_aggregation_job) = tx
+            .get_aggregation_job::<SEED_SIZE, Q, A>(task_id, aggregation_job_id)
+            .await?
+        {
+            if existing_aggregation_job.state() == &AggregationJobState::Deleted {
+                return Err(datastore::Error::User(
+                    Error::DeletedAggregationJob(*task_id, *aggregation_job_id).into(),
+                ));
+            }
+
+            if existing_aggregation_job.last_request_hash() != Some(request_hash) {
+                if let Some(log_forbidden_mutations) = log_forbidden_mutations {
+                    let original_report_metadatas: Vec<_> = tx
+                        .get_report_aggregations_for_aggregation_job(
+                            vdaf,
+                            &Role::Helper,
+                            task_id,
+                            aggregation_job_id,
+                        )
+                        .await?
+                        .iter()
+                        .map(|ra| ra.report_metadata())
+                        .collect();
+                    let mutating_request_report_metadatas: Vec<_> = req
+                        .prepare_inits()
+                        .iter()
+                        .map(|pi| pi.report_share().metadata().clone())
+                        .collect();
+                    let event = AggregationJobInitForbiddenMutationEvent {
+                        task_id: *task_id,
+                        aggregation_job_id: *aggregation_job_id,
+                        original_request_hash: existing_aggregation_job.last_request_hash(),
+                        original_report_metadatas,
+                        original_batch_id: format!(
+                            "{:?}",
+                            existing_aggregation_job.partial_batch_identifier()
+                        ),
+                        original_aggregation_parameter: existing_aggregation_job
+                            .aggregation_parameter()
+                            .get_encoded()
+                            .map_err(|e| datastore::Error::User(e.into()))?,
+                        mutating_request_hash: Some(request_hash),
+                        mutating_request_report_metadatas,
+                        mutating_request_batch_id: format!(
+                            "{:?}",
+                            req.batch_selector().batch_identifier()
+                        ),
+                        mutating_request_aggregation_parameter: req
+                            .aggregation_parameter()
+                            .to_vec(),
+                    };
+                    let event_id = crate::diagnostic::write_event(
+                        log_forbidden_mutations,
+                        "agg-job-illegal-mutation",
+                        event,
+                    )
+                    .await
+                    .map(|event_id| format!("{event_id:?}"))
+                    .unwrap_or_else(|error| {
+                        tracing::error!(?error, "failed to write hash mismatch event");
+                        "no event id".to_string()
+                    });
+
+                    tracing::info!(
+                        ?event_id,
+                        original_request_hash = existing_aggregation_job
+                            .last_request_hash()
+                            .map(hex::encode),
+                        mutating_request_hash = hex::encode(request_hash),
+                        "request hash mismatch on retried aggregation job request",
+                    );
+                }
+                return Err(datastore::Error::User(
+                    Error::ForbiddenMutation {
+                        resource_type: "aggregation job",
+                        identifier: aggregation_job_id.to_string(),
+                    }
+                    .into(),
+                ));
+            }
+
+            // This is a repeated request. Send the same response we computed last time.
+            return Ok(Some(AggregationJobResp::new(
+                tx.get_report_aggregations_for_aggregation_job(
+                    vdaf,
+                    &Role::Helper,
+                    task_id,
+                    aggregation_job_id,
+                )
+                .await?
+                .iter()
+                .filter_map(ReportAggregation::last_prep_resp)
+                .cloned()
+                .collect(),
+            )));
+        }
+
+        Ok(None)
+    }
+
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
@@ -1756,6 +1871,21 @@ impl VdafOps {
             AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
                 .map_err(Error::MessageDecode)?,
         );
+
+        if let Some(response) = datastore.run_tx("aggregate_init_idempotecy_check", |tx| {
+            let vdaf = vdaf.clone();
+            let task = Arc::clone(&task);
+            let aggregation_job_id = *aggregation_job_id;
+            let req = Arc::clone(&req);
+            let log_forbidden_mutations = log_forbidden_mutations.clone();
+
+            Box::pin(async move {
+                Self::check_aggregate_init_idempotency(tx, vdaf.as_ref(), task.id(), &aggregation_job_id, &req, request_hash, log_forbidden_mutations).await
+            })
+        }).await? {
+            return Ok(response);
+        }
+
         let agg_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
@@ -2172,111 +2302,24 @@ impl VdafOps {
                 let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let mut report_share_data = report_share_data.clone();
+                let req = Arc::clone(&req);
                 let log_forbidden_mutations = log_forbidden_mutations.clone();
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
                     // the same response as last time.
-                    if let Some(existing_aggregation_job) = tx
-                        .get_aggregation_job::<SEED_SIZE, Q, A>(task.id(), aggregation_job.id())
-                        .await?
+                    if let Some(response) = Self::check_aggregate_init_idempotency(
+                        tx,
+                        vdaf.as_ref(),
+                        task.id(),
+                        aggregation_job.id(),
+                        &req,
+                        request_hash,
+                        log_forbidden_mutations,
+                    )
+                    .await?
                     {
-                        if existing_aggregation_job.state() == &AggregationJobState::Deleted {
-                            return Err(datastore::Error::User(
-                                Error::DeletedAggregationJob(*task.id(), *aggregation_job.id())
-                                    .into(),
-                            ));
-                        }
-
-                        if aggregation_job.last_request_hash()
-                            != existing_aggregation_job.last_request_hash()
-                        {
-                            if let Some(log_forbidden_mutations) = log_forbidden_mutations {
-                                let original_report_metadatas: Vec<_> = tx
-                                    .get_report_aggregations_for_aggregation_job(
-                                        vdaf.as_ref(),
-                                        &Role::Helper,
-                                        task.id(),
-                                        aggregation_job.id(),
-                                    )
-                                    .await?
-                                    .iter()
-                                    .map(|ra| ra.report_metadata())
-                                    .collect();
-                                let mutating_request_report_metadatas: Vec<_> = report_share_data
-                                    .iter()
-                                    .map(|rsd| rsd.report_share.metadata().clone())
-                                    .collect();
-                                let event = AggregationJobInitForbiddenMutationEvent {
-                                    task_id: *task.id(),
-                                    aggregation_job_id: *aggregation_job.id(),
-                                    original_request_hash: existing_aggregation_job
-                                        .last_request_hash(),
-                                    original_report_metadatas,
-                                    original_batch_id: format!(
-                                        "{:?}",
-                                        existing_aggregation_job.partial_batch_identifier()
-                                    ),
-                                    original_aggregation_parameter: existing_aggregation_job
-                                        .aggregation_parameter()
-                                        .get_encoded()
-                                        .map_err(|e| datastore::Error::User(e.into()))?,
-                                    mutating_request_hash: aggregation_job.last_request_hash(),
-                                    mutating_request_report_metadatas,
-                                    mutating_request_batch_id: format!(
-                                        "{:?}",
-                                        aggregation_job.partial_batch_identifier()
-                                    ),
-                                    mutating_request_aggregation_parameter: aggregation_job
-                                        .aggregation_parameter()
-                                        .get_encoded()
-                                        .map_err(|e| datastore::Error::User(e.into()))?,
-                                };
-                                let event_id = crate::diagnostic::write_event(
-                                    log_forbidden_mutations,
-                                    "agg-job-illegal-mutation",
-                                    event,
-                                )
-                                .await
-                                .map(|event_id| format!("{event_id:?}"))
-                                .unwrap_or_else(|error| {
-                                    tracing::error!(?error, "failed to write hash mismatch event");
-                                    "no event id".to_string()
-                                });
-
-                                tracing::info!(
-                                    ?event_id,
-                                    original_request_hash = existing_aggregation_job
-                                        .last_request_hash()
-                                        .map(hex::encode),
-                                    mutating_request_hash =
-                                        aggregation_job.last_request_hash().map(hex::encode),
-                                    "request hash mismatch on retried aggregation job request",
-                                );
-                            }
-                            return Err(datastore::Error::User(
-                                Error::ForbiddenMutation {
-                                    resource_type: "aggregation job",
-                                    identifier: aggregation_job.id().to_string(),
-                                }
-                                .into(),
-                            ));
-                        }
-
-                        // This is a repeated request. Send the same response we computed last time.
-                        return Ok(AggregationJobResp::new(
-                            tx.get_report_aggregations_for_aggregation_job(
-                                vdaf.as_ref(),
-                                &Role::Helper,
-                                task.id(),
-                                aggregation_job.id(),
-                            )
-                            .await?
-                            .iter()
-                            .filter_map(ReportAggregation::last_prep_resp)
-                            .cloned()
-                            .collect(),
-                        ));
+                        return Ok(response);
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
