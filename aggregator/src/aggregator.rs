@@ -1872,6 +1872,8 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
+        // Check if this is a repeated request, and if it is the same as before, send
+        // the same response as last time.
         if let Some(response) = datastore
             .run_tx("aggregate_init_idempotecy_check", |tx| {
                 let vdaf = vdaf.clone();
@@ -2319,7 +2321,8 @@ impl VdafOps {
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
-                    // the same response as last time.
+                    // the same response as last time. We check again to avoid the possibility of
+                    // races.
                     if let Some(response) = Self::check_aggregate_init_idempotency(
                         tx,
                         vdaf.as_ref(),
