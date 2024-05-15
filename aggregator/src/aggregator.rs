@@ -1872,17 +1872,29 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
-        if let Some(response) = datastore.run_tx("aggregate_init_idempotecy_check", |tx| {
-            let vdaf = vdaf.clone();
-            let task = Arc::clone(&task);
-            let aggregation_job_id = *aggregation_job_id;
-            let req = Arc::clone(&req);
-            let log_forbidden_mutations = log_forbidden_mutations.clone();
+        if let Some(response) = datastore
+            .run_tx("aggregate_init_idempotecy_check", |tx| {
+                let vdaf = vdaf.clone();
+                let task = Arc::clone(&task);
+                let aggregation_job_id = *aggregation_job_id;
+                let req = Arc::clone(&req);
+                let log_forbidden_mutations = log_forbidden_mutations.clone();
 
-            Box::pin(async move {
-                Self::check_aggregate_init_idempotency(tx, vdaf.as_ref(), task.id(), &aggregation_job_id, &req, request_hash, log_forbidden_mutations).await
+                Box::pin(async move {
+                    Self::check_aggregate_init_idempotency(
+                        tx,
+                        vdaf.as_ref(),
+                        task.id(),
+                        &aggregation_job_id,
+                        &req,
+                        request_hash,
+                        log_forbidden_mutations,
+                    )
+                    .await
+                })
             })
-        }).await? {
+            .await?
+        {
             return Ok(response);
         }
 
