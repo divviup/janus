@@ -120,9 +120,11 @@ where
     pub fn put(
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
-        report_aggregations: Vec<RA>,
+        mut report_aggregations: Vec<RA>,
     ) -> Result<(), Error> {
         self.update_aggregation_parameter(aggregation_job.aggregation_parameter());
+
+        report_aggregations.sort_unstable_by_key(RA::ord);
 
         // Compute batch identifiers first, since computing the batch identifier is fallible and
         // it's nicer to not have to unwind state modifications if we encounter an error.
@@ -817,6 +819,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>:
     Clone + Send + Sync
 {
+    /// Returns the order of this report aggregation in its aggregation job.
+    fn ord(&self) -> u64;
+
     /// Returns the report ID associated with this report aggregation.
     fn report_id(&self) -> &ReportId;
 
@@ -862,6 +867,10 @@ where
     A::PrepareMessage: Send + Sync,
     A::PublicShare: Send + Sync,
 {
+    fn ord(&self) -> u64 {
+        self.report_aggregation.ord()
+    }
+
     fn report_id(&self) -> &ReportId {
         self.report_aggregation.report_id()
     }
@@ -922,6 +931,10 @@ impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A> for Report
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
+    fn ord(&self) -> u64 {
+        self.ord()
+    }
+
     fn report_id(&self) -> &ReportId {
         self.report_id()
     }

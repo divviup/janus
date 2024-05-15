@@ -143,6 +143,8 @@ pub enum Error {
     /// An error occurred when trying to ensure differential privacy.
     #[error("differential privacy error: {0}")]
     DifferentialPrivacy(VdafError),
+    #[error("client disconnected")]
+    ClientDisconnected,
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -309,6 +311,7 @@ impl Error {
             Error::BadRequest(_) => "bad_request",
             Error::InvalidTask(_, _) => "invalid_task",
             Error::DifferentialPrivacy(_) => "differential_privacy",
+            Error::ClientDisconnected => "client_disconnected",
         }
     }
 }
