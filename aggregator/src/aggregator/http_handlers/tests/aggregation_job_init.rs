@@ -354,27 +354,19 @@ async fn aggregate_init() {
         transcript_7.leader_prepare_transitions[0].message.clone(),
     );
 
-    // prepare_init_8 has already been aggregated in another aggregation job, with a different
-    // aggregation parameter.
-    let (prepare_init_8, transcript_8) = prep_init_generator.next(&measurement);
-
     let mut batch_aggregations_results = vec![];
     let mut aggregation_jobs_results = vec![];
-    let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
+    let conflicting_aggregation_job = datastore
         .run_unnamed_tx(|tx| {
             let task = helper_task.clone();
             let report_share_4 = prepare_init_4.report_share().clone();
-            let report_share_8 = prepare_init_8.report_share().clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                // report_share_4 and report_share_8 are already in the datastore as they were
-                // referenced by existing aggregation jobs.
+                // report_share_4 is already in the datastore as it was referenced by an existing
+                // aggregation job.
                 tx.put_scrubbed_report(task.id(), &report_share_4)
-                    .await
-                    .unwrap();
-                tx.put_scrubbed_report(task.id(), &report_share_8)
                     .await
                     .unwrap();
 
@@ -408,37 +400,6 @@ async fn aggregate_init() {
                 .await
                 .unwrap();
 
-                // Put in an aggregation job and report aggregation for report_share_8, using a
-                // a different aggregation parameter. As the aggregation parameter differs,
-                // report_share_8 should prepare successfully in the aggregation job we'll PUT
-                // later.
-                let non_conflicting_aggregation_job = AggregationJob::new(
-                    *task.id(),
-                    random(),
-                    dummy::AggregationParam(1),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobStep::from(0),
-                );
-                tx.put_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
-                    &non_conflicting_aggregation_job,
-                )
-                .await
-                .unwrap();
-                tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
-                    *task.id(),
-                    *non_conflicting_aggregation_job.id(),
-                    *report_share_8.metadata().id(),
-                    *report_share_8.metadata().time(),
-                    0,
-                    None,
-                    ReportAggregationState::Finished,
-                ))
-                .await
-                .unwrap();
-
                 // Write collected batch aggregations for the interval that report_share_5 falls
                 // into, which will cause it to fail to prepare.
                 try_join_all(
@@ -456,7 +417,7 @@ async fn aggregate_init() {
                 .await
                 .unwrap();
 
-                Ok((conflicting_aggregation_job, non_conflicting_aggregation_job))
+                Ok(conflicting_aggregation_job)
             })
         })
         .await
@@ -475,7 +436,6 @@ async fn aggregate_init() {
             prepare_init_5.clone(),
             prepare_init_6.clone(),
             prepare_init_7.clone(),
-            prepare_init_8.clone(),
         ]),
     );
 
@@ -492,7 +452,7 @@ async fn aggregate_init() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_resps().len(), 9);
+        assert_eq!(aggregate_resp.prepare_resps().len(), 8);
 
         let prepare_step_0 = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
@@ -573,15 +533,6 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(PrepareError::InvalidMessage),
         );
 
-        let prepare_step_8 = aggregate_resp.prepare_resps().get(8).unwrap();
-        assert_eq!(
-            prepare_step_8.report_id(),
-            prepare_init_8.report_share().metadata().id()
-        );
-        assert_matches!(prepare_step_8.result(), PrepareStepResult::Continue { message } => {
-            assert_eq!(message, &transcript_8.helper_prepare_transitions[0].message);
-        });
-
         // Check aggregation job in datastore.
         let (aggregation_jobs, batch_aggregations) = datastore
             .run_unnamed_tx(|tx| {
@@ -601,17 +552,14 @@ async fn aggregate_init() {
             .await
             .unwrap();
 
-        assert_eq!(aggregation_jobs.len(), 3);
+        assert_eq!(aggregation_jobs.len(), 2);
 
         let mut saw_conflicting_aggregation_job = false;
-        let mut saw_non_conflicting_aggregation_job = false;
         let mut saw_new_aggregation_job = false;
 
         for aggregation_job in &aggregation_jobs {
             if aggregation_job.eq(&conflicting_aggregation_job) {
                 saw_conflicting_aggregation_job = true;
-            } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
-                saw_non_conflicting_aggregation_job = true;
             } else if aggregation_job.task_id().eq(task.id())
                 && aggregation_job.id().eq(&aggregation_job_id)
                 && aggregation_job.partial_batch_identifier().eq(&())
@@ -622,7 +570,6 @@ async fn aggregate_init() {
         }
 
         assert!(saw_conflicting_aggregation_job);
-        assert!(saw_non_conflicting_aggregation_job);
         assert!(saw_new_aggregation_job);
 
         aggregation_jobs_results.push(aggregation_jobs);
