@@ -263,7 +263,7 @@ impl<C: Clock> Datastore<C> {
                         "retry"
                     }
                 }
-                (Ok(_), _) => "success",
+                (Ok(_), _) | (Err(Error::User(_)), _) => "success",
                 (Err(Error::Db(_)), _) | (Err(Error::Pool(_)), _) => "error_db",
                 (Err(_), _) => "error_other",
             };
