@@ -162,8 +162,8 @@ struct CustomView {
 impl CustomView {
     /// These boundaries are intended to be used with measurements having the unit of "bytes".
     const BYTES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0, 4194304.0, 8388608.0, 16777216.0,
-        33554432.0, 67108864.0,
+        1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
+        1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
     ];
 
     /// These boundaries are for measurements of unsigned integers, such as the number of retries
