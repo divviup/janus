@@ -364,8 +364,8 @@ async fn aggregate_init() {
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                // report_share_4 are already in the datastore as they were
-                // referenced by existing aggregation jobs.
+                // report_share_4 is already in the datastore as it was referenced by an existing
+                // aggregation job.
                 tx.put_scrubbed_report(task.id(), &report_share_4)
                     .await
                     .unwrap();

@@ -2344,7 +2344,7 @@ impl VdafOps {
                                 match tx.put_scrubbed_report(task.id(), &rsd.report_share).await {
                                     Ok(()) => false,
                                     Err(datastore::Error::MutationTargetAlreadyExists) => true,
-                                    Err(err) => Err(err)?,
+                                    Err(err) => return Err(err),
                                 };
 
                             if report_already_aggregated {
