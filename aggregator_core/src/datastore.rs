@@ -2170,53 +2170,6 @@ WHERE aggregation_jobs.task_id = $6
         )
     }
 
-    /// Check whether the report has ever been aggregated with the given parameter, for an
-    /// aggregation job besides the given one.
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn check_other_report_aggregation_exists<const SEED_SIZE: usize, A>(
-        &self,
-        task_id: &TaskId,
-        report_id: &ReportId,
-        aggregation_param: &A::AggregationParam,
-        aggregation_job_id: &AggregationJobId,
-    ) -> Result<bool, Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-    {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Ok(false),
-        };
-
-        let stmt = self
-            .prepare_cached(
-                "-- check_other_report_aggregation_exists()
-SELECT 1 FROM report_aggregations
-JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-WHERE report_aggregations.task_id = $1
-  AND aggregation_jobs.task_id = $1
-  AND report_aggregations.client_report_id = $2
-  AND aggregation_jobs.aggregation_param = $3
-  AND aggregation_jobs.aggregation_job_id != $4
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $5",
-            )
-            .await?;
-        Ok(self
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_info.pkey,
-                    /* report_id */ &report_id.as_ref(),
-                    /* aggregation_param */ &aggregation_param.get_encoded()?,
-                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                    /* threshold */
-                    &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
-                ],
-            )
-            .await
-            .map(|row| row.is_some())?)
-    }
-
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
     /// with a given aggregation job, ordered by their natural ordering.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
