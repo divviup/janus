@@ -15,7 +15,10 @@ use prio::{
 use rand::random;
 use url::Url;
 
-fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
+#[cfg(feature = "ohttp")]
+mod ohttp;
+
+async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
     let server_url = Url::parse(&server.url()).unwrap();
     Client::builder(
         random(),
@@ -25,10 +28,10 @@ fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Clien
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
-    .build_with_hpke_configs(
-        generate_test_hpke_config_and_private_key().config().clone(),
-        generate_test_hpke_config_and_private_key().config().clone(),
-    )
+    .with_leader_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .with_helper_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .build()
+    .await
     .unwrap()
 }
 
@@ -55,7 +58,7 @@ fn aggregator_endpoints_end_in_slash() {
 async fn upload_prio3_count() {
     install_test_trace_subscriber();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap());
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -78,7 +81,7 @@ async fn upload_prio3_invalid_measurement() {
     install_test_trace_subscriber();
     let server = mockito::Server::new_async().await;
     let vdaf = Prio3::new_sum(2, 16).unwrap();
-    let client = setup_client(&server, vdaf);
+    let client = setup_client(&server, vdaf).await;
 
     // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
     // Make sure we get the right error variant but otherwise we aren't
@@ -90,7 +93,7 @@ async fn upload_prio3_invalid_measurement() {
 async fn upload_prio3_http_status_code() {
     install_test_trace_subscriber();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap());
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -117,7 +120,7 @@ async fn upload_prio3_http_status_code() {
 async fn upload_problem_details() {
     install_test_trace_subscriber();
     let mut server = mockito::Server::new_async().await;
-    let client = setup_client(&server, Prio3::new_count(2).unwrap());
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
     let mocked_upload = server
         .mock(
@@ -165,21 +168,21 @@ async fn upload_bad_time_precision() {
         Duration::from_seconds(0),
         Prio3::new_count(2).unwrap(),
     )
-    .build_with_hpke_configs(
-        generate_test_hpke_config_and_private_key().config().clone(),
-        generate_test_hpke_config_and_private_key().config().clone(),
-    )
+    .with_leader_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .with_helper_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .build()
+    .await
     .unwrap();
     let result = client.upload(&true).await;
     assert_matches!(result, Err(Error::InvalidParameter(_)));
 }
 
-#[test]
-fn report_timestamp() {
+#[tokio::test]
+async fn report_timestamp() {
     install_test_trace_subscriber();
-    let server = mockito::Server::new();
+    let server = mockito::Server::new_async().await;
     let vdaf = Prio3::new_count(2).unwrap();
-    let mut client = setup_client(&server, vdaf);
+    let mut client = setup_client(&server, vdaf).await;
 
     client.parameters.time_precision = Duration::from_seconds(100);
     assert_eq!(
@@ -238,9 +241,21 @@ async fn aggregator_hpke() {
         .create_async()
         .await;
 
-    let got_hpke_config = aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
-        .await
-        .unwrap();
+    let got_hpke_config =
+        aggregator_hpke_config(None, &client_parameters, &Role::Leader, http_client)
+            .await
+            .unwrap();
+    assert_eq!(&got_hpke_config, keypair.config());
+
+    // Fetching HPKE config again should not hit the mock server
+    let got_hpke_config = aggregator_hpke_config(
+        Some(got_hpke_config),
+        &client_parameters,
+        &Role::Leader,
+        http_client,
+    )
+    .await
+    .unwrap();
     assert_eq!(&got_hpke_config, keypair.config());
 
     mock.assert_async().await;
@@ -294,9 +309,10 @@ async fn unsupported_hpke_algorithms() {
         .create_async()
         .await;
 
-    let got_hpke_config = aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
-        .await
-        .unwrap();
+    let got_hpke_config =
+        aggregator_hpke_config(None, &client_parameters, &Role::Leader, http_client)
+            .await
+            .unwrap();
     assert_eq!(got_hpke_config, good_hpke_config);
 
     mock.assert_async().await;
