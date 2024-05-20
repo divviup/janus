@@ -1283,13 +1283,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8dd36aa5df05470f831254a53cf0e3555277e9abee6459a98470a66d0bf470d5"
+checksum = "56aaef2dc9c65facc6d4251c31c019070b4b16770676c6da559853ebbc8bf4c2"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.7",
+ "janus_messages 0.7.8",
  "log",
  "pad-adapter",
  "serde",
@@ -2749,9 +2749,9 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.7"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31c6c35fffd82f3c0d43560d2e635ed5e34353c2713d33dee3948e195c5e2fb3"
+checksum = "304ed5ad18d64302e818f0cc77e5d0358acce486c3ac950ac14a0148f5903263"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
