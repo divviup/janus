@@ -445,6 +445,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1fdabc7756949593fe60f30ec81974b613357de856987752631dea1e3394c80"
 
 [[package]]
+name = "automod"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edf3ee19dbc0a46d740f6f0926bde8c50f02bdbc7b536842da28f6ac56513a8b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.55",
+]
+
+[[package]]
 name = "aws-lc-rs"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -600,7 +611,7 @@ dependencies = [
  "bitflags 2.5.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -3018,7 +3029,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.4",
 ]
 
 [[package]]
@@ -4879,9 +4890,9 @@ dependencies = [
 
 [[package]]
 name = "snapbox"
-version = "0.5.9"
+version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ac441e1ecf678f68423d47f376d53fabce1afba92c8f68e31508eb27df8562a"
+checksum = "15d55fd1f4a2ee1767db08ba740916a0f3a8e9add2947f19700a99ebcb119af0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4901,9 +4912,9 @@ dependencies = [
 
 [[package]]
 name = "snapbox-macros"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1c4b838b05d15ab22754068cb73500b2f3b07bf09d310e15b27f88160f1de40"
+checksum = "b1f4c14672714436c09254801c934b203196a51182a5107fb76591c7cc56424d"
 dependencies = [
  "anstream",
 ]
@@ -5538,26 +5549,26 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
+version = "0.19.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
+dependencies = [
+ "indexmap 2.2.6",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "winnow",
+]
+
+[[package]]
+name = "toml_edit"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8534fd7f78b5405e860340ad6575217ce99f38d4d5c8f2442cb5ecb50090e1"
 dependencies = [
  "indexmap 2.2.6",
  "toml_datetime",
- "winnow 0.5.40",
-]
-
-[[package]]
-name = "toml_edit"
-version = "0.22.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e40bb779c5187258fd7aad0eb68cb8706a0a81fa712fbea808ab43c4b8374c4"
-dependencies = [
- "indexmap 2.2.6",
- "serde",
- "serde_spanned",
- "toml_datetime",
- "winnow 0.6.5",
+ "winnow",
 ]
 
 [[package]]
@@ -6047,10 +6058,11 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "trycmd"
-version = "0.15.1"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d14c6930faf7c6c4942ce17daa6f38d659d2ebf2b579a56b6926707038eb37b0"
+checksum = "29622709ff54daef580ca6fff0687368527662c9e36fa8907438af35eb334b19"
 dependencies = [
+ "automod",
  "glob",
  "humantime",
  "humantime-serde",
@@ -6058,7 +6070,7 @@ dependencies = [
  "serde",
  "shlex",
  "snapbox",
- "toml_edit 0.22.9",
+ "toml_edit 0.19.15",
 ]
 
 [[package]]
@@ -6559,15 +6571,6 @@ name = "winnow"
 version = "0.5.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dffa400e67ed5a4dd237983829e66475f0a4a26938c4b04c21baede6262215b8"
 dependencies = [
  "memchr",
 ]
