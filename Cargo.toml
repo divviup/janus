@@ -88,7 +88,7 @@ rustc_version = "0.4.0"
 rustls = "0.23.5"
 rustls-pemfile = "2.1.2"
 sec1 = "0.7"
-serde = { version = "1.0.201", features = ["derive"] }
+serde = { version = "1.0.202", features = ["derive"] }
 serde_json = "1.0.117"
 serde_test = "1.0.175"
 serde_urlencoded = "0.7.1"
