@@ -2417,11 +2417,11 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "opentelemetry 0.22.0",
+ "opentelemetry 0.23.0",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry-semantic-conventions",
- "opentelemetry_sdk 0.22.1",
+ "opentelemetry_sdk 0.23.0",
  "postgres-protocol",
  "postgres-types",
  "prio 0.15.5",
@@ -2480,7 +2480,7 @@ dependencies = [
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.6.30",
- "opentelemetry 0.22.0",
+ "opentelemetry 0.23.0",
  "querystring",
  "rand",
  "ring 0.17.8",
@@ -2522,7 +2522,7 @@ dependencies = [
  "janus_messages 0.6.30",
  "k8s-openapi",
  "kube",
- "opentelemetry 0.22.0",
+ "opentelemetry 0.23.0",
  "postgres-protocol",
  "postgres-types",
  "prio 0.15.5",
@@ -2707,7 +2707,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.6.30",
- "opentelemetry 0.22.0",
+ "opentelemetry 0.23.0",
  "prio 0.15.5",
  "rand",
  "regex",
@@ -3373,7 +3373,6 @@ version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e90c7113be649e31e9a0f8b5ee24ed7a16923b322c3c5ab6367469c049d6b7e"
 dependencies = [
- "async-std",
  "async-trait",
  "crossbeam-channel",
  "futures-channel",
@@ -3385,10 +3384,7 @@ dependencies = [
  "ordered-float 4.1.1",
  "percent-encoding",
  "rand",
- "serde_json",
  "thiserror",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -3397,6 +3393,7 @@ version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae312d58eaa90a82d2e627fd86e075cf5230b3f11794e2ed74199ebbe572d4fd"
 dependencies = [
+ "async-std",
  "async-trait",
  "futures-channel",
  "futures-executor",
@@ -3408,7 +3405,10 @@ dependencies = [
  "ordered-float 4.1.1",
  "percent-encoding",
  "rand",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -5881,11 +5881,11 @@ dependencies = [
 
 [[package]]
 name = "trillium-opentelemetry"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63429771124359b50235c641649a9d5532b5b137a2b8a2ee1447961ea0706698"
+checksum = "8340d1e32a42a09fe4b790e965683a126acf5d9a0bbca8fc3722031efdad7907"
 dependencies = [
- "opentelemetry 0.22.0",
+ "opentelemetry 0.23.0",
  "trillium",
  "trillium-macros 0.0.6",
 ]
