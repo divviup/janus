@@ -6125,6 +6125,23 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             },
         );
         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+        for ord in 1..8 {
+            let batch_aggregation = BatchAggregation::<0, Q, dummy::Vdaf>::new(
+                *task.id(),
+                batch_identifier.clone(),
+                dummy::AggregationParam(0),
+                ord,
+                client_timestamp_interval,
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 0,
+                    aggregation_jobs_terminated: 0,
+                },
+            );
+            tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+        }
 
         if task.role() == &Role::Leader {
             let collection_job = CollectionJob::<0, Q, dummy::Vdaf>::new(
