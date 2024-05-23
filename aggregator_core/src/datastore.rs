@@ -4854,25 +4854,29 @@ deleted_aggregate_share_jobs AS (
       AND (LOWER(batch_interval) < $2
         OR (aggregate_share_jobs.batch_identifier = batches_to_delete.batch_identifier
           AND aggregate_share_jobs.aggregation_param = batches_to_delete.aggregation_param))
+),
+deleted_batch_aggregations AS (
+    DELETE FROM batch_aggregations
+    USING batches_to_delete
+    WHERE task_id = $1
+      AND batch_aggregations.batch_identifier = batches_to_delete.batch_identifier
+      AND batch_aggregations.aggregation_param = batches_to_delete.aggregation_param
 )
-DELETE FROM batch_aggregations
-USING batches_to_delete
-WHERE task_id = $1
-  AND batch_aggregations.batch_identifier = batches_to_delete.batch_identifier
-  AND batch_aggregations.aggregation_param = batches_to_delete.aggregation_param",
+SELECT COUNT(1) AS batch_count FROM batches_to_delete",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &task_info.pkey,
-                /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
-                /* limit */ &i64::try_from(limit)?,
-            ],
-        )
-        .await
-        .map_err(Into::into)
+        let row = self
+            .query_one(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+                    /* limit */ &i64::try_from(limit)?,
+                ],
+            )
+            .await?;
+        row.get_bigint_and_convert("batch_count")
     }
 
     /// Retrieve all global HPKE keypairs.
