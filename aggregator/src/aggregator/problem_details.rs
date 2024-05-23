@@ -13,10 +13,21 @@ impl DapProblemTypeExt for DapProblemType {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
     fn http_status(&self) -> Status {
-        // Per the errors section of the protocol, error responses should use HTTP status code 400
-        // Bad Request unless explicitly specified otherwise.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-3.2-7
-        Status::BadRequest
+        match self {
+            // The HTTPS request authentication section does not specify that an authorization
+            // failure is an "abort" of the protocol, and thus we can use a non-400 error code.
+            // Therefore, we choose to use 401 Unauthorized.
+            //
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.1
+            DapProblemType::UnauthorizedRequest => Status::Unauthorized,
+
+            // Per the Errors section of the protocol, error responses corresponding to an "abort"
+            // in the protocol should use HTTP status code 400 Bad Request unless explicitly
+            // specified otherwise.
+            //
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.2
+            _ => Status::BadRequest,
+        }
     }
 }
 
