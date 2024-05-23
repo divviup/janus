@@ -299,7 +299,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -316,7 +316,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
