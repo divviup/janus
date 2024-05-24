@@ -1,5 +1,7 @@
 use crate::aggregator::{
-    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
+    aggregate_init_tests::{
+        put_aggregation_job, put_aggregation_job_with_auth_header_count, PrepareInitGenerator,
+    },
     empty_batch_aggregations,
     http_handlers::{
         aggregator_handler,
@@ -127,14 +129,19 @@ async fn aggregate_wrong_agg_auth_token() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let wrong_token_value = random();
+    let wrong_token_value = AuthenticationToken::DapAuth(random());
 
     // Send the right token, but the wrong format: convert the DAP auth token to an equivalent
     // Bearer token, which should be rejected.
     let wrong_token_format =
         AuthenticationToken::new_bearer_token_from_bytes(dap_auth_token.as_ref()).unwrap();
 
-    for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {
+    for auth_tokens in [
+        Vec::from([wrong_token_value.clone()]),
+        Vec::from([wrong_token_format]),
+        Vec::from([]),
+        Vec::from([dap_auth_token, wrong_token_value]),
+    ] {
         let mut test_conn = put(task
             .aggregation_job_uri(&aggregation_job_id)
             .unwrap()
@@ -145,7 +152,7 @@ async fn aggregate_wrong_agg_auth_token() {
         )
         .with_request_body(request.get_encoded().unwrap());
 
-        if let Some(auth_token) = auth_token {
+        for auth_token in auth_tokens {
             let (auth_header, auth_value) = auth_token.request_authentication();
             test_conn = test_conn.with_request_header(auth_header, auth_value);
         }
@@ -354,8 +361,8 @@ async fn aggregate_init() {
         transcript_7.leader_prepare_transitions[0].message.clone(),
     );
 
-    let mut batch_aggregations_results = vec![];
-    let mut aggregation_jobs_results = vec![];
+    let mut batch_aggregations_results = Vec::new();
+    let mut aggregation_jobs_results = Vec::new();
     let conflicting_aggregation_job = datastore
         .run_unnamed_tx(|tx| {
             let task = helper_task.clone();
@@ -441,9 +448,15 @@ async fn aggregate_init() {
 
     // Send request, parse response. Do this twice to prove that the request is idempotent.
     let aggregation_job_id: AggregationJobId = random();
-    for _ in 0..2 {
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+    for auth_header_count in 1..=2 {
+        let mut test_conn = put_aggregation_job_with_auth_header_count(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &handler,
+            auth_header_count,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,

@@ -8,7 +8,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::extract_bearer_token,
+    http::{extract_bearer_token, HeadersExt as _},
     taskprov::TASKPROV_HEADER,
     time::Clock,
     Runtime,
@@ -686,7 +686,7 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     }
 
     conn.request_headers()
-        .get(DAP_AUTH_HEADER)
+        .get_coalescing_duplicates(DAP_AUTH_HEADER) // TODO(#3163): get_coalescing_duplicates -> get
         .map(|value| {
             AuthenticationToken::new_dap_auth_token_from_bytes(value.as_ref())
                 .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
