@@ -197,11 +197,11 @@ async fn collection_job_put_request_unauthenticated() {
         .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -218,11 +218,11 @@ async fn collection_job_put_request_unauthenticated() {
         )
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -235,11 +235,11 @@ async fn collection_job_put_request_unauthenticated() {
         .put_collection_job_with_auth_token(&collection_job_id, &req, None)
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -275,11 +275,11 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -295,11 +295,11 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         )
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -312,11 +312,11 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         .post_collection_job_with_auth_token(&collection_job_id, None)
         .await;
 
-    let want_status = Status::BadRequest;
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": want_status as u16,
+            "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),

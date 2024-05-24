@@ -159,7 +159,7 @@ async fn aggregate_wrong_agg_auth_token() {
 
         let mut test_conn = test_conn.run_async(&handler).await;
 
-        let want_status = 400;
+        let want_status = u16::from(Status::Forbidden);
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({

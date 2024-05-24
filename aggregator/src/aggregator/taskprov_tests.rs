@@ -316,11 +316,11 @@ async fn taskprov_aggregate_init() {
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest), "{}", name);
+        assert_eq!(test_conn.status(), Some(Status::Forbidden), "{}", name);
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
-                "status": Status::BadRequest as u16,
+                "status": u16::from(Status::Forbidden),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test.task_id),
@@ -971,11 +971,11 @@ async fn taskprov_aggregate_continue() {
     .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(test_conn.status(), Some(Status::Forbidden));
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": u16::from(Status::Forbidden),
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test.task_id),
@@ -1083,11 +1083,11 @@ async fn taskprov_aggregate_share() {
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(test_conn.status(), Some(Status::Forbidden));
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": u16::from(Status::Forbidden),
             "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test.task_id),
