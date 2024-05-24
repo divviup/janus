@@ -8,8 +8,10 @@ use crate::{
             AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
             ReportAggregationUpdate as _, WritableReportAggregation,
         },
-        error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
-        error::{BatchMismatch, OptOutReason},
+        error::{
+            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
+            ReportRejectionReason,
+        },
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
@@ -19,7 +21,10 @@ use crate::{
     },
     config::TaskprovConfig,
     diagnostic::AggregationJobInitForbiddenMutationEvent,
-    metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
+    metrics::{
+        aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
+        report_aggregation_success_counter,
+    },
 };
 use backoff::{backoff::Backoff, Notify};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -163,6 +168,8 @@ struct AggregatorMetrics {
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
+    /// Histogram tracking the VDAF type and dimension of successfully-aggregated reports.
+    aggregated_report_share_dimension_histogram: Histogram<u64>,
 }
 
 impl AggregatorMetrics {
@@ -170,6 +177,9 @@ impl AggregatorMetrics {
         AggregationJobWriterMetrics {
             report_aggregation_success_counter: self.report_aggregation_success_counter.clone(),
             aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+            aggregated_report_share_dimension_histogram: self
+                .aggregated_report_share_dimension_histogram
+                .clone(),
         }
     }
 }
@@ -283,6 +293,8 @@ impl<C: Clock> Aggregator<C> {
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
+        let aggregated_report_share_dimension_histogram =
+            aggregated_report_share_dimension_histogram(meter);
 
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
@@ -302,6 +314,7 @@ impl<C: Clock> Aggregator<C> {
                 upload_decode_failure_counter,
                 report_aggregation_success_counter,
                 aggregate_step_failure_counter,
+                aggregated_report_share_dimension_histogram,
             },
             global_hpke_keypairs,
             peer_aggregators,
