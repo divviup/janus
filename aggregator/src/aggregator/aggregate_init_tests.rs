@@ -309,9 +309,32 @@ pub(crate) async fn put_aggregation_job<Q: query_type::QueryType>(
     aggregation_job: &AggregationJobInitializeReq<Q>,
     handler: &impl Handler,
 ) -> TestConn {
+    put_aggregation_job_with_auth_header_count(
+        task,
+        aggregation_job_id,
+        aggregation_job,
+        handler,
+        1,
+    )
+    .await
+}
+
+pub(crate) async fn put_aggregation_job_with_auth_header_count<Q: query_type::QueryType>(
+    task: &Task,
+    aggregation_job_id: &AggregationJobId,
+    aggregation_job: &AggregationJobInitializeReq<Q>,
+    handler: &impl Handler,
+    auth_header_count: usize,
+) -> TestConn {
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
-        .with_request_header(header, value)
+
+    let mut test_conn = put(task.aggregation_job_uri(aggregation_job_id).unwrap().path());
+
+    for _ in 0..auth_header_count {
+        test_conn = test_conn.with_request_header(header, value.clone());
+    }
+
+    test_conn
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
