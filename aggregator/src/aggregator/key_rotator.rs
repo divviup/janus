@@ -111,15 +111,16 @@ impl<C: Clock> KeyRotator<C> {
         // so we should rollback.
         let current_keypairs = tx.get_global_hpke_keypairs().await?;
         debug!(?current_keypairs, "after");
-        if current_keypairs
+        if !current_keypairs
             .iter()
-            .find(|keypair| keypair.state() == &HpkeKeyState::Active)
-            .is_none()
+            .any(|keypair| keypair.state() == &HpkeKeyState::Active)
         {
-            DatastoreError::User(anyhow!("unexpected state: no keypairs are active").into());
+            Err(DatastoreError::User(
+                anyhow!("unexpected state: no keypairs are active").into(),
+            ))
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     #[tracing::instrument(skip(tx, current_keypairs, available_ids))]
@@ -130,7 +131,7 @@ impl<C: Clock> KeyRotator<C> {
         config: &HpkeKeyRotatorConfig,
     ) -> Result<(), DatastoreError> {
         let (pending_keypairs, active_keypairs, expired_keypairs) =
-            Self::partition_keypairs(&current_keypairs, &config.ciphersuite);
+            Self::partition_keypairs(current_keypairs, &config.ciphersuite);
         let mut next_key = || {
             generate_hpke_config_and_private_key(
                 available_ids
@@ -186,12 +187,9 @@ impl<C: Clock> KeyRotator<C> {
                     info!(id = ?next.config().id(), "inserting new pending key to replace expired one(s)");
                     tx.put_global_hpke_keypair(&next).await?;
                 } else {
-                    let pending_key_is_ready = pending_keypairs
-                        .iter()
-                        .find(|keypair| {
-                            Self::duration_since(tx, keypair.updated_at()) > config.pending_duration
-                        })
-                        .is_some();
+                    let pending_key_is_ready = pending_keypairs.iter().any(|keypair| {
+                        Self::duration_since(tx, keypair.updated_at()) > config.pending_duration
+                    });
                     if pending_key_is_ready {
                         for keypair in to_be_expired_keypairs {
                             info!(id = ?keypair.id(), "a pending key is ready, marking key expired");
