@@ -197,7 +197,7 @@ async fn collection_job_put_request_unauthenticated() {
         .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
@@ -218,7 +218,7 @@ async fn collection_job_put_request_unauthenticated() {
         )
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
@@ -235,7 +235,7 @@ async fn collection_job_put_request_unauthenticated() {
         .put_collection_job_with_auth_token(&collection_job_id, &req, None)
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
@@ -275,7 +275,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
@@ -295,7 +295,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         )
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
@@ -312,7 +312,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
         .post_collection_job_with_auth_token(&collection_job_id, None)
         .await;
 
-    let want_status = u16::from(Status::Unauthorized);
+    let want_status = u16::from(Status::Forbidden);
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({

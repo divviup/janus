@@ -16,10 +16,10 @@ impl DapProblemTypeExt for DapProblemType {
         match self {
             // The HTTPS request authentication section does not specify that an authorization
             // failure is an "abort" of the protocol, and thus we can use a non-400 error code.
-            // Therefore, we choose to use 401 Unauthorized.
+            // Therefore, we choose to use 403 Forbidden.
             //
             // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.1
-            DapProblemType::UnauthorizedRequest => Status::Unauthorized,
+            DapProblemType::UnauthorizedRequest => Status::Forbidden,
 
             // Per the Errors section of the protocol, error responses corresponding to an "abort"
             // in the protocol should use HTTP status code 400 Bad Request unless explicitly

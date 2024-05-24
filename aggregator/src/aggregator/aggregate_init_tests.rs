@@ -389,7 +389,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
     .run_async(&test_case.handler)
     .await;
 
-    assert_eq!(response.status(), Some(Status::Unauthorized));
+    assert_eq!(response.status(), Some(Status::Forbidden));
 }
 
 #[tokio::test]
