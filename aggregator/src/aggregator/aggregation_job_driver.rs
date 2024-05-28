@@ -1,12 +1,16 @@
-use crate::aggregator::{
-    aggregate_step_failure_counter,
-    aggregation_job_writer::{
-        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
+use crate::{
+    aggregator::{
+        aggregate_step_failure_counter,
+        aggregation_job_writer::{
+            AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
+            WritableReportAggregation,
+        },
+        error::handle_ping_pong_error,
+        http_handlers::AGGREGATION_JOB_ROUTE,
+        query_type::CollectableQueryType,
+        report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
     },
-    error::handle_ping_pong_error,
-    http_handlers::AGGREGATION_JOB_ROUTE,
-    query_type::CollectableQueryType,
-    report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
+    metrics::aggregated_report_share_dimension_histogram,
 };
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
@@ -64,6 +68,8 @@ pub struct AggregationJobDriver<B> {
     #[derivative(Debug = "ignore")]
     aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
+    aggregated_report_share_dimension_histogram: Histogram<u64>,
+    #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
     job_retry_counter: Counter<u64>,
@@ -83,6 +89,8 @@ where
     ) -> Self {
         let aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
+        let aggregated_report_share_dimension_histogram =
+            aggregated_report_share_dimension_histogram(meter);
 
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
@@ -112,6 +120,7 @@ where
             backoff,
             aggregation_success_counter,
             aggregate_step_failure_counter,
+            aggregated_report_share_dimension_histogram,
             job_cancel_counter,
             job_retry_counter,
             http_request_duration_histogram,
@@ -914,6 +923,9 @@ where
                 Some(AggregationJobWriterMetrics {
                     report_aggregation_success_counter: self.aggregation_success_counter.clone(),
                     aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+                    aggregated_report_share_dimension_histogram: self
+                        .aggregated_report_share_dimension_histogram
+                        .clone(),
                 }),
             );
         let new_step = aggregation_job.step().increment();

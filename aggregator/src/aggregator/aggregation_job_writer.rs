@@ -16,15 +16,21 @@ use janus_aggregator_core::{
     query_type::AccumulableQueryType,
     task::AggregatorTask,
 };
+#[cfg(feature = "fpvec_bounded_l2")]
+use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     report_id::ReportIdChecksumExt as _,
     time::{Clock, IntervalExt},
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregationJobId, Interval, PrepareError, PrepareResp, PrepareStepResult, ReportId,
     ReportIdChecksum, Time,
 };
-use opentelemetry::{metrics::Counter, KeyValue};
+use opentelemetry::{
+    metrics::{Counter, Histogram},
+    KeyValue,
+};
 use prio::{codec::Encode, vdaf};
 use rand::{thread_rng, Rng as _};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
@@ -52,6 +58,7 @@ where
 pub struct AggregationJobWriterMetrics {
     pub report_aggregation_success_counter: Counter<u64>,
     pub aggregate_step_failure_counter: Counter<u64>,
+    pub aggregated_report_share_dimension_histogram: Histogram<u64>,
 }
 
 #[allow(private_bounds)]
@@ -673,12 +680,125 @@ where
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
                             self.writer.update_metrics(|metrics| {
-                                metrics.report_aggregation_success_counter.add(1, &[])
+                                metrics.report_aggregation_success_counter.add(1, &[]);
+
+                                use VdafInstance::*;
+                                match self.writer.task.vdaf() {
+                                    Prio3Count => metrics
+                                        .aggregated_report_share_dimension_histogram
+                                        .record(1, &[KeyValue::new("type", "Prio3Count")]),
+
+                                    Prio3Sum { bits } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*bits).unwrap_or(u64::MAX),
+                                            &[KeyValue::new("type", "Prio3Sum")],
+                                        )
+                                    }
+
+                                    Prio3SumVec {
+                                        bits,
+                                        length,
+                                        chunk_length: _,
+                                    } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*bits)
+                                                .unwrap_or(u64::MAX)
+                                                .saturating_mul(
+                                                    u64::try_from(*length).unwrap_or(u64::MAX),
+                                                ),
+                                            &[KeyValue::new("type", "Prio3SumVec")],
+                                        )
+                                    }
+
+                                    Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                                        proofs: _,
+                                        bits,
+                                        length,
+                                        chunk_length: _,
+                                    } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*bits)
+                                                .unwrap_or(u64::MAX)
+                                                .saturating_mul(
+                                                    u64::try_from(*length).unwrap_or(u64::MAX),
+                                                ),
+                                            &[KeyValue::new(
+                                                "type",
+                                                "Prio3SumVecField64MultiproofHmacSha256Aes128",
+                                            )],
+                                        )
+                                    }
+
+                                    Prio3Histogram {
+                                        length,
+                                        chunk_length: _,
+                                    } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*length).unwrap_or(u64::MAX),
+                                            &[KeyValue::new("type", "Prio3Histogram")],
+                                        )
+                                    }
+
+                                    #[cfg(feature = "fpvec_bounded_l2")]
+                                    Prio3FixedPointBoundedL2VecSum {
+                                        bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
+                                        dp_strategy: _,
+                                        length,
+                                    } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*length)
+                                                .unwrap_or(u64::MAX)
+                                                .saturating_mul(16),
+                                            &[KeyValue::new(
+                                                "type",
+                                                "Prio3FixedPointBoundedL2VecSum",
+                                            )],
+                                        )
+                                    }
+
+                                    #[cfg(feature = "fpvec_bounded_l2")]
+                                    Prio3FixedPointBoundedL2VecSum {
+                                        bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize32,
+                                        dp_strategy: _,
+                                        length,
+                                    } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*length)
+                                                .unwrap_or(u64::MAX)
+                                                .saturating_mul(32),
+                                            &[KeyValue::new(
+                                                "type",
+                                                "Prio3FixedPointBoundedL2VecSum",
+                                            )],
+                                        )
+                                    }
+
+                                    Poplar1 { bits } => {
+                                        metrics.aggregated_report_share_dimension_histogram.record(
+                                            u64::try_from(*bits).unwrap_or(u64::MAX),
+                                            &[KeyValue::new("type", "Poplar1")],
+                                        )
+                                    }
+
+                                    #[cfg(feature = "test-util")]
+                                    Fake { rounds: _ } | FakeFailsPrepInit | FakeFailsPrepStep => {
+                                        metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(0, &[KeyValue::new("type", "Fake")])
+                                    }
+                                    _ => metrics
+                                        .aggregated_report_share_dimension_histogram
+                                        .record(0, &[KeyValue::new("type", "unknown")]),
+                                }
                             });
                             *batch_aggregation = merged_batch_aggregation
                         }
                         Err(err) => {
-                            warn!(report_id = %report_aggregation.report_id(), ?err, "Couldn't update batch aggregation");
+                            warn!(
+                                report_id = %report_aggregation.report_id(),
+                                ?err,
+                                "Couldn't update batch aggregation",
+                            );
                             self.writer.update_metrics(|metrics| {
                                 metrics
                                     .aggregate_step_failure_counter

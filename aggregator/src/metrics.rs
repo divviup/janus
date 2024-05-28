@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use opentelemetry::{
-    metrics::{Counter, Meter, Unit},
+    metrics::{Counter, Histogram, Meter, Unit},
     KeyValue,
 };
 use serde::{Deserialize, Serialize};
@@ -153,24 +153,29 @@ pub enum MetricsExporterHandle {
 
 #[cfg(any(feature = "prometheus", feature = "otlp"))]
 struct CustomView {
-    uint_histogram_view: Box<dyn View>,
+    retries_histogram_view: Box<dyn View>,
+    vdaf_dimension_histogram_view: Box<dyn View>,
     bytes_histogram_view: Box<dyn View>,
     default_histogram_view: Box<dyn View>,
 }
 
 #[cfg(any(feature = "prometheus", feature = "otlp"))]
 impl CustomView {
+    /// These boundaries are for the number of times a database transaction was retried.
+    const RETRIES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
+        1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
+        16384.0,
+    ];
+
+    /// These boundaries are for the dimensions of VDAF measurements.
+    const VDAF_DIMENSION_HISTOGRAM_VALUES: &'static [f64] = &[
+        1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0,
+    ];
+
     /// These boundaries are intended to be used with measurements having the unit of "bytes".
     const BYTES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
         1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
         1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
-    ];
-
-    /// These boundaries are for measurements of unsigned integers, such as the number of retries
-    /// that an operation took.
-    const UINT_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
-        16384.0,
     ];
 
     /// These boundaries are intended to be able to capture the length of short-lived operations
@@ -180,23 +185,31 @@ impl CustomView {
     ];
 
     pub fn new() -> Result<Self, MetricsError> {
+        let wildcard_instrument = Instrument::new().name("*");
         Ok(Self {
-            uint_histogram_view: new_view(
-                Instrument::new().name("*"),
+            retries_histogram_view: new_view(
+                wildcard_instrument.clone(),
                 Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::UINT_HISTOGRAM_BOUNDARIES),
+                    boundaries: Vec::from(Self::RETRIES_HISTOGRAM_BOUNDARIES),
+                    record_min_max: true,
+                }),
+            )?,
+            vdaf_dimension_histogram_view: new_view(
+                wildcard_instrument.clone(),
+                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
+                    boundaries: Vec::from(Self::VDAF_DIMENSION_HISTOGRAM_VALUES),
                     record_min_max: true,
                 }),
             )?,
             bytes_histogram_view: new_view(
-                Instrument::new().name("*"),
+                wildcard_instrument.clone(),
                 Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
                     boundaries: Vec::from(Self::BYTES_HISTOGRAM_BOUNDARIES),
                     record_min_max: true,
                 }),
             )?,
             default_histogram_view: new_view(
-                Instrument::new().name("*"),
+                wildcard_instrument,
                 Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
                     boundaries: Vec::from(Self::DEFAULT_HISTOGRAM_BOUNDARIES),
                     record_min_max: true,
@@ -210,13 +223,16 @@ impl CustomView {
 impl View for CustomView {
     fn match_inst(&self, inst: &Instrument) -> Option<Stream> {
         match (inst.kind, inst.name.as_ref()) {
+            (Some(InstrumentKind::Histogram), TRANSACTION_RETRIES_METER_NAME) => {
+                self.retries_histogram_view.match_inst(inst)
+            }
+            (Some(InstrumentKind::Histogram), AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME) => {
+                self.vdaf_dimension_histogram_view.match_inst(inst)
+            }
             (
                 Some(InstrumentKind::Histogram),
                 "http.server.request.body.size" | "http.server.response.body.size",
             ) => self.bytes_histogram_view.match_inst(inst),
-            (Some(InstrumentKind::Histogram), TRANSACTION_RETRIES_METER_NAME) => {
-                self.uint_histogram_view.match_inst(inst)
-            }
             (Some(InstrumentKind::Histogram), _) => self.default_histogram_view.match_inst(inst),
             _ => None,
         }
@@ -389,6 +405,8 @@ fn resource() -> Resource {
     version_info_resource.merge(&default_resource)
 }
 
+// TODO(#3165): This counter is made obsolete by the histogram below. Remove it once it is no longer
+// being used.
 pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> {
     let report_aggregation_success_counter = meter
         .u64_counter("janus_report_aggregation_success_counter")
@@ -397,6 +415,16 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
         .init();
     report_aggregation_success_counter.add(0, &[]);
     report_aggregation_success_counter
+}
+
+pub const AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME: &str =
+    "janus_aggregated_report_share_vdaf_dimension";
+
+pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Histogram<u64> {
+    meter
+        .u64_histogram(AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME)
+        .with_description("Successfully aggregated report shares")
+        .init()
 }
 
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
