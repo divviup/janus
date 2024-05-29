@@ -424,7 +424,7 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 /// API handler for the "/tasks/.../reports" PUT endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<Status, ArcError> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
@@ -466,7 +466,7 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
 /// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(
         conn,
@@ -494,7 +494,7 @@ async fn aggregation_jobs_put<C: Clock>(
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
@@ -540,7 +540,7 @@ async fn aggregation_jobs_delete<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
 async fn collection_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<Status, Error> {
     validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
 
@@ -610,7 +610,7 @@ async fn collection_jobs_delete<C: Clock>(
 /// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
 async fn aggregate_shares<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<EncodedBody<AggregateShare>, Error> {
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
@@ -730,6 +730,25 @@ fn parse_taskprov_header<C: Clock>(
         }
     } else {
         Ok(None)
+    }
+}
+
+struct BodyBytes(Vec<u8>);
+
+#[async_trait]
+impl TryFromConn for BodyBytes {
+    type Error = Error;
+
+    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
+        conn.request_body()
+            .await
+            .read_bytes()
+            .await
+            .map(BodyBytes)
+            .map_err(|error| match error {
+                trillium::Error::Io(_) | trillium::Error::Closed => Error::ClientDisconnected,
+                _ => Error::BadRequest(error.to_string()),
+            })
     }
 }
 
