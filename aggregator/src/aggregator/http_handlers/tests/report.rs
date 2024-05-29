@@ -1,14 +1,17 @@
-use crate::aggregator::{
-    error::ReportRejectionReason,
-    http_handlers::{
-        aggregator_handler,
-        test_util::{setup_http_handler_test, take_problem_details},
+use crate::{
+    aggregator::{
+        error::ReportRejectionReason,
+        http_handlers::{
+            aggregator_handler,
+            test_util::{setup_http_handler_test, take_problem_details},
+        },
+        test_util::default_aggregator_config,
+        tests::{create_report, create_report_custom},
     },
-    test_util::default_aggregator_config,
-    tests::{create_report, create_report_custom},
+    metrics::test_util::InMemoryMetricsInfrastructure,
 };
 use janus_aggregator_core::{
-    datastore::test_util::EphemeralDatastoreBuilder,
+    datastore::test_util::{ephemeral_datastore, EphemeralDatastoreBuilder},
     task::{test_util::TaskBuilder, QueryType},
     test_util::noop_meter,
 };
@@ -25,13 +28,20 @@ use janus_messages::{
     Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare, Report,
     ReportMetadata, Role, TaskId,
 };
+use opentelemetry::Key;
+use opentelemetry_sdk::metrics::data::{Histogram, Sum};
 use prio::codec::Encode;
 use rand::random;
 use serde_json::json;
-use std::{sync::Arc, time::Duration as StdDuration};
-use tokio::time::sleep;
+use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    time::{sleep, timeout},
+};
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::put, TestConn};
+use trillium_tokio::Stopper;
 
 #[tokio::test]
 async fn upload_handler() {
@@ -495,4 +505,235 @@ async fn upload_handler_error_fanout() {
     exhaust_pool_task_handle.abort();
 
     server_handle.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_client_early_disconnect() {
+    install_test_trace_subscriber();
+
+    let in_memory_metrics = InMemoryMetricsInfrastructure::new();
+    let clock = MockClock::default();
+    let ephemeral_datastore = ephemeral_datastore().await;
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    let handler = aggregator_handler(
+        datastore.clone(),
+        clock.clone(),
+        TestRuntime::default(),
+        &in_memory_metrics.meter,
+        default_aggregator_config(),
+    )
+    .await
+    .unwrap();
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task_id = *task.id();
+    let leader_task = task.leader_view().unwrap();
+    datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+    let report_1 = create_report(&leader_task, clock.now());
+    let encoded_report_1 = report_1.get_encoded().unwrap();
+    let report_2 = create_report(&leader_task, clock.now());
+    let encoded_report_2 = report_2.get_encoded().unwrap();
+
+    let stopper = Stopper::new();
+    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let local_addr = server.local_addr().unwrap();
+    let handle = trillium_tokio::config()
+        .without_signals()
+        .with_stopper(stopper.clone())
+        .with_prebound_server(server)
+        .spawn(handler);
+
+    // Client sends report, using Content-Length, and waits for one byte of response.
+    let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
+    let request_line_and_headers = format!(
+        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        Content-Type: application/dap-report\r\n\
+        Content-Length: {}\r\n\r\n",
+        encoded_report_1.len(),
+    );
+    client_socket
+        .write_all(request_line_and_headers.as_bytes())
+        .await
+        .unwrap();
+    client_socket.write_all(&encoded_report_1).await.unwrap();
+    timeout(
+        StdDuration::from_secs(15),
+        client_socket.read_exact(&mut [0]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    client_socket.shutdown().await.unwrap();
+    drop(client_socket);
+
+    // Client disconnects before sending the entire request body, using Content-Length.
+    let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
+    let request_line_and_headers = format!(
+        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        Content-Type: application/dap-report\r\n\
+        Content-Length: 1000\r\n\r\n"
+    );
+    client_socket
+        .write_all(request_line_and_headers.as_bytes())
+        .await
+        .unwrap();
+    client_socket.write_all(&[0x41u8; 999]).await.unwrap();
+    client_socket.shutdown().await.unwrap();
+    drop(client_socket);
+
+    // Client sends report, using chunked transfer encoding, and waits for one byte of response.
+    let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
+    let request_line_and_headers = format!(
+        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        Content-Type: application/dap-report\r\n\
+        Transfer-Encoding: chunked\r\n\r\n"
+    );
+    client_socket
+        .write_all(request_line_and_headers.as_bytes())
+        .await
+        .unwrap();
+    let chunk_length_line = format!("{:x}\r\n", encoded_report_2.len());
+    client_socket
+        .write_all(chunk_length_line.as_bytes())
+        .await
+        .unwrap();
+    client_socket.write_all(&encoded_report_2).await.unwrap();
+    client_socket.write_all(b"\r\n0\r\n\r\n").await.unwrap();
+    timeout(
+        StdDuration::from_secs(15),
+        client_socket.read_exact(&mut [0]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    client_socket.shutdown().await.unwrap();
+    drop(client_socket);
+
+    // Client disconnects before signaling the end of the request body, using chunked transfer
+    // encoding.
+    let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
+    let request_line_and_headers = format!(
+        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        Content-Type: application/dap-report\r\n\
+        Transfer-Encoding: chunked\r\n\r\n"
+    );
+    client_socket
+        .write_all(request_line_and_headers.as_bytes())
+        .await
+        .unwrap();
+    client_socket.write_all(b"1000\r\n").await.unwrap();
+    client_socket.write_all(&[0x41; 1000]).await.unwrap();
+    client_socket.write_all(b"\r\n").await.unwrap();
+    client_socket.shutdown().await.unwrap();
+    drop(client_socket);
+
+    // Loop until metrics show that the server has handled all responses. (At this point, it's
+    // possible the server hasn't accepted the above connections, and polling via metrics is more
+    // efficient and robust than sleeping.)
+    let metrics = timeout(StdDuration::from_secs(15), {
+        let in_memory_metrics = in_memory_metrics.clone();
+        async move {
+            loop {
+                let metrics = in_memory_metrics.collect().await;
+                let Some(metric) = metrics.get("http.server.request.duration") else {
+                    continue;
+                };
+                let histogram_data = metric
+                    .data
+                    .as_any()
+                    .downcast_ref::<Histogram<f64>>()
+                    .unwrap();
+                let count = histogram_data
+                    .data_points
+                    .iter()
+                    .map(|data_point| data_point.count)
+                    .sum::<u64>();
+                if count == 4 {
+                    break metrics;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    stopper.stop();
+    handle.await;
+    in_memory_metrics.shutdown().await;
+
+    // Inspect the metrics to confirm they contain expected values. We should have seen two
+    // successful requests, and two invalid requests due to the client disconnecting in the middle
+    // of the request body.
+    let error_code_key = Key::new("error_code");
+    let error_type_key = Key::new("error.type");
+    let status_code_key = Key::new("http.response.status_code");
+
+    let counter_data = metrics["janus_aggregator_responses"]
+        .data
+        .as_any()
+        .downcast_ref::<Sum<u64>>()
+        .unwrap();
+    assert_eq!(counter_data.data_points.len(), 2);
+    assert!(counter_data
+        .data_points
+        .iter()
+        .all(|data_point| data_point.value == 2));
+    assert_eq!(
+        counter_data
+            .data_points
+            .iter()
+            .map(|data_point| {
+                data_point
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.0 == &error_code_key)
+                    .unwrap()
+                    .1
+                    .to_string()
+            })
+            .collect::<HashSet<String>>(),
+        HashSet::from(["client_disconnected".into(), "".into()])
+    );
+
+    let histogram_data = metrics["http.server.request.duration"]
+        .data
+        .as_any()
+        .downcast_ref::<Histogram<f64>>()
+        .unwrap();
+    assert_eq!(histogram_data.data_points.len(), 2);
+    assert!(histogram_data
+        .data_points
+        .iter()
+        .all(|data_point| data_point.count == 2));
+    assert_eq!(
+        histogram_data
+            .data_points
+            .iter()
+            .map(|data_point| {
+                data_point
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.0 == &error_type_key)
+                    .map(|(_key, value)| value.to_string())
+            })
+            .collect::<HashSet<Option<String>>>(),
+        HashSet::from([Some("client_disconnected".to_string()), None])
+    );
+    assert_eq!(
+        histogram_data
+            .data_points
+            .iter()
+            .map(|data_point| {
+                data_point
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.0 == &status_code_key)
+                    .unwrap()
+                    .1
+                    .to_string()
+            })
+            .collect::<HashSet<String>>(),
+        HashSet::from(["400".into(), "200".into()])
+    );
 }

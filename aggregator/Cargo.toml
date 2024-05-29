@@ -119,7 +119,7 @@ opentelemetry_sdk = { workspace = true, features = ["testing"] }
 prio = { workspace = true, features = ["multithreaded"] }
 rstest.workspace = true
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
+tokio = { workspace = true, features = ["net", "test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true
 trycmd = { workspace = true }
 wait-timeout = { workspace = true }
