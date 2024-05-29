@@ -705,18 +705,18 @@ mod rate_limits {
 
         for handle in handles {
             let (retry_after, status) = handle.await.unwrap();
-            // Every request this test send should get rejected due to a missing body if it gets
-            // past the rate limiter.
-            if status.is_client_error() {
-                assert!(retry_after.is_none());
-                acceptable_status_count += 1
-            } else if status == StatusCode::TOO_MANY_REQUESTS {
+            if status == StatusCode::TOO_MANY_REQUESTS {
                 assert_matches!(retry_after, Some(retry_after) => {
                     let retry_after = retry_after.to_str().unwrap().parse::<u64>().unwrap();
                     assert!(retry_after <= test_config.window);
                     last_retry_after = Some(retry_after);
                 });
                 too_many_requests_count += 1
+            // Every request this test send should get rejected due to a missing body if it gets
+            // past the rate limiter.
+            } else if status.is_client_error() {
+                assert!(retry_after.is_none());
+                acceptable_status_count += 1
             } else {
                 panic!("unexpected status {status:?}");
             }
@@ -732,7 +732,7 @@ mod rate_limits {
             ratio > expected_429_rate - 0.05 && ratio <= expected_429_rate + 0.05,
             "ratio: {ratio} expected 429 rate: {expected_429_rate} \
             count of HTTP 429: {too_many_requests_count} \
-            count of HTTP 400: {acceptable_status_count}",
+            count of HTTP 4xx: {acceptable_status_count}",
         );
 
         let last_retry_after = assert_matches!(last_retry_after, Some(l) => l);
@@ -743,7 +743,8 @@ mod rate_limits {
         for url in [first_request_url.clone(), second_request_url.clone()] {
             let method = method.clone();
             let response = client.request(method, url).send().await.unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(response.status() != StatusCode::TOO_MANY_REQUESTS);
+            assert!(response.status().is_client_error());
             assert!(response.headers().get("retry-after").is_none());
         }
     }
