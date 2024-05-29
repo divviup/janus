@@ -30,7 +30,7 @@ use std::{borrow::Cow, time::Duration as StdDuration};
 use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
-use trillium_api::{api, State};
+use trillium_api::{api, State, TryFromConn};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
@@ -153,7 +153,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
-        Error::ClientDisconnected => conn,
+        Error::ClientDisconnected => conn.with_status(Status::BadRequest),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
