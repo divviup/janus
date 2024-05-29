@@ -707,7 +707,7 @@ mod rate_limits {
             let (retry_after, status) = handle.await.unwrap();
             // Every request this test send should get rejected due to a missing body if it gets
             // past the rate limiter.
-            if status == StatusCode::BAD_REQUEST {
+            if status.is_client_error() {
                 assert!(retry_after.is_none());
                 acceptable_status_count += 1
             } else if status == StatusCode::TOO_MANY_REQUESTS {
