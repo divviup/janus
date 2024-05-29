@@ -560,6 +560,7 @@ mod tests {
             zpages_handler, CommonBinaryOptions,
         },
         config::DbConfig,
+        metrics::test_util::InMemoryMetricsInfrastructure,
     };
     use clap::CommandFactory;
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
@@ -567,15 +568,9 @@ mod tests {
         install_test_trace_subscriber,
         testcontainers::{Postgres, Volume},
     };
-    use opentelemetry::metrics::MeterProvider as _;
-    use opentelemetry_sdk::{
-        metrics::{data::Gauge, PeriodicReader, SdkMeterProvider},
-        runtime::Tokio,
-        testing::metrics::InMemoryMetricsExporter,
-    };
-    use std::{collections::HashMap, fs};
+    use opentelemetry_sdk::metrics::data::Gauge;
+    use std::fs;
     use testcontainers::{core::Mount, runners::AsyncRunner, RunnableImage};
-    use tokio::task::spawn_blocking;
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
@@ -729,57 +724,30 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let pool = ephemeral_datastore.pool();
 
-        let exporter = InMemoryMetricsExporter::default();
-        let reader = PeriodicReader::builder(exporter.clone(), Tokio).build();
-        let meter_provider = SdkMeterProvider::builder()
-            .with_reader(reader.clone())
-            .build();
-        let meter = meter_provider.meter("tests");
+        let in_memory_metrics = InMemoryMetricsInfrastructure::new();
 
-        register_database_pool_status_metrics(pool.clone(), &meter).unwrap();
+        register_database_pool_status_metrics(pool.clone(), &in_memory_metrics.meter).unwrap();
 
-        check_database_pool_gauges(&meter_provider, &exporter, 0, 0, 0).await;
+        check_database_pool_gauges(&in_memory_metrics, 0, 0, 0).await;
         let connection = pool.get().await.unwrap();
-        check_database_pool_gauges(&meter_provider, &exporter, 0, 1, 0).await;
+        check_database_pool_gauges(&in_memory_metrics, 0, 1, 0).await;
         drop(connection);
-        check_database_pool_gauges(&meter_provider, &exporter, 1, 1, 0).await;
+        check_database_pool_gauges(&in_memory_metrics, 1, 1, 0).await;
 
-        spawn_blocking(move || {
-            // TODO: PeriodicReader::shutdown() currently has a bug that results in this method
-            // always returning an error. Ignore this until the fix makes it into the next release.
-            // See https://github.com/open-telemetry/opentelemetry-rust/pull/1375.
-            let _ = meter_provider.shutdown();
-        })
-        .await
-        .unwrap();
+        in_memory_metrics.shutdown().await;
     }
 
     async fn check_database_pool_gauges(
-        meter_provider: &SdkMeterProvider,
-        exporter: &InMemoryMetricsExporter,
+        in_memory_metrics: &InMemoryMetricsInfrastructure,
         expected_available: u64,
         expected_total: u64,
         expected_waiting: u64,
     ) {
-        spawn_blocking({
-            let meter_provider = meter_provider.clone();
-            move || {
-                meter_provider.force_flush().unwrap();
-            }
-        })
-        .await
-        .unwrap();
-
-        let finished_metrics = exporter.get_finished_metrics().unwrap();
-        let metrics = finished_metrics
-            .into_iter()
-            .flat_map(|rm| rm.scope_metrics.into_iter())
-            .flat_map(|sm| sm.metrics.into_iter())
-            .map(|metric| (metric.name.into_owned(), metric.data))
-            .collect::<HashMap<_, _>>();
+        let metrics = in_memory_metrics.collect().await;
 
         assert_eq!(
             metrics["janus_database_pool_available_connections"]
+                .data
                 .as_any()
                 .downcast_ref::<Gauge<u64>>()
                 .unwrap()
@@ -789,6 +757,7 @@ mod tests {
         );
         assert_eq!(
             metrics["janus_database_pool_total_connections"]
+                .data
                 .as_any()
                 .downcast_ref::<Gauge<u64>>()
                 .unwrap()
@@ -798,6 +767,7 @@ mod tests {
         );
         assert_eq!(
             metrics["janus_database_pool_waiting_tasks"]
+                .data
                 .as_any()
                 .downcast_ref::<Gauge<u64>>()
                 .unwrap()
