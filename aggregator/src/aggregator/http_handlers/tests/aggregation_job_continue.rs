@@ -390,7 +390,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let hpke_key = helper_task.current_hpke_key();
     let measurement = IdpfInput::from_bools(&[true]);
     let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(vec![measurement.clone()]).unwrap();
+        Poplar1AggregationParam::try_from_prefixes(Vec::from([measurement.clone()])).unwrap();
 
     // report_share_0 is a "happy path" report.
     let report_time_0 = first_batch_interval_clock
@@ -661,12 +661,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
     let first_batch_got_batch_aggregations = datastore
         .run_unnamed_tx(|tx| {
-            let (task, vdaf, report_metadata_0, aggregation_param) = (
-                helper_task.clone(),
-                vdaf.clone(),
-                report_metadata_0.clone(),
-                aggregation_param.clone(),
-            );
+            let task = helper_task.clone();
+            let vdaf = vdaf.clone();
+            let aggregation_param = aggregation_param.clone();
+
             Box::pin(async move {
                 Ok(merge_batch_aggregations_by_batch(
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
@@ -678,14 +676,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                         task.id(),
                         task.time_precision(),
                         &vdaf,
-                        &Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision(),
-                        )
-                        .unwrap(),
+                        &first_batch_identifier,
                         &aggregation_param,
                     )
                     .await
@@ -728,33 +719,28 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
     let second_batch_got_batch_aggregations = datastore
         .run_unnamed_tx(|tx| {
-            let (task, vdaf, report_metadata_2, aggregation_param) = (
-                helper_task.clone(),
-                vdaf.clone(),
-                report_metadata_2.clone(),
-                aggregation_param.clone(),
-            );
+            let task = helper_task.clone();
+            let vdaf = vdaf.clone();
+            let aggregation_param = aggregation_param.clone();
+
             Box::pin(async move {
-                TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                    VERIFY_KEY_LENGTH,
-                    Poplar1<XofTurboShake128, 16>,
-                    _,
-                >(
-                    tx,
-                    task.id(),
-                    task.time_precision(),
-                    &vdaf,
-                    &Interval::new(
-                        report_metadata_2
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        Duration::from_seconds(task.time_precision().as_seconds()),
+                let mut got_batch_aggregations =
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                        VERIFY_KEY_LENGTH,
+                        Poplar1<XofTurboShake128, 16>,
+                        _,
+                    >(
+                        tx,
+                        task.id(),
+                        task.time_precision(),
+                        &vdaf,
+                        &second_batch_identifier,
+                        &aggregation_param,
                     )
-                    .unwrap(),
-                    &aggregation_param,
-                )
-                .await
+                    .await
+                    .unwrap();
+                got_batch_aggregations.sort_unstable_by_key(|ba| ba.ord());
+                Ok(got_batch_aggregations)
             })
         })
         .await
@@ -963,12 +949,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // be the same)
     let first_batch_got_batch_aggregations = datastore
         .run_unnamed_tx(|tx| {
-            let (task, vdaf, report_metadata_0, aggregation_param) = (
-                helper_task.clone(),
-                vdaf.clone(),
-                report_metadata_0.clone(),
-                aggregation_param.clone(),
-            );
+            let task = helper_task.clone();
+            let vdaf = vdaf.clone();
+            let aggregation_param = aggregation_param.clone();
+
             Box::pin(async move {
                 Ok(merge_batch_aggregations_by_batch(
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
@@ -980,14 +964,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                         task.id(),
                         task.time_precision(),
                         &vdaf,
-                        &Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            Duration::from_seconds(task.time_precision().as_seconds()),
-                        )
-                        .unwrap(),
+                        &first_batch_identifier,
                         &aggregation_param,
                     )
                     .await
@@ -1019,14 +996,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         first_batch_got_batch_aggregations,
         Vec::from([BatchAggregation::new(
             *task.id(),
-            Interval::new(
-                report_metadata_0
-                    .time()
-                    .to_batch_interval_start(task.time_precision())
-                    .unwrap(),
-                *task.time_precision()
-            )
-            .unwrap(),
+            first_batch_identifier,
             aggregation_param.clone(),
             0,
             first_batch_interval,
@@ -1042,33 +1012,28 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
     let second_batch_got_batch_aggregations = datastore
         .run_unnamed_tx(|tx| {
-            let (task, vdaf, report_metadata_2, aggregation_param) = (
-                helper_task.clone(),
-                vdaf.clone(),
-                report_metadata_2.clone(),
-                aggregation_param.clone(),
-            );
+            let task = helper_task.clone();
+            let vdaf = vdaf.clone();
+            let aggregation_param = aggregation_param.clone();
+
             Box::pin(async move {
-                TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                    VERIFY_KEY_LENGTH,
-                    Poplar1<XofTurboShake128, 16>,
-                    _,
-                >(
-                    tx,
-                    task.id(),
-                    task.time_precision(),
-                    &vdaf,
-                    &Interval::new(
-                        report_metadata_2
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        Duration::from_seconds(task.time_precision().as_seconds()),
+                let mut got_batch_aggregations =
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                        VERIFY_KEY_LENGTH,
+                        Poplar1<XofTurboShake128, 16>,
+                        _,
+                    >(
+                        tx,
+                        task.id(),
+                        task.time_precision(),
+                        &vdaf,
+                        &second_batch_identifier,
+                        &aggregation_param,
                     )
-                    .unwrap(),
-                    &aggregation_param,
-                )
-                .await
+                    .await
+                    .unwrap();
+                got_batch_aggregations.sort_unstable_by_key(|ba| ba.ord());
+                Ok(got_batch_aggregations)
             })
         })
         .await
