@@ -1,62 +1,26 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use janus_aggregator_core::datastore::Datastore;
-use janus_core::{hpke::HpkeCiphersuite, time::RealClock};
-use opentelemetry::metrics::Meter;
+use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
-use tokio::time::interval;
-use tracing::error;
-use trillium_tokio::Stopper;
 
 use crate::{
-    aggregator::{garbage_collector::GarbageCollector, key_rotator::HpkeKeyRotatorConfig},
+    aggregator::key_rotator::{
+        deserialize_hpke_key_rotator_configs, HpkeKeyRotatorConfig, KeyRotator,
+    },
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
 
-use super::aggregator::GarbageCollectorConfig;
-
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     let BinaryContext {
-        config,
-        datastore,
-        meter,
-        stopper,
-        ..
+        config, datastore, ..
     } = ctx;
 
-    let datastore = Arc::new(datastore);
-
-    run_key_rotator(datastore, config.key_rotator, meter, stopper).await;
-
-    Ok(())
-}
-
-pub(super) async fn run_key_rotator(
-    datastore: Arc<Datastore<RealClock>>,
-    config: KeyRotatorConfig,
-    meter: Meter,
-    stopper: Stopper,
-) {
-    // oneshot?
-
-    // let gc = GarbageCollector::new(
-    //     datastore,
-    //     &meter,
-    //     gc_config.report_limit,
-    //     gc_config.aggregation_limit,
-    //     gc_config.collection_limit,
-    //     gc_config.tasks_per_tx,
-    //     gc_config.concurrent_tx_limit,
-    // );
-    // let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
-    // while stopper.stop_future(interval.tick()).await.is_some() {
-    //     if let Err(err) = gc.run().await {
-    //         error!(?err, "GC error");
-    //     }
-    // }
+    KeyRotator::new(Arc::new(datastore), config.key_rotator.hpke)
+        .run()
+        .await
 }
 
 #[derive(Debug, Default, Parser)]
@@ -82,18 +46,16 @@ impl BinaryOptions for Options {
 /// # Examples
 ///
 /// ```
-/// # use janus_aggregator::binaries::garbage_collector::Config;
+/// # use janus_aggregator::binaries::key_rotator::Config;
 /// let yaml_config = r#"
 /// ---
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
-/// garbage_collection:
-///   gc_frequency_s: 60
-///   report_limit: 5000
-///   aggregation_limit: 500
-///   collection_limit: 50
+/// key_rotator:
+///   hpke:
+///     - {}
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -102,7 +64,6 @@ impl BinaryOptions for Options {
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,
-
     pub key_rotator: KeyRotatorConfig,
 }
 
@@ -118,15 +79,8 @@ impl BinaryConfig for Config {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyRotatorConfig {
-    /// How frequently key rotator is run, in seconds.
-    pub frequency_secs: Option<u64>,
-
-    pub hpke: HpkeKeyRotatorConfig,
-    // hpke options
-    // how long until pending->active
-    // how long until active->expired
-    // how long until expired->deleted
-    // ciphersuite to use (array)
+    #[serde(default, deserialize_with = "deserialize_hpke_key_rotator_configs")]
+    pub hpke: Vec<HpkeKeyRotatorConfig>,
 }
 
 #[cfg(test)]
@@ -134,12 +88,17 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
+    use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
+    use rand::random;
 
-    use crate::config::{
-        default_max_transaction_retries,
-        test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig,
+    use crate::{
+        aggregator::key_rotator::HpkeKeyRotatorConfig,
+        config::{
+            default_max_transaction_retries,
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
+            CommonConfig,
+        },
     };
 
     use super::{Config, Options};
@@ -149,29 +108,54 @@ mod tests {
         Options::command().debug_assert();
     }
 
-    // #[test]
-    // fn roundtrip_config() {
-    //     roundtrip_encoding(Config {
-    //         common_config: CommonConfig {
-    //             database: generate_db_config(),
-    //             logging_config: generate_trace_config(),
-    //             metrics_config: generate_metrics_config(),
-    //             health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
-    //             max_transaction_retries: default_max_transaction_retries(),
-    //         },
-    //         key_rotator: super::KeyRotatorConfig {},
-    //     });
-    // }
+    #[test]
+    fn roundtrip_config() {
+        roundtrip_encoding(Config {
+            common_config: CommonConfig {
+                database: generate_db_config(),
+                logging_config: generate_trace_config(),
+                metrics_config: generate_metrics_config(),
+                health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+                max_transaction_retries: default_max_transaction_retries(),
+            },
+            key_rotator: super::KeyRotatorConfig {
+                hpke: Vec::from([
+                    HpkeKeyRotatorConfig {
+                        pending_duration: Duration::from_seconds(random()),
+                        active_duration: Duration::from_seconds(random()),
+                        expired_duration: Duration::from_seconds(random()),
+                        ciphersuite: HpkeCiphersuite::new(
+                            HpkeKemId::P256HkdfSha256,
+                            HpkeKdfId::HkdfSha256,
+                            HpkeAeadId::Aes128Gcm,
+                        ),
+                        retire: false,
+                    },
+                    HpkeKeyRotatorConfig {
+                        pending_duration: Duration::from_seconds(random()),
+                        active_duration: Duration::from_seconds(random()),
+                        expired_duration: Duration::from_seconds(random()),
+                        ciphersuite: HpkeCiphersuite::new(
+                            HpkeKemId::P521HkdfSha512,
+                            HpkeKdfId::HkdfSha512,
+                            HpkeAeadId::Aes256Gcm,
+                        ),
+                        retire: true,
+                    },
+                ]),
+            },
+        });
+    }
 
-    // #[test]
-    // fn documentation_config_examples() {
-    //     serde_yaml::from_str::<Config>(include_str!(
-    //         "../../../docs/samples/basic_config/key_rotator.yaml"
-    //     ))
-    //     .unwrap();
-    //     serde_yaml::from_str::<Config>(include_str!(
-    //         "../../../docs/samples/advanced_config/key_rotator.yaml"
-    //     ))
-    //     .unwrap();
-    // }
+    #[test]
+    fn documentation_config_examples() {
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/basic_config/key_rotator.yaml"
+        ))
+        .unwrap();
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/advanced_config/key_rotator.yaml"
+        ))
+        .unwrap();
+    }
 }

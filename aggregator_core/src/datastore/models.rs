@@ -15,7 +15,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
+    HpkeCiphertext, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
@@ -303,7 +303,6 @@ where
 #[cfg(feature = "test-util")]
 impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
     pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
-        use janus_messages::HpkeConfigId;
         use rand::random;
 
         Self::new(

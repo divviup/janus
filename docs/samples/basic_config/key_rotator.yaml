@@ -1,0 +1,9 @@
+database:
+  # Database URL. (required)
+  url: "postgres://postgres:postgres@localhost:5432/postgres"
+
+key_rotator:
+  # Rotation policy for global HPKE keys. At least one is required.
+  hpke:
+    # A default key that rotates every 4 weeks.
+    - {}

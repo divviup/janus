@@ -263,7 +263,7 @@ impl HpkeKeypair {
 }
 
 /// The algorithms used for each HPKE primitive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct HpkeCiphersuite {
     kem_id: HpkeKemId,
     kdf_id: HpkeKdfId,

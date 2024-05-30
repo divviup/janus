@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 #[allow(unused_imports)]
-use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
+use crate::aggregator::Config as AggregatorConfig;
+use crate::cache::GlobalHpkeKeypairCache; // used in doccomment.
 use anyhow::{anyhow, Error};
 use janus_aggregator_core::datastore::{
     models::{GlobalHpkeKeypair, HpkeKeyState},
@@ -11,8 +12,8 @@ use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeCiphersuite},
     time::{Clock, TimeExt},
 };
-use janus_messages::{Duration, HpkeConfigId, Time};
-use serde::{Deserialize, Serialize};
+use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use tracing::{debug, info};
 
 /// Handles key rotation for Janus, according to policies defined in the configuration.
@@ -31,6 +32,7 @@ use tracing::{debug, info};
 ///   - Promote pending keypairs too early, unless all Janus replicas have been rebooted since
 ///     their insertion.
 ///   - Directly insert active keypairs.
+///
 /// Keypairs that are manually inserted are adopted by the key rotator and will have their lifecycle
 /// managed. The number of keypairs per ciphersuite will trend towards 1, i.e. 2 keys with the same
 /// ciphersuite will eventually be replaced with 1 key.
@@ -46,17 +48,21 @@ pub struct HpkeKeyRotatorConfig {
     /// How long key remains in [`HpkeKeyState::Pending`] before being moved to
     /// [`HpkeKeyState::Active`]. This should be greater than
     /// [`AggregatorConfig::global_hpke_configs_refresh_interval`].
+    #[serde(rename = "pending_duration_secs", default = "default_pending_duration")]
     pub pending_duration: Duration,
 
     /// The time-to-live of the key. Once this is exceeded, the key is moved to
     /// [`HpkeKeyState::Expired`]. It is at operator discretion as to how long this should be.
+    #[serde(rename = "active_duration_secs", default = "default_active_duration")]
     pub active_duration: Duration,
 
     /// How long the key remains in [`HpkeKeyState::Expired`] before being deleted. This should
     /// be greater than the clients' HPKE key cache maximum age.
+    #[serde(rename = "expired_duration_secs", default = "default_expired_duration")]
     pub expired_duration: Duration,
 
     /// The ciphersuite of the key.
+    #[serde(default = "default_hpke_ciphersuite")]
     pub ciphersuite: HpkeCiphersuite,
 
     /// Safely phase out this ciphersuite. This will immediately delete any pending keys and
@@ -68,7 +74,32 @@ pub struct HpkeKeyRotatorConfig {
     ///
     /// There must be at least one non-retired config present with its key in the active state. If
     /// this is the only config and it is marked retired, the key rotator will refuse to run.
+    #[serde(default)]
     pub retire: bool,
+}
+
+/// Returns [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`] times 2, for safety margin.
+fn default_pending_duration() -> Duration {
+    Duration::from_seconds(GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL.as_secs() * 2)
+}
+
+/// 4 weeks. This is long enough not to be unnecessary churn, but short enough that misbehaving
+/// clients reveal themselves somewhat imminently.
+fn default_active_duration() -> Duration {
+    Duration::from_seconds(60 * 60 * 24 * 7 * 4)
+}
+
+/// 1 week.
+fn default_expired_duration() -> Duration {
+    Duration::from_seconds(60 * 60 * 24 * 7)
+}
+
+fn default_hpke_ciphersuite() -> HpkeCiphersuite {
+    HpkeCiphersuite::new(
+        HpkeKemId::X25519HkdfSha256,
+        HpkeKdfId::HkdfSha256,
+        HpkeAeadId::Aes128Gcm,
+    )
 }
 
 impl<C: Clock> KeyRotator<C> {
@@ -85,7 +116,7 @@ impl<C: Clock> KeyRotator<C> {
     /// This is not permissive of [`HpkeConfigId`] space exhaustion, i.e. if there are more rows
     /// than what fit into a `u8`, this process will error. To avoid this, keep the list of managed
     /// ciphersuites small, and the expiration duration less than the key age.
-    #[tracing::instrument]
+    #[tracing::instrument(err)]
     pub async fn run(&self) -> Result<(), Error> {
         self.datastore
             .run_tx("global_hpke_key_rotator", |tx| {
@@ -96,7 +127,7 @@ impl<C: Clock> KeyRotator<C> {
             .map_err(|err| err.into())
     }
 
-    #[tracing::instrument(skip(tx))]
+    #[tracing::instrument(err, skip(tx))]
     async fn run_hpke(
         tx: &Transaction<'_, C>,
         configs: Vec<HpkeKeyRotatorConfig>,
@@ -135,7 +166,7 @@ impl<C: Clock> KeyRotator<C> {
         }
     }
 
-    #[tracing::instrument(skip(tx, current_keypairs, available_ids))]
+    #[tracing::instrument(err, skip(tx, current_keypairs, available_ids))]
     async fn run_hpke_for_config(
         tx: &Transaction<'_, C>,
         current_keypairs: &[GlobalHpkeKeypair],
@@ -308,6 +339,29 @@ struct PartitionedKeypairs<'a> {
     pending: Vec<&'a GlobalHpkeKeypair>,
     active: Vec<&'a GlobalHpkeKeypair>,
     expired: Vec<&'a GlobalHpkeKeypair>,
+}
+
+/// Enforces that there's at least one [`HpkeKeyRotatorConfig`].
+pub fn deserialize_hpke_key_rotator_configs<'de, D>(
+    deserializer: D,
+) -> Result<Vec<HpkeKeyRotatorConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let configs: Vec<HpkeKeyRotatorConfig> = Deserialize::deserialize(deserializer)?;
+    let mut unique = HashSet::new();
+    if configs.is_empty() {
+        Err(de::Error::custom(
+            "must provide at least one hpke key rotator config",
+        ))
+    } else if !configs
+        .iter()
+        .all(|config| unique.insert(config.ciphersuite))
+    {
+        Err(de::Error::custom("each ciphersuite must be unique"))
+    } else {
+        Ok(configs)
+    }
 }
 
 #[cfg(test)]

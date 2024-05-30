@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use janus_aggregator::{
     binaries::{
         aggregation_job_creator, aggregation_job_driver, aggregator, collection_job_driver,
-        garbage_collector, janus_cli,
+        garbage_collector, janus_cli, key_rotator,
     },
     binary_utils::janus_main,
 };
@@ -23,6 +23,8 @@ enum Options {
     CollectionJobDriver(collection_job_driver::Options),
     #[clap(name = "janus_cli")]
     JanusCli(janus_cli::CommandLineOptions),
+    #[clap(name = "key_rotator")]
+    KeyRotator(key_rotator::Options),
     #[clap(name = "janus_aggregator", subcommand)]
     Default(Nested),
 }
@@ -46,6 +48,8 @@ enum Nested {
     CollectionJobDriver(collection_job_driver::Options),
     #[clap(name = "janus_cli")]
     JanusCli(janus_cli::CommandLineOptions),
+    #[clap(name = "key_rotator")]
+    KeyRotator(key_rotator::Options),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -75,6 +79,9 @@ fn main() -> anyhow::Result<()> {
         }
         Options::JanusCli(options) | Options::Default(Nested::JanusCli(options)) => {
             janus_cli::run(options)
+        }
+        Options::KeyRotator(options) | Options::Default(Nested::KeyRotator(options)) => {
+            janus_main(options, clock, false, key_rotator::main_callback)
         }
     }
 }
