@@ -28,9 +28,9 @@ use tracing::{debug, info};
 /// It is strongly discouraged to:
 ///   - Delete active or expired keypairs too early, as that would leave Janus unable to decrypt
 ///     report shares using the keypair.
-///   - Promote pending keypairs too early or directly insert active keypairs, unless all Janus
-///     replicas are rebooted after the change.
-///
+///   - Promote pending keypairs too early, unless all Janus replicas have been rebooted since
+///     their insertion.
+///   - Directly insert active keypairs.
 /// Keypairs that are manually inserted are adopted by the key rotator and will have their lifecycle
 /// managed. The number of keypairs per ciphersuite will trend towards 1, i.e. 2 keys with the same
 /// ciphersuite will eventually be replaced with 1 key.
@@ -207,7 +207,7 @@ impl<C: Clock> KeyRotator<C> {
 
             if to_be_expired_keypairs != active_keypairs {
                 for keypair in to_be_expired_keypairs {
-                    info!(id = ?keypair.id(), "allowing already active keypair to replace this one");
+                    info!(id = ?keypair.id(), "multiple active keys are present, marking key expired");
                     tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
                         .await?;
                 }
@@ -284,8 +284,8 @@ impl<C: Clock> KeyRotator<C> {
             .collect();
 
         // Try to cycle through the entire u8 space before going back to zero. This allows us a
-        // bigger window to quicky reject faulty old clients with an outdated HPKE config error,
-        // rather than attempting to decrypt them with the wrong key.
+        // bigger window to quicky reject reports from faulty old clients with an outdated HPKE
+        // config error, rather than attempting to decrypt them with the wrong key.
         let newest_id = current_keypairs
             .iter()
             .max_by(|a, b| a.created_at().cmp(b.created_at()))
