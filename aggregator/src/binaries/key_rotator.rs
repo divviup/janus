@@ -148,6 +148,40 @@ mod tests {
     }
 
     #[test]
+    fn reject_empty_config() {
+        assert!(serde_yaml::from_str::<Config>(
+            r#"---
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+    key_rotator:
+        hpke: []
+    "#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn reject_duplicate_ciphersuites() {
+        assert!(serde_yaml::from_str::<Config>(
+            r#"---
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+    key_rotator:
+        hpke:
+            - ciphersuite:
+                kem_id: P521HkdfSha512
+                kdf_id: HkdfSha512
+                aead_id: Aes256Gcm
+            - ciphersuite:
+                kem_id: P521HkdfSha512
+                kdf_id: HkdfSha512
+                aead_id: Aes256Gcm
+    "#,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn documentation_config_examples() {
         serde_yaml::from_str::<Config>(include_str!(
             "../../../docs/samples/basic_config/key_rotator.yaml"

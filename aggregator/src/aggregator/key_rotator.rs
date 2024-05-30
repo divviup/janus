@@ -242,21 +242,19 @@ impl<C: Clock> KeyRotator<C> {
                     tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
                         .await?;
                 }
+            } else if pending_keypairs.is_empty() {
+                let next = next_key()?;
+                info!(id = ?next.config().id(), "inserting new pending key to replace expired one(s)");
+                tx.put_global_hpke_keypair(&next).await?;
             } else {
-                if pending_keypairs.is_empty() {
-                    let next = next_key()?;
-                    info!(id = ?next.config().id(), "inserting new pending key to replace expired one(s)");
-                    tx.put_global_hpke_keypair(&next).await?;
-                } else {
-                    let pending_key_is_ready = pending_keypairs.iter().any(|keypair| {
-                        Self::duration_since(clock, keypair.updated_at()) > config.pending_duration
-                    });
-                    if pending_key_is_ready {
-                        for keypair in to_be_expired_keypairs {
-                            info!(id = ?keypair.id(), "a pending key is ready, marking key expired");
-                            tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
-                                .await?;
-                        }
+                let pending_key_is_ready = pending_keypairs.iter().any(|keypair| {
+                    Self::duration_since(clock, keypair.updated_at()) > config.pending_duration
+                });
+                if pending_key_is_ready {
+                    for keypair in to_be_expired_keypairs {
+                        info!(id = ?keypair.id(), "a pending key is ready, marking key expired");
+                        tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
+                            .await?;
                     }
                 }
             }
@@ -416,14 +414,14 @@ mod tests {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_0.clone(),
+                    ciphersuite: ciphersuite_0,
                     retire: false,
                 },
                 HpkeKeyRotatorConfig {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_1.clone(),
+                    ciphersuite: ciphersuite_1,
                     retire: false,
                 },
             ]),
@@ -432,10 +430,11 @@ mod tests {
         // Checks that there's a keypair with the given state for each ciphersuite.
         let ciphersuites = Vec::from([ciphersuite_0, ciphersuite_1]);
         let assert_state = |keypairs: &[GlobalHpkeKeypair], state: HpkeKeyState| {
-            assert!(ciphersuites.iter().all(|ciphersuite| keypairs
-                .iter()
-                .find(|keypair| keypair.state() == &state && &keypair.ciphersuite() == ciphersuite)
-                .is_some()));
+            assert!(ciphersuites.iter().all(|ciphersuite| {
+                keypairs.iter().any(|keypair| {
+                    keypair.state() == &state && &keypair.ciphersuite() == ciphersuite
+                })
+            }));
         };
 
         // First iteration: We should create active keys for each ciphersuite.
@@ -517,7 +516,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: false,
             }]),
         );
@@ -541,14 +540,14 @@ mod tests {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_0.clone(),
+                    ciphersuite: ciphersuite_0,
                     retire: false,
                 },
                 HpkeKeyRotatorConfig {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_1.clone(),
+                    ciphersuite: ciphersuite_1,
                     retire: false,
                 },
             ]),
@@ -612,7 +611,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: false,
             }]),
         );
@@ -628,7 +627,6 @@ mod tests {
         // Operator inserts a new key in the pending state.
         let id = HpkeConfigId::from(255);
         ds.run_unnamed_tx(|tx| {
-            let ciphersuite_0 = ciphersuite_0.clone();
             Box::pin(async move {
                 tx.put_global_hpke_keypair(
                     &generate_hpke_config_and_private_key(
@@ -650,8 +648,7 @@ mod tests {
         assert_eq!(keypairs.len(), 3);
         assert!(keypairs
             .iter()
-            .find(|keypair| keypair.state() == &HpkeKeyState::Active)
-            .is_some());
+            .any(|keypair| keypair.state() == &HpkeKeyState::Active));
         let pending_keypairs: Vec<_> = keypairs
             .iter()
             .filter(|keypair| keypair.state() == &HpkeKeyState::Pending)
@@ -667,10 +664,7 @@ mod tests {
             .filter(|keypair| keypair.state() == &HpkeKeyState::Active)
             .collect();
         assert_eq!(active_keypairs.len(), 2);
-        assert!(active_keypairs
-            .iter()
-            .find(|keypair| *keypair.id() == id)
-            .is_some());
+        assert!(active_keypairs.iter().any(|keypair| *keypair.id() == id));
 
         // Step into the future, we should eventually replace both active keypairs with only one.
         for _ in 0..30 {
@@ -708,7 +702,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: false,
             }]),
         );
@@ -722,7 +716,6 @@ mod tests {
         // Operator inserts a new key in the active state.
         let id = HpkeConfigId::from(255);
         ds.run_unnamed_tx(|tx| {
-            let ciphersuite_0 = ciphersuite_0.clone();
             Box::pin(async move {
                 tx.put_global_hpke_keypair(
                     &generate_hpke_config_and_private_key(
@@ -757,7 +750,7 @@ mod tests {
             key_rotator.run().await.unwrap();
             clock.advance(&Duration::from_seconds(30));
         }
-        let keypairs = dbg!(get_global_hpke_keypairs(&ds).await);
+        let keypairs = get_global_hpke_keypairs(&ds).await;
         let active_keypairs: Vec<_> = keypairs
             .iter()
             .filter(|keypair| keypair.state() == &HpkeKeyState::Active)
@@ -787,7 +780,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: true,
             }]),
         );
@@ -800,7 +793,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: false,
             }]),
         );
@@ -816,7 +809,7 @@ mod tests {
                 pending_duration,
                 active_duration,
                 expired_duration,
-                ciphersuite: ciphersuite_0.clone(),
+                ciphersuite: ciphersuite_0,
                 retire: true,
             }]),
         );
@@ -852,14 +845,14 @@ mod tests {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_0.clone(),
+                    ciphersuite: ciphersuite_0,
                     retire: false,
                 },
                 HpkeKeyRotatorConfig {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_1.clone(),
+                    ciphersuite: ciphersuite_1,
                     retire: false,
                 },
             ]),
@@ -881,14 +874,14 @@ mod tests {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_0.clone(),
+                    ciphersuite: ciphersuite_0,
                     retire: true,
                 },
                 HpkeKeyRotatorConfig {
                     pending_duration,
                     active_duration,
                     expired_duration,
-                    ciphersuite: ciphersuite_1.clone(),
+                    ciphersuite: ciphersuite_1,
                     retire: false,
                 },
             ]),

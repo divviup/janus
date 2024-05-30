@@ -2,26 +2,45 @@ database:
   # Database URL. (required)
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
+  # Timeout for new database connections. Defaults to 60 seconds.
+  connection_pool_timeout_secs: 60
+
+  # Maximum number of database connections. Defaults to CPUs * 4.
+  connection_pool_max_size: 8
+
+  # Flag to check if the database schema version is compatible upon startup.
+  # (optional, defaults to true)
+  check_schema_version: true
+
+  # Path to a PEM file with root certificates to trust for TLS database
+  # connections. If present, TLS may be used depending on the "sslmode"
+  # connection string parameter, and the server's support for TLS. If absent,
+  # TLS will never be used. (optional)
+  tls_trust_store_path: /path/to/file.pem
+
 key_rotator:
   # Rotation policy for global HPKE keys. At least one is required.
   hpke:
-    - # How long the key remains pending before it's promoted to active. Should be greater than
-      # the global HPKE keypair cache refresh rate. Default to 1 hour.
+    - # How long the key remains pending before it's promoted to active. Should
+      # be greater than the global HPKE keypair cache refresh rate. Default to
+      # 1 hour.
       pending_duration_secs: 3600
 
       # The TTL of the key. Defaults to 4 weeks.
       active_duration_secs: 2419200
 
-      # How long the key can be expired before being deleted. Should be greater than how long
-      # clients cache HPKE keys. Defaults to 1 week.
+      # How long the key can be expired before being deleted. Should be greater
+      # than how long clients cache HPKE keys. Defaults to 1 week.
       expired_duration_secs: 604800
 
-      # The algorithms used by the key. Must be unique across different entries in the `hpke` array.
+      # The algorithms used by the key. Must be unique across different entries
+      # in the `hpke` array.
       ciphersuite:
         kem_id: P521HkdfSha512
         kdf_id: HkdfSha512
         aead_id: Aes256Gcm
 
-      # Whether to phase out this key. Let the key rotator run for at least expired_duration_secs
-      # with `retire: true` before removing the key configuration.
+      # Whether to phase out this key. Let the key rotator run for at least
+      # expired_duration_secs with `retire: true` before removing the key
+      # configuration.
       retire: false

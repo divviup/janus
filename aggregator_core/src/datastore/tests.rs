@@ -7200,8 +7200,12 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(tx.get_global_hpke_keypairs().await.unwrap(), Vec::new());
                 tx.put_global_hpke_keypair(&keypair).await.unwrap();
 
-                let expected_keypair =
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Pending, clock.now());
+                let expected_keypair = GlobalHpkeKeypair::new(
+                    keypair.clone(),
+                    HpkeKeyState::Pending,
+                    clock.now(),
+                    clock.now(),
+                );
                 assert_eq!(
                     tx.get_global_hpke_keypairs().await.unwrap(),
                     Vec::from([expected_keypair.clone()])
@@ -7224,7 +7228,12 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                         .await
                         .unwrap()
                         .unwrap(),
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now(),)
+                    GlobalHpkeKeypair::new(
+                        keypair.clone(),
+                        HpkeKeyState::Active,
+                        clock.now(),
+                        clock.now(),
+                    )
                 );
 
                 clock.advance(&Duration::from_seconds(100));
@@ -7236,7 +7245,12 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                         .await
                         .unwrap()
                         .unwrap(),
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Expired, clock.now(),)
+                    GlobalHpkeKeypair::new(
+                        keypair.clone(),
+                        HpkeKeyState::Expired,
+                        clock.now(),
+                        clock.now(),
+                    )
                 );
 
                 Ok(())
