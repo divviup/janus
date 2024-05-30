@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 #[allow(unused_imports)]
-use crate::aggregator::Config as AggregatorConfig;
-use crate::cache::GlobalHpkeKeypairCache; // used in doccomment.
+use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
+use crate::cache::GlobalHpkeKeypairCache;
 use anyhow::{anyhow, Error};
 use janus_aggregator_core::datastore::{
     models::{GlobalHpkeKeypair, HpkeKeyState},
@@ -65,12 +65,13 @@ pub struct HpkeKeyRotatorConfig {
     #[serde(default = "default_hpke_ciphersuite")]
     pub ciphersuite: HpkeCiphersuite,
 
-    /// Safely phase out this ciphersuite. This will immediately delete any pending keys and
-    /// expire any active keys. Expired keys are retained for at least [`Self::expired_duration`]
-    /// before being deleted.
+    /// Safely phase out this config. If set, on next run the key rotator will immediately delete
+    /// any pending keys and expire any active keys with the given [`Self::ciphersuite`]. Expired
+    /// keys are retained for at least [`Self::expired_duration`] before being deleted.
     ///
-    /// After [`Self::expired_duration`], this config can be removed entirely. It is not recommended
-    /// to remove key configurations without running the key rotator with `retire` first.
+    /// After the key rotator has run after [`Self::expired_duration`], this config can be removed
+    /// entirely. It is not recommended to remove key configs unless the key rotator has been run
+    /// after [`Self::expired_duration`] with `retire` set.
     ///
     /// There must be at least one non-retired config present with its key in the active state. If
     /// this is the only config and it is marked retired, the key rotator will refuse to run.
