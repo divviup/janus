@@ -176,9 +176,9 @@ impl<C: Clock> KeyRotator<C> {
         let clock = tx.clock();
 
         let PartitionedKeypairs {
-            pending: pending_keypairs,
-            active: active_keypairs,
-            expired: expired_keypairs,
+            pending_keypairs,
+            active_keypairs,
+            expired_keypairs,
         } = Self::partition_keypairs(current_keypairs, &config.ciphersuite);
 
         let mut next_key = || {
@@ -194,26 +194,26 @@ impl<C: Clock> KeyRotator<C> {
         };
 
         if config.retire {
-            for keypair in pending_keypairs {
+            for pending_keypair in pending_keypairs {
                 // Janus replicas should have never advertised this keypair, so it should be safe
                 // to delete outright.
-                info!(id = ?keypair.id(), "deleting pending keypair for retired ciphersuite");
-                tx.delete_global_hpke_keypair(keypair.id()).await?;
+                info!(id = ?pending_keypair.id(), "deleting pending keypair for retired ciphersuite");
+                tx.delete_global_hpke_keypair(pending_keypair.id()).await?;
             }
-            for keypair in active_keypairs {
-                info!(id = ?keypair.id(), "expiring active keypair for retired ciphersuite");
-                tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
+            for active_keypair in active_keypairs {
+                info!(id = ?active_keypair.id(), "expiring active keypair for retired ciphersuite");
+                tx.set_global_hpke_keypair_state(active_keypair.id(), &HpkeKeyState::Expired)
                     .await?;
             }
         } else if active_keypairs.is_empty() && pending_keypairs.is_empty() {
             // Bootstrapping case: there are no keys at all for this ciphersuite, so we need to
             // insert one.
-            let keypair = next_key()?;
+            let new_keypair = next_key()?;
             info!(
-                id = ?keypair.config().id(),
+                id = ?new_keypair.config().id(),
                 "bootstrapping: inserting key for new ciphersuite"
             );
-            tx.put_global_hpke_keypair(&keypair).await?;
+            tx.put_global_hpke_keypair(&new_keypair).await?;
 
             // If there are zero keypairs reported by the database, it's likely beacuse we're
             // in a brand new database, and this is the first execution of Janus. Initialize
@@ -223,8 +223,8 @@ impl<C: Clock> KeyRotator<C> {
             // Otherwise, the ciphersuite was likely added to the configuration and its key
             // needs to go through the normal pending->active state change.
             if current_keypairs.is_empty() {
-                info!(id = ?keypair.config().id(), "bootstrapping: moving new key to active state");
-                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                info!(id = ?new_keypair.config().id(), "bootstrapping: moving new key to active state");
+                tx.set_global_hpke_keypair_state(new_keypair.config().id(), &HpkeKeyState::Active)
                     .await?;
             }
         } else {
@@ -251,10 +251,13 @@ impl<C: Clock> KeyRotator<C> {
                     Self::duration_since(clock, keypair.updated_at()) > config.pending_duration
                 });
                 if pending_key_is_ready {
-                    for keypair in to_be_expired_keypairs {
-                        info!(id = ?keypair.id(), "a pending key is ready, marking key expired");
-                        tx.set_global_hpke_keypair_state(keypair.id(), &HpkeKeyState::Expired)
-                            .await?;
+                    for to_be_expired_keypair in to_be_expired_keypairs {
+                        info!(id = ?to_be_expired_keypair.id(), "a pending key is ready, marking key expired");
+                        tx.set_global_hpke_keypair_state(
+                            to_be_expired_keypair.id(),
+                            &HpkeKeyState::Expired,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -273,10 +276,10 @@ impl<C: Clock> KeyRotator<C> {
             }
         }
 
-        for keypair in &expired_keypairs {
-            if Self::duration_since(clock, keypair.updated_at()) > config.expired_duration {
-                info!(id = ?keypair.id(), "deleting expired keypair");
-                tx.delete_global_hpke_keypair(keypair.id()).await?;
+        for expired_keypair in &expired_keypairs {
+            if Self::duration_since(clock, expired_keypair.updated_at()) > config.expired_duration {
+                info!(id = ?expired_keypair.id(), "deleting expired keypair");
+                tx.delete_global_hpke_keypair(expired_keypair.id()).await?;
             }
         }
 
@@ -299,9 +302,9 @@ impl<C: Clock> KeyRotator<C> {
             .iter()
             .filter(|keypair| &keypair.ciphersuite() == ciphersuite)
             .for_each(|keypair| match keypair.state() {
-                HpkeKeyState::Pending => ret.pending.push(keypair),
-                HpkeKeyState::Active => ret.active.push(keypair),
-                HpkeKeyState::Expired => ret.expired.push(keypair),
+                HpkeKeyState::Pending => ret.pending_keypairs.push(keypair),
+                HpkeKeyState::Active => ret.active_keypairs.push(keypair),
+                HpkeKeyState::Expired => ret.expired_keypairs.push(keypair),
             });
         ret
     }
@@ -334,9 +337,9 @@ impl<C: Clock> KeyRotator<C> {
 
 #[derive(Default)]
 struct PartitionedKeypairs<'a> {
-    pending: Vec<&'a GlobalHpkeKeypair>,
-    active: Vec<&'a GlobalHpkeKeypair>,
-    expired: Vec<&'a GlobalHpkeKeypair>,
+    pending_keypairs: Vec<&'a GlobalHpkeKeypair>,
+    active_keypairs: Vec<&'a GlobalHpkeKeypair>,
+    expired_keypairs: Vec<&'a GlobalHpkeKeypair>,
 }
 
 /// Enforces that there's at least one [`HpkeKeyRotatorConfig`].
