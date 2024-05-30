@@ -102,7 +102,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(3);
+supported_schema_versions!(4, 3);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -4825,12 +4825,21 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
         let stmt = self
             .prepare_cached(
                 "-- delete_expired_collection_artifacts()
-WITH batches_to_delete AS (
-    SELECT batch_identifier, aggregation_param
+WITH candidate_batches_to_delete AS (
+    SELECT DISTINCT batch_identifier, aggregation_param
     FROM batch_aggregations
     WHERE task_id = $1
-    GROUP BY batch_identifier, aggregation_param
-    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) < $2
+      AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) < $2
+),
+batches_to_delete AS (
+    SELECT ba.batch_identifier, ba.aggregation_param
+    FROM batch_aggregations AS ba
+    JOIN candidate_batches_to_delete AS candidate
+      ON ba.batch_identifier = candidate.batch_identifier
+     AND ba.aggregation_param = candidate.aggregation_param
+    WHERE ba.task_id = $1
+    GROUP BY ba.batch_identifier, ba.aggregation_param
+    HAVING MAX(UPPER(COALESCE(ba.batch_interval, ba.client_timestamp_interval))) < $2
     LIMIT $3
 ),
 deleted_outstanding_batches AS (
