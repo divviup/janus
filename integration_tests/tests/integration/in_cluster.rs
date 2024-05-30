@@ -10,6 +10,7 @@ use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_client::OhttpConfig;
 use janus_collector::PrivateCollectorCredential;
 use janus_core::{
     auth_tokens::AuthenticationToken,
@@ -487,6 +488,43 @@ async fn in_cluster_count() {
     // Start port forwards and set up task.
     let janus_pair =
         InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        "in_cluster_count",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "ohttp")]
+async fn in_cluster_count_ohttp() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    // Start port forwards and set up task.
+    let mut janus_pair =
+        InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+
+    // Set up the client to use OHTTP. The keys and relay are assumed to be deployed adjacent to the
+    // leader.
+    janus_pair.task_parameters.endpoint_fragments.ohttp_config = Some(OhttpConfig {
+        key_configs: janus_pair
+            .task_parameters
+            .endpoint_fragments
+            .leader_endpoint_for_host(0)
+            .join("ohttp-keys")
+            .unwrap(),
+        relay: janus_pair
+            .task_parameters
+            .endpoint_fragments
+            .leader_endpoint_for_host(0)
+            .join("gateway")
+            .unwrap(),
+    });
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

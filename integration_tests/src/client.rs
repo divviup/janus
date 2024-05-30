@@ -262,14 +262,19 @@ where
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .endpoints_for_host_client(leader_port, helper_port);
-        let client = Client::new(
+        let mut builder = Client::builder(
             task_parameters.task_id,
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             task_parameters.time_precision,
             vdaf,
-        )
-        .await?;
+        );
+
+        if let Some(ohttp_config) = &task_parameters.endpoint_fragments.ohttp_config {
+            builder = builder.with_ohttp_config(ohttp_config.clone());
+        }
+
+        let client = builder.build().await?;
         Ok(ClientImplementation::InProcess { client })
     }
 

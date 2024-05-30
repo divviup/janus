@@ -60,6 +60,7 @@ pub fn build_test_task(
                         host: format!("helper-{endpoint_random_value}"),
                         path: "/".to_string(),
                     },
+                    ohttp_config: None,
                 },
             )
         }
@@ -73,6 +74,7 @@ pub fn build_test_task(
                 helper: AggregatorEndpointFragments::Localhost {
                     path: "/".to_string(),
                 },
+                ohttp_config: None,
             },
         ),
         #[cfg(feature = "in-cluster")]
@@ -86,6 +88,7 @@ pub fn build_test_task(
                 helper: AggregatorEndpointFragments::Remote {
                     url: task_builder.helper_aggregator_endpoint().clone(),
                 },
+                ohttp_config: None,
             },
         ),
     };

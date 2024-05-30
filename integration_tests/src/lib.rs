@@ -1,6 +1,7 @@
 //! This crate contains functionality useful for Janus integration tests.
 
 use janus_aggregator_core::task::QueryType;
+use janus_client::OhttpConfig;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{Duration, TaskId};
@@ -98,6 +99,7 @@ impl AggregatorEndpointFragments {
 pub struct EndpointFragments {
     pub leader: AggregatorEndpointFragments,
     pub helper: AggregatorEndpointFragments,
+    pub ohttp_config: Option<OhttpConfig>,
 }
 
 impl EndpointFragments {
