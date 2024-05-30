@@ -7200,10 +7200,11 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(tx.get_global_hpke_keypairs().await.unwrap(), Vec::new());
                 tx.put_global_hpke_keypair(&keypair).await.unwrap();
 
+                let created_at = clock.now();
                 let expected_keypair = GlobalHpkeKeypair::new(
                     keypair.clone(),
                     HpkeKeyState::Pending,
-                    clock.now(),
+                    created_at,
                     clock.now(),
                 );
                 assert_eq!(
@@ -7231,7 +7232,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                     GlobalHpkeKeypair::new(
                         keypair.clone(),
                         HpkeKeyState::Active,
-                        clock.now(),
+                        created_at,
                         clock.now(),
                     )
                 );
@@ -7248,7 +7249,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                     GlobalHpkeKeypair::new(
                         keypair.clone(),
                         HpkeKeyState::Expired,
-                        clock.now(),
+                        created_at,
                         clock.now(),
                     )
                 );
