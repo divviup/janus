@@ -51,6 +51,8 @@ use {
 pub(crate) mod tokio_runtime;
 
 #[cfg(test)]
+pub(crate) mod test_util;
+#[cfg(test)]
 mod tests;
 
 /// Errors from initializing metrics provider, registry, and exporter.
