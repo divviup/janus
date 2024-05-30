@@ -37,6 +37,8 @@
 //! }
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 use backoff::ExponentialBackoff;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
