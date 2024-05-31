@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     aggregator::key_rotator::{
-        deserialize_hpke_key_rotator_configs, HpkeKeyRotatorConfig, KeyRotator,
+        deserialize_hpke_key_rotator_config, HpkeKeyRotatorConfig, KeyRotator,
     },
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -79,13 +79,16 @@ impl BinaryConfig for Config {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyRotatorConfig {
-    #[serde(deserialize_with = "deserialize_hpke_key_rotator_configs")]
-    pub hpke: Vec<HpkeKeyRotatorConfig>,
+    #[serde(deserialize_with = "deserialize_hpke_key_rotator_config")]
+    pub hpke: HpkeKeyRotatorConfig,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::{
+        collections::HashSet,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
@@ -119,66 +122,25 @@ mod tests {
                 max_transaction_retries: default_max_transaction_retries(),
             },
             key_rotator: super::KeyRotatorConfig {
-                hpke: Vec::from([
-                    HpkeKeyRotatorConfig {
-                        pending_duration: Duration::from_seconds(random()),
-                        active_duration: Duration::from_seconds(random()),
-                        expired_duration: Duration::from_seconds(random()),
-                        ciphersuite: HpkeCiphersuite::new(
+                hpke: HpkeKeyRotatorConfig {
+                    pending_duration: Duration::from_seconds(random()),
+                    active_duration: Duration::from_seconds(random()),
+                    expired_duration: Duration::from_seconds(random()),
+                    ciphersuites: HashSet::from([
+                        HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,
                             HpkeKdfId::HkdfSha256,
                             HpkeAeadId::Aes128Gcm,
                         ),
-                        retire: false,
-                    },
-                    HpkeKeyRotatorConfig {
-                        pending_duration: Duration::from_seconds(random()),
-                        active_duration: Duration::from_seconds(random()),
-                        expired_duration: Duration::from_seconds(random()),
-                        ciphersuite: HpkeCiphersuite::new(
+                        HpkeCiphersuite::new(
                             HpkeKemId::P521HkdfSha512,
                             HpkeKdfId::HkdfSha512,
                             HpkeAeadId::Aes256Gcm,
                         ),
-                        retire: true,
-                    },
-                ]),
+                    ]),
+                },
             },
         });
-    }
-
-    #[test]
-    fn reject_empty_config() {
-        assert!(serde_yaml::from_str::<Config>(
-            r#"---
-    database:
-        url: "postgres://postgres:postgres@localhost:5432/postgres"
-    key_rotator:
-        hpke: []
-    "#,
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn reject_duplicate_ciphersuites() {
-        assert!(serde_yaml::from_str::<Config>(
-            r#"---
-    database:
-        url: "postgres://postgres:postgres@localhost:5432/postgres"
-    key_rotator:
-        hpke:
-            - ciphersuite:
-                kem_id: P521HkdfSha512
-                kdf_id: HkdfSha512
-                aead_id: Aes256Gcm
-            - ciphersuite:
-                kem_id: P521HkdfSha512
-                kdf_id: HkdfSha512
-                aead_id: Aes256Gcm
-    "#,
-        )
-        .is_err());
     }
 
     #[test]

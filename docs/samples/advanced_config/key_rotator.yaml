@@ -22,40 +22,21 @@ key_rotator:
   # Rotation policy for global HPKE keys. At least one is required. Each entry
   # represents a key with a particular ciphersuite.
   hpke:
-    - # How long the key remains pending before it's promoted to active. Should
-      # be greater than the global HPKE keypair cache refresh rate. Default to
-      # 1 hour.
-      pending_duration_secs: 3600
+    # How long keys remains pending before they're promoted to active. Should
+    # be greater than the global HPKE keypair cache refresh rate. Defaults to
+    # 1 hour.
+    pending_duration_secs: 3600
 
-      # The TTL of the key. Defaults to 4 weeks.
-      active_duration_secs: 2419200
+    # The TTL of keys. Defaults to 4 weeks.
+    active_duration_secs: 2419200
 
-      # How long the key can be expired before being deleted. Should be greater
-      # than how long clients cache HPKE keys. Defaults to 1 week.
-      expired_duration_secs: 604800
+    # How long keys can be expired before being deleted. Should be greater than
+    # how long clients cache HPKE keys. Defaults to 1 week.
+    expired_duration_secs: 604800
 
-      # The algorithms used by the key. Must be unique across different entries
-      # in the `hpke` array. Defaults to the values specified below.
-      ciphersuite:
-        kem_id: P521HkdfSha512
+    # The set of keys to manage, identified by ciphersuite.
+    ciphersuite:
+      # Defaults to a key with these algorithms.
+      - kem_id: P521HkdfSha512
         kdf_id: HkdfSha512
         aead_id: Aes256Gcm
-
-      # Safely phase out this config.
-      #
-      # If set, on next run the key rotator will immediately delete any pending
-      # keys and expire any keys with the given ciphersuite. Expired keys are
-      # retained for `expired_duration_secs` before being deleted.
-      #
-      # After the key rotator has run after `expired_duration_secs`, this config
-      # entry can be removed entirely. You should not remove this config unless
-      # the key rotator has been run after `expired_duration_secs` with
-      # `retire: true`.
-      #
-      # There must be at least one non-retired config present with its key
-      # in the active state (i.e. the key rotator has been run for longer
-      # than `pending_duration_secs` with a new key config). If this is the
-      # only key and it is marked retired, the key rotator will refuse to run.
-      #
-      # Defaults to false.
-      retire: false
