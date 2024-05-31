@@ -54,8 +54,7 @@ impl BinaryOptions for Options {
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
 /// key_rotator:
-///   hpke:
-///     - {}
+///   hpke: {}
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
