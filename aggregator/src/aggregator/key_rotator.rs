@@ -23,9 +23,6 @@ use tracing::{debug, info};
 /// The key rotator can handle key rotation for global HPKE keys. The key rotator is tolerant of
 /// some manual operator changes to the `global_hpke_keys` table.
 ///
-/// Operators _must not_ manually change the `created_at` or `updated_at` columns, as these are
-/// used for rotation decision-making.
-///
 /// It is strongly discouraged to:
 ///   - Delete active or expired keypairs too early, as that would leave Janus unable to decrypt
 ///     report shares using the keypair.
@@ -143,7 +140,7 @@ impl<C: Clock> KeyRotator<C> {
         tx.lock_global_hpke_keypairs().await?;
 
         let current_keypairs = tx.get_global_hpke_keypairs().await?;
-        debug!(?current_keypairs, "before");
+        debug!(?current_keypairs, "table state before running key rotator");
         let mut available_ids = Self::available_ids(&current_keypairs);
         for config in &configs {
             Self::run_hpke_for_config(tx, &current_keypairs, &mut available_ids, config).await?;
@@ -154,7 +151,7 @@ impl<C: Clock> KeyRotator<C> {
         // so we should rollback. This captures any bugs, and if the operator is trying to retire
         // the last available key.
         let current_keypairs = tx.get_global_hpke_keypairs().await?;
-        debug!(?current_keypairs, "after");
+        debug!(?current_keypairs, "table state after running key rotator");
         if !current_keypairs
             .iter()
             .any(|keypair| keypair.state() == &HpkeKeyState::Active)
@@ -232,7 +229,8 @@ impl<C: Clock> KeyRotator<C> {
             let to_be_expired_keypairs: Vec<_> = active_keypairs
                 .iter()
                 .filter(|keypair| {
-                    Self::duration_since(clock, keypair.updated_at()) > config.active_duration
+                    Self::duration_since(clock, keypair.last_state_change_at())
+                        > config.active_duration
                 })
                 .cloned()
                 .collect();
@@ -249,7 +247,8 @@ impl<C: Clock> KeyRotator<C> {
                 tx.put_global_hpke_keypair(&next).await?;
             } else {
                 let pending_key_is_ready = pending_keypairs.iter().any(|keypair| {
-                    Self::duration_since(clock, keypair.updated_at()) > config.pending_duration
+                    Self::duration_since(clock, keypair.last_state_change_at())
+                        > config.pending_duration
                 });
                 if pending_key_is_ready {
                     for to_be_expired_keypair in to_be_expired_keypairs {
@@ -267,7 +266,7 @@ impl<C: Clock> KeyRotator<C> {
             // as active keypairs, because it's possible for there to be a pending keypair
             // without an active one.
             for pending_keypair in pending_keypairs {
-                if Self::duration_since(clock, pending_keypair.updated_at())
+                if Self::duration_since(clock, pending_keypair.last_state_change_at())
                     > config.pending_duration
                 {
                     info!(id = ?pending_keypair.id(), "pending key is ready, moving it to active");
@@ -278,7 +277,9 @@ impl<C: Clock> KeyRotator<C> {
         }
 
         for expired_keypair in &expired_keypairs {
-            if Self::duration_since(clock, expired_keypair.updated_at()) > config.expired_duration {
+            if Self::duration_since(clock, expired_keypair.last_state_change_at())
+                > config.expired_duration
+            {
                 info!(id = ?expired_keypair.id(), "deleting expired keypair");
                 tx.delete_global_hpke_keypair(expired_keypair.id()).await?;
             }
@@ -321,7 +322,7 @@ impl<C: Clock> KeyRotator<C> {
         // config error, rather than attempting to decrypt them with the wrong key.
         let newest_id = current_keypairs
             .iter()
-            .max_by(|a, b| a.created_at().cmp(b.created_at()))
+            .max_by_key(|keypair| keypair.id())
             .map(|keypair| (*keypair.id()).into())
             .unwrap_or(0);
         (newest_id..=u8::MAX)

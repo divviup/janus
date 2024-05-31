@@ -2203,22 +2203,19 @@ pub enum HpkeKeyState {
 pub struct GlobalHpkeKeypair {
     hpke_keypair: HpkeKeypair,
     state: HpkeKeyState,
-    created_at: Time,
-    updated_at: Time,
+    last_state_change_at: Time,
 }
 
 impl GlobalHpkeKeypair {
     pub(super) fn new(
         hpke_keypair: HpkeKeypair,
         state: HpkeKeyState,
-        created_at: Time,
-        updated_at: Time,
+        last_state_change_at: Time,
     ) -> Self {
         Self {
             hpke_keypair,
             state,
-            created_at,
-            updated_at,
+            last_state_change_at,
         }
     }
 
@@ -2230,12 +2227,8 @@ impl GlobalHpkeKeypair {
         &self.state
     }
 
-    pub fn created_at(&self) -> &Time {
-        &self.created_at
-    }
-
-    pub fn updated_at(&self) -> &Time {
-        &self.updated_at
+    pub fn last_state_change_at(&self) -> &Time {
+        &self.last_state_change_at
     }
 
     pub fn ciphersuite(&self) -> HpkeCiphersuite {
