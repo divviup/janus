@@ -6,7 +6,7 @@ use janus_messages::problem_type::DapProblemType;
 use reqwest::{header::CONTENT_TYPE, Response};
 use std::fmt::{self, Display, Formatter};
 use tracing::warn;
-use trillium::{Conn, HeaderName, HeaderValue, Headers};
+use trillium::{Conn, HeaderValue};
 
 /// This captures an HTTP status code and parsed problem details document from an HTTP response.
 #[derive(Debug)]
@@ -108,7 +108,7 @@ impl Display for HttpErrorResponse {
 pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
     if let Some(authorization) = conn
         .request_headers()
-        .get_coalescing_duplicates("authorization") // TODO(#3163): get_coalescing_duplicates -> get
+        .get("authorization")
         .map(HeaderValue::to_string)
     {
         let (auth_scheme, token) = authorization
@@ -125,28 +125,6 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
     }
 
     Ok(None)
-}
-
-pub trait HeadersExt {
-    fn get_coalescing_duplicates<'a>(
-        &self,
-        name: impl Into<HeaderName<'a>>,
-    ) -> Option<&HeaderValue>;
-}
-
-impl HeadersExt for Headers {
-    fn get_coalescing_duplicates<'a>(
-        &self,
-        name: impl Into<HeaderName<'a>>,
-    ) -> Option<&HeaderValue> {
-        self.get_values(name).and_then(|header_values| {
-            header_values
-                .iter()
-                .map(Option::Some)
-                .reduce(|l, r| if l == r { l } else { None })
-                .flatten()
-        })
-    }
 }
 
 #[cfg(test)]
