@@ -48,10 +48,10 @@ rstest = "0.18.2"
 testcontainers = "0.16.7"
 thiserror = "1.0"
 tokio = { version = "1.38", features = ["full", "tracing"] }
-trillium = "0.2.19"
-trillium-api = { version = "0.2.0-rc.11", default-features = false }
+trillium = "0.2.20"
+trillium-api = { version = "0.2.0-rc.12", default-features = false }
 trillium-caching-headers = "0.2.3"
-trillium-head = "0.2.2"
+trillium-head = "0.2.3"
 trillium-opentelemetry = "0.8.0"
 trillium-router = "0.3.6"
 trillium-rustls = "0.7.0"

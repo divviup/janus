@@ -41,7 +41,7 @@ struct ErrorCode(&'static str);
 impl Handler for Error {
     async fn run(&self, mut conn: Conn) -> Conn {
         let error_code = self.error_code();
-        conn.set_state(ErrorCode(error_code));
+        conn.insert_state(ErrorCode(error_code));
         let conn = match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => conn
