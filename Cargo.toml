@@ -112,14 +112,14 @@ tokio = { version = "1.38", features = ["full", "tracing"] }
 tokio-postgres = "0.7.10"
 tokio-postgres-rustls = "0.12.0"
 tokio-stream = "0.1.15"
-trillium = "0.2.19"
-trillium-api = { version = "0.2.0-rc.11", default-features = false }
+trillium = "0.2.20"
+trillium-api = { version = "0.2.0-rc.12", default-features = false }
 trillium-caching-headers = "0.2.3"
-trillium-head = "0.2.2"
+trillium-head = "0.2.3"
 trillium-macros = "0.0.6"
 trillium-opentelemetry = "0.8.0"
 trillium-prometheus = "0.1.0"
-trillium-proxy = { version = "0.5.4", default-features = false }
+trillium-proxy = { version = "0.5.5", default-features = false }
 trillium-router = "0.3.6"
 trillium-rustls = "0.7.0"
 trillium-testing = "0.6.1"

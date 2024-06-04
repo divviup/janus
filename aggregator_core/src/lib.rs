@@ -64,7 +64,7 @@ impl<H: Handler> InstrumentedHandler<H> {
         let route = conn.route().expect("no route in conn").to_string();
         let method = conn.method();
         let span = info_span!("endpoint", route, %method);
-        conn.set_state(InstrumentedHandlerSpan(span.clone()));
+        conn.insert_state(InstrumentedHandlerSpan(span.clone()));
         self.0.run(conn).instrument(span).await
     }
 
