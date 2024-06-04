@@ -401,7 +401,7 @@ async fn janus_in_process_one_round_with_agg_param_fixed_size() {
     .await;
 
     submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-        "janus_in_process_one_round_with_agg_param",
+        "janus_in_process_one_round_with_agg_param_fixed_size",
         &janus_pair.task_parameters,
         &[
             dummy::AggregationParam(10),
@@ -429,7 +429,7 @@ async fn janus_in_process_one_round_with_agg_param_time_interval() {
     .await;
 
     submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-        "janus_in_process_one_round_with_agg_param",
+        "janus_in_process_one_round_with_agg_param_time_interval",
         &janus_pair.task_parameters,
         &[
             dummy::AggregationParam(10),
