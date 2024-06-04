@@ -528,7 +528,7 @@ async fn in_cluster_count_ohttp() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "in_cluster_count",
+        "in_cluster_count_ohttp",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
