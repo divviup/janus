@@ -24,6 +24,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use futures::future::try_join_all;
+use itertools::Itertools as _;
 use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
@@ -7273,6 +7274,99 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
 
                 tx.check_timestamp_columns("global_hpke_keys", "test-put-keys", true)
                     .await;
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn update_global_hpke_keypairs(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
+    let clock = datastore.clock.clone();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let clock = clock.clone();
+            Box::pin(async move {
+                let keypairs = Vec::from([
+                    GlobalHpkeKeypair::new(
+                        generate_test_hpke_config_and_private_key(),
+                        HpkeKeyState::Pending,
+                        clock.now(),
+                    ),
+                    GlobalHpkeKeypair::new(
+                        generate_test_hpke_config_and_private_key(),
+                        HpkeKeyState::Active,
+                        clock.now(),
+                    ),
+                ]);
+                tx.update_global_hpke_keypairs(&keypairs).await.unwrap();
+
+                let current_keypairs: Vec<_> = tx
+                    .get_global_hpke_keypairs()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                let expected_keypairs: Vec<_> = keypairs
+                    .iter()
+                    .cloned()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                assert_eq!(current_keypairs, expected_keypairs);
+
+                // No-op.
+                tx.update_global_hpke_keypairs(&keypairs).await.unwrap();
+                let current_keypairs: Vec<_> = tx
+                    .get_global_hpke_keypairs()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                let expected_keypairs: Vec<_> = keypairs
+                    .iter()
+                    .cloned()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                assert_eq!(current_keypairs, expected_keypairs);
+
+                let keypairs = Vec::from([
+                    // Move keypairs[0] to new state.
+                    GlobalHpkeKeypair::new(
+                        keypairs[0].hpke_keypair().clone(),
+                        HpkeKeyState::Active,
+                        clock.now(),
+                    ),
+                    // Introduce new keypair.
+                    GlobalHpkeKeypair::new(
+                        generate_test_hpke_config_and_private_key(),
+                        HpkeKeyState::Active,
+                        clock.now(),
+                    ),
+                    // keypairs[1] is deleted.
+                ]);
+                tx.update_global_hpke_keypairs(&keypairs).await.unwrap();
+
+                let current_keypairs: Vec<_> = tx
+                    .get_global_hpke_keypairs()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                let expected_keypairs: Vec<_> = keypairs
+                    .iter()
+                    .cloned()
+                    .sorted_by_key(|keypair| *keypair.id())
+                    .collect();
+                assert_eq!(current_keypairs, expected_keypairs);
 
                 Ok(())
             })

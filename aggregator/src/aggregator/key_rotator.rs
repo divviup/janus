@@ -404,7 +404,7 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
     }
 
     async fn write(self, tx: &Transaction<'_, C>) -> Result<(), DatastoreError> {
-        tx.rewrite_global_hpke_keypairs(&self.keypairs.values().cloned().collect::<Vec<_>>())
+        tx.update_global_hpke_keypairs(&self.keypairs.values().cloned().collect::<Vec<_>>())
             .await?;
 
         // Defensive assertion: Check our transaction snapshot for at least one active keypair in
