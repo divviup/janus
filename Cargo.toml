@@ -35,7 +35,7 @@ cfg-if = "1.0.0"
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4.38", default-features = false }
-clap = { version = "4.5.3", features = ["cargo", "derive", "env"] }
+clap = { version = "4.5.7", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.2.0"
 deadpool = "0.12.1"
 deadpool-postgres = "0.13.2"
