@@ -231,14 +231,15 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
             .keypairs
             .iter()
             .filter_map(|(&id, keypair)| {
-                let ciphersuite = self.config.ciphersuites.get(&keypair.ciphersuite());
+                let ciphersuite_known = self.config.ciphersuites.contains(&keypair.ciphersuite());
                 match keypair.state() {
-                    HpkeKeyState::Active => match ciphersuite {
-                        Some(ciphersuite) => {
+                    HpkeKeyState::Active => {
+                        if ciphersuite_known {
+                            let ciphersuite = keypair.ciphersuite();
                             let keypairs: Vec<_> = self
                                 .keypairs
                                 .values()
-                                .filter(|keypair| keypair.ciphersuite() == *ciphersuite)
+                                .filter(|keypair| keypair.ciphersuite() == ciphersuite)
                                 .collect();
 
                             let pending_key_ready = keypairs.iter().any(|keypair| {
@@ -264,9 +265,9 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
                                             ?ciphersuite,
                                             id = ?keypair.id(),
                                             "inserting pending key because active key is ready \
-                                            for expiration but no pending key is ready"
+                                                for expiration but no pending key is ready"
                                         );
-                                        Some(Op::Create(*ciphersuite))
+                                        Some(Op::Create(ciphersuite))
                                     } else if pending_key_ready {
                                         info!(
                                             ?ciphersuite,
@@ -291,8 +292,7 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
                                 );
                                 Some(Op::Update(*keypair.id(), HpkeKeyState::Expired))
                             }
-                        }
-                        None => {
+                        } else {
                             info!(
                                 ciphersuite = ?keypair.ciphersuite(),
                                 id = ?keypair.id(),
@@ -300,9 +300,10 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
                             );
                             Some(Op::Update(id, HpkeKeyState::Expired))
                         }
-                    },
-                    HpkeKeyState::Pending => match ciphersuite {
-                        Some(ciphersuite) => {
+                    }
+                    HpkeKeyState::Pending => {
+                        if ciphersuite_known {
+                            let ciphersuite = keypair.ciphersuite();
                             let latest_pending_keypair = self
                                 .keypairs
                                 .values()
@@ -335,26 +336,22 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
                                 );
                                 Some(Op::Delete(id))
                             }
-                        }
-                        None => {
+                        } else {
                             info!(
                                 id = ?keypair.id(),
-                                ?ciphersuite,
+                                ?ciphersuite_known,
                                 "deleting pending key for unknown ciphersuite"
                             );
                             Some(Op::Delete(id))
                         }
-                    },
+                    }
                     HpkeKeyState::Expired => {
-                        if duration_since(&self.clock, keypair.last_state_change_at())
-                            > self.config.expired_duration
-                        {
-                            info!(?id, "deleting expired key");
-                            Some(Op::Delete(id))
-                        } else {
-                            // No action required, the key is not ready for deletion.
-                            None
-                        }
+                        (duration_since(&self.clock, keypair.last_state_change_at())
+                            > self.config.expired_duration)
+                            .then(|| {
+                                info!(?id, "deleting expired key");
+                                Op::Delete(id)
+                            })
                     }
                 }
             })

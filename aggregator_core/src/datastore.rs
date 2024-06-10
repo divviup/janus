@@ -4974,7 +4974,7 @@ DELETE FROM global_hpke_keys WHERE config_id = $1",
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "-- clear_global_hpke_keypairs()
+                "-- rewrite_global_hpke_keypairs()
 DELETE FROM global_hpke_keys",
             )
             .await?;
@@ -4992,7 +4992,7 @@ DELETE FROM global_hpke_keys",
 
             let stmt = self
                 .prepare_cached(
-                    "-- clear_global_hpke_keypair()
+                    "-- rewrite_global_hpke_keypair()
 INSERT INTO global_hpke_keys
     (config_id, config, private_key, state, last_state_change_at, created_at, updated_at, updated_by)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
