@@ -50,7 +50,13 @@ impl EphemeralDatabase {
 
     async fn start() -> Self {
         // Start an instance of Postgres running in a container.
-        let db_container = RunnableImage::from(Postgres::default()).start().await;
+        let db_container = RunnableImage::from(Postgres::default())
+            .with_args(Vec::from([
+                "-c".to_string(),
+                "max_connections=200".to_string(),
+            ]))
+            .start()
+            .await;
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
         let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
         trace!("Postgres container is up with port {port_number}");
