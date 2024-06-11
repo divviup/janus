@@ -1,5 +1,9 @@
 use crate::{
-    aggregator::{self, http_handlers::aggregator_handler},
+    aggregator::{
+        self,
+        http_handlers::aggregator_handler,
+        key_rotator::{deserialize_hpke_key_rotator_config, HpkeKeyRotatorConfig, KeyRotator},
+    },
     binaries::garbage_collector::run_garbage_collector,
     binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
     cache::{
@@ -27,8 +31,8 @@ use std::{
     pin::Pin,
 };
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{join, sync::watch};
-use tracing::info;
+use tokio::{join, sync::watch, time::interval};
+use tracing::{error, info};
 use trillium::Handler;
 use trillium_router::router;
 use url::Url;
@@ -90,6 +94,23 @@ async fn run_aggregator(
         }
     };
 
+    let key_rotator_future = {
+        let datastore = Arc::clone(&datastore);
+        let config = config.key_rotator.take();
+        let stopper = stopper.clone();
+        async move {
+            if let Some(config) = config {
+                let key_rotator = KeyRotator::new(datastore, config.hpke);
+                let mut interval = interval(Duration::from_secs(config.frequency_s));
+                while stopper.stop_future(interval.tick()).await.is_some() {
+                    if let Err(err) = key_rotator.run().await {
+                        error!(?err, "key rotator error");
+                    }
+                }
+            }
+        }
+    };
+
     let aggregator_api_future: Pin<Box<dyn Future<Output = ()> + Send + 'static>> =
         match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
@@ -134,6 +155,7 @@ async fn run_aggregator(
     join!(
         aggregator_server,
         garbage_collector_future,
+        key_rotator_future,
         aggregator_api_future
     );
     Ok(())
@@ -318,6 +340,10 @@ pub struct Config {
     #[serde(default)]
     pub garbage_collection: Option<GarbageCollectorConfig>,
 
+    /// Run the key rotator in this binary.
+    #[serde(default)]
+    pub key_rotator: Option<KeyRotatorConfig>,
+
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
     pub listen_address: SocketAddr,
@@ -363,6 +389,15 @@ pub struct Config {
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY`]. You shouldn't normally have to specify this.
     #[serde(default)]
     pub task_cache_capacity: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyRotatorConfig {
+    /// How frequently the key rotator is run, in seconds.
+    pub frequency_s: u64,
+
+    #[serde(deserialize_with = "deserialize_hpke_key_rotator_config")]
+    pub hpke: HpkeKeyRotatorConfig,
 }
 
 fn default_task_counter_shard_count() -> u64 {
@@ -460,10 +495,11 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
 
 #[cfg(test)]
 mod tests {
-    use super::{AggregatorApi, Config, GarbageCollectorConfig, Options};
+    use super::{AggregatorApi, Config, GarbageCollectorConfig, KeyRotatorConfig, Options};
     use crate::{
         aggregator::{
             self,
+            key_rotator::HpkeKeyRotatorConfig,
             test_util::{hpke_config_signing_key, HPKE_CONFIG_SIGNING_KEY_PEM},
         },
         config::{
@@ -478,16 +514,18 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
+    use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
     use ring::{
         rand::SystemRandom,
         signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
     };
     use std::{
+        collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::PathBuf,
-        time::Duration,
+        time::Duration as StdDuration,
     };
 
     #[test]
@@ -517,6 +555,26 @@ mod tests {
                 collection_limit: 75,
                 tasks_per_tx: 15,
                 concurrent_tx_limit: Some(23),
+            }),
+            key_rotator: Some(KeyRotatorConfig {
+                frequency_s: random(),
+                hpke: HpkeKeyRotatorConfig {
+                    pending_duration: Duration::from_seconds(random()),
+                    active_duration: Duration::from_seconds(random()),
+                    expired_duration: Duration::from_seconds(random()),
+                    ciphersuites: HashSet::from([
+                        HpkeCiphersuite::new(
+                            HpkeKemId::P256HkdfSha256,
+                            HpkeKdfId::HkdfSha256,
+                            HpkeAeadId::Aes128Gcm,
+                        ),
+                        HpkeCiphersuite::new(
+                            HpkeKemId::P521HkdfSha512,
+                            HpkeKdfId::HkdfSha512,
+                            HpkeAeadId::Aes256Gcm,
+                        ),
+                    ]),
+                },
             }),
             aggregator_api: Some(aggregator_api),
             common_config: CommonConfig {
@@ -674,7 +732,7 @@ mod tests {
             .unwrap(),
             &aggregator::Config {
                 max_upload_batch_size: 100,
-                max_upload_batch_write_delay: Duration::from_millis(250),
+                max_upload_batch_write_delay: StdDuration::from_millis(250),
                 batch_aggregation_shard_count: 32,
                 taskprov_config: TaskprovConfig::default(),
                 hpke_config_signing_key: Some(hpke_config_signing_key()),
@@ -835,7 +893,7 @@ mod tests {
             .unwrap(),
             &aggregator::Config {
                 max_upload_batch_size: 100,
-                max_upload_batch_write_delay: Duration::from_millis(250),
+                max_upload_batch_write_delay: StdDuration::from_millis(250),
                 batch_aggregation_shard_count: 32,
                 taskprov_config: TaskprovConfig::default(),
                 ..Default::default()

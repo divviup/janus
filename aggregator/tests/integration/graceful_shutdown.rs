@@ -5,10 +5,13 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator::{
+    aggregator::key_rotator::HpkeKeyRotatorConfig,
     binaries::{
         aggregation_job_creator::Config as AggregationJobCreatorConfig,
         aggregation_job_driver::Config as AggregationJobDriverConfig,
-        aggregator::{AggregatorApi, Config as AggregatorConfig, GarbageCollectorConfig},
+        aggregator::{
+            AggregatorApi, Config as AggregatorConfig, GarbageCollectorConfig, KeyRotatorConfig,
+        },
         collection_job_driver::Config as CollectionJobDriverConfig,
         garbage_collector::Config as GarbageCollectorBinaryConfig,
     },
@@ -23,15 +26,20 @@ use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
 };
-use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
+use janus_core::{
+    hpke::HpkeCiphersuite, test_util::install_test_trace_subscriber, time::RealClock,
+    vdaf::VdafInstance,
+};
+use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
 use reqwest::Url;
 use serde::Serialize;
 use std::{
+    collections::HashSet,
     future::Future,
     io::{ErrorKind, Write},
     net::{Ipv4Addr, SocketAddr},
     process::{Child, Command, Stdio},
-    time::Instant,
+    time::{Duration as StdDuration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -63,7 +71,7 @@ async fn wait_for_server(addr: SocketAddr) -> Result<(), Timeout> {
     for _ in 0..30 {
         match TcpStream::connect(addr).await {
             Ok(_) => return Ok(()),
-            Err(_) => sleep(std::time::Duration::from_millis(500)).await,
+            Err(_) => sleep(StdDuration::from_millis(500)).await,
         }
     }
     Err(Timeout)
@@ -215,7 +223,7 @@ async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut c
     // Confirm that the binary under test shuts down promptly.
     let start = Instant::now();
     let (mut child, child_exit_status_res) = spawn_blocking(move || {
-        let result = child.wait_timeout(std::time::Duration::from_secs(15));
+        let result = child.wait_timeout(StdDuration::from_secs(15));
         (child, result)
     })
     .await
@@ -272,6 +280,26 @@ async fn aggregator_shutdown() {
             collection_limit: 50,
             tasks_per_tx: 1,
             concurrent_tx_limit: None,
+        }),
+        key_rotator: Some(KeyRotatorConfig {
+            frequency_s: 60 * 60 * 6,
+            hpke: HpkeKeyRotatorConfig {
+                pending_duration: Duration::from_seconds(60),
+                active_duration: Duration::from_seconds(60 * 60 * 24),
+                expired_duration: Duration::from_seconds(60 * 60 * 24),
+                ciphersuites: HashSet::from([
+                    HpkeCiphersuite::new(
+                        HpkeKemId::P256HkdfSha256,
+                        HpkeKdfId::HkdfSha256,
+                        HpkeAeadId::Aes128Gcm,
+                    ),
+                    HpkeCiphersuite::new(
+                        HpkeKemId::P521HkdfSha512,
+                        HpkeKdfId::HkdfSha512,
+                        HpkeAeadId::Aes256Gcm,
+                    ),
+                ]),
+            },
         }),
         listen_address: aggregator_listen_address,
         aggregator_api: Some(AggregatorApi {
