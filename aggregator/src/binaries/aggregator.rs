@@ -89,6 +89,7 @@ async fn run_aggregator(
         let stopper = stopper.clone();
         async move {
             if let Some(gc_config) = gc_config {
+                info!("Running garbage collector");
                 run_garbage_collector(datastore, gc_config, meter, stopper).await;
             }
         }
@@ -100,6 +101,7 @@ async fn run_aggregator(
         let stopper = stopper.clone();
         async move {
             if let Some(config) = config {
+                info!("Running key rotator");
                 let key_rotator = KeyRotator::new(datastore, config.hpke);
                 let mut interval = interval(Duration::from_secs(config.frequency_s));
                 while stopper.stop_future(interval.tick()).await.is_some() {
