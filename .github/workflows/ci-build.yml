@@ -59,7 +59,7 @@ jobs:
       with:
         key: ${{ steps.os-version.outputs.release }}
     - name: Pre-build embedded container images
-      uses: docker/bake-action@v4.5.0
+      uses: docker/bake-action@v4.6.0
       with:
         files: docker-bake.hcl
         workdir: .
@@ -140,7 +140,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v4.5.0
+      uses: docker/bake-action@v4.6.0
       with:
         files: docker-bake.hcl
         workdir: .
@@ -165,7 +165,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v4.5.0
+      uses: docker/bake-action@v4.6.0
       with:
         files: docker-bake.hcl
         workdir: .
