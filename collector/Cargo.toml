@@ -31,7 +31,7 @@ retry-after = "0.4.0"
 thiserror.workspace = true
 tokio.workspace = true
 tracing = "0.1.40"
-url = "2.5.0"
+url = "2.5.1"
 serde = { workspace = true }
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }
 serde_json.workspace = true
