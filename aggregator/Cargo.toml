@@ -41,7 +41,7 @@ base64 = "0.22.1"
 bytes = "1.6.0"
 chrono.workspace = true
 clap = { version = "4.5.7", features = ["derive", "env"] }
-console-subscriber = { version = "0.2.0", optional = true }
+console-subscriber = { version = "0.3.0", optional = true }
 deadpool = { version = "0.12.1", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.14.0"
 derivative.workspace = true
