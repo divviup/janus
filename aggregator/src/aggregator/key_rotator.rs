@@ -60,17 +60,17 @@ pub struct HpkeKeyRotatorConfig {
     /// How long key remains in [`HpkeKeyState::Pending`] before being moved to
     /// [`HpkeKeyState::Active`]. This should be greater than
     /// [`AggregatorConfig::global_hpke_configs_refresh_interval`].
-    #[serde(rename = "pending_duration_secs", default = "default_pending_duration")]
+    #[serde(rename = "pending_duration_s", default = "default_pending_duration")]
     pub pending_duration: Duration,
 
     /// The time-to-live of the key. Once this is exceeded, the key is moved to
     /// [`HpkeKeyState::Expired`]. It is at operator discretion as to how long this should be.
-    #[serde(rename = "active_duration_secs", default = "default_active_duration")]
+    #[serde(rename = "active_duration_s", default = "default_active_duration")]
     pub active_duration: Duration,
 
     /// How long the key remains in [`HpkeKeyState::Expired`] before being deleted. This should
     /// be greater than the clients' HPKE key cache maximum age.
-    #[serde(rename = "expired_duration_secs", default = "default_expired_duration")]
+    #[serde(rename = "expired_duration_s", default = "default_expired_duration")]
     pub expired_duration: Duration,
 
     /// Set of keys to manage, identified by ciphersuite.

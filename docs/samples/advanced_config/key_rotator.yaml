@@ -25,14 +25,14 @@ key_rotator:
     # How long keys remains pending before they're promoted to active. Should
     # be greater than the global HPKE keypair cache refresh rate. Defaults to
     # 1 hour.
-    pending_duration_secs: 3600
+    pending_duration_s: 3600
 
     # The TTL of keys. Defaults to 4 weeks.
-    active_duration_secs: 2419200
+    active_duration_s: 2419200
 
     # How long keys can be expired before being deleted. Should be greater than
     # how long clients cache HPKE keys. Defaults to 1 week.
-    expired_duration_secs: 604800
+    expired_duration_s: 604800
 
     # The set of keys to manage, identified by ciphersuite.
     ciphersuite:
