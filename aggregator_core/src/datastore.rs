@@ -43,7 +43,7 @@ use prio::{
 use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     convert::TryFrom,
     fmt::{Debug, Display},
     future::Future,
@@ -4965,75 +4965,6 @@ DELETE FROM global_hpke_keys WHERE config_id = $1",
             self.execute(&stmt, &[&(u8::from(*config_id) as i16)])
                 .await?,
         )
-    }
-
-    /// Updates the entire `global_hpke_keys` table, by changing existing entries to match
-    // `keypairs`. Keys not in `keypairs` are removed.
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn update_global_hpke_keypairs(
-        &self,
-        keypairs: &[GlobalHpkeKeypair],
-    ) -> Result<(), Error> {
-        let current_keypairs_ids = self
-            .get_global_hpke_keypairs()
-            .await?
-            .into_iter()
-            .map(|keypair| *keypair.id())
-            .collect::<HashSet<_>>();
-        let update_keypairs_ids = keypairs.iter().map(|keypair| *keypair.id()).collect();
-        let to_delete: Vec<_> = current_keypairs_ids
-            .difference(&update_keypairs_ids)
-            .collect();
-
-        try_join!(
-            try_join_all(
-                to_delete
-                    .iter()
-                    .map(|id| async move { self.delete_global_hpke_keypair(id).await })
-            ),
-            try_join_all(keypairs.iter().map(|keypair| async move {
-                let hpke_config_id = u8::from(*keypair.id()) as i16;
-                let hpke_config = keypair.hpke_keypair().config().get_encoded()?;
-                let encrypted_hpke_private_key = self.crypter.encrypt(
-                    "global_hpke_keys",
-                    &u8::from(*keypair.id()).to_be_bytes(),
-                    "private_key",
-                    keypair.hpke_keypair().private_key().as_ref(),
-                )?;
-
-                let stmt = self
-                    .prepare_cached(
-                        "-- update_global_hpke_keypairs()
-INSERT INTO global_hpke_keys
-(config_id, config, private_key, state, last_state_change_at, created_at, updated_at, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (config_id) DO UPDATE
-    SET (state, last_state_change_at, updated_at, updated_by) = 
-        (excluded.state, excluded.last_state_change_at, excluded.updated_at, excluded.updated_by)",
-                    )
-                    .await?;
-                let now = self.clock.now().as_naive_date_time()?;
-                check_insert(
-                    self.execute(
-                        &stmt,
-                        &[
-                            /* config_id */ &hpke_config_id,
-                            /* config */ &hpke_config,
-                            /* private_key */ &encrypted_hpke_private_key,
-                            /* state */ keypair.state(),
-                            /* last_state_change_at */
-                            &keypair.last_state_change_at().as_naive_date_time()?,
-                            /* created_at */ &now,
-                            /* updated_at */ &now,
-                            /* updated_by */ &self.name,
-                        ],
-                    )
-                    .await?,
-                )
-            }))
-        )?;
-
-        Ok(())
     }
 
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]

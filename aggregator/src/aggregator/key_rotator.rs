@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -73,7 +73,8 @@ pub struct HpkeKeyRotatorConfig {
     #[serde(rename = "expired_duration_s", default = "default_expired_duration")]
     pub expired_duration: Duration,
 
-    /// Set of keys to manage, identified by ciphersuite.
+    /// Set of keys to manage, identified by ciphersuite. Existing keys whose ciphersuites are not
+    /// in this list are safely phased out.
     #[serde(default = "default_hpke_ciphersuites")]
     pub ciphersuites: HashSet<HpkeCiphersuite>,
 }
@@ -114,12 +115,10 @@ impl<C: Clock> KeyRotator<C> {
         // ExclusiveLock does not conflict with the AccessShare lock taken by table reads, i.e.
         // other aggregator replicas can continue to refresh their key caches without being blocked.
         tx.lock_global_hpke_keypairs().await?;
-        HpkeKeypairs::new(tx, config)
-            .await?
-            .bootstrap()?
-            .sweep()?
-            .write(tx)
-            .await
+
+        let hpke_key_rotator = HpkeKeyRotator::new(tx, config).await?;
+        let ops = hpke_key_rotator.sweep()?;
+        hpke_key_rotator.write(tx, &ops).await
     }
 }
 
@@ -133,18 +132,18 @@ fn duration_since<C: Clock>(clock: &C, time: &Time) -> Duration {
 /// In-memory representation of the `global_hpke_keys` table.
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct HpkeKeypairs<'a, C: Clock> {
+struct HpkeKeyRotator<'a, C: Clock> {
     clock: C,
     config: &'a HpkeKeyRotatorConfig,
-    keypairs: HashMap<HpkeConfigId, GlobalHpkeKeypair>,
 
     // Data structures for intermediate state.
     #[derivative(Debug = "ignore")]
     available_ids: Box<dyn Iterator<Item = HpkeConfigId> + Send + Sync>,
+    keypairs: HashMap<HpkeConfigId, GlobalHpkeKeypair>,
     initially_empty: bool,
 }
 
-impl<'a, C: Clock> HpkeKeypairs<'a, C> {
+impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
     async fn new(
         tx: &Transaction<'_, C>,
         config: &'a HpkeKeyRotatorConfig,
@@ -185,28 +184,15 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
         })
     }
 
-    /// Bootstrap policy:
+    /// Returns the [`HpkeOp`]s necessary to move all keys into a compliant state.
+    ///
+    /// Key bootstrap policy:
     ///   - If this is the very first run of Janus, insert keypairs in [`HpkeKeyState::Active`]
     ///     for each configured ciphersuite. Detect first run by whether the `global_hpke_keys`
     ///     table is empty.
     ///   - For each configured ciphersuite, if there is no pending or active key, insert
     ///     a key in [`HpkeKeyState::Pending`].
-    fn bootstrap(mut self) -> Result<Self, DatastoreError> {
-        for ciphersuite in &self.config.ciphersuites {
-            if self.initially_empty {
-                info!(?ciphersuite, "bootstrapping new database");
-                self.put(*ciphersuite, HpkeKeyState::Active)?;
-            } else if !self.keypairs.values().any(|keypair| {
-                &keypair.ciphersuite() == ciphersuite
-                    && (keypair.is_active() || keypair.is_pending())
-            }) {
-                info!(?ciphersuite, "bootstrapping new configuration");
-                self.put(*ciphersuite, HpkeKeyState::Pending)?;
-            }
-        }
-        Ok(self)
-    }
-
+    ///
     /// Rotation policy:
     ///   - If the key has been in [`HpkeKeyState::Expired`] for at least
     ///     [`HpkeKeyRotatorConfig::expired_duration`], delete it.
@@ -219,193 +205,171 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
     ///   - For each configured ciphersuite, if the active key has been active for more than
     ///     [`HpkeKeyRotatorConfig::active_duration`] and there is no pending key, insert a pending
     ///     key.
-    ///   - For each configured ciphersuite, expire the oldest active keys.
-    fn sweep(mut self) -> Result<Self, DatastoreError> {
-        enum Op {
-            Create(HpkeCiphersuite),
-            Update(HpkeConfigId, HpkeKeyState),
-            Delete(HpkeConfigId),
+    ///   - For each configured ciphersuite, expire all but the newest active key.
+    fn sweep(&self) -> Result<Vec<HpkeOp>, DatastoreError> {
+        let mut ops: Vec<HpkeOp> = Vec::new();
+
+        // Bootstrap new keys.
+        for ciphersuite in &self.config.ciphersuites {
+            if self.initially_empty {
+                ops.push(HpkeOp::Create(
+                    *ciphersuite,
+                    HpkeKeyState::Active,
+                    "bootstrapping new database",
+                ));
+            } else if !self.keypairs.values().any(|keypair| {
+                &keypair.ciphersuite() == ciphersuite
+                    && (keypair.is_active() || keypair.is_pending())
+            }) {
+                ops.push(HpkeOp::Create(
+                    *ciphersuite,
+                    HpkeKeyState::Pending,
+                    "bootstrapping new configuration",
+                ))
+            }
         }
 
-        let ops: Vec<_> = self
-            .keypairs
-            .iter()
-            .filter_map(|(&id, keypair)| {
-                let ciphersuite_known = self.config.ciphersuites.contains(&keypair.ciphersuite());
-                match keypair.state() {
-                    HpkeKeyState::Active => {
-                        if ciphersuite_known {
-                            let ciphersuite = keypair.ciphersuite();
-                            let keypairs: Vec<_> = self
-                                .keypairs
-                                .values()
-                                .filter(|keypair| keypair.ciphersuite() == ciphersuite)
-                                .collect();
+        // Partition existing keypairs by ciphersuite and state. The keypairs are sorted in
+        // descending order by `last_state_change_at`, i.e. the latest is first.
+        let mut by_ciphersuite: HashMap<
+            HpkeCiphersuite,
+            HashMap<HpkeKeyState, VecDeque<&GlobalHpkeKeypair>>,
+        > = HashMap::new();
+        for (_, keypair) in self.keypairs.iter() {
+            by_ciphersuite
+                .entry(keypair.ciphersuite())
+                .and_modify(|by_state| {
+                    by_state
+                        .entry(*keypair.state())
+                        .and_modify(|entry| {
+                            entry.insert(
+                                entry.partition_point(|&candidate| {
+                                    candidate.last_state_change_at()
+                                        > keypair.last_state_change_at()
+                                }),
+                                keypair,
+                            )
+                        })
+                        .or_insert_with(|| VecDeque::from([keypair]));
+                })
+                .or_insert_with(|| HashMap::from([(*keypair.state(), VecDeque::from([keypair]))]));
+        }
 
-                            let pending_key_ready = keypairs.iter().any(|keypair| {
-                                keypair.is_pending()
-                                    && duration_since(&self.clock, keypair.last_state_change_at())
-                                        > self.config.pending_duration
-                            });
+        for (ciphersuite, mut by_state) in by_ciphersuite {
+            let active_keypairs = by_state.remove(&HpkeKeyState::Active).unwrap_or_default();
+            let pending_keypairs = by_state.remove(&HpkeKeyState::Pending).unwrap_or_default();
+            let expired_keypairs = by_state.remove(&HpkeKeyState::Expired).unwrap_or_default();
 
-                            let no_pending_key =
-                                !keypairs.iter().any(|keypair| keypair.is_pending());
+            if self.config.ciphersuites.contains(&ciphersuite) {
+                let latest_pending_key = pending_keypairs.front();
+                let latest_active_key = active_keypairs.front();
 
-                            let latest_active_key = keypairs
-                                .into_iter()
-                                .filter(|&keypair| keypair.is_active())
-                                .max_by_key(|keypair| keypair.last_state_change_at());
+                if let Some(latest_pending_key) = latest_pending_key {
+                    if duration_since(&self.clock, latest_pending_key.last_state_change_at())
+                        > self.config.pending_duration
+                    {
+                        ops.push(HpkeOp::Update(
+                            *latest_pending_key.id(),
+                            HpkeKeyState::Active,
+                            "ready for promotion",
+                        ));
 
-                            if Some(keypair) == latest_active_key {
-                                if duration_since(&self.clock, keypair.last_state_change_at())
-                                    > self.config.active_duration
-                                {
-                                    if no_pending_key {
-                                        info!(
-                                            ?ciphersuite,
-                                            id = ?keypair.id(),
-                                            "inserting pending key because active key is ready \
-                                                for expiration but no pending key is ready"
-                                        );
-                                        Some(Op::Create(ciphersuite))
-                                    } else if pending_key_ready {
-                                        info!(
-                                            ?ciphersuite,
-                                            id = ?keypair.id(),
-                                            "expiring active key because pending key is ready"
-                                        );
-                                        Some(Op::Update(*keypair.id(), HpkeKeyState::Expired))
-                                    } else {
-                                        // No action required, there's a pending key but we have to
-                                        // wait for it to become ready.
-                                        None
-                                    }
-                                } else {
-                                    // No action required, the key is not due for expiration.
-                                    None
-                                }
-                            } else {
-                                info!(
-                                    ?ciphersuite,
-                                    id = ?keypair.id(),
-                                    "expiring extraneous active key"
-                                );
-                                Some(Op::Update(*keypair.id(), HpkeKeyState::Expired))
-                            }
-                        } else {
-                            info!(
-                                ciphersuite = ?keypair.ciphersuite(),
-                                id = ?keypair.id(),
-                                "expiring active key for unknown ciphersuite"
-                            );
-                            Some(Op::Update(id, HpkeKeyState::Expired))
+                        if let Some(latest_active_key) = latest_active_key {
+                            ops.push(HpkeOp::Update(
+                                *latest_active_key.id(),
+                                HpkeKeyState::Expired,
+                                "pending key ready",
+                            ));
                         }
                     }
-                    HpkeKeyState::Pending => {
-                        if ciphersuite_known {
-                            let ciphersuite = keypair.ciphersuite();
-                            let latest_pending_keypair = self
-                                .keypairs
-                                .values()
-                                .filter(|candidate| {
-                                    keypair.ciphersuite() == candidate.ciphersuite()
-                                        && keypair.is_pending()
-                                })
-                                .max_by_key(|keypair| keypair.last_state_change_at());
-
-                            if Some(keypair) == latest_pending_keypair {
-                                if duration_since(&self.clock, keypair.last_state_change_at())
-                                    > self.config.pending_duration
-                                {
-                                    info!(
-                                        id = ?keypair.id(),
-                                        ?ciphersuite,
-                                        "promoting pending keypair to active"
-                                    );
-                                    Some(Op::Update(*keypair.id(), HpkeKeyState::Active))
-                                } else {
-                                    // No action required, the key is pending but it's not ready
-                                    // for promotion.
-                                    None
-                                }
-                            } else {
-                                info!(
-                                    id = ?keypair.id(),
-                                    ?ciphersuite,
-                                    "deleting extraneous pending keypair"
-                                );
-                                Some(Op::Delete(id))
-                            }
-                        } else {
-                            info!(
-                                id = ?keypair.id(),
-                                ?ciphersuite_known,
-                                "deleting pending key for unknown ciphersuite"
-                            );
-                            Some(Op::Delete(id))
-                        }
-                    }
-                    HpkeKeyState::Expired => {
-                        (duration_since(&self.clock, keypair.last_state_change_at())
-                            > self.config.expired_duration)
-                            .then(|| {
-                                info!(?id, "deleting expired key");
-                                Op::Delete(id)
-                            })
-                    }
+                } else if latest_pending_key.is_none()
+                    && latest_active_key.is_some_and(|keypair| {
+                        duration_since(&self.clock, keypair.last_state_change_at())
+                            > self.config.active_duration
+                    })
+                {
+                    ops.push(HpkeOp::Create(
+                        ciphersuite,
+                        HpkeKeyState::Pending,
+                        "active key ready for expiration, but no pending key present",
+                    ));
                 }
-            })
-            .collect();
 
+                ops.extend(active_keypairs.iter().skip(1).map(|keypair| {
+                    HpkeOp::Update(*keypair.id(), HpkeKeyState::Expired, "extraneous key")
+                }));
+                ops.extend(
+                    pending_keypairs
+                        .iter()
+                        .skip(1)
+                        .map(|keypair| HpkeOp::Delete(*keypair.id(), "extraneous key")),
+                );
+            } else {
+                ops.extend(active_keypairs.iter().map(|keypair| {
+                    HpkeOp::Update(*keypair.id(), HpkeKeyState::Expired, "unknown ciphersuite")
+                }));
+                ops.extend(
+                    pending_keypairs
+                        .iter()
+                        .map(|keypair| HpkeOp::Delete(*keypair.id(), "unknown ciphersuite")),
+                );
+            }
+
+            ops.extend(
+                expired_keypairs
+                    .iter()
+                    .filter(|keypair| {
+                        duration_since(&self.clock, keypair.last_state_change_at())
+                            > self.config.expired_duration
+                    })
+                    .map(|keypair| HpkeOp::Delete(*keypair.id(), "expired key")),
+            );
+        }
+
+        Ok(ops)
+    }
+
+    async fn write(
+        mut self,
+        tx: &Transaction<'_, C>,
+        ops: &[HpkeOp],
+    ) -> Result<(), DatastoreError> {
         for op in ops {
             match op {
-                Op::Create(ciphersuite) => {
-                    self.put(ciphersuite, HpkeKeyState::Pending)?;
+                HpkeOp::Create(ciphersuite, state, reason) => {
+                    info!(?ciphersuite, ?state, reason, "creating new key");
+
+                    let id = self.available_ids.next().ok_or_else(|| {
+                        DatastoreError::User(anyhow!("global HPKE key ID space exhausted").into())
+                    })?;
+                    let keypair = generate_hpke_config_and_private_key(
+                        id,
+                        ciphersuite.kem_id(),
+                        ciphersuite.kdf_id(),
+                        ciphersuite.aead_id(),
+                    )
+                    .map_err(|e| DatastoreError::User(e.into()))?;
+
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), state)
+                        .await?;
                 }
-                Op::Update(id, state) => {
-                    // Unwrap safety: it is a crash-worthy bug to update a non-existent key.
-                    self.keypairs
-                        .get_mut(&id)
-                        .unwrap()
-                        .set_state(state, self.clock.now());
+                HpkeOp::Update(id, state, reason) => {
+                    let keypair = tx.get_global_hpke_keypair(id).await?.ok_or_else(|| {
+                        DatastoreError::User(
+                            anyhow!("attempted to update state of non-existent key").into(),
+                        )
+                    })?;
+                    info!(?id, old_state = ?keypair.state(), new_state = ?state, reason, "changing key state");
+                    tx.set_global_hpke_keypair_state(keypair.id(), state)
+                        .await?;
                 }
-                Op::Delete(id) => {
-                    // Unwrap safety: it is a crash-worthy bug to delete a non-existent key.
-                    self.keypairs.remove(&id).unwrap();
+                HpkeOp::Delete(id, reason) => {
+                    info!(?id, reason, "deleting key");
+                    tx.delete_global_hpke_keypair(id).await?;
                 }
             }
         }
-        Ok(self)
-    }
-
-    fn put(
-        &mut self,
-        ciphersuite: HpkeCiphersuite,
-        state: HpkeKeyState,
-    ) -> Result<(), DatastoreError> {
-        let id = self.available_ids.next().ok_or_else(|| {
-            DatastoreError::User(anyhow!("global HPKE key ID space exhausted").into())
-        })?;
-        let keypair = generate_hpke_config_and_private_key(
-            id,
-            ciphersuite.kem_id(),
-            ciphersuite.kdf_id(),
-            ciphersuite.aead_id(),
-        )
-        .map_err(|e| DatastoreError::User(e.into()))?;
-
-        let result = self
-            .keypairs
-            .insert(id, GlobalHpkeKeypair::new(keypair, state, self.clock.now()));
-
-        // It is a bug to try to put a key where one already exists.
-        assert!(result.is_none());
-        Ok(())
-    }
-
-    async fn write(self, tx: &Transaction<'_, C>) -> Result<(), DatastoreError> {
-        tx.update_global_hpke_keypairs(&self.keypairs.values().cloned().collect::<Vec<_>>())
-            .await?;
 
         // Defensive assertion: Check our transaction snapshot for at least one active keypair in
         // in the table. If one is absent, committing the transaction would leave Janus unstartable
@@ -423,6 +387,12 @@ impl<'a, C: Clock> HpkeKeypairs<'a, C> {
             Ok(())
         }
     }
+}
+
+enum HpkeOp {
+    Create(HpkeCiphersuite, HpkeKeyState, &'static str),
+    Update(HpkeConfigId, HpkeKeyState, &'static str),
+    Delete(HpkeConfigId, &'static str),
 }
 
 /// Enforces that there's at least one [`HpkeCiphersuite`].
@@ -703,6 +673,10 @@ mod tests {
         }
         let keypairs = get_global_hpke_keypairs(&ds).await;
         assert_eq!(keypairs.len(), 2);
+
+        // Advance long enough to make the pending key ready. We should still prioritize the promoting
+        // the newest inserted key.
+        clock.advance(&Duration::from_seconds(300));
 
         // Operator inserts a new key in the pending state.
         let id = HpkeConfigId::from(255);
