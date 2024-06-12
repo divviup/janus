@@ -43,8 +43,8 @@ jobs:
       name: "Authenticate to GCP (private repositories)"
       uses: "google-github-actions/auth@v2"
       with:
-        workload_identity_provider: ${{ vars.GCP_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ vars.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+        workload_identity_provider: ${{ vars.GCP_ARTIFACTS_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ vars.GCP_ARTIFACTS_PUBLISHER_SERVICE_ACCOUNT }}
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
@@ -68,8 +68,8 @@ jobs:
       name: "Authenticate to GCP (public repositories)"
       uses: "google-github-actions/auth@v2"
       with:
-        workload_identity_provider: ${{ vars.GCP_PUBLIC_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ vars.GCP_PUBLIC_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+        workload_identity_provider: ${{ vars.GCP_GAR_PUBLIC_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ vars.GCP_GAR_PUBLIC_PUBLISHER_SERVICE_ACCOUNT }}
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
