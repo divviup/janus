@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_client::Client;
 use janus_core::vdaf::{Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance};
 use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
-use janus_messages::{Duration, TaskId};
+use janus_messages::{Duration, TaskId, Time};
 use prio::{
     codec::Encode,
     field::Field64,
@@ -155,8 +155,8 @@ impl InteropClient {
                 name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/\
                        divviup_ts_interop_client"
                     .to_string(),
-                tag: "4e71c8b@sha256:\
-                      61d1bf4cb731d0637b2c5489c45def0155ac22411c4e97607e6cff67cf135198"
+                tag: "e2bd57d@sha256:\
+                      ea32ec6d1e6522d4282b644e9885aeb30a0a92877f73e27424e9e00844b9a80c"
                     .to_string(),
             }
         }
@@ -314,11 +314,12 @@ where
         }))
     }
 
-    pub async fn upload(&self, measurement: &V::Measurement) -> anyhow::Result<()> {
+    pub async fn upload(&self, measurement: &V::Measurement, time: Time) -> anyhow::Result<()> {
         match self {
-            ClientImplementation::InProcess { client } => {
-                client.upload(measurement).await.map_err(Into::into)
-            }
+            ClientImplementation::InProcess { client } => client
+                .upload_with_time(measurement, time)
+                .await
+                .map_err(Into::into),
             ClientImplementation::Container(inner) => {
                 let task_id_encoded = URL_SAFE_NO_PAD.encode(inner.task_id.get_encoded().unwrap());
                 let upload_response = inner
@@ -333,6 +334,7 @@ where
                         "helper": inner.helper,
                         "vdaf": json_encode_vdaf(&inner.vdaf_instance),
                         "measurement": inner.vdaf.json_encode_measurement(measurement),
+                        "time": time.as_seconds_since_epoch(),
                         "time_precision": inner.time_precision.as_seconds(),
                     }))
                     .send()
