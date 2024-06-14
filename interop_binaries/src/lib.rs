@@ -35,6 +35,11 @@ use trillium_api::ApiConnExt;
 use url::Url;
 
 #[cfg(feature = "testcontainer")]
+// Consts in this module are derived from `include_bytes!()`. If the target file is empty at
+// lint-time, they'll be empty, so this lint does us no good. This lint is only on Rust >1.79, so
+// we have to ignore unknown lints for MSRVs.
+#[allow(unknown_lints)]
+#[allow(clippy::const_is_empty)]
 pub mod testcontainer;
 
 pub mod status {
