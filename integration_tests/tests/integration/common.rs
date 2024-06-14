@@ -204,12 +204,15 @@ where
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval. (for time interval tasks)
-    let before_timestamp = RealClock::default().now();
+    let time = RealClock::default().now();
     for measurement in measurements.iter() {
-        client_implementation.upload(measurement).await.unwrap();
+        client_implementation
+            .upload(measurement, time)
+            .await
+            .unwrap();
     }
 
-    before_timestamp
+    time
 }
 
 pub async fn verify_aggregate_generic<V>(
