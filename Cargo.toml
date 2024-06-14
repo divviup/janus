@@ -77,6 +77,8 @@ pretty_assertions = "1.4.0"
 prio = { version = "0.16.5", default-features = false, features = ["experimental"] }
 prometheus = "0.13.4"
 querystring = "1.1.0"
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"
 rand = "0.8"
 rayon = "1.10.0"
 reqwest = { version = "0.12.5", default-features = false, features = ["rustls-tls"] }

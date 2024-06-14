@@ -8,7 +8,7 @@ use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
 use crate::cache::GlobalHpkeKeypairCache;
 use anyhow::{anyhow, Error};
 use derivative::Derivative;
-use futures::FutureExt;
+use futures::{future::try_join_all, FutureExt};
 use janus_aggregator_core::datastore::{
     models::{GlobalHpkeKeypair, HpkeKeyState},
     Datastore, Error as DatastoreError, Transaction,
@@ -19,7 +19,11 @@ use janus_core::{
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
 use serde::{de, Deserialize, Deserializer, Serialize};
+use tokio::try_join;
 use tracing::{debug, info};
+
+#[cfg(test)]
+use quickcheck::{Arbitrary, Gen};
 
 /// Handles key rotation for Janus, according to policies defined in the configuration.
 ///
@@ -116,9 +120,18 @@ impl<C: Clock> KeyRotator<C> {
         // other aggregator replicas can continue to refresh their key caches without being blocked.
         tx.lock_global_hpke_keypairs().await?;
 
-        let hpke_key_rotator = HpkeKeyRotator::new(tx, config).await?;
-        let ops = hpke_key_rotator.sweep()?;
-        hpke_key_rotator.write(tx, &ops).await
+        let keypairs = tx
+            .get_global_hpke_keypairs()
+            .inspect(|keypairs| debug!(?keypairs, "table state before running key rotator"))
+            .await?
+            .into_iter()
+            .map(|keypair| (*keypair.id(), keypair))
+            .collect();
+
+        HpkeKeyRotator::new(tx.clock().clone(), keypairs, config)?
+            .sweep()?
+            .write(tx)
+            .await
     }
 }
 
@@ -144,18 +157,11 @@ struct HpkeKeyRotator<'a, C: Clock> {
 }
 
 impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
-    async fn new(
-        tx: &Transaction<'_, C>,
+    fn new(
+        clock: C,
+        keypairs: HashMap<HpkeConfigId, GlobalHpkeKeypair>,
         config: &'a HpkeKeyRotatorConfig,
     ) -> Result<Self, DatastoreError> {
-        let keypairs: HashMap<_, _> = tx
-            .get_global_hpke_keypairs()
-            .inspect(|keypairs| debug!(?keypairs, "table state before running key rotator"))
-            .await?
-            .into_iter()
-            .map(|keypair| (*keypair.id(), keypair))
-            .collect();
-
         let ids: HashSet<_> = keypairs.iter().map(|(&id, _)| u8::from(id)).collect();
         // Try to cycle through the entire u8 space before going back to zero. This allows us a
         // bigger window to quicky reject reports from faulty old clients with an outdated HPKE
@@ -176,7 +182,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
         ));
 
         Ok(Self {
-            clock: tx.clock().clone(),
+            clock,
             initially_empty: keypairs.is_empty(),
             keypairs,
             available_ids,
@@ -206,7 +212,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
     ///     [`HpkeKeyRotatorConfig::active_duration`] and there is no pending key, insert a pending
     ///     key.
     ///   - For each configured ciphersuite, expire all but the newest active key.
-    fn sweep(&self) -> Result<Vec<HpkeOp>, DatastoreError> {
+    fn sweep(mut self) -> Result<Self, DatastoreError> {
         let mut ops: Vec<HpkeOp> = Vec::new();
 
         // Bootstrap new keys.
@@ -326,14 +332,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
             );
         }
 
-        Ok(ops)
-    }
-
-    async fn write(
-        mut self,
-        tx: &Transaction<'_, C>,
-        ops: &[HpkeOp],
-    ) -> Result<(), DatastoreError> {
+        // Write ops in a separate loop, to avoid iterator invalidation problems.
         for op in ops {
             match op {
                 HpkeOp::Create(ciphersuite, state, reason) => {
@@ -350,26 +349,76 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     )
                     .map_err(|e| DatastoreError::User(e.into()))?;
 
-                    tx.put_global_hpke_keypair(&keypair).await?;
-                    tx.set_global_hpke_keypair_state(keypair.config().id(), state)
-                        .await?;
+                    let result = self
+                        .keypairs
+                        .insert(id, GlobalHpkeKeypair::new(keypair, state, self.clock.now()));
+                    // It is a programmer error to attempt to insert a key where one already exists.
+                    assert!(result.is_none());
                 }
                 HpkeOp::Update(id, state, reason) => {
-                    let keypair = tx.get_global_hpke_keypair(id).await?.ok_or_else(|| {
-                        DatastoreError::User(
-                            anyhow!("attempted to update state of non-existent key").into(),
-                        )
-                    })?;
+                    // Unwrap safety: it is a bug to attempt to mutate a non-existent key.
+                    let keypair = self.keypairs.get_mut(&id).unwrap();
                     info!(?id, old_state = ?keypair.state(), new_state = ?state, reason, "changing key state");
-                    tx.set_global_hpke_keypair_state(keypair.id(), state)
-                        .await?;
+                    keypair.set_state(state, self.clock.now());
                 }
                 HpkeOp::Delete(id, reason) => {
+                    // Unwrap safety: it is a bug to delete a non-existent key.
                     info!(?id, reason, "deleting key");
-                    tx.delete_global_hpke_keypair(id).await?;
+                    self.keypairs.remove(&id).unwrap();
                 }
             }
         }
+
+        Ok(self)
+    }
+
+    async fn write(&self, tx: &Transaction<'_, C>) -> Result<(), DatastoreError> {
+        let current_keypairs_ids: HashSet<_> = tx
+            .get_global_hpke_keypairs()
+            .await?
+            .into_iter()
+            .map(|keypair| *keypair.id())
+            .collect();
+        let update_keypairs_ids: HashSet<_> = self.keypairs.keys().cloned().collect();
+        let to_delete: Vec<_> = current_keypairs_ids
+            .difference(&update_keypairs_ids)
+            .collect();
+
+        try_join!(
+            try_join_all(
+                to_delete
+                    .iter()
+                    .map(|id| async move { tx.delete_global_hpke_keypair(id).await })
+            ),
+            try_join_all(
+                self.keypairs
+                    .iter()
+                    .map(|(id, updated_keypair)| async move {
+                        match tx.get_global_hpke_keypair(id).await? {
+                            Some(current_keypair) => {
+                                if current_keypair.state() != updated_keypair.state() {
+                                    tx.set_global_hpke_keypair_state(
+                                        updated_keypair.id(),
+                                        updated_keypair.state(),
+                                    )
+                                    .await?;
+                                }
+                                Ok(())
+                            }
+                            None => {
+                                tx.put_global_hpke_keypair(updated_keypair.hpke_keypair())
+                                    .await?;
+                                tx.set_global_hpke_keypair_state(
+                                    updated_keypair.id(),
+                                    updated_keypair.state(),
+                                )
+                                .await?;
+                                Ok(())
+                            }
+                        }
+                    })
+            ),
+        )?;
 
         // Defensive assertion: Check our transaction snapshot for at least one active keypair in
         // in the table. If one is absent, committing the transaction would leave Janus unstartable
@@ -435,8 +484,28 @@ fn default_hpke_ciphersuites() -> HashSet<HpkeCiphersuite> {
 }
 
 #[cfg(test)]
+impl Arbitrary for HpkeKeyRotatorConfig {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let mut ciphersuites = HashSet::arbitrary(&mut Gen::new(4));
+        // Ensure we have at least one ciphersuite in the config.
+        ciphersuites.insert(HpkeCiphersuite::arbitrary(g));
+
+        Self {
+            // Use u32 cast to u64 to avoid overflowing time.
+            pending_duration: Duration::from_seconds(u32::arbitrary(g).into()),
+            active_duration: Duration::from_seconds(u32::arbitrary(g).into()),
+            expired_duration: Duration::from_seconds(u32::arbitrary(g).into()),
+            ciphersuites,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, sync::Arc};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
 
     use janus_aggregator_core::datastore::{
         models::{GlobalHpkeKeypair, HpkeKeyState},
@@ -444,13 +513,19 @@ mod tests {
         Datastore,
     };
     use janus_core::{
-        hpke::{generate_hpke_config_and_private_key, HpkeCiphersuite},
+        hpke::{
+            test_util::generate_test_hpke_config_and_private_key_with_id_and_ciphersuite,
+            HpkeCiphersuite,
+        },
         test_util::install_test_trace_subscriber,
         time::{Clock, DurationExt, MockClock},
     };
-    use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
+    use quickcheck::{Arbitrary, Gen, TestResult};
 
-    use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator};
+    use crate::aggregator::key_rotator::{duration_since, HpkeKeyRotatorConfig, KeyRotator};
+
+    use super::HpkeKeyRotator;
 
     async fn get_global_hpke_keypairs<C: Clock>(ds: &Datastore<C>) -> Vec<GlobalHpkeKeypair> {
         ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypairs().await }))
@@ -458,6 +533,7 @@ mod tests {
             .unwrap()
     }
 
+    // Exercises the happy path and database interaction of the key rotator.
     #[tokio::test]
     async fn hpke_key_rotator() {
         install_test_trace_subscriber();
@@ -556,367 +632,280 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn hpke_key_rotator_new_config() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        let pending_duration = Duration::from_seconds(60);
-        let active_duration = Duration::from_seconds(300);
-        let expired_duration = Duration::from_seconds(60);
-        let ciphersuite_0 = HpkeCiphersuite::new(
-            HpkeKemId::P256HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        );
-        let ciphersuites = HashSet::from([ciphersuite_0]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        // Run the key rotator for a while.
-        for _ in 0..18 {
-            key_rotator.run().await.unwrap();
-            clock.advance(&Duration::from_seconds(30));
-        }
-
-        // Add a new ciphersuite to the config.
-        let ciphersuite_1 = HpkeCiphersuite::new(
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha512,
-            HpkeAeadId::Aes256Gcm,
-        );
-        let ciphersuites = HashSet::from([ciphersuite_0, ciphersuite_1]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        // Run the key rotator, we should insert a new pending key for the new ciphersuite.
-        clock.advance(&Duration::from_seconds(1));
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.ciphersuite() == ciphersuite_1)
-            .collect();
-        assert_eq!(keypairs.len(), 1);
-        assert_eq!(keypairs[0].state(), &HpkeKeyState::Pending);
-
-        // Nothing should change.
-        clock.advance(&Duration::from_seconds(1));
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.ciphersuite() == ciphersuite_1)
-            .collect();
-        assert_eq!(keypairs.len(), 1);
-        assert_eq!(keypairs[0].state(), &HpkeKeyState::Pending);
-
-        // Move past the pending duration, we should promote the new keypair.
-        clock.advance(&pending_duration.add(&Duration::from_seconds(1)).unwrap());
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.ciphersuite() == ciphersuite_1)
-            .collect();
-        assert_eq!(keypairs.len(), 1);
-        assert_eq!(keypairs[0].state(), &HpkeKeyState::Active);
+    #[derive(Debug, Clone)]
+    struct InitialGlobalHpkeKeysState {
+        /// Where the clock should start.
+        start: Time,
+        keypairs: HashMap<HpkeConfigId, GlobalHpkeKeypair>,
     }
 
-    #[tokio::test]
-    async fn hpke_key_rotator_multiple_pending_keys() {
-        // Should only promote the latest pending key.
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    impl Arbitrary for InitialGlobalHpkeKeysState {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            let start = u32::arbitrary(g) as u64;
 
-        let pending_duration = Duration::from_seconds(60);
-        let active_duration = Duration::from_seconds(300);
-        let expired_duration = Duration::from_seconds(60);
-        let ciphersuite_0 = HpkeCiphersuite::new(
-            HpkeKemId::P256HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        );
-        let ciphersuites = HashSet::from([ciphersuite_0]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
+            // Allow some timestamps to be in the future, within reason.
+            let offset = start + u8::arbitrary(g) as u64;
 
-        // Run the key rotator for a while, such that the current key is expired with one pending.
-        for _ in 0..12 {
-            key_rotator.run().await.unwrap();
-            clock.advance(&Duration::from_seconds(30));
-        }
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        assert_eq!(keypairs.len(), 2);
+            // Use at most 32 distinct keypairs.
+            let ids: HashSet<u8> = HashSet::arbitrary(&mut Gen::new(32));
 
-        // Advance long enough to make the pending key ready. We should still prioritize the promoting
-        // the newest inserted key.
-        clock.advance(&Duration::from_seconds(300));
-
-        // Operator inserts a new key in the pending state.
-        let id = HpkeConfigId::from(255);
-        ds.run_unnamed_tx(|tx| {
-            Box::pin(async move {
-                tx.put_global_hpke_keypair(
-                    &generate_hpke_config_and_private_key(
-                        id,
-                        ciphersuite_0.kem_id(),
-                        ciphersuite_0.kdf_id(),
-                        ciphersuite_0.aead_id(),
+            let keypairs = ids
+                .into_iter()
+                .map(|id| {
+                    (
+                        HpkeConfigId::from(id),
+                        GlobalHpkeKeypair::new(
+                            generate_test_hpke_config_and_private_key_with_id_and_ciphersuite(
+                                id,
+                                HpkeCiphersuite::arbitrary(g),
+                            ),
+                            *g.choose(&[
+                                HpkeKeyState::Pending,
+                                HpkeKeyState::Active,
+                                HpkeKeyState::Expired,
+                            ])
+                            .unwrap(),
+                            Time::from_seconds_since_epoch(
+                                (start + offset).saturating_sub(u32::arbitrary(g) as u64),
+                            ),
+                        ),
                     )
-                    .unwrap(),
-                )
-                .await
+                })
+                .collect();
+            Self {
+                start: Time::from_seconds_since_epoch(start),
+                keypairs,
+            }
+        }
+    }
+
+    // For each known ciphersuite, if there was an active key before running the key rotator, we
+    // must retain an active key.
+    #[quickcheck]
+    fn hpke_key_rotator_at_least_one_active_key_per_active_ciphersuite(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        let clock = MockClock::new(state.start);
+
+        let known_ciphersuites_with_active_keys: Vec<_> = config
+            .ciphersuites
+            .iter()
+            .filter(|&ciphersuite| {
+                state.keypairs.iter().any(|(_, keypair)| {
+                    keypair.state() == &HpkeKeyState::Active
+                        && ciphersuite == &keypair.ciphersuite()
+                })
             })
-        })
-        .await
-        .unwrap();
-
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        assert_eq!(keypairs.len(), 2);
-        assert!(keypairs
-            .iter()
-            .any(|keypair| keypair.state() == &HpkeKeyState::Active));
-        let pending_keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.state() == &HpkeKeyState::Pending)
             .collect();
-        assert_eq!(pending_keypairs.len(), 1);
-        assert!(pending_keypairs[0].id() == &id);
 
-        // Move past the pending duration, we should promote the latest inserted pending keypair.
-        clock.advance(&pending_duration.add(&Duration::from_seconds(1)).unwrap());
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let active_keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.state() == &HpkeKeyState::Active)
-            .collect();
-        assert_eq!(active_keypairs.len(), 1);
-        assert!(active_keypairs[0].id() == &id);
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
+
+        for known_ciphersuite in known_ciphersuites_with_active_keys {
+            if !key_rotator.keypairs.iter().any(|(_, keypair)| {
+                &keypair.ciphersuite() == known_ciphersuite
+                    && keypair.state() == &HpkeKeyState::Active
+            }) {
+                return TestResult::failed();
+            }
+        }
+        TestResult::passed()
     }
 
-    #[tokio::test]
-    async fn hpke_key_rotator_multiple_active_keys() {
-        // If the operator inserts multiple active keys, we should replace them with only one key.
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    #[quickcheck]
+    fn hpke_key_rotator_remove_config(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        let clock = MockClock::new(state.start);
 
-        let pending_duration = Duration::from_seconds(60);
-        let active_duration = Duration::from_seconds(300);
-        let expired_duration = Duration::from_seconds(60);
-        let ciphersuite_0 = HpkeCiphersuite::new(
-            HpkeKemId::P256HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        );
-
-        let ciphersuites = HashSet::from([ciphersuite_0]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        // Run the key rotator for a while.
-        for _ in 0..18 {
-            key_rotator.run().await.unwrap();
-            clock.advance(&Duration::from_seconds(30));
-        }
-
-        // Operator inserts a new key in the active state.
-        let id = HpkeConfigId::from(255);
-        ds.run_unnamed_tx(|tx| {
-            Box::pin(async move {
-                tx.put_global_hpke_keypair(
-                    &generate_hpke_config_and_private_key(
-                        id,
-                        ciphersuite_0.kem_id(),
-                        ciphersuite_0.kdf_id(),
-                        ciphersuite_0.aead_id(),
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap();
-                tx.set_global_hpke_keypair_state(&id, &HpkeKeyState::Active)
-                    .await
-                    .unwrap();
-                Ok(())
+        let to_expire: HashSet<_> = state
+            .keypairs
+            .iter()
+            .filter(|(_, keypair)| {
+                !config.ciphersuites.contains(&keypair.ciphersuite())
+                    && keypair.state() == &HpkeKeyState::Active
             })
-        })
-        .await
-        .unwrap();
-
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let active_keypairs: Vec<_> = keypairs
-            .iter()
-            .filter(|keypair| keypair.state() == &HpkeKeyState::Active)
+            .map(|(id, _)| *id)
             .collect();
-        assert_eq!(active_keypairs.len(), 1);
-        // `id` should be the active key, since it was inserted more recently.
-        assert_eq!(active_keypairs[0].id(), &id);
-    }
 
-    #[tokio::test]
-    async fn hpke_key_rotator_refuse_to_remove_only_key() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let to_delete: HashSet<_> = state
+            .keypairs
+            .iter()
+            .filter(|(_, keypair)| {
+                !config.ciphersuites.contains(&keypair.ciphersuite())
+                    && keypair.state() == &HpkeKeyState::Pending
+            })
+            .map(|(id, _)| *id)
+            .collect();
 
-        let pending_duration = Duration::from_seconds(60);
-        let active_duration = Duration::from_seconds(300);
-        let expired_duration = Duration::from_seconds(60);
-        let ciphersuite_0 = HpkeCiphersuite::new(
-            HpkeKemId::P256HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        );
-
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: HashSet::new(),
-            },
-        );
-
-        assert!(key_rotator.run().await.is_err());
-
-        let ciphersuites = HashSet::from([ciphersuite_0]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        for _ in 0..7 {
-            key_rotator.run().await.unwrap();
-            clock.advance(&Duration::from_seconds(30));
+        if to_expire.is_empty() && to_delete.is_empty() {
+            return TestResult::discard();
         }
 
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: HashSet::new(),
-            },
-        );
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
 
-        assert!(key_rotator.run().await.is_err());
+        if to_delete
+            .iter()
+            .any(|id| key_rotator.keypairs.contains_key(id))
+        {
+            TestResult::error("pending key should have been deleted")
+        } else if !to_expire
+            .iter()
+            .all(|id| key_rotator.keypairs.get(id).unwrap().state() == &HpkeKeyState::Expired)
+        {
+            TestResult::error("active key should have been expired")
+        } else {
+            TestResult::passed()
+        }
     }
 
-    #[tokio::test]
-    async fn hpke_key_rotator_remove_config() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        let pending_duration = Duration::from_seconds(60);
-        let active_duration = Duration::from_seconds(300);
-        let expired_duration = Duration::from_seconds(120);
-        let ciphersuite_0 = HpkeCiphersuite::new(
-            HpkeKemId::P256HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        );
-        let ciphersuite_1 = HpkeCiphersuite::new(
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha512,
-            HpkeAeadId::Aes256Gcm,
-        );
-        let ciphersuites = HashSet::from([ciphersuite_0, ciphersuite_1]);
-
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        // Run the key rotator for a while, such that the current key is expired with one pending.
-        for _ in 0..12 {
-            key_rotator.run().await.unwrap();
-            clock.advance(&Duration::from_seconds(30));
+    #[quickcheck]
+    fn hpke_key_rotator_new_config(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        if state.keypairs.is_empty() {
+            return TestResult::discard();
         }
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        assert_eq!(keypairs.len(), 4);
+        let clock = MockClock::new(state.start);
 
-        // Remove ciphersuite_0 from the config.
-        let ciphersuites = HashSet::from([ciphersuite_1]);
-        let key_rotator = KeyRotator::new(
-            ds.clone(),
-            HpkeKeyRotatorConfig {
-                pending_duration,
-                active_duration,
-                expired_duration,
-                ciphersuites: ciphersuites.clone(),
-            },
-        );
-
-        // The pending key should be gone, and the active key should be expired.
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let ciphersuite_0_keypairs: Vec<_> = keypairs
+        let ciphersuites_to_insert: Vec<_> = config
+            .ciphersuites
             .iter()
-            .filter(|keypair| keypair.ciphersuite() == ciphersuite_0)
+            .filter(|&ciphersuite| {
+                !state
+                    .keypairs
+                    .iter()
+                    .any(|(_, keypair)| &keypair.ciphersuite() == ciphersuite)
+            })
             .collect();
-        assert_eq!(ciphersuite_0_keypairs.len(), 1);
-        assert!(ciphersuite_0_keypairs[0].state() == &HpkeKeyState::Expired);
 
-        clock.advance(&expired_duration.add(&Duration::from_seconds(1)).unwrap());
-        key_rotator.run().await.unwrap();
-        let keypairs = get_global_hpke_keypairs(&ds).await;
-        let ciphersuite_0_keypairs: Vec<_> = keypairs
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
+
+        for ciphersuite in ciphersuites_to_insert {
+            let inserted: Vec<_> = key_rotator
+                .keypairs
+                .iter()
+                .filter(|(_, keypair)| &keypair.ciphersuite() == ciphersuite)
+                .collect();
+            if inserted.len() != 1 {
+                return TestResult::error("more than one key inserted for new ciphersuite");
+            } else if inserted[0].1.state() != &HpkeKeyState::Pending {
+                return TestResult::error("inserted key not in pending state");
+            }
+        }
+        TestResult::passed()
+    }
+
+    #[quickcheck]
+    fn hpke_key_rotator_active_keys(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        let clock = MockClock::new(state.start);
+        let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
+
+        for ciphersuite in &config.ciphersuites {
+            let active_keys: Vec<_> = key_rotator
+                .keypairs
+                .values()
+                .filter(|&keypair| {
+                    keypair.ciphersuite() == *ciphersuite
+                        && keypair.state() == &HpkeKeyState::Active
+                })
+                .collect();
+
+            if active_keys.len() > 1 {
+                return TestResult::error("there should be at most 1 active key");
+            } else if active_keys.len() == 1
+                && duration_since(&clock, active_keys[0].last_state_change_at())
+                    > config.active_duration
+                && !key_rotator.keypairs.values().any(|keypair| {
+                    keypair.state() == &HpkeKeyState::Pending
+                        && &keypair.ciphersuite() == ciphersuite
+                })
+            {
+                return TestResult::error("no pending key present for expiring key");
+            }
+        }
+
+        TestResult::passed()
+    }
+
+    #[quickcheck]
+    fn hpke_key_rotator_pending_keys(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        let clock = MockClock::new(state.start);
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
+
+        for ciphersuite in &config.ciphersuites {
+            let pending_keys: Vec<_> = key_rotator
+                .keypairs
+                .values()
+                .filter(|&keypair| {
+                    &keypair.ciphersuite() == ciphersuite
+                        && keypair.state() == &HpkeKeyState::Pending
+                })
+                .collect();
+
+            if pending_keys.len() > 1 {
+                return TestResult::error("there should be at most 1 pending key");
+            }
+        }
+
+        TestResult::passed()
+    }
+
+    #[quickcheck]
+    fn hpke_key_rotator_expired_keys(
+        config: HpkeKeyRotatorConfig,
+        state: InitialGlobalHpkeKeysState,
+    ) -> TestResult {
+        let clock = MockClock::new(state.start);
+
+        let to_delete: HashSet<_> = state
+            .keypairs
             .iter()
-            .filter(|keypair| keypair.ciphersuite() == ciphersuite_0)
+            .filter(|(_, keypair)| {
+                duration_since(&clock, keypair.last_state_change_at()) > config.expired_duration
+                    && keypair.state() == &HpkeKeyState::Expired
+            })
+            .map(|(id, _)| *id)
             .collect();
-        assert!(ciphersuite_0_keypairs.is_empty());
+
+        if to_delete.is_empty() {
+            return TestResult::discard();
+        }
+
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+            .unwrap()
+            .sweep()
+            .unwrap();
+
+        for id in to_delete {
+            if key_rotator.keypairs.contains_key(&id) {
+                return TestResult::error("expired key was not deleted");
+            }
+        }
+
+        TestResult::passed()
     }
 }
