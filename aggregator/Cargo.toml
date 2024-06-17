@@ -115,8 +115,8 @@ janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 prio = { workspace = true, features = ["multithreaded"] }
-quickcheck = "1.0.3"
-quickcheck_macros = "1.0.0"
+quickcheck = { workspace = true }
+quickcheck_macros = { workspace = true }
 rstest.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "test-util"] } # ensure this remains compatible with the non-dev dependency
