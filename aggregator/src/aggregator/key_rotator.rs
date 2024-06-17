@@ -241,24 +241,15 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
             HpkeCiphersuite,
             HashMap<HpkeKeyState, VecDeque<&GlobalHpkeKeypair>>,
         > = HashMap::new();
-        for (_, keypair) in self.keypairs.iter() {
-            by_ciphersuite
-                .entry(keypair.ciphersuite())
-                .and_modify(|by_state| {
-                    by_state
-                        .entry(*keypair.state())
-                        .and_modify(|entry| {
-                            entry.insert(
-                                entry.partition_point(|&candidate| {
-                                    candidate.last_state_change_at()
-                                        > keypair.last_state_change_at()
-                                }),
-                                keypair,
-                            )
-                        })
-                        .or_insert_with(|| VecDeque::from([keypair]));
-                })
-                .or_insert_with(|| HashMap::from([(*keypair.state(), VecDeque::from([keypair]))]));
+        for keypair in self.keypairs.values() {
+            let by_state = by_ciphersuite.entry(keypair.ciphersuite()).or_default();
+            let keypairs = by_state.entry(*keypair.state()).or_default();
+            keypairs.insert(
+                keypairs.partition_point(|&candidate| {
+                    candidate.last_state_change_at() > keypair.last_state_change_at()
+                }),
+                keypair,
+            );
         }
 
         for (ciphersuite, mut by_state) in by_ciphersuite {
@@ -288,12 +279,10 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                             ));
                         }
                     }
-                } else if latest_pending_key.is_none()
-                    && latest_active_key.is_some_and(|keypair| {
-                        duration_since(&self.clock, keypair.last_state_change_at())
-                            > self.config.active_duration
-                    })
-                {
+                } else if latest_active_key.is_some_and(|keypair| {
+                    duration_since(&self.clock, keypair.last_state_change_at())
+                        > self.config.active_duration
+                }) {
                     ops.push(HpkeOp::Create(
                         ciphersuite,
                         HpkeKeyState::Pending,
@@ -507,6 +496,7 @@ mod tests {
         sync::Arc,
     };
 
+    use itertools::Itertools;
     use janus_aggregator_core::datastore::{
         models::{GlobalHpkeKeypair, HpkeKeyState},
         test_util::ephemeral_datastore,
@@ -851,12 +841,24 @@ mod tests {
         state: InitialGlobalHpkeKeysState,
     ) -> TestResult {
         let clock = MockClock::new(state.start);
-        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs, &config)
+        let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
             .unwrap();
 
         for ciphersuite in &config.ciphersuites {
+            let newest_pending_keys_ids: HashSet<_> = state
+                .keypairs
+                .values()
+                .filter(|&keypair| {
+                    &keypair.ciphersuite() == ciphersuite
+                        && keypair.state() == &HpkeKeyState::Pending
+                })
+                .max_set_by_key(|keypair| keypair.last_state_change_at())
+                .into_iter()
+                .map(|keypair| *keypair.id())
+                .collect();
+
             let pending_keys: Vec<_> = key_rotator
                 .keypairs
                 .values()
@@ -868,6 +870,11 @@ mod tests {
 
             if pending_keys.len() > 1 {
                 return TestResult::error("there should be at most 1 pending key");
+            } else if pending_keys.len() == 1
+                && !newest_pending_keys_ids.is_empty()
+                && !newest_pending_keys_ids.contains(pending_keys[0].id())
+            {
+                return TestResult::error("only the newest pending key should remain");
             }
         }
 
