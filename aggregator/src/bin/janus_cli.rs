@@ -29,6 +29,8 @@ use tracing::{debug, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    initialize_rustls();
+
     // Parse command-line options, then read & parse config.
     let command_line_options = CommandLineOptions::parse();
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
@@ -455,10 +457,17 @@ impl From<kube::Client> for LazyKubeClient {
     }
 }
 
+fn initialize_rustls() {
+    // Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by
+    // the default Cargo feature. Specifying a default provider here prevents runtime errors if
+    // another dependency also enables the ring feature.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
-    use crate::{LazyKubeClient, URL_SAFE_NO_PAD};
+    use crate::{initialize_rustls, LazyKubeClient, URL_SAFE_NO_PAD};
     use base64::Engine;
     use clap::CommandFactory;
     use janus_aggregator::{
@@ -491,6 +500,8 @@ mod tests {
 
     #[tokio::test]
     async fn options_datastore_keys() {
+        initialize_rustls();
+
         // Prep: create a Kubernetes cluster and put a secret in it
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
@@ -821,6 +832,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_datastore_key() {
+        initialize_rustls();
+
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
 
@@ -852,6 +865,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_datastore_key_dry_run() {
+        initialize_rustls();
+
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await.into();
 

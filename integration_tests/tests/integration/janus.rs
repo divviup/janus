@@ -1,6 +1,9 @@
 #[cfg(feature = "testcontainer")]
 use crate::common::test_task_builder;
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
+use crate::{
+    common::{submit_measurements_and_verify_aggregate, test_task_builder_host},
+    initialize_rustls,
+};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
@@ -98,6 +101,7 @@ impl JanusInProcessPair {
 async fn janus_janus_count() {
     static TEST_NAME: &str = "janus_janus_count";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair =
@@ -117,6 +121,7 @@ async fn janus_janus_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair =
@@ -138,6 +143,7 @@ async fn janus_in_process_count() {
 async fn janus_janus_sum_16() {
     static TEST_NAME: &str = "janus_janus_sum_16";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusContainerPair::new(
@@ -161,6 +167,7 @@ async fn janus_janus_sum_16() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_sum_16() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair =
@@ -182,6 +189,7 @@ async fn janus_in_process_sum_16() {
 async fn janus_janus_histogram_4_buckets() {
     static TEST_NAME: &str = "janus_janus_histogram_4_buckets";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusContainerPair::new(
@@ -208,6 +216,7 @@ async fn janus_janus_histogram_4_buckets() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_histogram_4_buckets() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(
@@ -235,6 +244,7 @@ async fn janus_in_process_histogram_4_buckets() {
 async fn janus_janus_fixed_size() {
     static TEST_NAME: &str = "janus_janus_fixed_size";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusContainerPair::new(
@@ -261,6 +271,7 @@ async fn janus_janus_fixed_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_fixed_size() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(
@@ -288,6 +299,7 @@ async fn janus_in_process_fixed_size() {
 async fn janus_janus_sum_vec() {
     static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
@@ -313,6 +325,7 @@ async fn janus_janus_sum_vec() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_sum_vec() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(
         VdafInstance::Prio3SumVec {
