@@ -169,8 +169,7 @@ key_rotator:
   # How frequently to run the key rotator, in seconds. Required.
   frequency_s: 3600
 
-  # Rotation policy for global HPKE keys. At least one is required. Each entry
-  # represents a key with a particular ciphersuite.
+  # Rotation policy for global HPKE keys.
   hpke:
     # How long keys remains pending before they're promoted to active. Should
     # be greater than the global HPKE keypair cache refresh rate. Defaults to
@@ -184,7 +183,8 @@ key_rotator:
     # how long clients cache HPKE keys. Defaults to 1 week.
     expired_duration_s: 604800
 
-    # The set of keys to manage, identified by ciphersuite.
+    # The set of keys to manage, identified by ciphersuite. At least one is
+    # required. Each entry represents a key with a particular ciphersuite.
     ciphersuite:
       # Defaults to a key with these algorithms.
       - kem_id: P521HkdfSha512

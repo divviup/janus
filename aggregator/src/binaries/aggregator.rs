@@ -28,10 +28,9 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     future::{ready, Future},
     path::PathBuf,
-    pin::Pin,
 };
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{join, sync::watch, time::interval};
+use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
 use trillium::Handler;
 use trillium_router::router;
@@ -82,24 +81,24 @@ async fn run_aggregator(
         None,
     );
 
-    let garbage_collector_future = {
+    let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
         let gc_config = config.garbage_collection.take();
         let meter = meter.clone();
         let stopper = stopper.clone();
-        async move {
+        spawn(async move {
             if let Some(gc_config) = gc_config {
                 info!("Running garbage collector");
                 run_garbage_collector(datastore, gc_config, meter, stopper).await;
             }
-        }
+        })
     };
 
-    let key_rotator_future = {
+    let key_rotator_handle = {
         let datastore = Arc::clone(&datastore);
         let config = config.key_rotator.take();
         let stopper = stopper.clone();
-        async move {
+        spawn(async move {
             if let Some(config) = config {
                 info!("Running key rotator");
                 let key_rotator = KeyRotator::new(datastore, config.hpke);
@@ -113,10 +112,10 @@ async fn run_aggregator(
                     }
                 }
             }
-        }
+        })
     };
 
-    let aggregator_api_future: Pin<Box<dyn Future<Output = ()> + Send + 'static>> =
+    let aggregator_api_handle =
         match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
                 if let Some(listen_address) = config.listen_address {
@@ -129,7 +128,7 @@ async fn run_aggregator(
 
                     info!(?aggregator_api_bound_address, "Running aggregator API");
 
-                    Box::pin(aggregator_api_server)
+                    spawn(aggregator_api_server)
                 } else if let Some(path_prefix) = &config.path_prefix {
                     // Create a Trillium handler under the requested path prefix, which we'll add to
                     // the DAP API handler in the setup_server call below
@@ -141,12 +140,12 @@ async fn run_aggregator(
                     // Append wildcard so that this handler will match anything under the prefix
                     let path_prefix = format!("{path_prefix}/*");
                     handlers.1 = Some(router().all(path_prefix, handler));
-                    Box::pin(ready(()))
+                    spawn(ready(()))
                 } else {
                     unreachable!("the configuration should not have deserialized to this state")
                 }
             }
-            None => Box::pin(ready(())),
+            None => spawn(ready(())),
         };
 
     let (aggregator_bound_address, aggregator_server) =
@@ -154,15 +153,16 @@ async fn run_aggregator(
             .await
             .context("failed to create aggregator server")?;
     sender.send_replace(Some(aggregator_bound_address));
+    let aggregator_server_handle = spawn(aggregator_server);
 
     info!(?aggregator_bound_address, "Running aggregator");
 
-    join!(
-        aggregator_server,
-        garbage_collector_future,
-        key_rotator_future,
-        aggregator_api_future
-    );
+    try_join!(
+        aggregator_server_handle,
+        garbage_collector_handle,
+        key_rotator_handle,
+        aggregator_api_handle
+    )?;
     Ok(())
 }
 
