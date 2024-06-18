@@ -1,7 +1,10 @@
 #![cfg(feature = "testcontainer")]
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
+use crate::{
+    common::{submit_measurements_and_verify_aggregate, test_task_builder},
+    initialize_rustls,
+};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 use janus_integration_tests::{
@@ -40,6 +43,7 @@ async fn run_divviup_ts_integration_test(test_name: &str, vdaf: VdafInstance) {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test("janus_divviup_ts_count", VdafInstance::Prio3Count).await;
 }
@@ -47,6 +51,7 @@ async fn janus_divviup_ts_count() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test("janus_divviup_ts_sum", VdafInstance::Prio3Sum { bits: 8 })
         .await;
@@ -55,6 +60,7 @@ async fn janus_divviup_ts_sum() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_histogram",
@@ -69,6 +75,7 @@ async fn janus_divviup_ts_histogram() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_divviup_ts_sumvec() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     run_divviup_ts_integration_test(
         "janus_divviup_ts_sumvec",

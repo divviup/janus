@@ -253,6 +253,8 @@ where
     F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
+    initialize_rustls();
+
     // Parse arguments, then read & parse config.
     let options = Options::parse();
     let config: Config = read_config(options.common_options())?;
@@ -500,13 +502,20 @@ pub async fn setup_server(
     Ok((address, future))
 }
 
+pub(crate) fn initialize_rustls() {
+    // Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by
+    // the default Cargo feature. Specifying a default provider here prevents runtime errors if
+    // another dependency also enables the ring feature.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
         binary_utils::{
-            database_pool, register_database_pool_status_metrics, zpages_handler,
-            CommonBinaryOptions,
+            database_pool, initialize_rustls, register_database_pool_status_metrics,
+            zpages_handler, CommonBinaryOptions,
         },
         config::DbConfig,
     };
@@ -603,6 +612,7 @@ mod tests {
     #[tokio::test]
     async fn postgres_tls_connection() {
         install_test_trace_subscriber();
+        initialize_rustls();
 
         // We need to be careful about providing the certificate and private key to the Postgres
         // container. The key must have '-rw-------' permissions, and both must be readable by the

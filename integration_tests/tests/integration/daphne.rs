@@ -1,4 +1,7 @@
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
+use crate::{
+    common::{submit_measurements_and_verify_aggregate, test_task_builder},
+    initialize_rustls,
+};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
@@ -17,6 +20,7 @@ use std::time::Duration;
 async fn daphne_janus() {
     static TEST_NAME: &str = "daphne_janus";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let network = generate_network_name();
@@ -58,6 +62,7 @@ async fn daphne_janus() {
 async fn janus_daphne() {
     static TEST_NAME: &str = "janus_daphne";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let network = generate_network_name();
@@ -99,6 +104,7 @@ async fn janus_daphne() {
 async fn janus_in_process_daphne() {
     static TEST_NAME: &str = "janus_in_process_daphne";
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // Start servers.
     let network = generate_network_name();
