@@ -12,12 +12,6 @@ pub mod diagnostic;
 pub mod metrics;
 pub mod trace;
 
-#[cfg(test)]
-extern crate quickcheck;
-#[cfg(test)]
-#[macro_use(quickcheck)]
-extern crate quickcheck_macros;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Operation {
     Put,

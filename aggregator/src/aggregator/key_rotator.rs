@@ -512,6 +512,7 @@ mod tests {
     };
     use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
     use quickcheck::{Arbitrary, Gen, TestResult};
+    use quickcheck_macros::quickcheck;
 
     use crate::aggregator::key_rotator::{duration_since, HpkeKeyRotatorConfig, KeyRotator};
 

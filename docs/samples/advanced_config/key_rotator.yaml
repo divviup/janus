@@ -26,7 +26,7 @@ key_rotator:
     # 1 hour.
     pending_duration_s: 3600
 
-    # The TTL of keys. Defaults to 4 weeks.
+    # The TTL of keys. Defaults to 12 weeks.
     active_duration_s: 2419200
 
     # How long keys can be expired before being deleted. Should be greater than
