@@ -160,6 +160,7 @@ impl JanusInProcess {
             common_config: common_config.clone(),
             taskprov_config: TaskprovConfig::default(),
             garbage_collection: None,
+            key_rotator: None,
             listen_address: (Ipv4Addr::LOCALHOST, 0).into(),
             aggregator_api: None,
             max_upload_batch_size: 100,

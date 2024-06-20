@@ -162,3 +162,31 @@ garbage_collection:
   # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
   # of the garbage collector.
   collection_limit: 50
+
+# Configuration for key rotator. Allows running the key rotator as part of the aggregator process.
+# If omitted, you should run the key rotator as a separate cronjob.
+key_rotator:
+  # How frequently to run the key rotator, in seconds. Required.
+  frequency_s: 3600
+
+  # Rotation policy for global HPKE keys.
+  hpke:
+    # How long keys remains pending before they're promoted to active. Should
+    # be greater than the global HPKE keypair cache refresh rate. Defaults to
+    # 1 hour.
+    pending_duration_s: 3600
+
+    # The TTL of keys. Defaults to 4 weeks.
+    active_duration_s: 2419200
+
+    # How long keys can be expired before being deleted. Should be greater than
+    # how long clients cache HPKE keys. Defaults to 1 week.
+    expired_duration_s: 604800
+
+    # The set of keys to manage, identified by ciphersuite. At least one is
+    # required. Each entry represents a key with a particular ciphersuite.
+    ciphersuite:
+      # Defaults to a key with these algorithms.
+      - kem_id: P521HkdfSha512
+        kdf_id: HkdfSha512
+        aead_id: Aes256Gcm
