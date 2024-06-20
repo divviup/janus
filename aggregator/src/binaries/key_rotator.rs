@@ -95,7 +95,10 @@ mod tests {
     use rand::random;
 
     use crate::{
-        aggregator::key_rotator::HpkeKeyRotatorConfig,
+        aggregator::key_rotator::{
+            default_active_duration, default_expired_duration, default_hpke_ciphersuites,
+            default_pending_duration, HpkeKeyRotatorConfig,
+        },
         config::{
             default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
@@ -103,7 +106,7 @@ mod tests {
         },
     };
 
-    use super::{Config, Options};
+    use super::{Config, KeyRotatorConfig, Options};
 
     #[test]
     fn verify_app() {
@@ -120,7 +123,7 @@ mod tests {
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
             },
-            key_rotator: super::KeyRotatorConfig {
+            key_rotator: KeyRotatorConfig {
                 hpke: HpkeKeyRotatorConfig {
                     pending_duration: Duration::from_seconds(random()),
                     active_duration: Duration::from_seconds(random()),
@@ -140,6 +143,27 @@ mod tests {
                 },
             },
         });
+    }
+
+    #[test]
+    fn default_config() {
+        let config = serde_yaml::from_str::<KeyRotatorConfig>(
+            r#"---
+hpke: {}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config,
+            KeyRotatorConfig {
+                hpke: HpkeKeyRotatorConfig {
+                    pending_duration: default_pending_duration(),
+                    active_duration: default_active_duration(),
+                    expired_duration: default_expired_duration(),
+                    ciphersuites: default_hpke_ciphersuites(),
+                }
+            }
+        )
     }
 
     #[test]

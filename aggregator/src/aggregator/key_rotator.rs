@@ -449,22 +449,22 @@ where
 }
 
 /// Returns [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`] times 2, for safety margin.
-fn default_pending_duration() -> Duration {
+pub fn default_pending_duration() -> Duration {
     Duration::from_seconds(GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL.as_secs() * 2)
 }
 
 /// 12 weeks. This is long enough not to be unnecessary churn, but short enough that misbehaving
 /// clients reveal themselves somewhat imminently.
-fn default_active_duration() -> Duration {
+pub fn default_active_duration() -> Duration {
     Duration::from_seconds(60 * 60 * 24 * 7 * 12)
 }
 
 /// 1 week.
-fn default_expired_duration() -> Duration {
+pub fn default_expired_duration() -> Duration {
     Duration::from_seconds(60 * 60 * 24 * 7)
 }
 
-fn default_hpke_ciphersuites() -> HashSet<HpkeCiphersuite> {
+pub fn default_hpke_ciphersuites() -> HashSet<HpkeCiphersuite> {
     HashSet::from([HpkeCiphersuite::new(
         HpkeKemId::X25519HkdfSha256,
         HpkeKdfId::HkdfSha256,
