@@ -1,7 +1,5 @@
 use crate::aggregator::{
-    aggregate_init_tests::{
-        put_aggregation_job, put_aggregation_job_with_auth_header_count, PrepareInitGenerator,
-    },
+    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
     http_handlers::{
         aggregator_handler,
@@ -448,15 +446,9 @@ async fn aggregate_init() {
 
     // Send request, parse response. Do this twice to prove that the request is idempotent.
     let aggregation_job_id: AggregationJobId = random();
-    for auth_header_count in 1..=2 {
-        let mut test_conn = put_aggregation_job_with_auth_header_count(
-            &task,
-            &aggregation_job_id,
-            &request,
-            &handler,
-            auth_header_count,
-        )
-        .await;
+    for _ in 0..2 {
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
