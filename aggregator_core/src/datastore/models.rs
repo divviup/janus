@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::HpkeKeypair,
+    hpke::{HpkeCiphersuite, HpkeKeypair},
     report_id::ReportIdChecksumExt,
     time::{DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
@@ -15,8 +15,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, TaskId, Time,
+    HpkeCiphertext, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
+    ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
     range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -303,7 +303,6 @@ where
 #[cfg(feature = "test-util")]
 impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
     pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
-        use janus_messages::HpkeConfigId;
         use rand::random;
 
         Self::new(
@@ -2184,18 +2183,21 @@ impl ToSql for SqlInterval {
 #[postgres(name = "hpke_key_state")]
 #[serde(rename_all = "snake_case")]
 pub enum HpkeKeyState {
-    /// The key should be advertised to DAP clients, and is the preferred key
-    /// for new reports to be encrypted with.
+    /// The key should be advertised to DAP clients, and is a preferred key for new reports to be
+    /// encrypted with. The key should only be in this state if all Janus replicas have had
+    /// sufficient time to discover the key in at least the [`Self::Pending`] state.
     #[postgres(name = "ACTIVE")]
     Active,
-    /// The key should not be advertised to DAP clients, but could be used for
-    /// decrypting client reports depending on when aggregators pick up the new key.
-    /// New keys should be created in this state.
+    /// The key should not be advertised to DAP clients, but could be used for decrypting client
+    /// reports depending on when Janus replicas pick up the new key. New keys should be created in
+    /// this state and remain in this state for as long as it takes replicas to refresh their
+    /// caches of HPKE keys.
     #[postgres(name = "PENDING")]
     Pending,
-    /// The key is pending deletion. It should not be advertised, but could be used
-    /// for decrypting client reports depending on the age of those reports or when
-    /// clients have refreshed their key caches.
+    /// The key is pending deletion. It should not be advertised, but could be used for decrypting
+    /// client reports depending on the age of those reports or when clients have refreshed their
+    /// key caches. The key should remain in this state for longer than clients are expected to
+    /// cache HPKE keys.
     #[postgres(name = "EXPIRED")]
     Expired,
 }
@@ -2204,15 +2206,15 @@ pub enum HpkeKeyState {
 pub struct GlobalHpkeKeypair {
     hpke_keypair: HpkeKeypair,
     state: HpkeKeyState,
-    updated_at: Time,
+    last_state_change_at: Time,
 }
 
 impl GlobalHpkeKeypair {
-    pub(super) fn new(hpke_keypair: HpkeKeypair, state: HpkeKeyState, updated_at: Time) -> Self {
+    pub fn new(hpke_keypair: HpkeKeypair, state: HpkeKeyState, last_state_change_at: Time) -> Self {
         Self {
             hpke_keypair,
             state,
-            updated_at,
+            last_state_change_at,
         }
     }
 
@@ -2224,8 +2226,33 @@ impl GlobalHpkeKeypair {
         &self.state
     }
 
-    pub fn updated_at(&self) -> &Time {
-        &self.updated_at
+    pub fn set_state(&mut self, state: HpkeKeyState, time: Time) {
+        self.state = state;
+        self.last_state_change_at = time;
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.state == HpkeKeyState::Pending
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.state == HpkeKeyState::Active
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.state == HpkeKeyState::Expired
+    }
+
+    pub fn last_state_change_at(&self) -> &Time {
+        &self.last_state_change_at
+    }
+
+    pub fn ciphersuite(&self) -> HpkeCiphersuite {
+        HpkeCiphersuite::from(self.hpke_keypair().config())
+    }
+
+    pub fn id(&self) -> &HpkeConfigId {
+        self.hpke_keypair.config().id()
     }
 }
 

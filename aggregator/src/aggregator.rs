@@ -129,6 +129,7 @@ mod collection_job_tests;
 mod error;
 pub mod garbage_collector;
 pub mod http_handlers;
+pub mod key_rotator;
 pub mod problem_details;
 pub mod query_type;
 pub mod report_writer;

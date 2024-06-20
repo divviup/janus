@@ -14,6 +14,9 @@ use std::{
     str::FromStr,
 };
 
+#[cfg(feature = "test-util")]
+use quickcheck::Arbitrary;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// An error occurred in the underlying HPKE library.
@@ -262,10 +265,69 @@ impl HpkeKeypair {
     }
 }
 
+/// The algorithms used for each HPKE primitive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct HpkeCiphersuite {
+    kem_id: HpkeKemId,
+    kdf_id: HpkeKdfId,
+    aead_id: HpkeAeadId,
+}
+
+impl HpkeCiphersuite {
+    pub fn new(kem_id: HpkeKemId, kdf_id: HpkeKdfId, aead_id: HpkeAeadId) -> Self {
+        Self {
+            kem_id,
+            kdf_id,
+            aead_id,
+        }
+    }
+
+    pub fn kem_id(&self) -> HpkeKemId {
+        self.kem_id
+    }
+
+    pub fn kdf_id(&self) -> HpkeKdfId {
+        self.kdf_id
+    }
+
+    pub fn aead_id(&self) -> HpkeAeadId {
+        self.aead_id
+    }
+}
+
+impl From<&HpkeConfig> for HpkeCiphersuite {
+    fn from(value: &HpkeConfig) -> Self {
+        Self {
+            kem_id: *value.kem_id(),
+            kdf_id: *value.kdf_id(),
+            aead_id: *value.aead_id(),
+        }
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl Arbitrary for HpkeCiphersuite {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        // Note that this does not span all possible combinations of algorithms. This is done to
+        // keep the cardinality low, and since Janus doesn't support all KEMs.
+        Self {
+            kem_id: *g
+                .choose(&[HpkeKemId::P256HkdfSha256, HpkeKemId::X25519HkdfSha256])
+                .unwrap(),
+            kdf_id: *g
+                .choose(&[HpkeKdfId::HkdfSha256, HpkeKdfId::HkdfSha512])
+                .unwrap(),
+            aead_id: *g
+                .choose(&[HpkeAeadId::Aes128Gcm, HpkeAeadId::ChaCha20Poly1305])
+                .unwrap(),
+        }
+    }
+}
+
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
+    use super::{generate_hpke_config_and_private_key, HpkeCiphersuite, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
@@ -285,6 +347,19 @@ pub mod test_util {
             HpkeKemId::X25519HkdfSha256,
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap()
+    }
+
+    pub fn generate_test_hpke_config_and_private_key_with_id_and_ciphersuite(
+        id: u8,
+        ciphersuite: HpkeCiphersuite,
+    ) -> HpkeKeypair {
+        generate_hpke_config_and_private_key(
+            HpkeConfigId::from(id),
+            ciphersuite.kem_id(),
+            ciphersuite.kdf_id(),
+            ciphersuite.aead_id(),
         )
         .unwrap()
     }

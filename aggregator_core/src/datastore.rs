@@ -102,7 +102,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(5, 4, 3);
+supported_schema_versions!(6, 5);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -4888,13 +4888,22 @@ SELECT COUNT(1) AS batch_count FROM batches_to_delete",
         row.get_bigint_and_convert("batch_count")
     }
 
+    /// Take an ExclusiveLock on the global_hpke_keys table.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn lock_global_hpke_keypairs(&self) -> Result<(), Error> {
+        self.raw_tx
+            .batch_execute("LOCK TABLE global_hpke_keys IN EXCLUSIVE MODE")
+            .await
+            .map_err(|err| err.into())
+    }
+
     /// Retrieve all global HPKE keypairs.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<GlobalHpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypairs()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
+SELECT config_id, config, private_key, state, last_state_change_at FROM global_hpke_keys",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
@@ -4914,7 +4923,7 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys",
         let stmt = self
             .prepare_cached(
                 "-- get_global_hpke_keypair()
-SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
+SELECT config_id, config, private_key, state, last_state_change_at FROM global_hpke_keys
     WHERE config_id = $1",
             )
             .await?;
@@ -4938,7 +4947,7 @@ SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
         Ok(GlobalHpkeKeypair::new(
             HpkeKeypair::new(config, private_key),
             row.get("state"),
-            Time::from_naive_date_time(&row.get("updated_at")),
+            Time::from_naive_date_time(&row.get("last_state_change_at")),
         ))
     }
 
@@ -4968,16 +4977,18 @@ DELETE FROM global_hpke_keys WHERE config_id = $1",
             .prepare_cached(
                 "-- set_global_hpke_keypair_state()
 UPDATE global_hpke_keys
-    SET state = $1, updated_at = $2, updated_by = $3
-    WHERE config_id = $4",
+    SET state = $1, last_state_change_at = $2, updated_at = $3, updated_by = $4
+    WHERE config_id = $5",
             )
             .await?;
+        let now = self.clock.now().as_naive_date_time()?;
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
                     /* state */ state,
-                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* last_state_change_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* config_id */ &(u8::from(*config_id) as i16),
                 ],
@@ -4986,7 +4997,7 @@ UPDATE global_hpke_keys
         )
     }
 
-    // Inserts a new global HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
+    /// Inserts a new global HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
@@ -5002,10 +5013,11 @@ UPDATE global_hpke_keys
             .prepare_cached(
                 "-- put_global_hpke_keypair()
 INSERT INTO global_hpke_keys
-    (config_id, config, private_key, created_at, updated_at, updated_by)
-    VALUES ($1, $2, $3, $4, $5, $6)",
+    (config_id, config, private_key, last_state_change_at, created_at, updated_at, updated_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .await?;
+        let now = self.clock.now().as_naive_date_time()?;
         check_insert(
             self.execute(
                 &stmt,
@@ -5013,8 +5025,9 @@ INSERT INTO global_hpke_keys
                     /* config_id */ &hpke_config_id,
                     /* config */ &hpke_config,
                     /* private_key */ &encrypted_hpke_private_key,
-                    /* created_at */ &self.clock.now().as_naive_date_time()?,
-                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* last_state_change_at */ &now,
+                    /* created_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
             )

@@ -763,7 +763,7 @@ impl<'de> Deserialize<'de> for TaskId {
 
 /// DAP protocol message representing an HPKE key encapsulation mechanism.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
 )]
 #[repr(u16)]
 #[non_exhaustive]
@@ -802,7 +802,7 @@ impl Decode for HpkeKemId {
 
 /// DAP protocol message representing an HPKE key derivation function.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
 )]
 #[repr(u16)]
 #[non_exhaustive]
@@ -837,7 +837,7 @@ impl Decode for HpkeKdfId {
 
 /// DAP protocol message representing an HPKE AEAD.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
 )]
 #[repr(u16)]
 #[non_exhaustive]
