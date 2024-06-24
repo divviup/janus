@@ -22,7 +22,7 @@ reqwest = { workspace = true, features = ["json"] }
 thiserror.workspace = true
 tokio.workspace = true
 tracing = "0.1.40"
-url = "2.5.1"
+url = "2.5.2"
 
 [dev-dependencies]
 assert_matches.workspace = true

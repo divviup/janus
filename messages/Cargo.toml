@@ -24,7 +24,7 @@ prio = { version = "0.15.5", default-features = false, features = ["multithreade
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-url = "2.5.1"
+url = "2.5.2"
 
 [dev-dependencies]
 assert_matches.workspace = true
