@@ -54,7 +54,7 @@ trillium.workspace = true
 trillium-macros = "0.0.6"
 trillium-router.workspace = true
 url = { version = "2.5.1", features = ["serde"] }
-uuid = { version = "1.8.0", features = ["v4"] }
+uuid = { version = "1.9.0", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches = "1"
