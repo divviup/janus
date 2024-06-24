@@ -40,7 +40,7 @@ chrono = { workspace = true, features = ["clock"] }
 derivative.workspace = true
 futures = "0.3.30"
 hex = "0.4"
-hpke-dispatch = { version = "0.5.1", features = ["serde"] }
+hpke-dispatch = { version = "0.6.0", features = ["serde"] }
 http.workspace = true
 http-api-problem.workspace = true
 janus_messages.workspace = true
