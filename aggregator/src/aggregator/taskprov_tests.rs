@@ -15,7 +15,7 @@ use janus_aggregator_core::{
     datastore::{
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, ReportAggregation, ReportAggregationState,
+            BatchAggregationState, HpkeKeyState, ReportAggregation, ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -138,6 +138,12 @@ where
                 let peer_aggregator = peer_aggregator.clone();
                 Box::pin(async move {
                     tx.put_global_hpke_keypair(&global_hpke_key).await.unwrap();
+                    tx.set_global_hpke_keypair_state(
+                        &global_hpke_key.config().id(),
+                        &HpkeKeyState::Active,
+                    )
+                    .await
+                    .unwrap();
                     tx.put_taskprov_peer_aggregator(&peer_aggregator)
                         .await
                         .unwrap();
