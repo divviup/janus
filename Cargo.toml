@@ -28,7 +28,7 @@ assert_matches = "1"
 async-trait = "0.1"
 backoff = "0.4.0"
 base64 = "0.22.1"
-bhttp = "0.5.1"
+bhttp = "0.5.3"
 bytes = "1"
 cfg-if = "1.0.0"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
