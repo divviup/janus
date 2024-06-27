@@ -11,7 +11,7 @@ on:
         type: string
         # This action may be run against the main branch so long as we are not
         # in a prerelease window.
-        default: '["main", "release/0.6","release/0.5"]'
+        default: '["main"]'
 
 jobs:
   bump-version:

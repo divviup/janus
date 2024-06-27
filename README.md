@@ -40,9 +40,9 @@ branch.
 | `release/0.3` | [`draft-ietf-ppm-dap-03`][dap-03] | Yes | Unmaintained as of February 6, 2023 |
 | `release/0.4` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of May 24, 2023 |
 | `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Unmaintained as of November 1, 2023 |
-| `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Supported |
-| `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Supported |
-| `main` | [`draft-ietf-ppm-dap-09`][dap-09] | [Partially](https://github.com/divviup/janus/issues/2389) | Supported |
+| `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of June 24, 2024 |
+| `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Unmaintained as of June 24, 2024 |
+| `main` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes | Supported |
 
 Note that no version of Janus supports `draft-ietf-ppm-dap-05` or `-06`. Draft
 05 was skipped because there were flaws in its usage of the new ping-pong
