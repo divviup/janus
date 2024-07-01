@@ -5,7 +5,7 @@ use crate::{
     OHTTP_RESPONSE_MEDIA_TYPE,
 };
 use assert_matches::assert_matches;
-use bhttp::{Message, Mode};
+use bhttp::{Message, Mode, StatusCode};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key, http::HttpErrorResponse,
@@ -133,7 +133,7 @@ async fn successful_upload() {
 
             // Construct a 200 OK response to the encapsulated request, then encapsulate that
             let mut response = Vec::new();
-            Message::response(200)
+            Message::response(StatusCode::OK)
                 .write_bhttp(Mode::KnownLength, &mut response)
                 .unwrap();
             server_response.encapsulate(&response).unwrap()
@@ -268,7 +268,7 @@ async fn http_client_error_from_target() {
 
             // Construct a 400 Client Error response to the encapsulated request, then encapsulate that
             let mut response = Vec::new();
-            Message::response(400)
+            Message::response(StatusCode::try_from(400u16).unwrap())
                 .write_bhttp(Mode::KnownLength, &mut response)
                 .unwrap();
             server_response.encapsulate(&response).unwrap()
