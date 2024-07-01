@@ -785,7 +785,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         let decapsulated_response = ohttp_response.decapsulate(relay_response.body().as_ref())?;
         let message = Message::read_bhttp(&mut Cursor::new(&decapsulated_response))?;
         let status = if let ControlData::Response(status) = message.control() {
-            StatusCode::from_u16(*status).map_err(|_| {
+            StatusCode::from_u16((*status).into()).map_err(|_| {
                 Error::UnexpectedServerResponse(
                     "status in decapsulated response is not valid HTTP status",
                 )
