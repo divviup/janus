@@ -2,7 +2,10 @@
 
 use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
 use janus_aggregator_core::{
-    datastore::{models::HpkeKeyState, Datastore},
+    datastore::{
+        models::{GlobalHpkeKeypair, HpkeKeyState},
+        Datastore,
+    },
     taskprov::PeerAggregator,
 };
 use janus_core::{hpke::HpkeKeypair, time::Clock};
@@ -43,15 +46,19 @@ impl GlobalHpkeKeypairCache {
     pub const DEFAULT_REFRESH_INTERVAL: Duration =
         Duration::from_secs(60 * 30 /* 30 minutes */);
 
+    const WAIT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+    const WAIT_MAX_RETRIES: u32 = 10;
+
     pub async fn new<C: Clock>(
         datastore: Arc<Datastore<C>>,
         refresh_interval: Duration,
+        required: bool,
     ) -> Result<Self, Error> {
         let keypairs = Arc::new(StdMutex::new(HashMap::new()));
         let configs = Arc::new(StdMutex::new(Arc::new(Vec::new())));
 
         // Initial cache load.
-        Self::refresh_inner(&datastore, &configs, &keypairs).await?;
+        Self::refresh_inner(&datastore, &configs, &keypairs, required).await?;
 
         // Start refresh task.
         let refresh_configs = configs.clone();
@@ -62,9 +69,13 @@ impl GlobalHpkeKeypairCache {
                 sleep(refresh_interval).await;
 
                 let now = Instant::now();
-                let result =
-                    Self::refresh_inner(&refresh_datastore, &refresh_configs, &refresh_keypairs)
-                        .await;
+                let result = Self::refresh_inner(
+                    &refresh_datastore,
+                    &refresh_configs,
+                    &refresh_keypairs,
+                    required,
+                )
+                .await;
                 let elapsed = now.elapsed();
 
                 match result {
@@ -81,16 +92,47 @@ impl GlobalHpkeKeypairCache {
         })
     }
 
+    fn keypairs_are_valid(keypairs: &[GlobalHpkeKeypair], required: bool) -> bool {
+        if required {
+            keypairs.iter().any(|keypair| keypair.is_active())
+        } else {
+            true
+        }
+    }
+
+    #[tracing::instrument(skip_all, err)]
     async fn refresh_inner<C: Clock>(
         datastore: &Datastore<C>,
         configs: &StdMutex<HpkeConfigs>,
         keypairs: &StdMutex<HpkeKeypairs>,
+        required: bool,
     ) -> Result<(), Error> {
-        let global_keypairs = datastore
-            .run_tx("refresh_global_hpke_keypairs_cache", |tx| {
-                Box::pin(async move { tx.get_global_hpke_keypairs().await })
-            })
-            .await?;
+        // When HPKE keys are required, we need to ensure that there's at least one active keypair
+        // in the database before proceeding.
+        let mut retries = 0;
+        let mut global_keypairs = Vec::new();
+        while retries < Self::WAIT_MAX_RETRIES {
+            global_keypairs = datastore
+                .run_tx("refresh_global_hpke_keypairs_cache", |tx| {
+                    Box::pin(async move { tx.get_global_hpke_keypairs().await })
+                })
+                .await?;
+
+            if Self::keypairs_are_valid(&global_keypairs, required) {
+                break;
+            }
+
+            // We sleep and retry to ensure that a separate concurrently running key rotator has
+            // the chance to do its work, before failing the process.
+            debug!("no active global keys present in database, retrying");
+            retries += 1;
+            sleep(Self::WAIT_RETRY_INTERVAL).await;
+        }
+        if !Self::keypairs_are_valid(&global_keypairs, required) {
+            return Err(Error::Internal(
+                "no active global HPKE keys present in database".to_string(),
+            ));
+        }
 
         let new_configs = Arc::new(
             global_keypairs
@@ -123,7 +165,7 @@ impl GlobalHpkeKeypairCache {
 
     #[cfg(feature = "test-util")]
     pub async fn refresh<C: Clock>(&self, datastore: &Datastore<C>) -> Result<(), Error> {
-        Self::refresh_inner(datastore, &self.configs, &self.keypairs).await
+        Self::refresh_inner(datastore, &self.configs, &self.keypairs, false).await
     }
 
     /// Retrieve active configs for config advertisement. This only returns configs
@@ -285,10 +327,11 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use janus_aggregator_core::{
-        datastore::test_util::ephemeral_datastore,
+        datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
         task::{test_util::TaskBuilder, QueryType},
     };
     use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::MockClock,
         vdaf::VdafInstance,
@@ -296,7 +339,53 @@ mod tests {
     use janus_messages::Time;
     use tokio::time::sleep;
 
-    use crate::{aggregator::report_writer::ReportWriteBatcher, cache::TaskAggregatorCache};
+    use crate::{
+        aggregator::report_writer::ReportWriteBatcher,
+        cache::{GlobalHpkeKeypairCache, TaskAggregatorCache},
+    };
+
+    #[tokio::test]
+    async fn global_hpke_keypair_cache_required() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // On empty DB, this should block waiting for an HPKE keypair to be placed, so spawn it to
+        // let it poll in the background.
+        let cache = tokio::spawn({
+            let datastore = datastore.clone();
+            async move {
+                GlobalHpkeKeypairCache::new(
+                    datastore,
+                    GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+                    true,
+                )
+                .await
+            }
+        });
+
+        // Insert a new active key in the foreground, after a short wait.
+        sleep(Duration::from_secs(1)).await;
+        let keypair = generate_test_hpke_config_and_private_key();
+        datastore
+            .run_unnamed_tx(|tx| {
+                let keypair = keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let cache = cache.await.unwrap().unwrap();
+        assert_eq!(
+            cache.keypair(keypair.config().id()).unwrap(),
+            Arc::new(keypair),
+        );
+    }
 
     #[tokio::test]
     async fn task_aggregator_cache() {
