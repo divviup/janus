@@ -3,7 +3,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeout_secs: 60
+  connection_pool_timeouts_secs: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8
@@ -40,7 +40,7 @@ key_rotator:
 
     # The set of keys to manage, identified by ciphersuite. At least one is
     # required. Each entry represents a key with a particular ciphersuite.
-    ciphersuite:
+    ciphersuites:
       # Defaults to a key with these algorithms.
       - kem_id: P521HkdfSha512
         kdf_id: HkdfSha512

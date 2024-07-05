@@ -5,7 +5,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeout_secs: 60
+  connection_pool_timeouts_secs: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8
@@ -75,7 +75,7 @@ metrics_config:
     # Enable exporting metrics from the Tokio runtime. If this is true, the
     # binary must have been compiled with the flag `--cfg tokio_unstable`.
     # (optional)
-    enable: false
+    enabled: false
     # Enable a histogram of task poll times. This introduces some additional
     # overhead. (optional)
     enable_poll_time_histogram: false

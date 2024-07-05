@@ -1381,7 +1381,7 @@ mod tests {
   aggregator_auth_token_hash:
     type: Bearer
     hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
-  collector_auth_token:
+  collector_auth_token_hash:
   hpke_keys: []
 "#;
 
