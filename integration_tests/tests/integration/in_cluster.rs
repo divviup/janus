@@ -10,6 +10,7 @@ use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+#[cfg(feature = "ohttp")]
 use janus_client::OhttpConfig;
 use janus_collector::PrivateCollectorCredential;
 use janus_core::{
