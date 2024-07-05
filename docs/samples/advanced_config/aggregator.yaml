@@ -20,6 +20,11 @@ database:
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
 
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
+
 # Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -163,6 +168,14 @@ garbage_collection:
   # of the garbage collector.
   collection_limit: 50
 
+  # The maximum number of tasks to process together for GC in a single database
+  # transaction. (optional)
+  tasks_per_tx: 1
+
+  # The maximum number of concurrent database transactions to open at once while
+  # processing GC. Leaving this unset means there is no maximum. (optional)
+  concurrent_tx_limit: null
+
 # Configuration for key rotator. Allows running the key rotator as part of the aggregator process.
 # If omitted, you should run the key rotator as a separate cronjob.
 key_rotator:
@@ -190,3 +203,17 @@ key_rotator:
       - kem_id: P521HkdfSha512
         kdf_id: HkdfSha512
         aead_id: Aes256Gcm
+
+# Defines how often to refresh the global HPKE configs cache, in milliseconds.
+# This affects how often an aggregator becomes aware of key state changes.
+# (optional, defaults to 30 minutes)
+global_hpke_configs_refresh_interval: 1800000
+
+# Defines how long to cache tasks for, in seconds. This affects how soon the
+# aggregator becomes aware of task parameter changes. (optional, defaults to 10
+# minutes)
+task_cache_ttl_seconds: 600
+
+# Defines how many tasks can be cached. This affects how much memory the
+# aggregator might use to store cached tasks. (optional)
+task_cache_capacity: 10000

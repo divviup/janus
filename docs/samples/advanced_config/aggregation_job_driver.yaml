@@ -20,6 +20,11 @@ database:
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
 
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
+
 # Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -119,6 +124,18 @@ http_request_connection_timeout_secs: 10
 # https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout for details.
 # (optional; defaults to 30 seconds)
 http_request_timeout_secs: 30
+
+# The initial interval, in milliseconds, to wait before retrying a retryable
+# HTTP request. (optional, default 1 second)
+retry_initial_interval_millis: 1000
+
+# The maximum interval, in milliseconds, to wait before retrying a retryable
+# HTTP request. (optional, default 30 seconds)
+retry_max_interval_millis: 30000
+
+# The maximum elapsed time, in milliseconds, to wait before giving up on
+# retrying a retryable HTTP request. (optional, default 5 minutes)
+retry_max_elapsed_time_millis: 300000
 
 # Number of sharded database records per batch aggregation. Must not be greater
 # than the equivalent setting in the collection job driver. (required)

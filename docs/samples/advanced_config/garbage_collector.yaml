@@ -20,6 +20,11 @@ database:
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
 
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
+
 # Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -106,3 +111,11 @@ garbage_collection:
   # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
   # of the garbage collector.
   collection_limit: 50
+
+  # The maximum number of tasks to process together for GC in a single database
+  # transaction. (optional)
+  tasks_per_tx: 1
+
+  # The maximum number of concurrent database transactions to open at once while
+  # processing GC. Leaving this unset means there is no maximum. (optional)
+  concurrent_tx_limit: null

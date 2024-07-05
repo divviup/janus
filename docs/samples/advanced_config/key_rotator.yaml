@@ -18,6 +18,11 @@ database:
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
 
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
+
 key_rotator:
   # Rotation policy for global HPKE keys.
   hpke:
