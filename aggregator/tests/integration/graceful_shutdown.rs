@@ -315,7 +315,7 @@ async fn aggregator_shutdown() {
         task_cache_ttl_seconds: None,
         task_cache_capacity: None,
         log_forbidden_mutations: None,
-        require_global_hpke_keys: None,
+        require_global_hpke_keys: false,
     };
 
     graceful_shutdown("aggregator", config).await;

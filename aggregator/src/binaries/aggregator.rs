@@ -398,7 +398,7 @@ pub struct Config {
     /// Experimental. Always advertise global HPKE keys instead of per-task HPKE keys. This will
     /// become on by default in a future version of Janus.
     #[serde(default)]
-    pub require_global_hpke_keys: Option<bool>,
+    pub require_global_hpke_keys: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -472,7 +472,7 @@ impl Config {
                 .task_cache_capacity
                 .unwrap_or(TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY),
             log_forbidden_mutations: self.log_forbidden_mutations.clone(),
-            require_global_hpke_keys: self.require_global_hpke_keys.is_some_and(|r| r),
+            require_global_hpke_keys: self.require_global_hpke_keys,
         })
     }
 }
@@ -604,7 +604,7 @@ mod tests {
             task_cache_ttl_seconds: None,
             task_cache_capacity: None,
             log_forbidden_mutations: Some(PathBuf::from("/tmp/events")),
-            require_global_hpke_keys: Some(true),
+            require_global_hpke_keys: true,
         })
     }
 

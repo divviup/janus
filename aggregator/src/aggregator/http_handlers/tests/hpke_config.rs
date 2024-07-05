@@ -428,7 +428,7 @@ async fn require_global_hpke_keys() {
     assert_eq!(hpke_config_list.hpke_configs(), &[keypair.config().clone()]);
     check_hpke_config_is_usable(&hpke_config_list, &keypair);
 
-    let mut test_conn = get(&format!("/hpke_config")).run_async(&handler).await;
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
     let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(hpke_config_list.hpke_configs(), &[keypair.config().clone()]);

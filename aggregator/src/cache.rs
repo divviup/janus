@@ -92,12 +92,31 @@ impl GlobalHpkeKeypairCache {
         })
     }
 
-    fn keypairs_are_valid(keypairs: &[GlobalHpkeKeypair], required: bool) -> bool {
-        if required {
-            keypairs.iter().any(|keypair| keypair.is_active())
-        } else {
-            true
+    async fn get_global_hpke_keypairs<C: Clock>(
+        datastore: &Datastore<C>,
+        required: bool,
+    ) -> Result<Vec<GlobalHpkeKeypair>, Error> {
+        // When global HPKE keys are required, we need to ensure that there's at least one active
+        // keypair in the database before proceeding.
+        for _ in 0..Self::WAIT_MAX_RETRIES {
+            let keypairs = datastore
+                .run_tx("refresh_global_hpke_keypairs_cache", |tx| {
+                    Box::pin(async move { tx.get_global_hpke_keypairs().await })
+                })
+                .await?;
+
+            if !required || keypairs.iter().any(|keypair| keypair.is_active()) {
+                return Ok(keypairs);
+            }
+
+            // We sleep and retry to ensure that a separate concurrently running key rotator has
+            // the chance to do its work, before failing the process.
+            debug!("no active global keys present in database, retrying");
+            sleep(Self::WAIT_RETRY_INTERVAL).await;
         }
+        Err(Error::Internal(
+            "no active global HPKE keys present in database".to_string(),
+        ))
     }
 
     #[tracing::instrument(skip_all, err)]
@@ -107,32 +126,7 @@ impl GlobalHpkeKeypairCache {
         keypairs: &StdMutex<HpkeKeypairs>,
         required: bool,
     ) -> Result<(), Error> {
-        // When HPKE keys are required, we need to ensure that there's at least one active keypair
-        // in the database before proceeding.
-        let mut retries = 0;
-        let mut global_keypairs = Vec::new();
-        while retries < Self::WAIT_MAX_RETRIES {
-            global_keypairs = datastore
-                .run_tx("refresh_global_hpke_keypairs_cache", |tx| {
-                    Box::pin(async move { tx.get_global_hpke_keypairs().await })
-                })
-                .await?;
-
-            if Self::keypairs_are_valid(&global_keypairs, required) {
-                break;
-            }
-
-            // We sleep and retry to ensure that a separate concurrently running key rotator has
-            // the chance to do its work, before failing the process.
-            debug!("no active global keys present in database, retrying");
-            retries += 1;
-            sleep(Self::WAIT_RETRY_INTERVAL).await;
-        }
-        if !Self::keypairs_are_valid(&global_keypairs, required) {
-            return Err(Error::Internal(
-                "no active global HPKE keys present in database".to_string(),
-            ));
-        }
+        let global_keypairs = Self::get_global_hpke_keypairs(datastore, required).await?;
 
         let new_configs = Arc::new(
             global_keypairs

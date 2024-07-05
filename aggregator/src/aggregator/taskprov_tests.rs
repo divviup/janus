@@ -139,7 +139,7 @@ where
                 Box::pin(async move {
                     tx.put_global_hpke_keypair(&global_hpke_key).await.unwrap();
                     tx.set_global_hpke_keypair_state(
-                        &global_hpke_key.config().id(),
+                        global_hpke_key.config().id(),
                         &HpkeKeyState::Active,
                     )
                     .await
