@@ -49,9 +49,6 @@ logging_config:
     otlp:
       # OTLP gRPC endpoint.
       endpoint: "https://example.com"
-      # gRPC metadata to send with OTLP requests. (optional)
-      metadata:
-        key: "value"
 
   # Flag to write tracing spans and events to JSON files. This is compatible
   # with Chrome's trace viewer, available at `chrome://tracing`, and
@@ -72,9 +69,6 @@ metrics_config:
   ##otlp:
   ##  # OTLP gRPC endpoint.
   ##  endpoint: "https://example.com/"
-  ##  # gRPC metadata to send with OTLP requests. (optional)
-  ##  metadata:
-  ##    key: "value"
 
   # Configuration for Tokio runtime metrics. (optional)
   tokio:

@@ -1348,7 +1348,6 @@ mod tests {
   min_batch_size: 10
   time_precision: 300
   tolerable_clock_skew: 600
-  input_share_aad_public_share_length_prefix: false
   collector_hpke_config:
     id: 23
     kem_id: X25519HkdfSha256
@@ -1373,7 +1372,6 @@ mod tests {
   min_batch_size: 10
   time_precision: 300
   tolerable_clock_skew: 600
-  input_share_aad_public_share_length_prefix: false
   collector_hpke_config:
     id: 23
     kem_id: X25519HkdfSha256
