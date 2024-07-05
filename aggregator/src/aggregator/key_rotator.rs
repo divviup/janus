@@ -83,6 +83,17 @@ pub struct HpkeKeyRotatorConfig {
     pub ciphersuites: HashSet<HpkeCiphersuite>,
 }
 
+impl Default for HpkeKeyRotatorConfig {
+    fn default() -> Self {
+        Self {
+            pending_duration: default_pending_duration(),
+            active_duration: default_active_duration(),
+            expired_duration: default_expired_duration(),
+            ciphersuites: default_hpke_ciphersuites(),
+        }
+    }
+}
+
 impl<C: Clock> KeyRotator<C> {
     pub fn new(datastore: Arc<Datastore<C>>, hpke: HpkeKeyRotatorConfig) -> Self {
         Self { datastore, hpke }

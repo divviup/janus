@@ -1,0 +1,7 @@
+# This configuration file is used in the janus_interop_aggregator container
+# image.
+database:
+  url: postgres://postgres@127.0.0.1:5432/postgres
+  check_schema_version: false
+key_rotator:
+  hpke: {}

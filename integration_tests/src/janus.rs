@@ -15,6 +15,7 @@ use janus_aggregator::{
         collection_job_driver::{
             self, Config as CollectionJobDriverConfig, Options as CollectionJobDriverOptions,
         },
+        key_rotator::{self, Config as KeyRotatorConfig, Options as KeyRotatorOptions},
     },
     binary_utils::{BinaryContext, CommonBinaryOptions},
     config::{
@@ -171,7 +172,7 @@ impl JanusInProcess {
             task_cache_ttl_seconds: None,
             task_cache_capacity: None,
             log_forbidden_mutations: None,
-            require_global_hpke_keys: false,
+            require_global_hpke_keys: true,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {
             common: common_binary_options.clone(),
@@ -209,7 +210,7 @@ impl JanusInProcess {
             common: common_binary_options.clone(),
         };
         let collection_job_driver_config = CollectionJobDriverConfig {
-            common_config,
+            common_config: common_config.clone(),
             job_driver_config: JobDriverConfig {
                 job_discovery_interval_secs: 1,
                 max_concurrent_job_workers: 10,
@@ -226,6 +227,13 @@ impl JanusInProcess {
             min_collection_job_retry_delay_secs: 1,
             max_collection_job_retry_delay_secs: 1,
             collection_job_retry_delay_exponential_factor: 1.0,
+        };
+        let key_rotator_config = KeyRotatorConfig {
+            common_config,
+            key_rotator: Default::default(),
+        };
+        let key_rotator_options = KeyRotatorOptions {
+            common: common_binary_options,
         };
 
         // Spawn each component.
@@ -273,6 +281,19 @@ impl JanusInProcess {
                 options: collection_job_driver_options,
                 config: collection_job_driver_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
+                meter: noop_meter(),
+                stopper: stopper.clone(),
+            });
+            async {
+                future.await.unwrap();
+            }
+        });
+        tokio::spawn({
+            let future = key_rotator::main_callback(BinaryContext {
+                clock,
+                options: key_rotator_options,
+                config: key_rotator_config,
+                datastore,
                 meter: noop_meter(),
                 stopper: stopper.clone(),
             });
