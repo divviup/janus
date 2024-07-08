@@ -76,7 +76,7 @@ impl BinaryConfig for Config {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyRotatorConfig {
     #[serde(deserialize_with = "deserialize_hpke_key_rotator_config")]
     pub hpke: HpkeKeyRotatorConfig,

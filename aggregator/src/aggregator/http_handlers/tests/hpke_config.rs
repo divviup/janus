@@ -6,7 +6,7 @@ use crate::{
             HPKE_CONFIG_SIGNATURE_HEADER,
         },
         test_util::{hpke_config_signing_key, hpke_config_verification_key},
-        Config,
+        Aggregator, Config,
     },
     config::TaskprovConfig,
 };
@@ -375,4 +375,62 @@ async fn verify_and_decode_hpke_config_list(test_conn: &mut TestConn) -> HpkeCon
         .verify(&response_body, &signature)
         .unwrap();
     HpkeConfigList::get_decoded(&response_body).unwrap()
+}
+
+#[tokio::test]
+async fn require_global_hpke_keys() {
+    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+
+    // Insert an HPKE config, i.e. start the application with a keypair already
+    // in the database.
+    let keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await.unwrap();
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let cfg = Config {
+        require_global_hpke_keys: true,
+        hpke_config_signing_key: Some(hpke_config_signing_key()),
+        ..Default::default()
+    };
+
+    let aggregator = Arc::new(
+        Aggregator::new(
+            Arc::clone(&datastore),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            cfg,
+        )
+        .await
+        .unwrap(),
+    );
+
+    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+        .await
+        .unwrap();
+
+    let mut test_conn = get(&format!("/hpke_config?task_id={}", &random::<TaskId>()))
+        .run_async(&handler)
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    assert_eq!(hpke_config_list.hpke_configs(), &[keypair.config().clone()]);
+    check_hpke_config_is_usable(&hpke_config_list, &keypair);
+
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    assert_eq!(hpke_config_list.hpke_configs(), &[keypair.config().clone()]);
+    check_hpke_config_is_usable(&hpke_config_list, &keypair);
 }
