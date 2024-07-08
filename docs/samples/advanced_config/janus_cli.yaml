@@ -5,7 +5,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeout_secs: 60
+  connection_pool_timeouts_secs: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8
@@ -19,6 +19,11 @@ database:
   # connection string parameter, and the server's support for TLS. If absent,
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
+
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
 
 # Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
@@ -44,9 +49,6 @@ logging_config:
     otlp:
       # OTLP gRPC endpoint.
       endpoint: "https://example.com"
-      # gRPC metadata to send with OTLP requests. (optional)
-      metadata:
-        key: "value"
 
   # Flag to write tracing spans and events to JSON files. This is compatible
   # with Chrome's trace viewer, available at `chrome://tracing`, and
@@ -67,16 +69,13 @@ metrics_config:
   ##otlp:
   ##  # OTLP gRPC endpoint.
   ##  endpoint: "https://example.com/"
-  ##  # gRPC metadata to send with OTLP requests. (optional)
-  ##  metadata:
-  ##    key: "value"
 
   # Configuration for Tokio runtime metrics. (optional)
   tokio:
     # Enable exporting metrics from the Tokio runtime. If this is true, the
     # binary must have been compiled with the flag `--cfg tokio_unstable`.
     # (optional)
-    enable: false
+    enabled: false
     # Enable a histogram of task poll times. This introduces some additional
     # overhead. (optional)
     enable_poll_time_histogram: false

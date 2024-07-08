@@ -131,7 +131,7 @@
     hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ"
   # Note that this task does not have a collector authentication token, since
   # it is a helper role task.
-  collector_auth_token:
+  collector_auth_token_hash:
   hpke_keys:
   - config:
       id: 37

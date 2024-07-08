@@ -3,7 +3,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeout_secs: 60
+  connection_pool_timeouts_secs: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8
@@ -17,6 +17,11 @@ database:
   # connection string parameter, and the server's support for TLS. If absent,
   # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
+
+# The maximum number of times a transaction can be retried. This is intended to
+# guard against bugs that induce infinite retries. It should be set to a
+# reasonably high limit to prevent legitimate work from being cancelled.
+max_transaction_retries: 1000
 
 key_rotator:
   # Rotation policy for global HPKE keys.
@@ -35,7 +40,7 @@ key_rotator:
 
     # The set of keys to manage, identified by ciphersuite. At least one is
     # required. Each entry represents a key with a particular ciphersuite.
-    ciphersuite:
+    ciphersuites:
       # Defaults to a key with these algorithms.
       - kem_id: P521HkdfSha512
         kdf_id: HkdfSha512
