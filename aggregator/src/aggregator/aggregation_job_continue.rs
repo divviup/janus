@@ -471,6 +471,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let keypair = datastore.put_global_hpke_key().await.unwrap();
 
         let aggregation_parameter = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -479,6 +480,7 @@ mod tests {
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
+            keypair.config().clone(),
             Poplar1::new_turboshake128(1),
             aggregation_parameter.clone(),
         );

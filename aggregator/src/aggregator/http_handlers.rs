@@ -759,12 +759,14 @@ pub mod test_util {
     use crate::aggregator::test_util::default_aggregator_config;
     use janus_aggregator_core::{
         datastore::{
+            models::HpkeKeyState,
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
         test_util::noop_meter,
     };
     use janus_core::{
+        hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::MockClock,
     };
@@ -792,9 +794,60 @@ pub mod test_util {
         serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 
-    /// Returns structures necessary for completing an HTTP handler test. The returned
+    /// Contains structures necessary for completing an HTTP handler test. The contained
     /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
     /// dropped.
+    pub struct HttpHandlerTest {
+        pub clock: MockClock,
+        pub ephemeral_datastore: EphemeralDatastore,
+        pub datastore: Arc<Datastore<MockClock>>,
+        pub handler: Box<dyn Handler>,
+        pub hpke_keypair: HpkeKeypair,
+    }
+
+    impl HttpHandlerTest {
+        pub async fn new() -> Self {
+            install_test_trace_subscriber();
+            let clock = MockClock::default();
+            let ephemeral_datastore = ephemeral_datastore().await;
+            let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+            let hpke_keypair = HpkeKeypair::test();
+            datastore
+                .run_unnamed_tx(|tx| {
+                    let hpke_keypair = hpke_keypair.clone();
+                    Box::pin(async move {
+                        tx.put_global_hpke_keypair(&hpke_keypair).await?;
+                        tx.set_global_hpke_keypair_state(
+                            hpke_keypair.config().id(),
+                            &HpkeKeyState::Active,
+                        )
+                        .await
+                    })
+                })
+                .await
+                .unwrap();
+
+            let handler = aggregator_handler(
+                datastore.clone(),
+                clock.clone(),
+                TestRuntime::default(),
+                &noop_meter(),
+                default_aggregator_config(),
+            )
+            .await
+            .unwrap();
+
+            Self {
+                clock,
+                ephemeral_datastore,
+                datastore,
+                handler: Box::new(handler),
+                hpke_keypair,
+            }
+        }
+    }
+
     pub async fn setup_http_handler_test() -> (
         MockClock,
         EphemeralDatastore,
@@ -805,6 +858,7 @@ pub mod test_util {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        datastore.put_global_hpke_key().await.unwrap();
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),

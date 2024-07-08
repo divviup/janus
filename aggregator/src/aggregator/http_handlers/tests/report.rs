@@ -3,7 +3,7 @@ use crate::{
         error::ReportRejectionReason,
         http_handlers::{
             aggregator_handler,
-            test_util::{setup_http_handler_test, take_problem_details},
+            test_util::{take_problem_details, HttpHandlerTest},
         },
         test_util::default_aggregator_config,
         tests::{create_report, create_report_custom},
@@ -66,7 +66,14 @@ async fn upload_handler() {
         assert_eq!(take_problem_details(test_conn).await, desired_response);
     }
 
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
@@ -76,7 +83,7 @@ async fn upload_handler() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let report = create_report(&leader_task, clock.now());
+    let report = create_report(&leader_task, &hpke_keypair, clock.now());
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
     for _ in 0..2 {
@@ -97,7 +104,7 @@ async fn upload_handler() {
         &leader_task,
         clock.now(),
         *accepted_report_id,
-        leader_task.current_hpke_key(),
+        &hpke_keypair,
     );
     let mut test_conn = put(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -209,6 +216,7 @@ async fn upload_handler() {
         .unwrap();
     let report_2 = create_report(
         &leader_task_expire_soon,
+        &hpke_keypair,
         clock.now().add(&Duration::from_seconds(120)).unwrap(),
     );
     let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
@@ -227,7 +235,7 @@ async fn upload_handler() {
     .await;
 
     // Reject reports with an undecodeable public share.
-    let mut bad_public_share_report = create_report(&leader_task, clock.now());
+    let mut bad_public_share_report = create_report(&leader_task, &hpke_keypair, clock.now());
     bad_public_share_report = Report::new(
         bad_public_share_report.metadata().clone(),
         // Some obviously wrong public share.
@@ -260,7 +268,7 @@ async fn upload_handler() {
         clock.now(),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
-        &HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into()),
+        &HpkeKeypair::test_with_id((*hpke_keypair.config().id()).into()),
     );
     let mut test_conn = put(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -278,12 +286,12 @@ async fn upload_handler() {
     .await;
 
     // Reject reports whose leader input share is corrupt.
-    let mut bad_leader_input_share_report = create_report(&leader_task, clock.now());
+    let mut bad_leader_input_share_report = create_report(&leader_task, &hpke_keypair, clock.now());
     bad_leader_input_share_report = Report::new(
         bad_leader_input_share_report.metadata().clone(),
         bad_leader_input_share_report.public_share().to_vec(),
         hpke::seal(
-            leader_task.current_hpke_key().config(),
+            hpke_keypair.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
             // Some obviously wrong payload.
             &PlaintextInputShare::new(Vec::new(), vec![0; 100])
@@ -354,12 +362,19 @@ async fn upload_handler() {
 // Helper should not expose `tasks/{task-id}/reports` endpoint.
 #[tokio::test]
 async fn upload_handler_helper() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
-    let report = create_report(&helper_task, clock.now());
+    let report = create_report(&helper_task, &hpke_keypair, clock.now());
 
     let mut test_conn = put(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -401,6 +416,7 @@ async fn upload_handler_error_fanout() {
         .build()
         .await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
     let handler = aggregator_handler(
         datastore.clone(),
         clock.clone(),
@@ -436,7 +452,7 @@ async fn upload_handler_error_fanout() {
     url.set_port(Some(socket_addr.port())).unwrap();
 
     // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
-    let report: Report = create_report(&leader_task, clock.now());
+    let report: Report = create_report(&leader_task, &hpke_keypair, clock.now());
     let response = client
         .put(url.clone())
         .header("Content-Type", Report::MEDIA_TYPE)
@@ -477,8 +493,9 @@ async fn upload_handler_error_fanout() {
                 let clock = clock.clone();
                 let client = client.clone();
                 let url = url.clone();
+                let hpke_keypair = hpke_keypair.clone();
                 async move {
-                    let report = create_report(&leader_task, clock.now());
+                    let report = create_report(&leader_task, &hpke_keypair, clock.now());
                     let response = client
                         .put(url)
                         .header("Content-Type", Report::MEDIA_TYPE)
@@ -510,6 +527,7 @@ async fn upload_client_early_disconnect() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
     let handler = aggregator_handler(
         datastore.clone(),
         clock.clone(),
@@ -525,9 +543,9 @@ async fn upload_client_early_disconnect() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let report_1 = create_report(&leader_task, clock.now());
+    let report_1 = create_report(&leader_task, &hpke_keypair, clock.now());
     let encoded_report_1 = report_1.get_encoded().unwrap();
-    let report_2 = create_report(&leader_task, clock.now());
+    let report_2 = create_report(&leader_task, &hpke_keypair, clock.now());
     let encoded_report_2 = report_2.get_encoded().unwrap();
 
     let stopper = Stopper::new();

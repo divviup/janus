@@ -3,7 +3,7 @@ use crate::aggregator::{
         post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
     },
     empty_batch_aggregations,
-    http_handlers::test_util::setup_http_handler_test,
+    http_handlers::test_util::{setup_http_handler_test, HttpHandlerTest},
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
     tests::generate_helper_report_share,
 };
@@ -43,7 +43,14 @@ use trillium::Status;
 
 #[tokio::test]
 async fn aggregate_continue() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair: hpke_key,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let aggregation_job_id = random();
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
@@ -51,7 +58,6 @@ async fn aggregate_continue() {
 
     let vdaf = Arc::new(Poplar1::<XofTurboShake128, 16>::new(1));
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-    let hpke_key = helper_task.current_hpke_key();
     let measurement = IdpfInput::from_bools(&[true]);
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(vec![measurement.clone()]).unwrap();
@@ -371,7 +377,13 @@ async fn aggregate_continue() {
 
 #[tokio::test]
 async fn aggregate_continue_accumulate_batch_aggregation() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair: hpke_key,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
@@ -387,7 +399,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
     let vdaf = Poplar1::new(1);
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-    let hpke_key = helper_task.current_hpke_key();
     let measurement = IdpfInput::from_bools(&[true]);
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(Vec::from([measurement.clone()])).unwrap();
@@ -1157,7 +1168,13 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
 
 #[tokio::test]
 async fn aggregate_continue_prep_step_fails() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair: hpke_key,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
@@ -1179,7 +1196,7 @@ async fn aggregate_continue_prep_step_fails() {
     let helper_report_share = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
         *task.id(),
         report_metadata.clone(),
-        helper_task.current_hpke_key().config(),
+        hpke_key.config(),
         &transcript.public_share,
         Vec::new(),
         &transcript.helper_input_share,

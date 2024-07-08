@@ -251,12 +251,21 @@ impl Default for Config {
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
             log_forbidden_mutations: None,
-            require_global_hpke_keys: false,
+            require_global_hpke_keys: true,
         }
     }
 }
 
 impl<C: Clock> Aggregator<C> {
+    /// Creates a new [`Aggregator`].
+    ///
+    /// # Errors
+    ///
+    /// Fails on general datastore errors.
+    ///
+    /// If [`Self::require_global_hpke_keys`] is `true`, and there is not at least one
+    /// [`GlobalHpkeKeypair`] in the database in the [`HpkeKeyState::Active`] state then this
+    /// function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
         clock: C,
@@ -3445,6 +3454,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
+            self,
             models::{CollectionJob, CollectionJobState, TaskUploadCounter},
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -3481,7 +3491,7 @@ mod tests {
         task: &AggregatorTask,
         report_timestamp: Time,
         id: ReportId,
-        hpke_key: &HpkeKeypair,
+        hpke_keypair: &HpkeKeypair,
     ) -> Report {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
 
@@ -3497,7 +3507,7 @@ mod tests {
         );
 
         let leader_ciphertext = hpke::seal(
-            hpke_key.config(),
+            hpke_keypair.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
             &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded().unwrap())
                 .get_encoded()
@@ -3506,7 +3516,7 @@ mod tests {
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
-            hpke_key.config(),
+            hpke_keypair.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
             &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded().unwrap())
                 .get_encoded()
@@ -3523,80 +3533,88 @@ mod tests {
         )
     }
 
-    pub(super) fn create_report(task: &AggregatorTask, report_timestamp: Time) -> Report {
-        create_report_custom(task, report_timestamp, random(), task.current_hpke_key())
+    pub(super) fn create_report(
+        task: &AggregatorTask,
+        hpke_keypair: &HpkeKeypair,
+        report_timestamp: Time,
+    ) -> Report {
+        create_report_custom(task, report_timestamp, random(), hpke_keypair)
     }
 
-    async fn setup_upload_test(
-        cfg: Config,
-    ) -> (
-        Prio3Count,
-        Aggregator<MockClock>,
-        MockClock,
-        Task,
-        Arc<Datastore<MockClock>>,
-        EphemeralDatastore,
-    ) {
-        setup_upload_test_with_runtime(TestRuntime::default(), cfg).await
+    struct UploadTest {
+        vdaf: Prio3Count,
+        aggregator: Aggregator<MockClock>,
+        clock: MockClock,
+        task: Task,
+        datastore: Arc<Datastore<MockClock>>,
+        ephemeral_datastore: EphemeralDatastore,
+        hpke_keypair: HpkeKeypair,
     }
 
-    async fn setup_upload_test_with_runtime<R>(
-        runtime: R,
-        cfg: Config,
-    ) -> (
-        Prio3Count,
-        Aggregator<MockClock>,
-        MockClock,
-        Task,
-        Arc<Datastore<MockClock>>,
-        EphemeralDatastore,
-    )
-    where
-        R: Runtime + Send + Sync + 'static,
-    {
-        let clock = MockClock::default();
-        let vdaf = Prio3Count::new_count(2).unwrap();
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    impl UploadTest {
+        async fn new(cfg: Config) -> Self {
+            Self::new_with_runtime(cfg, TestRuntime::default()).await
+        }
 
-        let leader_task = task.leader_view().unwrap();
+        async fn new_with_runtime<R>(cfg: Config, runtime: R) -> Self
+        where
+            R: Runtime + Send + Sync + 'static,
+        {
+            let clock = MockClock::default();
+            let vdaf = Prio3Count::new_count(2).unwrap();
+            let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
 
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+            let leader_task = task.leader_view().unwrap();
 
-        datastore.put_aggregator_task(&leader_task).await.unwrap();
+            let ephemeral_datastore = ephemeral_datastore().await;
+            let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+            let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
+            datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-        let aggregator = Aggregator::new(
-            Arc::clone(&datastore),
-            clock.clone(),
-            runtime,
-            &noop_meter(),
-            cfg,
-        )
-        .await
-        .unwrap();
+            let aggregator = Aggregator::new(
+                Arc::clone(&datastore),
+                clock.clone(),
+                runtime,
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap();
 
-        (
-            vdaf,
-            aggregator,
-            clock,
-            task,
-            datastore,
-            ephemeral_datastore,
-        )
+            Self {
+                vdaf,
+                aggregator,
+                clock,
+                task,
+                datastore,
+                ephemeral_datastore,
+                hpke_keypair,
+            }
+        }
     }
 
     #[tokio::test]
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, ds, _ephemeral_datastore) = setup_upload_test(Config {
+        let UploadTest {
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore: ds,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new(Config {
             max_upload_batch_size: 1000,
             max_upload_batch_write_delay: StdDuration::from_millis(500),
             ..Default::default()
         })
         .await;
+
         let leader_task = task.leader_view().unwrap();
-        let report = create_report(&leader_task, clock.now());
+        let report = create_report(&leader_task, &hpke_keypair, clock.now());
 
         aggregator
             .handle_upload(task.id(), &report.get_encoded().unwrap())
@@ -3613,7 +3631,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(got_report.eq_report(&vdaf, leader_task.current_hpke_key(), &report));
+        assert!(got_report.eq_report(&vdaf, &hpke_keypair, &report));
 
         // Report uploads are idempotent.
         aggregator
@@ -3627,7 +3645,7 @@ mod tests {
             &leader_task,
             clock.now(),
             *report.metadata().id(),
-            leader_task.current_hpke_key(),
+            &hpke_keypair,
         );
         aggregator
             .handle_upload(task.id(), &mutated_report.get_encoded().unwrap())
@@ -3651,9 +3669,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(got_report
-            .unwrap()
-            .eq_report(&vdaf, leader_task.current_hpke_key(), &report));
+        assert!(got_report.unwrap().eq_report(&vdaf, &hpke_keypair, &report));
 
         assert_eq!(
             got_counter,
@@ -3666,18 +3682,27 @@ mod tests {
         install_test_trace_subscriber();
 
         const BATCH_SIZE: usize = 100;
-        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(Config {
-                max_upload_batch_size: BATCH_SIZE,
-                max_upload_batch_write_delay: StdDuration::from_secs(86400),
-                ..Default::default()
-            })
-            .await;
+        let UploadTest {
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new(Config {
+            max_upload_batch_size: BATCH_SIZE,
+            max_upload_batch_write_delay: StdDuration::from_secs(86400),
+            ..Default::default()
+        })
+        .await;
 
-        let reports: Vec<_> =
-            iter::repeat_with(|| create_report(&task.leader_view().unwrap(), clock.now()))
-                .take(BATCH_SIZE)
-                .collect();
+        let reports: Vec<_> = iter::repeat_with(|| {
+            create_report(&task.leader_view().unwrap(), &hpke_keypair, clock.now())
+        })
+        .take(BATCH_SIZE)
+        .collect();
         let want_report_ids: HashSet<_> = reports.iter().map(|r| *r.metadata().id()).collect();
 
         let aggregator = Arc::new(aggregator);
@@ -3722,14 +3747,21 @@ mod tests {
         install_test_trace_subscriber();
 
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
         let leader_task = task.leader_view().unwrap();
-        let report = create_report(&leader_task, clock.now());
+        let report = create_report(&leader_task, &hpke_keypair, clock.now());
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
@@ -3785,10 +3817,19 @@ mod tests {
     async fn upload_report_in_the_future_boundary_condition() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+        let UploadTest {
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new(default_aggregator_config()).await;
         let report = create_report(
             &task.leader_view().unwrap(),
+            &hpke_keypair,
             clock.now().add(task.tolerable_clock_skew()).unwrap(),
         );
 
@@ -3826,14 +3867,22 @@ mod tests {
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
         let report = create_report(
             &task.leader_view().unwrap(),
+            &hpke_keypair,
             clock
                 .now()
                 .add(task.tolerable_clock_skew())
@@ -3876,13 +3925,20 @@ mod tests {
         install_test_trace_subscriber();
 
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
-        let report = create_report(&task.leader_view().unwrap(), clock.now());
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
+        let report = create_report(&task.leader_view().unwrap(), &hpke_keypair, clock.now());
 
         // Insert a collection job for the batch interval including our report.
         let batch_interval = Interval::new(
@@ -3950,91 +4006,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_report_encrypted_with_global_key() {
+    async fn upload_report_encrypted_with_task_specific_key() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(Config {
-                max_upload_batch_size: 1000,
-                max_upload_batch_write_delay: StdDuration::from_millis(500),
-                ..Default::default()
-            })
-            .await;
+        let UploadTest {
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            ..
+        } = UploadTest::new(Config {
+            max_upload_batch_size: 1000,
+            max_upload_batch_write_delay: StdDuration::from_millis(500),
+            ..Default::default()
+        })
+        .await;
         let leader_task = task.leader_view().unwrap();
 
-        // Same ID as the task to test having both keys to choose from.
+        // Insert a global keypair with the same ID as the task to test having both keys to choose
+        // from.
         let global_hpke_keypair_same_id =
             HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into());
-        // Different ID to test misses on the task key.
-        let global_hpke_keypair_different_id = HpkeKeypair::test_with_id(
-            (0..)
-                .map(HpkeConfigId::from)
-                .find(|id| !leader_task.hpke_keys().contains_key(id))
-                .unwrap()
-                .into(),
-        );
 
         datastore
             .run_unnamed_tx(|tx| {
                 let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-                let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
                 Box::pin(async move {
                     // Leave these in the PENDING state--they should still be decryptable.
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                        .await?;
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
-                        .await?;
-                    Ok(())
+                    match tx
+                        .put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await
+                    {
+                        // Prevent test flakes in case a colliding key is already in the datastore.
+                        // The test context code randomly generates an ID so there's a chance for
+                        // collision.
+                        Ok(_) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
+                        Err(err) => Err(err),
+                    }
                 })
             })
             .await
             .unwrap();
         aggregator.refresh_caches().await.unwrap();
 
-        for report in [
-            create_report(&leader_task, clock.now()),
-            create_report_custom(
-                &leader_task,
-                clock.now(),
-                random(),
-                &global_hpke_keypair_same_id,
-            ),
-            create_report_custom(
-                &leader_task,
-                clock.now(),
-                random(),
-                &global_hpke_keypair_different_id,
-            ),
-        ] {
-            aggregator
-                .handle_upload(task.id(), &report.get_encoded().unwrap())
-                .await
-                .unwrap();
+        let report = create_report(&leader_task, leader_task.current_hpke_key(), clock.now());
+        aggregator
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .await
+            .unwrap();
 
-            let got_report = datastore
-                .run_unnamed_tx(|tx| {
-                    let (vdaf, task_id, report_id) =
-                        (vdaf.clone(), *task.id(), *report.metadata().id());
-                    Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
-                })
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(task.id(), got_report.task_id());
-            assert_eq!(report.metadata(), got_report.metadata());
-        }
+        let got_report = datastore
+            .run_unnamed_tx(|tx| {
+                let (vdaf, task_id, report_id) =
+                    (vdaf.clone(), *task.id(), *report.metadata().id());
+                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.id(), got_report.task_id());
+        assert_eq!(report.metadata(), got_report.metadata());
     }
 
     #[tokio::test]
     async fn upload_report_task_expired() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_task_expiration(Some(clock.now()))
@@ -4045,7 +4096,7 @@ mod tests {
 
         // Advance the clock to expire the task.
         clock.advance(&Duration::from_seconds(1));
-        let report = create_report(&task, clock.now());
+        let report = create_report(&task, &hpke_keypair, clock.now());
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
@@ -4084,12 +4135,18 @@ mod tests {
     async fn upload_report_report_expired() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_report_expiry_age(Some(Duration::from_seconds(60)))
@@ -4098,7 +4155,7 @@ mod tests {
             .unwrap();
         datastore.put_aggregator_task(&task).await.unwrap();
 
-        let report = create_report(&task, clock.now());
+        let report = create_report(&task, &hpke_keypair, clock.now());
 
         // Advance the clock to expire the report.
         clock.advance(&Duration::from_seconds(61));
@@ -4140,12 +4197,19 @@ mod tests {
     async fn upload_report_faulty_encryption() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
 
         let task = task.leader_view().unwrap();
 
@@ -4154,7 +4218,7 @@ mod tests {
             &task,
             clock.now(),
             random(),
-            &HpkeKeypair::test_with_id((*task.current_hpke_key().config().id()).into()),
+            &HpkeKeypair::test_with_id((*hpke_keypair.config().id()).into()),
         );
 
         // Try to upload the report, verify that we get the expected error.
@@ -4194,16 +4258,23 @@ mod tests {
     async fn upload_report_public_share_decode_failure() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
 
         let task = task.leader_view().unwrap();
 
-        let mut report = create_report(&task, clock.now());
+        let mut report = create_report(&task, &hpke_keypair, clock.now());
         report = Report::new(
             report.metadata().clone(),
             // Some obviously wrong public share.
@@ -4249,21 +4320,28 @@ mod tests {
     async fn upload_report_leader_input_share_decode_failure() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test_with_runtime(
-                runtime_manager.with_label("aggregator"),
-                default_aggregator_config(),
-            )
-            .await;
+        let UploadTest {
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            hpke_keypair,
+            ..
+        } = UploadTest::new_with_runtime(
+            default_aggregator_config(),
+            runtime_manager.with_label("aggregator"),
+        )
+        .await;
 
         let task = task.leader_view().unwrap();
 
-        let mut report = create_report(&task, clock.now());
+        let mut report = create_report(&task, &hpke_keypair, clock.now());
         report = Report::new(
             report.metadata().clone(),
             report.public_share().to_vec(),
             hpke::seal(
-                task.current_hpke_key().config(),
+                hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
                 // Some obviously wrong payload.
                 &PlaintextInputShare::new(Vec::new(), vec![0; 100])
