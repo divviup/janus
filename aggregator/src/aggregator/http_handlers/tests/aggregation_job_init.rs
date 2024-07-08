@@ -1,11 +1,10 @@
 use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
+    http_handlers::test_util::{
+        decode_response_body, setup_http_handler_test, take_problem_details, HttpHandlerTest,
     },
-    test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
+    test_util::BATCH_AGGREGATION_SHARD_COUNT,
     tests::{generate_helper_report_share, generate_helper_report_share_for_plaintext},
 };
 use assert_matches::assert_matches;
@@ -16,23 +15,19 @@ use janus_aggregator_core::{
         ReportAggregation, ReportAggregationState,
     },
     task::{test_util::TaskBuilder, QueryType, VerifyKey},
-    test_util::noop_meter,
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::test_util::{
-        generate_test_hpke_config_and_private_key,
-        generate_test_hpke_config_and_private_key_with_id,
-    },
+    hpke::test_util::generate_test_hpke_config_and_private_key,
     report_id::ReportIdChecksumExt,
-    test_util::{run_vdaf, runtime::TestRuntime},
+    test_util::run_vdaf,
     time::{Clock, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
+    Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
     PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult, ReportIdChecksum,
     ReportMetadata, ReportShare, Time,
 };
@@ -176,7 +171,14 @@ async fn aggregate_wrong_agg_auth_token() {
 // Measurement} values (whose type is ()).
 #[allow(clippy::unit_arg, clippy::let_unit_value)]
 async fn aggregate_init() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
@@ -184,11 +186,11 @@ async fn aggregate_init() {
 
     let vdaf = dummy::Vdaf::new(1);
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
-    let hpke_key = helper_task.current_hpke_key();
     let measurement = 0;
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        hpke_keypair.config().clone(),
         vdaf.clone(),
         dummy::AggregationParam(0),
     );
@@ -224,7 +226,7 @@ async fn aggregate_init() {
     input_share_bytes.push(0); // can no longer be decoded.
     let report_share_2 = generate_helper_report_share_for_plaintext(
         prepare_init_2.report_share().metadata().clone(),
-        hpke_key.config(),
+        hpke_keypair.config(),
         transcript_2.public_share.get_encoded().unwrap(),
         &input_share_bytes,
         &InputShareAad::new(
@@ -285,7 +287,7 @@ async fn aggregate_init() {
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_5,
-        hpke_key.config(),
+        hpke_keypair.config(),
         &transcript_5.public_share,
         Vec::new(),
         &transcript_5.helper_input_share,
@@ -314,7 +316,7 @@ async fn aggregate_init() {
     );
     let report_share_6 = generate_helper_report_share_for_plaintext(
         report_metadata_6.clone(),
-        hpke_key.config(),
+        hpke_keypair.config(),
         public_share_6.clone(),
         &transcript_6.helper_input_share.get_encoded().unwrap(),
         &InputShareAad::new(*task.id(), report_metadata_6, public_share_6)
@@ -345,7 +347,7 @@ async fn aggregate_init() {
     let report_share_7 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_7,
-        hpke_key.config(),
+        hpke_keypair.config(),
         &transcript_7.public_share,
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -587,7 +589,14 @@ async fn aggregate_init() {
 
 #[tokio::test]
 async fn aggregate_init_batch_already_collected() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
         QueryType::FixedSize {
@@ -605,6 +614,7 @@ async fn aggregate_init_batch_already_collected() {
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        hpke_keypair.config().clone(),
         vdaf.clone(),
         dummy::AggregationParam(0),
     );
@@ -684,258 +694,22 @@ async fn aggregate_init_batch_already_collected() {
 }
 
 #[tokio::test]
-#[allow(clippy::unit_arg)]
-async fn aggregate_init_with_reports_encrypted_by_global_key() {
-    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
-
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
-
-    let helper_task = task.helper_view().unwrap();
-    datastore.put_aggregator_task(&helper_task).await.unwrap();
-    let vdaf = dummy::Vdaf::new(1);
-    let aggregation_param = dummy::AggregationParam(0);
-    let prep_init_generator = PrepareInitGenerator::new(
-        clock.clone(),
-        helper_task.clone(),
-        vdaf.clone(),
-        aggregation_param,
-    );
-
-    // Insert some global HPKE keys.
-    // Same ID as the task to test having both keys to choose from.
-    let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-        (*helper_task.current_hpke_key().config().id()).into(),
-    );
-    // Different ID to test misses on the task key.
-    let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
-        (0..)
-            .map(HpkeConfigId::from)
-            .find(|id| !helper_task.hpke_keys().contains_key(id))
-            .unwrap()
-            .into(),
-    );
-    datastore
-        .run_unnamed_tx(|tx| {
-            let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-            let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
-            Box::pin(async move {
-                // Leave these in the PENDING state--they should still be decryptable.
-                tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                    .await
-                    .unwrap();
-                tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
-                    .await
-                    .unwrap();
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-
-    // Create new handler _after_ the keys have been inserted so that they come pre-cached.
-    let handler = aggregator_handler(
-        datastore.clone(),
-        clock.clone(),
-        TestRuntime::default(),
-        &noop_meter(),
-        default_aggregator_config(),
-    )
-    .await
-    .unwrap();
-
-    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
-
-    // This report was encrypted with a global HPKE config that has the same config
-    // ID as the task's HPKE config.
-    let (prepare_init_same_id, transcript_same_id) = prep_init_generator.next(&0);
-
-    // This report was encrypted with a global HPKE config that has the same config
-    // ID as the task's HPKE config, but will fail to decrypt.
-    let (prepare_init_same_id_corrupted, transcript_same_id_corrupted) =
-        prep_init_generator.next(&0);
-
-    let encrypted_input_share = prepare_init_same_id_corrupted
-        .report_share()
-        .encrypted_input_share();
-    let mut corrupted_payload = encrypted_input_share.payload().to_vec();
-    corrupted_payload[0] ^= 0xFF;
-    let corrupted_input_share = HpkeCiphertext::new(
-        *encrypted_input_share.config_id(),
-        encrypted_input_share.encapsulated_key().to_vec(),
-        corrupted_payload,
-    );
-
-    let prepare_init_same_id_corrupted = PrepareInit::new(
-        ReportShare::new(
-            prepare_init_same_id_corrupted
-                .report_share()
-                .metadata()
-                .clone(),
-            transcript_same_id_corrupted
-                .public_share
-                .get_encoded()
-                .unwrap(),
-            corrupted_input_share,
-        ),
-        prepare_init_same_id_corrupted.message().clone(),
-    );
-
-    // This report was encrypted with a global HPKE config that doesn't collide
-    // with the task HPKE config's ID.
-    let report_metadata_different_id = ReportMetadata::new(
-        random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-    );
-    let transcript_different_id = run_vdaf(
-        &vdaf,
-        verify_key.as_bytes(),
-        &dummy::AggregationParam(0),
-        report_metadata_different_id.id(),
-        &0,
-    );
-    let report_share_different_id = generate_helper_report_share::<dummy::Vdaf>(
-        *task.id(),
-        report_metadata_different_id,
-        global_hpke_keypair_different_id.config(),
-        &transcript_different_id.public_share,
-        Vec::new(),
-        &transcript_different_id.helper_input_share,
-    );
-
-    let prepare_init_different_id = PrepareInit::new(
-        report_share_different_id,
-        transcript_different_id.leader_prepare_transitions[0]
-            .message
-            .clone(),
-    );
-
-    // This report was encrypted with a global HPKE config that doesn't collide
-    // with the task HPKE config's ID, but will fail decryption.
-    let report_metadata_different_id_corrupted = ReportMetadata::new(
-        random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-    );
-    let transcript_different_id_corrupted = run_vdaf(
-        &vdaf,
-        verify_key.as_bytes(),
-        &dummy::AggregationParam(0),
-        report_metadata_different_id_corrupted.id(),
-        &0,
-    );
-    let report_share_different_id_corrupted = generate_helper_report_share::<dummy::Vdaf>(
-        *task.id(),
-        report_metadata_different_id_corrupted.clone(),
-        global_hpke_keypair_different_id.config(),
-        &transcript_different_id_corrupted.public_share,
-        Vec::new(),
-        &transcript_different_id_corrupted.helper_input_share,
-    );
-    let encrypted_input_share = report_share_different_id_corrupted.encrypted_input_share();
-    let mut corrupted_payload = encrypted_input_share.payload().to_vec();
-    corrupted_payload[0] ^= 0xFF;
-    let corrupted_input_share = HpkeCiphertext::new(
-        *encrypted_input_share.config_id(),
-        encrypted_input_share.encapsulated_key().to_vec(),
-        corrupted_payload,
-    );
-    let encoded_public_share = transcript_different_id_corrupted
-        .public_share
-        .get_encoded()
-        .unwrap();
-
-    let prepare_init_different_id_corrupted = PrepareInit::new(
-        ReportShare::new(
-            report_metadata_different_id_corrupted,
-            encoded_public_share.clone(),
-            corrupted_input_share,
-        ),
-        transcript_different_id_corrupted.leader_prepare_transitions[0]
-            .message
-            .clone(),
-    );
-
-    let aggregation_job_id: AggregationJobId = random();
-    let request = AggregationJobInitializeReq::new(
-        dummy::AggregationParam(0).get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
-        Vec::from([
-            prepare_init_same_id.clone(),
-            prepare_init_different_id.clone(),
-            prepare_init_same_id_corrupted.clone(),
-            prepare_init_different_id_corrupted.clone(),
-        ]),
-    );
-
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-
-    // Validate response.
-    assert_eq!(aggregate_resp.prepare_resps().len(), 4);
-
-    let prepare_step_same_id = aggregate_resp.prepare_resps().first().unwrap();
-    assert_eq!(
-        prepare_step_same_id.report_id(),
-        prepare_init_same_id.report_share().metadata().id()
-    );
-    assert_matches!(prepare_step_same_id.result(), PrepareStepResult::Continue { message } => {
-        assert_eq!(message, &transcript_same_id.helper_prepare_transitions[0].message);
-    });
-
-    let prepare_step_different_id = aggregate_resp.prepare_resps().get(1).unwrap();
-    assert_eq!(
-        prepare_step_different_id.report_id(),
-        prepare_init_different_id.report_share().metadata().id()
-    );
-    assert_matches!(
-        prepare_step_different_id.result(),
-        PrepareStepResult::Continue { message } => {
-            assert_eq!(message, &transcript_different_id.helper_prepare_transitions[0].message);
-        }
-    );
-
-    let prepare_step_same_id_corrupted = aggregate_resp.prepare_resps().get(2).unwrap();
-    assert_eq!(
-        prepare_step_same_id_corrupted.report_id(),
-        prepare_init_same_id_corrupted
-            .report_share()
-            .metadata()
-            .id(),
-    );
-    assert_matches!(
-        prepare_step_same_id_corrupted.result(),
-        &PrepareStepResult::Reject(PrepareError::HpkeDecryptError)
-    );
-
-    let prepare_step_different_id_corrupted = aggregate_resp.prepare_resps().get(3).unwrap();
-    assert_eq!(
-        prepare_step_different_id_corrupted.report_id(),
-        prepare_init_different_id_corrupted
-            .report_share()
-            .metadata()
-            .id()
-    );
-    assert_matches!(
-        prepare_step_different_id_corrupted.result(),
-        &PrepareStepResult::Reject(PrepareError::HpkeDecryptError)
-    );
-}
-
-#[tokio::test]
 async fn aggregate_init_prep_init_failed() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        hpke_keypair.config().clone(),
         dummy::Vdaf::new(1),
         dummy::AggregationParam(0),
     );
@@ -975,13 +749,21 @@ async fn aggregate_init_prep_init_failed() {
 
 #[tokio::test]
 async fn aggregate_init_prep_step_failed() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        hpke_keypair.config().clone(),
         dummy::Vdaf::new(1),
         dummy::AggregationParam(0),
     );
@@ -1020,7 +802,14 @@ async fn aggregate_init_prep_step_failed() {
 
 #[tokio::test]
 async fn aggregate_init_duplicated_report_id() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
@@ -1028,6 +817,7 @@ async fn aggregate_init_duplicated_report_id() {
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        hpke_keypair.config().clone(),
         dummy::Vdaf::new(1),
         dummy::AggregationParam(0),
     );

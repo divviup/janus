@@ -15,7 +15,7 @@ use trillium_testing::assert_status;
 use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     http_handlers::{
-        test_util::{setup_http_handler_test, take_response_body},
+        test_util::{take_response_body, HttpHandlerTest},
         tests::aggregate_share::post_aggregate_share_request,
     },
 };
@@ -24,7 +24,14 @@ use crate::aggregator::{
 /// reports cannot be aggregated with the same aggregation parameter into multiple batches.
 #[tokio::test]
 async fn helper_aggregation_report_share_replay() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
         QueryType::FixedSize {
@@ -42,8 +49,13 @@ async fn helper_aggregation_report_share_replay() {
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-    let prep_init_generator =
-        PrepareInitGenerator::new(clock.clone(), helper_task.clone(), vdaf.clone(), agg_param);
+    let prep_init_generator = PrepareInitGenerator::new(
+        clock.clone(),
+        helper_task.clone(),
+        hpke_keypair.config().clone(),
+        vdaf.clone(),
+        agg_param,
+    );
     let (replayed_report, _replayed_report_transcript) = prep_init_generator.next(&7);
     let (other_report_1, _other_report_1_transcript) = prep_init_generator.next(&11);
     let (other_report_2, _other_report_2_transcript) = prep_init_generator.next(&23);
