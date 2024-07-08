@@ -805,6 +805,7 @@ pub mod test_util {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        datastore.put_global_hpke_key().await.unwrap();
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),

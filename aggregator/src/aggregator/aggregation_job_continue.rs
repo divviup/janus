@@ -486,6 +486,7 @@ mod tests {
         let (prepare_init, transcript) =
             prepare_init_generator.next(&IdpfInput::from_bools(&[true]));
 
+        datastore.put_global_hpke_key().await.unwrap();
         datastore
             .run_unnamed_tx(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (

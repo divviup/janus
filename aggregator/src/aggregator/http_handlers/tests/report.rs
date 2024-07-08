@@ -406,6 +406,7 @@ async fn upload_handler_error_fanout() {
         .build()
         .await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    datastore.put_global_hpke_key().await.unwrap();
     let handler = aggregator_handler(
         datastore.clone(),
         clock.clone(),
@@ -515,6 +516,7 @@ async fn upload_client_early_disconnect() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    datastore.put_global_hpke_key().await.unwrap();
     let handler = aggregator_handler(
         datastore.clone(),
         clock.clone(),

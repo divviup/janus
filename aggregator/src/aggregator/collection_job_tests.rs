@@ -139,6 +139,7 @@ pub(crate) async fn setup_collection_job_test_case(
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     datastore.put_aggregator_task(&role_task).await.unwrap();
+    datastore.put_global_hpke_key().await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),

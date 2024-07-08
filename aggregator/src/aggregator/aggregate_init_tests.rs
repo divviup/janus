@@ -260,6 +260,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
+    datastore.put_global_hpke_key().await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),

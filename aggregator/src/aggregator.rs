@@ -251,12 +251,21 @@ impl Default for Config {
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
             log_forbidden_mutations: None,
-            require_global_hpke_keys: false,
+            require_global_hpke_keys: true,
         }
     }
 }
 
 impl<C: Clock> Aggregator<C> {
+    /// Creates a new [`Aggregator`].
+    ///
+    /// # Errors
+    ///
+    /// Fails on general datastore errors.
+    ///
+    /// If [`Self::require_global_hpke_keys`] is `true`, and there is not at least one
+    /// [`GlobalHpkeKeypair`] in the database in the [`HpkeKeyState::Active`] state then this
+    /// function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
         clock: C,
@@ -3565,8 +3574,8 @@ mod tests {
 
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
         datastore.put_aggregator_task(&leader_task).await.unwrap();
+        datastore.put_global_hpke_key().await.unwrap();
 
         let aggregator = Aggregator::new(
             Arc::clone(&datastore),
