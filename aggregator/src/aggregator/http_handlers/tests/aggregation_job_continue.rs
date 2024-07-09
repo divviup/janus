@@ -3,7 +3,7 @@ use crate::aggregator::{
         post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
     },
     empty_batch_aggregations,
-    http_handlers::test_util::{setup_http_handler_test, HttpHandlerTest},
+    http_handlers::test_util::HttpHandlerTest,
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
     tests::generate_helper_report_share,
 };
@@ -1057,7 +1057,12 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
 #[tokio::test]
 async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
@@ -1342,7 +1347,12 @@ async fn aggregate_continue_prep_step_fails() {
 
 #[tokio::test]
 async fn aggregate_continue_unexpected_transition() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
@@ -1453,7 +1463,12 @@ async fn aggregate_continue_unexpected_transition() {
 
 #[tokio::test]
 async fn aggregate_continue_out_of_order_transition() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
@@ -1623,7 +1638,12 @@ async fn aggregate_continue_out_of_order_transition() {
 
 #[tokio::test]
 async fn aggregate_continue_for_non_waiting_aggregation() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();

@@ -398,7 +398,7 @@ mod tests {
         },
         http_handlers::{
             aggregator_handler,
-            test_util::{setup_http_handler_test, take_problem_details},
+            test_util::{take_problem_details, HttpHandlerTest},
         },
         test_util::default_aggregator_config,
     };
@@ -608,7 +608,12 @@ mod tests {
 
     #[tokio::test]
     async fn leader_rejects_aggregation_job_post() {
-        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+        let HttpHandlerTest {
+            ephemeral_datastore: _ephemeral_datastore,
+            datastore,
+            handler,
+            ..
+        } = HttpHandlerTest::new().await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
         datastore
@@ -634,7 +639,12 @@ mod tests {
 
     #[tokio::test]
     async fn leader_rejects_aggregation_job_delete() {
-        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+        let HttpHandlerTest {
+            ephemeral_datastore: _ephemeral_datastore,
+            datastore,
+            handler,
+            ..
+        } = HttpHandlerTest::new().await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
         datastore

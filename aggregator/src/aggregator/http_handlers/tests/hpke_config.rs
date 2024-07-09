@@ -2,7 +2,7 @@ use crate::{
     aggregator::{
         http_handlers::{
             aggregator_handler, aggregator_handler_with_aggregator,
-            test_util::{setup_http_handler_test, take_problem_details, take_response_body},
+            test_util::{take_problem_details, take_response_body, HttpHandlerTest},
             HPKE_CONFIG_SIGNATURE_HEADER,
         },
         test_util::{
@@ -112,7 +112,12 @@ async fn task_specific_hpke_config() {
 
 #[tokio::test]
 async fn global_hpke_config() {
-    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Retrieve the global keypair from the test fixture.
     let first_hpke_keypair = datastore
@@ -247,7 +252,12 @@ async fn global_hpke_config() {
 
 #[tokio::test]
 async fn global_hpke_config_with_taskprov() {
-    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Retrieve the global keypair from the test fixture.
     let first_hpke_keypair = datastore
@@ -330,7 +340,12 @@ fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: 
 
 #[tokio::test]
 async fn hpke_config_cors_headers() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
         .build()
@@ -386,7 +401,12 @@ async fn verify_and_decode_hpke_config_list(test_conn: &mut TestConn) -> HpkeCon
 
 #[tokio::test]
 async fn require_global_hpke_keys() {
-    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Retrieve the global keypair from the test fixture.
     let keypair = datastore
