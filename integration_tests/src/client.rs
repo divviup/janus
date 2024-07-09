@@ -17,7 +17,11 @@ use prio::{
 use rand::random;
 use serde_json::{json, Value};
 use std::env;
-use testcontainers::{core::WaitFor, runners::AsyncRunner, Image, RunnableImage};
+use testcontainers::{
+    core::{wait::HealthWaitStrategy, WaitFor},
+    runners::AsyncRunner,
+    ContainerRequest, Image, ImageExt,
+};
 use url::Url;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
@@ -164,18 +168,16 @@ impl InteropClient {
 }
 
 impl Image for InteropClient {
-    type Args = ();
-
-    fn name(&self) -> String {
-        self.name.clone()
+    fn name(&self) -> &str {
+        &self.name
     }
 
-    fn tag(&self) -> String {
-        self.tag.clone()
+    fn tag(&self) -> &str {
+        &self.tag
     }
 
     fn ready_conditions(&self) -> Vec<testcontainers::core::WaitFor> {
-        Vec::from([WaitFor::Healthcheck])
+        Vec::from([WaitFor::Healthcheck(HealthWaitStrategy::new())])
     }
 }
 
@@ -289,9 +291,9 @@ where
         let client_container_name = format!("client-{random_part}");
         let container = ContainerLogsDropGuard::new_janus(
             test_name,
-            RunnableImage::from(container_image)
+            ContainerRequest::from(container_image)
                 .with_network(network)
-                .with_env_var(get_rust_log_level())
+                .with_env_var("RUST_LOG", get_rust_log_level())
                 .with_container_name(client_container_name)
                 .start()
                 .await

@@ -23,7 +23,7 @@ use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
-use testcontainers::{runners::AsyncRunner, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
 use tokio::time::sleep;
 
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -65,9 +65,9 @@ async fn run(
 
     let client_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        RunnableImage::from(Client::default())
+        ContainerRequest::from(Client::default())
             .with_network(&network)
-            .with_env_var(get_rust_log_level())
+            .with_env_var("RUST_LOG", get_rust_log_level())
             .with_container_name(generate_unique_name("client"))
             .start()
             .await
@@ -81,9 +81,9 @@ async fn run(
     let leader_name = generate_unique_name("leader");
     let leader_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        RunnableImage::from(Aggregator::default())
+        ContainerRequest::from(Aggregator::default())
             .with_network(&network)
-            .with_env_var(get_rust_log_level())
+            .with_env_var("RUST_LOG", get_rust_log_level())
             .with_container_name(leader_name.clone())
             .start()
             .await
@@ -97,9 +97,9 @@ async fn run(
     let helper_name = generate_unique_name("helper");
     let helper_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        RunnableImage::from(Aggregator::default())
+        ContainerRequest::from(Aggregator::default())
             .with_network(&network)
-            .with_env_var(get_rust_log_level())
+            .with_env_var("RUST_LOG", get_rust_log_level())
             .with_container_name(helper_name.clone())
             .start()
             .await
@@ -112,9 +112,9 @@ async fn run(
 
     let collector_container = ContainerLogsDropGuard::new_janus(
         test_name,
-        RunnableImage::from(Collector::default())
+        ContainerRequest::from(Collector::default())
             .with_network(&network)
-            .with_env_var(get_rust_log_level())
+            .with_env_var("RUST_LOG", get_rust_log_level())
             .with_container_name(generate_unique_name("collector"))
             .start()
             .await

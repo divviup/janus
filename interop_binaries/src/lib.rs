@@ -556,11 +556,8 @@ impl Default for Keyring {
 
 /// Returns the environment variable RUST_LOG. If it's unset or otherwise invalid, return the
 /// default value of "info".
-pub fn get_rust_log_level() -> (&'static str, String) {
-    (
-        "RUST_LOG",
-        env::var("RUST_LOG").unwrap_or("info".to_string()),
-    )
+pub fn get_rust_log_level() -> String {
+    env::var("RUST_LOG").unwrap_or("info".to_string())
 }
 
 #[cfg(feature = "test-util")]
@@ -687,6 +684,6 @@ pub mod test_util {
     }
 
     pub fn generate_unique_name(prefix: &str) -> String {
-        format!("{}_{}", prefix, hex::encode(random::<[u8; 4]>()))
+        format!("{}-{}", prefix, hex::encode(random::<[u8; 4]>()))
     }
 }

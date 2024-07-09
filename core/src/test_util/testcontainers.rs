@@ -1,12 +1,11 @@
 //! Testing functionality that interacts with the testcontainers library.
 
-use std::{collections::HashMap, process::Command};
+use std::{borrow::Cow, process::Command};
 use testcontainers::{core::WaitFor, Image};
 
 /// A [`testcontainers::Image`] that provides a Postgres server.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Postgres {
-    env_vars: HashMap<String, String>,
     entrypoint: Option<String>,
 }
 
@@ -14,39 +13,20 @@ impl Postgres {
     const NAME: &'static str = "postgres";
     const TAG: &'static str = "15-alpine";
 
-    fn build_environment() -> HashMap<String, String> {
-        HashMap::from([
-            ("POSTGRES_DB".to_owned(), "postgres".to_owned()),
-            ("POSTGRES_HOST_AUTH_METHOD".to_owned(), "trust".to_owned()),
-        ])
-    }
-
     pub fn with_entrypoint(entrypoint: String) -> Self {
         Self {
-            env_vars: Self::build_environment(),
             entrypoint: Some(entrypoint),
         }
     }
 }
 
-impl Default for Postgres {
-    fn default() -> Self {
-        Self {
-            env_vars: Self::build_environment(),
-            entrypoint: None,
-        }
-    }
-}
-
 impl Image for Postgres {
-    type Args = Vec<String>;
-
-    fn name(&self) -> String {
-        Self::NAME.to_owned()
+    fn name(&self) -> &str {
+        Self::NAME
     }
 
-    fn tag(&self) -> String {
-        Self::TAG.to_owned()
+    fn tag(&self) -> &str {
+        Self::TAG
     }
 
     fn ready_conditions(&self) -> Vec<WaitFor> {
@@ -55,12 +35,17 @@ impl Image for Postgres {
         )])
     }
 
-    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
-        Box::new(self.env_vars.iter())
+    fn env_vars(
+        &self,
+    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
+        [
+            ("POSTGRES_DB", "postgres"),
+            ("POSTGRES_HOST_AUTH_METHOD", "trust"),
+        ]
     }
 
-    fn entrypoint(&self) -> Option<String> {
-        self.entrypoint.clone()
+    fn entrypoint(&self) -> Option<&str> {
+        self.entrypoint.as_deref()
     }
 }
 

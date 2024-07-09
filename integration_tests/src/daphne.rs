@@ -7,7 +7,7 @@ use janus_interop_binaries::{
 };
 use janus_messages::{Role, Time};
 use serde_json::json;
-use testcontainers::{runners::AsyncRunner, GenericImage, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerRequest, GenericImage, ImageExt};
 use url::Url;
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
@@ -44,10 +44,10 @@ impl Daphne {
 
         // Start the Daphne test container running.
         let (port, daphne_container) = if start_container {
-            let runnable_image = RunnableImage::from(GenericImage::new(image_name, image_tag))
+            let runnable_image = ContainerRequest::from(GenericImage::new(image_name, image_tag))
                 .with_network(network)
                 // Daphne uses the DAP_TRACING environment variable for its tracing subscriber.
-                .with_env_var(("DAP_TRACING", get_rust_log_level().1))
+                .with_env_var("DAP_TRACING", get_rust_log_level())
                 .with_container_name(endpoint.host_str().unwrap());
             let daphne_container = ContainerLogsDropGuard::new(
                 test_name,
