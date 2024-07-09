@@ -7,8 +7,10 @@ use crate::aggregator::{
             decode_response_body, setup_http_handler_test, take_problem_details, HttpHandlerTest,
         },
     },
-    test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
-    tests::{generate_helper_report_share, generate_helper_report_share_for_plaintext},
+    test_util::{
+        default_aggregator_config, generate_helper_report_share,
+        generate_helper_report_share_for_plaintext, BATCH_AGGREGATION_SHARD_COUNT,
+    },
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;

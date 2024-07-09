@@ -3,7 +3,7 @@ use crate::aggregator::{
         aggregator_handler,
         test_util::{decode_response_body, take_problem_details},
     },
-    tests::generate_helper_report_share,
+    test_util::generate_helper_report_share,
     Config,
 };
 use assert_matches::assert_matches;

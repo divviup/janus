@@ -4,8 +4,7 @@ use crate::aggregator::{
     },
     empty_batch_aggregations,
     http_handlers::test_util::{setup_http_handler_test, HttpHandlerTest},
-    test_util::BATCH_AGGREGATION_SHARD_COUNT,
-    tests::generate_helper_report_share,
+    test_util::{generate_helper_report_share, BATCH_AGGREGATION_SHARD_COUNT},
 };
 use futures::future::try_join_all;
 use janus_aggregator_core::{

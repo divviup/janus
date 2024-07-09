@@ -5,8 +5,7 @@ use crate::{
             aggregator_handler,
             test_util::{take_problem_details, HttpHandlerTest},
         },
-        test_util::default_aggregator_config,
-        tests::{create_report, create_report_custom},
+        test_util::{create_report, create_report_custom, default_aggregator_config},
     },
     metrics::test_util::InMemoryMetricsInfrastructure,
 };
