@@ -467,7 +467,6 @@ impl AggregatorTask {
     /// Return the HPKE keypairs used by this aggregator to decrypt client reports, or an empty map
     /// for taskprov tasks.
     pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, HpkeKeypair> {
-        // panic!("don't use task-specific keys");
         &self.hpke_keys
     }
 

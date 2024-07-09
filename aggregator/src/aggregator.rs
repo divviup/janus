@@ -3454,6 +3454,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
+            self,
             models::{CollectionJob, CollectionJobState, TaskUploadCounter},
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -4005,6 +4006,72 @@ mod tests {
             got_counters,
             Some(TaskUploadCounter::new_with_values(1, 0, 0, 0, 0, 0, 0, 0))
         )
+    }
+
+    #[tokio::test]
+    async fn upload_report_encrypted_with_task_specific_key() {
+        install_test_trace_subscriber();
+
+        let UploadTest {
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore: _ephemeral_datastore,
+            ..
+        } = UploadTest::new(Config {
+            max_upload_batch_size: 1000,
+            max_upload_batch_write_delay: StdDuration::from_millis(500),
+            ..Default::default()
+        })
+        .await;
+        let leader_task = task.leader_view().unwrap();
+
+        // Insert a global keypair with the same ID as the task to test having both keys to choose
+        // from.
+        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
+            (*leader_task.current_hpke_key().config().id()).into(),
+        );
+
+        datastore
+            .run_unnamed_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    match tx
+                        .put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await
+                    {
+                        // Prevent test flakes in case a colliding key is already in the datastore.
+                        // The test context code randomly generates an ID so there's a chance for
+                        // collision.
+                        Ok(_) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
+                        Err(err) => Err(err),
+                    }
+                })
+            })
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+
+        let report = create_report(&leader_task, leader_task.current_hpke_key(), clock.now());
+        aggregator
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .await
+            .unwrap();
+
+        let got_report = datastore
+            .run_unnamed_tx(|tx| {
+                let (vdaf, task_id, report_id) =
+                    (vdaf.clone(), *task.id(), *report.metadata().id());
+                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.id(), got_report.task_id());
+        assert_eq!(report.metadata(), got_report.metadata());
     }
 
     #[tokio::test]

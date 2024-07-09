@@ -1,26 +1,36 @@
 use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
-    http_handlers::test_util::{
-        decode_response_body, setup_http_handler_test, take_problem_details, HttpHandlerTest,
+    http_handlers::{
+        aggregator_handler,
+        test_util::{
+            decode_response_body, setup_http_handler_test, take_problem_details, HttpHandlerTest,
+        },
     },
-    test_util::BATCH_AGGREGATION_SHARD_COUNT,
+    test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
     tests::{generate_helper_report_share, generate_helper_report_share_for_plaintext},
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
-    datastore::models::{
-        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-        ReportAggregation, ReportAggregationState,
+    datastore::{
+        self,
+        models::{
+            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+            ReportAggregation, ReportAggregationState,
+        },
     },
     task::{test_util::TaskBuilder, QueryType, VerifyKey},
+    test_util::noop_meter,
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::test_util::generate_test_hpke_config_and_private_key,
+    hpke::test_util::{
+        generate_test_hpke_config_and_private_key,
+        generate_test_hpke_config_and_private_key_with_id,
+    },
     report_id::ReportIdChecksumExt,
-    test_util::run_vdaf,
+    test_util::{run_vdaf, runtime::TestRuntime},
     time::{Clock, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
@@ -691,6 +701,91 @@ async fn aggregate_init_batch_already_collected() {
         prepare_step.result(),
         &PrepareStepResult::Reject(PrepareError::BatchCollected)
     );
+}
+
+#[tokio::test]
+#[allow(clippy::unit_arg)]
+async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+    let vdaf = dummy::Vdaf::new(1);
+    let aggregation_param = dummy::AggregationParam(0);
+    let prep_init_generator = PrepareInitGenerator::new(
+        clock.clone(),
+        helper_task.clone(),
+        helper_task.current_hpke_key().config().clone(),
+        vdaf.clone(),
+        aggregation_param,
+    );
+
+    // Same ID as the task to test having both keys to choose from.
+    let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
+        (*helper_task.current_hpke_key().config().id()).into(),
+    );
+    datastore
+        .run_unnamed_tx(|tx| {
+            let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+            Box::pin(async move {
+                // Leave these in the PENDING state--they should still be decryptable.
+                match tx
+                    .put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                    .await
+                {
+                    // Prevent test flakes in case a colliding key is already in the datastore.
+                    // The test context code randomly generates an ID so there's a chance for
+                    // collision.
+                    Ok(_) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
+                    Err(err) => Err(err),
+                }
+            })
+        })
+        .await
+        .unwrap();
+
+    // Create new handler _after_ the keys have been inserted so that they come pre-cached.
+    let handler = aggregator_handler(
+        datastore.clone(),
+        clock.clone(),
+        TestRuntime::default(),
+        &noop_meter(),
+        default_aggregator_config(),
+    )
+    .await
+    .unwrap();
+
+    let (prepare_init, transcript) = prep_init_generator.next(&0);
+
+    let aggregation_job_id: AggregationJobId = random();
+    let request = AggregationJobInitializeReq::new(
+        dummy::AggregationParam(0).get_encoded().unwrap(),
+        PartialBatchSelector::new_time_interval(),
+        Vec::from([prepare_init.clone()]),
+    );
+
+    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    // Validate response.
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+
+    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(
+        prepare_step.report_id(),
+        prepare_init.report_share().metadata().id()
+    );
+    assert_matches!(prepare_step.result(), PrepareStepResult::Continue { message } => {
+        assert_eq!(message, &transcript.helper_prepare_transitions[0].message);
+    });
 }
 
 #[tokio::test]
