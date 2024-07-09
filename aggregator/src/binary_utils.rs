@@ -72,7 +72,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
         database_config.password(pass);
     }
 
-    let connection_pool_timeout = Duration::from_secs(db_config.connection_pool_timeouts_secs);
+    let connection_pool_timeout = Duration::from_secs(db_config.connection_pool_timeouts_s);
 
     let conn_mgr = if let Some(ref path) = db_config.tls_trust_store_path {
         let root_store = load_pem_trust_store(path).context("failed to load TLS trust store")?;
@@ -707,7 +707,7 @@ mod tests {
             url: format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=require")
                 .parse()
                 .unwrap(),
-            connection_pool_timeouts_secs: 5,
+            connection_pool_timeouts_s: 5,
             connection_pool_max_size: None,
             check_schema_version: false,
             tls_trust_store_path: Some("tests/tls_files/rootCA.pem".into()),

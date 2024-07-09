@@ -386,8 +386,8 @@ pub struct Config {
     /// Defines how long to cache tasks for, in seconds. This affects how often the aggregator
     /// becomes aware of task parameter changes. If unspecified, default is defined by
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_TTL`]. You shouldn't normally have to specify this.
-    #[serde(default)]
-    pub task_cache_ttl_seconds: Option<u64>,
+    #[serde(default, alias = "task_cache_ttl_seconds")]
+    pub task_cache_ttl_s: Option<u64>,
 
     /// Defines how many tasks can be cached. This affects how much memory the aggregator might use
     /// to store cached tasks. If unspecified, default is defined by
@@ -464,7 +464,7 @@ impl Config {
                 .as_deref()
                 .map(parse_pem_ec_private_key)
                 .transpose()?,
-            task_cache_ttl: match self.task_cache_ttl_seconds {
+            task_cache_ttl: match self.task_cache_ttl_s {
                 Some(ttl) => Duration::from_secs(ttl),
                 None => TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             },
@@ -601,7 +601,7 @@ mod tests {
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: Some(42),
-            task_cache_ttl_seconds: None,
+            task_cache_ttl_s: None,
             task_cache_capacity: None,
             log_forbidden_mutations: Some(PathBuf::from("/tmp/events")),
             require_global_hpke_keys: true,

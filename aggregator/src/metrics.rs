@@ -116,11 +116,11 @@ pub struct TokioMetricsConfiguration {
     #[serde(default)]
     pub poll_time_histogram_scale: HistogramScale,
 
-    /// Resolution of the histogram tracking poll times. When using a linear scale, every bucket
-    /// will have this width. When using a logarithmic scale, the smallest bucket will have this
-    /// width.
-    #[serde(default)]
-    pub poll_time_histogram_resolution_microseconds: Option<u64>,
+    /// Resolution of the histogram tracking poll times, in microseconds. When using a linear
+    /// scale, every bucket will have this width. When using a logarithmic scale, the smallest
+    /// bucket will have this width.
+    #[serde(default, alias = "poll_time_histogram_resolution_microseconds")]
+    pub poll_time_histogram_resolution_us: Option<u64>,
 
     /// Chooses the number of buckets in the histogram used to track poll times. This number of
     /// buckets includes the bucket with a range extending to positive infinity.

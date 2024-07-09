@@ -22,12 +22,12 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         reqwest::Client::builder()
             .user_agent(CLIENT_USER_AGENT)
             .timeout(Duration::from_secs(
-                ctx.config.job_driver_config.http_request_timeout_secs,
+                ctx.config.job_driver_config.http_request_timeout_s,
             ))
             .connect_timeout(Duration::from_secs(
                 ctx.config
                     .job_driver_config
-                    .http_request_connection_timeout_secs,
+                    .http_request_connection_timeout_s,
             ))
             .build()
             .context("couldn't create HTTP client")?,
@@ -35,8 +35,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
     ));
-    let lease_duration =
-        Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
+    let lease_duration = Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_s);
 
     // Start running.
     let job_driver = Arc::new(JobDriver::new(
@@ -44,12 +43,12 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         TokioRuntime,
         ctx.meter,
         ctx.stopper,
-        Duration::from_secs(ctx.config.job_driver_config.job_discovery_interval_secs),
+        Duration::from_secs(ctx.config.job_driver_config.job_discovery_interval_s),
         ctx.config.job_driver_config.max_concurrent_job_workers,
         Duration::from_secs(
             ctx.config
                 .job_driver_config
-                .worker_lease_clock_skew_allowance_secs,
+                .worker_lease_clock_skew_allowance_s,
         ),
         aggregation_job_driver
             .make_incomplete_job_acquirer_callback(Arc::clone(&datastore), lease_duration),
@@ -161,16 +160,16 @@ mod tests {
                 max_transaction_retries: default_max_transaction_retries(),
             },
             job_driver_config: JobDriverConfig {
-                job_discovery_interval_secs: 10,
+                job_discovery_interval_s: 10,
                 max_concurrent_job_workers: 10,
-                worker_lease_duration_secs: 600,
-                worker_lease_clock_skew_allowance_secs: 60,
+                worker_lease_duration_s: 600,
+                worker_lease_clock_skew_allowance_s: 60,
                 maximum_attempts_before_failure: 5,
-                http_request_timeout_secs: 10,
-                http_request_connection_timeout_secs: 30,
-                retry_initial_interval_millis: 1000,
-                retry_max_interval_millis: 30_000,
-                retry_max_elapsed_time_millis: 300_000,
+                http_request_timeout_s: 10,
+                http_request_connection_timeout_s: 30,
+                retry_initial_interval_ms: 1000,
+                retry_max_interval_ms: 30_000,
+                retry_max_elapsed_time_ms: 300_000,
             },
             batch_aggregation_shard_count: 32,
             taskprov_config: TaskprovConfig::default(),

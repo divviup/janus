@@ -137,7 +137,7 @@ async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut c
 
     let common_config = config.common_config_mut();
     common_config.database.url = ephemeral_datastore.connection_string().parse().unwrap();
-    common_config.database.connection_pool_timeouts_secs = 60;
+    common_config.database.connection_pool_timeouts_s = 60;
     common_config.health_check_listen_address = health_check_listen_address;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
@@ -262,7 +262,7 @@ async fn aggregator_shutdown() {
         common_config: CommonConfig {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
-                connection_pool_timeouts_secs: 60,
+                connection_pool_timeouts_s: 60,
                 connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
@@ -312,7 +312,7 @@ async fn aggregator_shutdown() {
         batch_aggregation_shard_count: 32,
         task_counter_shard_count: 64,
         global_hpke_configs_refresh_interval: None,
-        task_cache_ttl_seconds: None,
+        task_cache_ttl_s: None,
         task_cache_capacity: None,
         log_forbidden_mutations: None,
         require_global_hpke_keys: false,
@@ -328,7 +328,7 @@ async fn garbage_collector_shutdown() {
         common_config: CommonConfig {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
-                connection_pool_timeouts_secs: 60,
+                connection_pool_timeouts_s: 60,
                 connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
@@ -358,7 +358,7 @@ async fn aggregation_job_creator_shutdown() {
         common_config: CommonConfig {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
-                connection_pool_timeouts_secs: 60,
+                connection_pool_timeouts_s: 60,
                 connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
@@ -369,8 +369,8 @@ async fn aggregation_job_creator_shutdown() {
             max_transaction_retries: default_max_transaction_retries(),
         },
         batch_aggregation_shard_count: 32,
-        tasks_update_frequency_secs: 3600,
-        aggregation_job_creation_interval_secs: 60,
+        tasks_update_frequency_s: 3600,
+        aggregation_job_creation_interval_s: 60,
         min_aggregation_job_size: 100,
         max_aggregation_job_size: 100,
         aggregation_job_creation_report_window: 5000,
@@ -386,7 +386,7 @@ async fn aggregation_job_driver_shutdown() {
         common_config: CommonConfig {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
-                connection_pool_timeouts_secs: 60,
+                connection_pool_timeouts_s: 60,
                 connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
@@ -397,16 +397,16 @@ async fn aggregation_job_driver_shutdown() {
             max_transaction_retries: default_max_transaction_retries(),
         },
         job_driver_config: JobDriverConfig {
-            job_discovery_interval_secs: 10,
+            job_discovery_interval_s: 10,
             max_concurrent_job_workers: 10,
-            worker_lease_duration_secs: 600,
-            worker_lease_clock_skew_allowance_secs: 60,
+            worker_lease_duration_s: 600,
+            worker_lease_clock_skew_allowance_s: 60,
             maximum_attempts_before_failure: 5,
-            http_request_timeout_secs: 10,
-            http_request_connection_timeout_secs: 30,
-            retry_initial_interval_millis: 1000,
-            retry_max_interval_millis: 30_000,
-            retry_max_elapsed_time_millis: 300_000,
+            http_request_timeout_s: 10,
+            http_request_connection_timeout_s: 30,
+            retry_initial_interval_ms: 1000,
+            retry_max_interval_ms: 30_000,
+            retry_max_elapsed_time_ms: 300_000,
         },
         taskprov_config: TaskprovConfig::default(),
         batch_aggregation_shard_count: 32,
@@ -422,7 +422,7 @@ async fn collection_job_driver_shutdown() {
         common_config: CommonConfig {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
-                connection_pool_timeouts_secs: 60,
+                connection_pool_timeouts_s: 60,
                 connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
@@ -433,20 +433,20 @@ async fn collection_job_driver_shutdown() {
             max_transaction_retries: default_max_transaction_retries(),
         },
         job_driver_config: JobDriverConfig {
-            job_discovery_interval_secs: 10,
+            job_discovery_interval_s: 10,
             max_concurrent_job_workers: 10,
-            worker_lease_duration_secs: 600,
-            worker_lease_clock_skew_allowance_secs: 60,
+            worker_lease_duration_s: 600,
+            worker_lease_clock_skew_allowance_s: 60,
             maximum_attempts_before_failure: 5,
-            http_request_timeout_secs: 10,
-            http_request_connection_timeout_secs: 30,
-            retry_initial_interval_millis: 1000,
-            retry_max_interval_millis: 30_000,
-            retry_max_elapsed_time_millis: 300_000,
+            http_request_timeout_s: 10,
+            http_request_connection_timeout_s: 30,
+            retry_initial_interval_ms: 1000,
+            retry_max_interval_ms: 30_000,
+            retry_max_elapsed_time_ms: 300_000,
         },
         batch_aggregation_shard_count: 32,
-        min_collection_job_retry_delay_secs: 1,
-        max_collection_job_retry_delay_secs: 1,
+        min_collection_job_retry_delay_s: 1,
+        max_collection_job_retry_delay_s: 1,
         collection_job_retry_delay_exponential_factor: 1.0,
     };
 
