@@ -56,9 +56,13 @@ impl EphemeralDatabase {
                 "max_connections=200".to_string(),
             ]))
             .start()
-            .await;
+            .await
+            .unwrap();
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
+        let port_number = db_container
+            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+            .await
+            .unwrap();
         trace!("Postgres container is up with port {port_number}");
 
         Self {

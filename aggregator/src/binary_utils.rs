@@ -699,9 +699,12 @@ mod tests {
             ]),
         ))
         .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
-        let db_container = image.start().await;
+        let db_container = image.start().await.unwrap();
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
+        let port = db_container
+            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+            .await
+            .unwrap();
 
         let db_config = DbConfig {
             url: format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=require")

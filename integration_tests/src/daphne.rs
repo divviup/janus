@@ -51,12 +51,13 @@ impl Daphne {
                 .with_container_name(endpoint.host_str().unwrap());
             let daphne_container = ContainerLogsDropGuard::new(
                 test_name,
-                runnable_image.start().await,
+                runnable_image.start().await.unwrap(),
                 ContainerLogsSource::Path("/logs".into()),
             );
             let port = daphne_container
                 .get_host_port_ipv4(Self::INTERNAL_SERVING_PORT)
-                .await;
+                .await
+                .unwrap();
             (port, Some(daphne_container))
         } else {
             (Self::INTERNAL_SERVING_PORT, None)

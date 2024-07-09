@@ -294,9 +294,10 @@ where
                 .with_env_var(get_rust_log_level())
                 .with_container_name(client_container_name)
                 .start()
-                .await,
+                .await
+                .unwrap(),
         );
-        let host_port = container.get_host_port_ipv4(8080).await;
+        let host_port = container.get_host_port_ipv4(8080).await.unwrap();
         let http_client = reqwest::Client::new();
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments

@@ -70,11 +70,13 @@ async fn run(
             .with_env_var(get_rust_log_level())
             .with_container_name(generate_unique_name("client"))
             .start()
-            .await,
+            .await
+            .unwrap(),
     );
     let client_port = client_container
         .get_host_port_ipv4(Client::INTERNAL_SERVING_PORT)
-        .await;
+        .await
+        .unwrap();
 
     let leader_name = generate_unique_name("leader");
     let leader_container = ContainerLogsDropGuard::new_janus(
@@ -84,11 +86,13 @@ async fn run(
             .with_env_var(get_rust_log_level())
             .with_container_name(leader_name.clone())
             .start()
-            .await,
+            .await
+            .unwrap(),
     );
     let leader_port = leader_container
         .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
-        .await;
+        .await
+        .unwrap();
 
     let helper_name = generate_unique_name("helper");
     let helper_container = ContainerLogsDropGuard::new_janus(
@@ -98,11 +102,13 @@ async fn run(
             .with_env_var(get_rust_log_level())
             .with_container_name(helper_name.clone())
             .start()
-            .await,
+            .await
+            .unwrap(),
     );
     let helper_port = helper_container
         .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
-        .await;
+        .await
+        .unwrap();
 
     let collector_container = ContainerLogsDropGuard::new_janus(
         test_name,
@@ -111,11 +117,13 @@ async fn run(
             .with_env_var(get_rust_log_level())
             .with_container_name(generate_unique_name("collector"))
             .start()
-            .await,
+            .await
+            .unwrap(),
     );
     let collector_port = collector_container
         .get_host_port_ipv4(Collector::INTERNAL_SERVING_PORT)
-        .await;
+        .await
+        .unwrap();
 
     // Wait for all containers to sucessfully respond to HTTP requests.
     join_all(
