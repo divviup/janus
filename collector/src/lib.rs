@@ -754,9 +754,7 @@ mod tests {
     use fixed_macro::fixed;
     use janus_core::{
         auth_tokens::AuthenticationToken,
-        hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
-        },
+        hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
         retries::test_util::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
@@ -782,7 +780,7 @@ mod tests {
 
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         Collector::builder(
             random(),
             server_url,
@@ -876,7 +874,7 @@ mod tests {
 
     #[test]
     fn leader_endpoint_end_in_slash() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
@@ -1296,7 +1294,7 @@ mod tests {
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
         let server_url = Url::parse(&server.url()).unwrap();
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::builder(
             random(),
             server_url,

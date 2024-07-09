@@ -730,7 +730,7 @@ mod tests {
     use janus_collector::PrivateCollectorCredential;
     use janus_core::{
         auth_tokens::{BearerToken, DapAuthToken},
-        hpke::test_util::generate_test_hpke_config_and_private_key,
+        hpke::HpkeKeypair,
     };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
@@ -757,7 +757,7 @@ mod tests {
 
     #[tokio::test]
     async fn argument_handling() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
@@ -994,7 +994,7 @@ mod tests {
 
         let leader = Url::parse("https://example.com/dap/").unwrap();
 
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
@@ -1193,7 +1193,7 @@ mod tests {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
 
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
@@ -1383,7 +1383,7 @@ mod tests {
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let leader = Url::parse("https://example.com/dap/").unwrap();
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
@@ -1450,7 +1450,7 @@ mod tests {
 
     #[test]
     fn subcommand_new_job_arguments() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
@@ -1537,7 +1537,7 @@ mod tests {
 
     #[test]
     fn subcommand_poll_job_arguments() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());

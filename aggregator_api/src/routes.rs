@@ -14,9 +14,7 @@ use janus_aggregator_core::{
     taskprov::PeerAggregator,
     SecretBytes,
 };
-use janus_core::{
-    auth_tokens::AuthenticationTokenHash, hpke::generate_hpke_config_and_private_key, time::Clock,
-};
+use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::Clock};
 use janus_messages::HpkeConfigId;
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
@@ -168,7 +166,7 @@ pub(super) async fn post_task<C: Clock>(
             Duration::from_seconds(60), // 1 minute,
             // hpke_keys
             // Unwrap safety: we always use a supported KEM.
-            [generate_hpke_config_and_private_key(
+            [HpkeKeypair::generate(
                 random(),
                 HpkeKemId::X25519HkdfSha256,
                 HpkeKdfId::HkdfSha256,
@@ -341,7 +339,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
                 Error::Conflict("All possible IDs for global HPKE key have been taken".to_string())
             })?,
     );
-    let keypair = generate_hpke_config_and_private_key(
+    let keypair = HpkeKeypair::generate(
         config_id,
         req.kem_id.unwrap_or(HpkeKemId::X25519HkdfSha256),
         req.kdf_id.unwrap_or(HpkeKdfId::HkdfSha256),

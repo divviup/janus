@@ -3456,10 +3456,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key_with_id,
-            HpkeApplicationInfo, HpkeKeypair, Label,
-        },
+        hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
         test_util::{
             install_test_trace_subscriber,
             runtime::{TestRuntime, TestRuntimeManager},
@@ -3966,11 +3963,10 @@ mod tests {
         let leader_task = task.leader_view().unwrap();
 
         // Same ID as the task to test having both keys to choose from.
-        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-            (*leader_task.current_hpke_key().config().id()).into(),
-        );
+        let global_hpke_keypair_same_id =
+            HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into());
         // Different ID to test misses on the task key.
-        let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
+        let global_hpke_keypair_different_id = HpkeKeypair::test_with_id(
             (0..)
                 .map(HpkeConfigId::from)
                 .find(|id| !leader_task.hpke_keys().contains_key(id))
@@ -4158,9 +4154,7 @@ mod tests {
             &task,
             clock.now(),
             random(),
-            &generate_test_hpke_config_and_private_key_with_id(
-                (*task.current_hpke_key().config().id()).into(),
-            ),
+            &HpkeKeypair::test_with_id((*task.current_hpke_key().config().id()).into()),
         );
 
         // Try to upload the report, verify that we get the expected error.

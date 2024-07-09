@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(feature = "test-util")]
-use quickcheck::Arbitrary;
+use {quickcheck::Arbitrary, rand::random};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -209,35 +209,6 @@ pub fn open(
         .map_err(Into::into)
 }
 
-/// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
-/// HpkePrivateKey (private portion). This function errors if the supplied key
-/// encapsulated mechanism is not supported by the underlying HPKE library.
-pub fn generate_hpke_config_and_private_key(
-    hpke_config_id: HpkeConfigId,
-    kem_id: HpkeKemId,
-    kdf_id: HpkeKdfId,
-    aead_id: HpkeAeadId,
-) -> Result<HpkeKeypair, Error> {
-    let Keypair {
-        private_key,
-        public_key,
-    } = match kem_id {
-        HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
-        HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
-        _ => return Err(Error::UnsupportedKem),
-    };
-    Ok(HpkeKeypair::new(
-        HpkeConfig::new(
-            hpke_config_id,
-            kem_id,
-            kdf_id,
-            aead_id,
-            HpkePublicKey::from(public_key),
-        ),
-        HpkePrivateKey::new(private_key),
-    ))
-}
-
 /// An HPKE configuration and its corresponding private key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeKeypair {
@@ -252,6 +223,34 @@ impl HpkeKeypair {
             config,
             private_key,
         }
+    }
+
+    /// Generate a new HPKE keypair. This function errors if the supplied key encapsulation
+    /// mechanism is not supported by the underlying HPKE library.
+    pub fn generate(
+        hpke_config_id: HpkeConfigId,
+        kem_id: HpkeKemId,
+        kdf_id: HpkeKdfId,
+        aead_id: HpkeAeadId,
+    ) -> Result<Self, Error> {
+        let Keypair {
+            private_key,
+            public_key,
+        } = match kem_id {
+            HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
+            HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
+            _ => return Err(Error::UnsupportedKem),
+        };
+        Ok(Self::new(
+            HpkeConfig::new(
+                hpke_config_id,
+                kem_id,
+                kdf_id,
+                aead_id,
+                HpkePublicKey::from(public_key),
+            ),
+            HpkePrivateKey::new(private_key),
+        ))
     }
 
     /// Retrieve the HPKE configuration from this keypair.
@@ -326,13 +325,9 @@ impl Arbitrary for HpkeCiphersuite {
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-pub mod test_util {
-    use super::{generate_hpke_config_and_private_key, HpkeCiphersuite, HpkeKeypair};
-    use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
-    use rand::random;
-
-    pub fn generate_test_hpke_config_and_private_key() -> HpkeKeypair {
-        generate_hpke_config_and_private_key(
+impl HpkeKeypair {
+    pub fn test() -> Self {
+        Self::generate(
             HpkeConfigId::from(random::<u8>()),
             HpkeKemId::X25519HkdfSha256,
             HpkeKdfId::HkdfSha256,
@@ -341,8 +336,8 @@ pub mod test_util {
         .unwrap()
     }
 
-    pub fn generate_test_hpke_config_and_private_key_with_id(id: u8) -> HpkeKeypair {
-        generate_hpke_config_and_private_key(
+    pub fn test_with_id(id: u8) -> Self {
+        Self::generate(
             HpkeConfigId::from(id),
             HpkeKemId::X25519HkdfSha256,
             HpkeKdfId::HkdfSha256,
@@ -351,11 +346,8 @@ pub mod test_util {
         .unwrap()
     }
 
-    pub fn generate_test_hpke_config_and_private_key_with_id_and_ciphersuite(
-        id: u8,
-        ciphersuite: HpkeCiphersuite,
-    ) -> HpkeKeypair {
-        generate_hpke_config_and_private_key(
+    pub fn test_with_ciphersuite(id: u8, ciphersuite: HpkeCiphersuite) -> Self {
+        Self::generate(
             HpkeConfigId::from(id),
             ciphersuite.kem_id(),
             ciphersuite.kdf_id(),
@@ -367,7 +359,7 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    use super::{HpkeApplicationInfo, Label};
     #[allow(deprecated)]
     use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
     use hpke_dispatch::{Kem, Keypair};
@@ -380,7 +372,7 @@ mod tests {
 
     #[test]
     fn exchange_message() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
@@ -407,7 +399,7 @@ mod tests {
 
     #[test]
     fn wrong_private_key() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
@@ -422,7 +414,7 @@ mod tests {
         .unwrap();
 
         // Attempt to decrypt with different private key, and verify this fails.
-        let wrong_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let wrong_hpke_keypair = HpkeKeypair::test();
         open(
             &wrong_hpke_keypair,
             &application_info,
@@ -434,7 +426,7 @@ mod tests {
 
     #[test]
     fn wrong_application_info() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
@@ -461,7 +453,7 @@ mod tests {
 
     #[test]
     fn wrong_associated_data() {
-        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = HpkeKeypair::test();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";

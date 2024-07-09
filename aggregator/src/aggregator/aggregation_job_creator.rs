@@ -923,7 +923,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
+        hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
@@ -978,7 +978,7 @@ mod tests {
         let batch_identifier =
             TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let leader_report_metadata = ReportMetadata::new(random(), report_time);
         let leader_transcript = run_vdaf(
             vdaf.as_ref(),
@@ -1160,7 +1160,7 @@ mod tests {
         // batches shouldn't have any aggregation jobs in common since we can fill our aggregation
         // jobs without overlap.
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
 
         let first_report_time = clock.now();
         let second_report_time = clock.now().add(task.time_precision()).unwrap();
@@ -1345,7 +1345,7 @@ mod tests {
         let report_time = clock.now();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
 
         let first_report_metadata = ReportMetadata::new(random(), report_time);
         let first_transcript = run_vdaf(
@@ -1555,7 +1555,7 @@ mod tests {
         // Create a min-size batch.
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
@@ -1742,7 +1742,7 @@ mod tests {
         // containing these reports.
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time);
@@ -1964,7 +1964,7 @@ mod tests {
         // the reports should remain "unaggregated".
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time);
@@ -2128,7 +2128,7 @@ mod tests {
         // of reports for the second batch.
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time);
@@ -2392,7 +2392,7 @@ mod tests {
         // job with the remainder of the reports.
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time);
@@ -2665,7 +2665,7 @@ mod tests {
         let report_time_1 = clock.now().sub(&batch_time_window_size).unwrap();
         let report_time_2 = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
 
         let mut reports = Vec::new();
         reports.extend(
@@ -2979,7 +2979,7 @@ mod tests {
         // aggregation jobs to be created containing all these reports, but only two batches.
         let report_time = clock.now();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time);

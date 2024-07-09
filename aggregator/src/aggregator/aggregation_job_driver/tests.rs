@@ -23,7 +23,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key,
+    hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
@@ -97,7 +97,7 @@ async fn aggregation_job_driver() {
     );
 
     let agg_auth_token = task.aggregator_auth_token().clone();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -375,7 +375,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -704,7 +704,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -983,7 +983,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let gc_eligible_report = LeaderStoredReport::generate(
         *task.id(),
         gc_eligible_report_metadata,
@@ -1325,7 +1325,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -1608,7 +1608,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -1872,7 +1872,7 @@ async fn step_time_interval_aggregation_job_continue() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -2207,7 +2207,7 @@ async fn step_fixed_size_aggregation_job_continue() {
     );
 
     let agg_auth_token = task.aggregator_auth_token();
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -2501,7 +2501,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
         &false,
     );
 
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
     let report = LeaderStoredReport::generate(
         *task.id(),
         report_metadata,
@@ -2750,7 +2750,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     let aggregation_job_id = random();
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
 
     let vdaf = Prio3::new_count(2).unwrap();
     let time = clock
@@ -2991,7 +2991,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     let aggregation_job_id = random();
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
-    let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+    let helper_hpke_keypair = HpkeKeypair::test();
 
     let vdaf = Prio3::new_count(2).unwrap();
     let time = clock

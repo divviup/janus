@@ -16,7 +16,7 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::AuthenticationToken,
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
-    hpke::generate_hpke_config_and_private_key,
+    hpke::HpkeKeypair,
     time::{Clock, RealClock},
 };
 use janus_messages::{
@@ -355,7 +355,7 @@ async fn generate_global_hpke_key<C: Clock>(
     aead: HpkeAeadId,
     hpke_config_out_file: Option<&Path>,
 ) -> Result<()> {
-    let hpke_keypair = Arc::new(generate_hpke_config_and_private_key(id, kem, kdf, aead)?);
+    let hpke_keypair = Arc::new(HpkeKeypair::generate(id, kem, kdf, aead)?);
 
     if !dry_run {
         datastore
@@ -756,7 +756,7 @@ mod tests {
     };
     use janus_core::{
         auth_tokens::AuthenticationToken,
-        hpke::generate_hpke_config_and_private_key,
+        hpke::HpkeKeypair,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
         vdaf::VdafInstance,
@@ -964,7 +964,7 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
                 tx.put_global_hpke_keypair(
-                    &generate_hpke_config_and_private_key(
+                    &HpkeKeypair::generate(
                         id,
                         HpkeKemId::P256HkdfSha256,
                         HpkeKdfId::HkdfSha256,
@@ -1012,7 +1012,7 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
                 tx.put_global_hpke_keypair(
-                    &generate_hpke_config_and_private_key(
+                    &HpkeKeypair::generate(
                         id,
                         HpkeKemId::P256HkdfSha256,
                         HpkeKdfId::HkdfSha256,
@@ -1092,7 +1092,7 @@ mod tests {
         let peer_endpoint = "https://example.com".try_into().unwrap();
         let role = Role::Leader;
         let verify_key_init = random();
-        let collector_hpke_config = generate_hpke_config_and_private_key(
+        let collector_hpke_config = HpkeKeypair::generate(
             HpkeConfigId::from(96),
             HpkeKemId::P256HkdfSha256,
             HpkeKdfId::HkdfSha256,
@@ -1160,7 +1160,7 @@ mod tests {
             &"https://example.com".try_into().unwrap(),
             Role::Leader,
             random(),
-            &generate_hpke_config_and_private_key(
+            &HpkeKeypair::generate(
                 HpkeConfigId::from(96),
                 HpkeKemId::P256HkdfSha256,
                 HpkeKdfId::HkdfSha256,

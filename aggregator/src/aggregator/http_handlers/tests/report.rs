@@ -16,10 +16,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key_with_id, HpkeApplicationInfo,
-        Label,
-    },
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, DurationExt, MockClock, TimeExt},
     vdaf::VdafInstance,
@@ -263,9 +260,7 @@ async fn upload_handler() {
         clock.now(),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
-        &generate_test_hpke_config_and_private_key_with_id(
-            (*leader_task.current_hpke_key().config().id()).into(),
-        ),
+        &HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into()),
     );
     let mut test_conn = put(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)

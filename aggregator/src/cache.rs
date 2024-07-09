@@ -325,7 +325,7 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType},
     };
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
+        hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::MockClock,
         vdaf::VdafInstance,
@@ -361,7 +361,7 @@ mod tests {
 
         // Insert a new active key in the foreground, after a short wait.
         sleep(Duration::from_secs(1)).await;
-        let keypair = generate_test_hpke_config_and_private_key();
+        let keypair = HpkeKeypair::test();
         datastore
             .run_unnamed_tx(|tx| {
                 let keypair = keypair.clone();

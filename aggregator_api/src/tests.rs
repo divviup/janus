@@ -23,14 +23,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::{
-        generate_hpke_config_and_private_key,
-        test_util::{
-            generate_test_hpke_config_and_private_key,
-            generate_test_hpke_config_and_private_key_with_id,
-        },
-        HpkeKeypair, HpkePrivateKey,
-    },
+    hpke::{HpkeKeypair, HpkePrivateKey},
     test_util::install_test_trace_subscriber,
     time::MockClock,
     vdaf::VdafInstance,
@@ -201,15 +194,7 @@ async fn post_task_bad_role() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
@@ -243,15 +228,7 @@ async fn post_task_unauthorized() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
@@ -286,15 +263,7 @@ async fn post_task_helper_no_optional_fields() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: None,
         collector_auth_token_hash: None,
     };
@@ -376,15 +345,7 @@ async fn post_task_helper_with_aggregator_auth_token() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: None,
     };
@@ -420,15 +381,7 @@ async fn post_task_idempotence() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
 
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
@@ -503,15 +456,7 @@ async fn post_task_leader_all_optional_fields() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
         collector_auth_token_hash: Some(collector_auth_token_hash.clone()),
     };
@@ -591,15 +536,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
-        collector_hpke_config: generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
-        .config()
-        .clone(),
+        collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: None,
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
@@ -967,8 +904,8 @@ async fn get_global_hpke_configs() {
     assert_eq!(resp, vec![]);
 
     let keypair1_id = random();
-    let keypair1 = generate_test_hpke_config_and_private_key_with_id(keypair1_id);
-    let keypair2 = generate_hpke_config_and_private_key(
+    let keypair1 = HpkeKeypair::test_with_id(keypair1_id);
+    let keypair2 = HpkeKeypair::generate(
         HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
@@ -1069,8 +1006,8 @@ async fn get_global_hpke_config() {
     );
 
     let keypair1_id = random();
-    let keypair1 = generate_test_hpke_config_and_private_key_with_id(keypair1_id);
-    let keypair2 = generate_hpke_config_and_private_key(
+    let keypair1 = HpkeKeypair::test_with_id(keypair1_id);
+    let keypair2 = HpkeKeypair::generate(
         HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
@@ -1266,7 +1203,7 @@ async fn patch_global_hpke_config() {
         "",
     );
 
-    let keypair = generate_test_hpke_config_and_private_key();
+    let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
         Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
@@ -1337,7 +1274,7 @@ async fn delete_global_hpke_config() {
         "",
     );
 
-    let keypair = generate_test_hpke_config_and_private_key();
+    let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
         Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
