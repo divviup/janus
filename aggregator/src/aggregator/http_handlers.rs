@@ -847,28 +847,4 @@ pub mod test_util {
             }
         }
     }
-
-    pub async fn setup_http_handler_test() -> (
-        MockClock,
-        EphemeralDatastore,
-        Arc<Datastore<MockClock>>,
-        impl Handler,
-    ) {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        datastore.put_global_hpke_key().await.unwrap();
-        let handler = aggregator_handler(
-            datastore.clone(),
-            clock.clone(),
-            TestRuntime::default(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
-        (clock, ephemeral_datastore, datastore, handler)
-    }
 }

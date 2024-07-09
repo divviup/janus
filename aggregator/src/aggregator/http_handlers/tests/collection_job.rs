@@ -1,8 +1,6 @@
 use crate::aggregator::{
     collection_job_tests::setup_collection_job_test_case,
-    http_handlers::test_util::{
-        decode_response_body, setup_http_handler_test, take_problem_details,
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
 };
 use janus_aggregator_core::{
     datastore::models::{
@@ -132,7 +130,12 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
 
 #[tokio::test]
 async fn collection_job_put_request_invalid_batch_size() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })

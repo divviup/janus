@@ -1,8 +1,6 @@
 use crate::aggregator::{
     error::BatchMismatch,
-    http_handlers::test_util::{
-        decode_response_body, setup_http_handler_test, take_problem_details,
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
@@ -52,7 +50,12 @@ pub(crate) async fn post_aggregate_share_request<Q: query_type::QueryType>(
 
 #[tokio::test]
 async fn aggregate_share_request_to_leader() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
@@ -84,7 +87,13 @@ async fn aggregate_share_request_to_leader() {
 
 #[tokio::test]
 async fn aggregate_share_request_invalid_batch_interval() {
-    let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
@@ -143,7 +152,12 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
 #[tokio::test]
 async fn aggregate_share_request() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .with_max_batch_query_count(1)
