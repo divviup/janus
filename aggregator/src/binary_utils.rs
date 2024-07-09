@@ -570,7 +570,7 @@ mod tests {
     };
     use opentelemetry_sdk::metrics::data::Gauge;
     use std::fs;
-    use testcontainers::{core::Mount, runners::AsyncRunner, RunnableImage};
+    use testcontainers::{core::Mount, runners::AsyncRunner, ContainerRequest, ImageExt};
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
@@ -661,47 +661,46 @@ mod tests {
         // case those were lost on a non-POSIX host). Then, we run a second container with the volume
         // mounted in, and use the fixed files in the volume in database configuration.
         let volume = Volume::new();
-        let setup_image = RunnableImage::from((
-            Postgres::with_entrypoint("/bin/bash".to_string()),
-            Vec::from([
-                "-c".to_string(),
-                concat!(
-                    "cp /etc/ssl/postgresql_host/* /etc/ssl/postgresql/ && ",
-                    "chown postgres /etc/ssl/postgresql/* && ",
-                    "chmod 600 /etc/ssl/postgresql/127.0.0.1-key.pem && ",
-                    // This satisfies the ReadyCondition.
-                    "echo 'database system is ready to accept connections' >&2",
-                )
-                .to_string(),
-            ]),
-        ))
-        .with_mount(Mount::bind_mount(
-            fs::canonicalize("tests/tls_files")
-                .unwrap()
-                .into_os_string()
-                .into_string()
-                .unwrap(),
-            "/etc/ssl/postgresql_host",
-        ))
-        .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
+        let setup_image =
+            ContainerRequest::from(Postgres::with_entrypoint("/bin/bash".to_string()))
+                .with_cmd([
+                    "-c",
+                    concat!(
+                        "cp /etc/ssl/postgresql_host/* /etc/ssl/postgresql/ && ",
+                        "chown postgres /etc/ssl/postgresql/* && ",
+                        "chmod 600 /etc/ssl/postgresql/127.0.0.1-key.pem && ",
+                        // This satisfies the ReadyCondition.
+                        "echo 'database system is ready to accept connections' >&2",
+                    ),
+                ])
+                .with_mount(Mount::bind_mount(
+                    fs::canonicalize("tests/tls_files")
+                        .unwrap()
+                        .into_os_string()
+                        .into_string()
+                        .unwrap(),
+                    "/etc/ssl/postgresql_host",
+                ))
+                .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
         let setup_container = setup_image.start().await;
         drop(setup_container);
 
-        let image = RunnableImage::from((
-            Postgres::default(),
-            Vec::from([
-                "-c".to_string(),
-                "ssl=on".to_string(),
-                "-c".to_string(),
-                "ssl_cert_file=/etc/ssl/postgresql/127.0.0.1.pem".to_string(),
-                "-c".to_string(),
-                "ssl_key_file=/etc/ssl/postgresql/127.0.0.1-key.pem".to_string(),
-            ]),
-        ))
-        .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
-        let db_container = image.start().await;
+        let image = ContainerRequest::from(Postgres::default())
+            .with_cmd([
+                "-c",
+                "ssl=on",
+                "-c",
+                "ssl_cert_file=/etc/ssl/postgresql/127.0.0.1.pem",
+                "-c",
+                "ssl_key_file=/etc/ssl/postgresql/127.0.0.1-key.pem",
+            ])
+            .with_mount(Mount::volume_mount(volume.name(), "/etc/ssl/postgresql"));
+        let db_container = image.start().await.unwrap();
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
+        let port = db_container
+            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+            .await
+            .unwrap();
 
         let db_config = DbConfig {
             url: format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=require")

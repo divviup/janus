@@ -22,7 +22,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use testcontainers::{runners::AsyncRunner, ContainerAsync, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerAsync, ContainerRequest, ImageExt};
 use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
@@ -50,15 +50,19 @@ impl EphemeralDatabase {
 
     async fn start() -> Self {
         // Start an instance of Postgres running in a container.
-        let db_container = RunnableImage::from(Postgres::default())
-            .with_args(Vec::from([
+        let db_container = ContainerRequest::from(Postgres::default())
+            .with_cmd(Vec::from([
                 "-c".to_string(),
                 "max_connections=200".to_string(),
             ]))
             .start()
-            .await;
+            .await
+            .unwrap();
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT).await;
+        let port_number = db_container
+            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+            .await
+            .unwrap();
         trace!("Postgres container is up with port {port_number}");
 
         Self {

@@ -38,7 +38,7 @@ use janus_interop_binaries::{
 use janus_messages::Role;
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "testcontainer")]
-use testcontainers::{runners::AsyncRunner, RunnableImage};
+use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
 use trillium_tokio::Stopper;
 
 /// Represents a running Janus test instance in a container.
@@ -61,16 +61,18 @@ impl JanusContainer {
         };
         let container = ContainerLogsDropGuard::new_janus(
             test_name,
-            RunnableImage::from(Aggregator::default())
+            ContainerRequest::from(Aggregator::default())
                 .with_network(network)
-                .with_env_var(get_rust_log_level())
+                .with_env_var("RUST_LOG", get_rust_log_level())
                 .with_container_name(endpoint.host_str().unwrap())
                 .start()
-                .await,
+                .await
+                .unwrap(),
         );
         let port = container
             .get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
-            .await;
+            .await
+            .unwrap();
 
         // Wait for the container to start listening on its port.
         await_http_server(port).await;
