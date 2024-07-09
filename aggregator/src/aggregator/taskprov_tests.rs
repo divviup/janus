@@ -28,10 +28,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
-        HpkeKeypair, Label,
-    },
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
@@ -124,8 +121,8 @@ where
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let global_hpke_key = generate_test_hpke_config_and_private_key();
-        let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let global_hpke_key = HpkeKeypair::test();
+        let collector_hpke_keypair = HpkeKeypair::test();
         let peer_aggregator = PeerAggregatorBuilder::new()
             .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
             .with_role(Role::Leader)

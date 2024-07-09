@@ -17,10 +17,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key_with_id, HpkeApplicationInfo,
-        HpkeKeypair, Label,
-    },
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     test_util::runtime::TestRuntime,
     vdaf::VdafInstance,
 };
@@ -99,7 +96,7 @@ async fn global_hpke_config() {
 
     // Insert an HPKE config, i.e. start the application with a keypair already
     // in the database.
-    let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    let first_hpke_keypair = HpkeKeypair::test_with_id(1);
     datastore
         .run_unnamed_tx(|tx| {
             let keypair = first_hpke_keypair.clone();
@@ -148,7 +145,7 @@ async fn global_hpke_config() {
     check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
 
     // Insert an inactive HPKE config.
-    let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
+    let second_hpke_keypair = HpkeKeypair::test_with_id(2);
     datastore
         .run_unnamed_tx(|tx| {
             let keypair = second_hpke_keypair.clone();
@@ -239,7 +236,7 @@ async fn global_hpke_config_with_taskprov() {
 
     // Insert an HPKE config, i.e. start the application with a keypair already
     // in the database.
-    let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    let first_hpke_keypair = HpkeKeypair::test_with_id(1);
     datastore
         .run_unnamed_tx(|tx| {
             let keypair = first_hpke_keypair.clone();
@@ -383,7 +380,7 @@ async fn require_global_hpke_keys() {
 
     // Insert an HPKE config, i.e. start the application with a keypair already
     // in the database.
-    let keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    let keypair = HpkeKeypair::test_with_id(1);
     datastore
         .run_unnamed_tx(|tx| {
             let keypair = keypair.clone();

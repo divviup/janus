@@ -8,7 +8,7 @@ use assert_matches::assert_matches;
 use bhttp::{Message, Mode, StatusCode};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key, http::HttpErrorResponse,
+    hpke::HpkeKeypair, http::HttpErrorResponse,
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
@@ -38,8 +38,8 @@ async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count
         Prio3::new_count(2).unwrap(),
     )
     .with_backoff(test_http_request_exponential_backoff())
-    .with_leader_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
-    .with_helper_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .with_leader_hpke_config(HpkeKeypair::test().config().clone())
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .with_ohttp_config(OhttpConfig {
         key_configs: keys_endpoint,
         relay,

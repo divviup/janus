@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_core::{
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
-    hpke::generate_hpke_config_and_private_key,
+    hpke::HpkeKeypair,
 };
 use janus_messages::HpkeConfigId;
 use prio::codec::Encode;
@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     let options = Options::parse();
 
     let id = HpkeConfigId::from(options.id);
-    let keypair = generate_hpke_config_and_private_key(
+    let keypair = HpkeKeypair::generate(
         id,
         options.kem.into(),
         options.kdf.into(),

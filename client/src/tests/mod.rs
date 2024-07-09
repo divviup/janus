@@ -3,8 +3,7 @@ use assert_matches::assert_matches;
 use hex_literal::hex;
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key,
-    retries::test_util::test_http_request_exponential_backoff,
+    hpke::HpkeKeypair, retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
 use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
@@ -28,8 +27,8 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
-    .with_leader_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
-    .with_helper_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .with_leader_hpke_config(HpkeKeypair::test().config().clone())
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .build()
     .await
     .unwrap()
@@ -168,8 +167,8 @@ async fn upload_bad_time_precision() {
         Duration::from_seconds(0),
         Prio3::new_count(2).unwrap(),
     )
-    .with_leader_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
-    .with_helper_hpke_config(generate_test_hpke_config_and_private_key().config().clone())
+    .with_leader_hpke_config(HpkeKeypair::test().config().clone())
+    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
     .build()
     .await
     .unwrap();
@@ -227,7 +226,7 @@ async fn aggregator_hpke() {
     );
     client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 
-    let keypair = generate_test_hpke_config_and_private_key();
+    let keypair = HpkeKeypair::test();
     let hpke_config_list = HpkeConfigList::new(Vec::from([keypair.config().clone()]));
     let mock = server
         .mock(
@@ -284,7 +283,7 @@ async fn unsupported_hpke_algorithms() {
         "4141414141414141" // Contents of HpkePublicKey
     );
 
-    let good_hpke_config = generate_test_hpke_config_and_private_key().config().clone();
+    let good_hpke_config = HpkeKeypair::test().config().clone();
     let encoded_good_hpke_config = good_hpke_config.get_encoded().unwrap();
 
     let mut encoded_hpke_config_list = Vec::new();

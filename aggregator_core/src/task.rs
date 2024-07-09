@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
+    hpke::HpkeKeypair,
     time::TimeExt,
     vdaf::VdafInstance,
 };
@@ -665,7 +665,7 @@ impl SerializedAggregatorTask {
 
         if self.hpke_keys.is_empty() {
             // Unwrap safety: we always use a supported KEM.
-            let hpke_keypair = generate_hpke_config_and_private_key(
+            let hpke_keypair = HpkeKeypair::generate(
                 random(),
                 HpkeKemId::X25519HkdfSha256,
                 HpkeKdfId::HkdfSha256,
@@ -787,13 +787,7 @@ pub mod test_util {
     use derivative::Derivative;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-        hpke::{
-            test_util::{
-                generate_test_hpke_config_and_private_key,
-                generate_test_hpke_config_and_private_key_with_id,
-            },
-            HpkeKeypair,
-        },
+        hpke::HpkeKeypair,
         time::DurationExt,
         url_ensure_trailing_slash,
         vdaf::VdafInstance,
@@ -1088,14 +1082,8 @@ pub mod test_util {
         pub fn new(query_type: QueryType, vdaf: VdafInstance) -> Self {
             let task_id = random();
 
-            let leader_hpke_keypairs = [
-                generate_test_hpke_config_and_private_key(),
-                generate_test_hpke_config_and_private_key_with_id(1),
-            ];
-            let helper_hpke_keypairs = [
-                generate_test_hpke_config_and_private_key(),
-                generate_test_hpke_config_and_private_key_with_id(1),
-            ];
+            let leader_hpke_keypairs = [HpkeKeypair::test(), HpkeKeypair::test_with_id(1)];
+            let helper_hpke_keypairs = [HpkeKeypair::test(), HpkeKeypair::test_with_id(1)];
 
             let vdaf_verify_key = SecretBytes::new(
                 thread_rng()
@@ -1117,7 +1105,7 @@ pub mod test_util {
                 0,
                 Duration::from_hours(8).unwrap(),
                 Duration::from_minutes(10).unwrap(),
-                /* Collector HPKE keypair */ generate_test_hpke_config_and_private_key(),
+                /* Collector HPKE keypair */ HpkeKeypair::test(),
                 /* Aggregator auth token */ random(),
                 /* Collector auth token */ random(),
                 leader_hpke_keypairs,

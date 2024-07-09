@@ -20,10 +20,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::test_util::{
-        generate_test_hpke_config_and_private_key,
-        generate_test_hpke_config_and_private_key_with_id,
-    },
+    hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     test_util::{run_vdaf, runtime::TestRuntime},
     time::{Clock, MockClock, TimeExt},
@@ -242,7 +239,7 @@ async fn aggregate_init() {
     let (prepare_init_3, transcript_3) = prep_init_generator.next(&measurement);
 
     let wrong_hpke_config = loop {
-        let hpke_config = generate_test_hpke_config_and_private_key().config().clone();
+        let hpke_config = HpkeKeypair::test().config().clone();
         if helper_task.hpke_keys().contains_key(hpke_config.id()) {
             continue;
         }
@@ -703,11 +700,10 @@ async fn aggregate_init_with_reports_encrypted_by_global_key() {
 
     // Insert some global HPKE keys.
     // Same ID as the task to test having both keys to choose from.
-    let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-        (*helper_task.current_hpke_key().config().id()).into(),
-    );
+    let global_hpke_keypair_same_id =
+        HpkeKeypair::test_with_id((*helper_task.current_hpke_key().config().id()).into());
     // Different ID to test misses on the task key.
-    let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
+    let global_hpke_keypair_different_id = HpkeKeypair::test_with_id(
         (0..)
             .map(HpkeConfigId::from)
             .find(|id| !helper_task.hpke_keys().contains_key(id))

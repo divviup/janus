@@ -25,9 +25,7 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use futures::future::try_join_all;
 use janus_core::{
-    hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
-    },
+    hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, run_vdaf},
     time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
@@ -7187,10 +7185,12 @@ SELECT (lower(interval) = '2021-10-05 00:00:00' AND
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
+    use janus_core::hpke::HpkeKeypair;
+
     install_test_trace_subscriber();
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
     let clock = datastore.clock.clone();
-    let keypair = generate_test_hpke_config_and_private_key();
+    let keypair = HpkeKeypair::test();
 
     datastore
         .run_tx("test-put-keys", |tx| {

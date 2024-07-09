@@ -275,10 +275,7 @@ impl KeyType for VdafVerifyKeyLength {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use janus_core::{
-        auth_tokens::AuthenticationToken,
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-    };
+    use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair};
     use janus_messages::{Duration, HpkeConfig, Role};
     use rand::random;
     use url::Url;
@@ -294,7 +291,7 @@ pub mod test_util {
                 Url::parse("https://example.com").unwrap(),
                 Role::Leader,
                 random(),
-                generate_test_hpke_config_and_private_key().config().clone(),
+                HpkeKeypair::test().config().clone(),
                 None,
                 Duration::from_seconds(1),
                 Vec::from([random()]),

@@ -3,10 +3,7 @@ use derivative::Derivative;
 use janus_aggregator_core::task::{test_util::Task, QueryType};
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::{vdaf_dp_strategies, Prio3FixedPointBoundedL2VecSumBitSize};
-use janus_core::{
-    hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
-    vdaf::VdafInstance,
-};
+use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
     HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
@@ -379,7 +376,7 @@ impl HpkeConfigRegistry {
             .entry(id)
             .or_insert_with(|| {
                 // Unwrap safety: we always use a supported KEM.
-                generate_hpke_config_and_private_key(
+                HpkeKeypair::generate(
                     id,
                     // These algorithms should be broadly compatible with other DAP implementations, since they
                     // are required by section 6 of draft-ietf-ppm-dap-02.

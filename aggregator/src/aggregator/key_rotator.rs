@@ -14,7 +14,7 @@ use janus_aggregator_core::datastore::{
     Datastore, Error as DatastoreError, Transaction,
 };
 use janus_core::{
-    hpke::{generate_hpke_config_and_private_key, HpkeCiphersuite},
+    hpke::{HpkeCiphersuite, HpkeKeypair},
     time::{Clock, TimeExt},
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
@@ -341,7 +341,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     let id = self.available_ids.next().ok_or_else(|| {
                         DatastoreError::User(anyhow!("global HPKE key ID space exhausted").into())
                     })?;
-                    let keypair = generate_hpke_config_and_private_key(
+                    let keypair = HpkeKeypair::generate(
                         id,
                         ciphersuite.kem_id(),
                         ciphersuite.kdf_id(),
@@ -514,10 +514,7 @@ mod tests {
         Datastore,
     };
     use janus_core::{
-        hpke::{
-            test_util::generate_test_hpke_config_and_private_key_with_id_and_ciphersuite,
-            HpkeCiphersuite,
-        },
+        hpke::{HpkeCiphersuite, HpkeKeypair},
         test_util::install_test_trace_subscriber,
         time::{Clock, DurationExt, MockClock},
     };
@@ -657,10 +654,7 @@ mod tests {
                     (
                         HpkeConfigId::from(id),
                         GlobalHpkeKeypair::new(
-                            generate_test_hpke_config_and_private_key_with_id_and_ciphersuite(
-                                id,
-                                HpkeCiphersuite::arbitrary(g),
-                            ),
+                            HpkeKeypair::test_with_ciphersuite(id, HpkeCiphersuite::arbitrary(g)),
                             *g.choose(&[
                                 HpkeKeyState::Pending,
                                 HpkeKeyState::Active,
