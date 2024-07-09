@@ -3563,6 +3563,7 @@ mod tests {
         where
             R: Runtime + Send + Sync + 'static,
         {
+            install_test_trace_subscriber();
             let clock = MockClock::default();
             let vdaf = Prio3Count::new_count(2).unwrap();
             let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
@@ -3598,8 +3599,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload() {
-        install_test_trace_subscriber();
-
         let UploadTest {
             vdaf,
             aggregator,
@@ -3682,8 +3681,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_batch() {
-        install_test_trace_subscriber();
-
         const BATCH_SIZE: usize = 100;
         let UploadTest {
             vdaf,
@@ -3747,8 +3744,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
-        install_test_trace_subscriber();
-
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -3818,8 +3813,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_in_the_future_boundary_condition() {
-        install_test_trace_subscriber();
-
         let UploadTest {
             vdaf,
             aggregator,
@@ -3868,7 +3861,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_in_the_future_past_clock_skew() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -3925,8 +3917,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_for_collected_batch() {
-        install_test_trace_subscriber();
-
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -4010,8 +4000,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_encrypted_with_task_specific_key() {
-        install_test_trace_subscriber();
-
         let UploadTest {
             vdaf,
             aggregator,
@@ -4076,7 +4064,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_task_expired() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -4137,7 +4124,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_report_expired() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -4199,7 +4185,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_faulty_encryption() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -4262,7 +4247,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_public_share_decode_failure() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
@@ -4324,7 +4308,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_leader_input_share_decode_failure() {
-        install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
         let UploadTest {
             aggregator,
