@@ -404,6 +404,25 @@ impl<C: Clock> Datastore<C> {
         })
         .await
     }
+
+    /// Write an arbitrary global HPKE key to the datastore and place it in the
+    /// [`HpkeKeyState::Active`] state.
+    #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+    pub async fn put_global_hpke_key(&self) -> Result<HpkeKeypair, Error> {
+        let keypair = HpkeKeypair::test();
+        self.run_tx("test-put-global-hpke-key", |tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await?;
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+            })
+        })
+        .await?;
+
+        Ok(keypair)
+    }
 }
 
 fn check_error<T>(

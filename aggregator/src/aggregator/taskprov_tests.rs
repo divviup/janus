@@ -253,10 +253,10 @@ where
         let (report_share, transcript) = PrepareInitGenerator::new(
             self.clock.clone(),
             self.task.helper_view().unwrap(),
+            self.global_hpke_key.config().clone(),
             self.vdaf.clone(),
             self.aggregation_param.clone(),
         )
-        .with_hpke_config(self.global_hpke_key.config().clone())
         .with_extensions(extensions)
         .next_report_share(&self.measurement);
         (transcript, report_share, self.aggregation_param.clone())

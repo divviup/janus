@@ -3,7 +3,7 @@ use crate::aggregator::{
         aggregator_handler,
         test_util::{decode_response_body, take_problem_details},
     },
-    tests::generate_helper_report_share,
+    test_util::generate_helper_report_share,
     Config,
 };
 use assert_matches::assert_matches;
@@ -63,10 +63,10 @@ where
     pub(super) fn new(
         clock: MockClock,
         task: AggregatorTask,
+        hpke_config: HpkeConfig,
         vdaf: V,
         aggregation_param: V::AggregationParam,
     ) -> Self {
-        let hpke_config = task.current_hpke_key().config().clone();
         Self {
             clock,
             task,
@@ -75,11 +75,6 @@ where
             hpke_config,
             extensions: Vec::new(),
         }
-    }
-
-    pub(super) fn with_hpke_config(mut self, config: HpkeConfig) -> Self {
-        self.hpke_config = config;
-        self
     }
 
     pub(super) fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
@@ -260,6 +255,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     datastore.put_aggregator_task(&helper_task).await.unwrap();
+    let keypair = datastore.put_global_hpke_key().await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),
@@ -274,6 +270,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     let prepare_init_generator = PrepareInitGenerator::new(
         clock.clone(),
         helper_task.clone(),
+        keypair.config().clone(),
         vdaf,
         aggregation_param.clone(),
     );
