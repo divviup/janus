@@ -327,23 +327,18 @@ impl Arbitrary for HpkeCiphersuite {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 impl HpkeKeypair {
     pub fn test() -> Self {
-        Self::generate(
-            HpkeConfigId::from(random::<u8>()),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )
-        .unwrap()
+        Self::test_with_id(random())
     }
 
     pub fn test_with_id(id: u8) -> Self {
-        Self::generate(
-            HpkeConfigId::from(id),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
+        Self::test_with_ciphersuite(
+            id,
+            HpkeCiphersuite::new(
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            ),
         )
-        .unwrap()
     }
 
     pub fn test_with_ciphersuite(id: u8, ciphersuite: HpkeCiphersuite) -> Self {
