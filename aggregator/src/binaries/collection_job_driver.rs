@@ -116,6 +116,7 @@ impl BinaryOptions for Options {
 /// ```
 // TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,

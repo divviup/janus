@@ -28,6 +28,7 @@ use url::Url;
 /// let _decoded: CommonConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommonConfig {
     /// The database configuration.
     pub database: DbConfig,
@@ -71,6 +72,7 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 /// Configuration for a Janus server using a database.
 #[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
 #[derivative(Debug)]
+#[serde(deny_unknown_fields)]
 pub struct DbConfig {
     /// URL at which to connect to the database.
     #[derivative(Debug(format_with = "format_database_url"))]
@@ -133,6 +135,7 @@ fn format_database_url(url: &Url, fmt: &mut std::fmt::Formatter) -> Result<(), s
 ///
 /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TaskprovConfig {
     /// Whether to enable the extension or not. Enabling this changes the behavior
     /// of the aggregator consistent with the taskprov [specification][spec].
@@ -174,6 +177,7 @@ pub struct TaskprovConfig {
 /// ```
 // TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JobDriverConfig {
     /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when
     /// there are no jobs to be stepped.

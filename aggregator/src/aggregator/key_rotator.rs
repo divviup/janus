@@ -60,6 +60,7 @@ pub struct KeyRotator<C: Clock> {
 
 /// Defines the ciphersuite and rotation policy of a global HPKE key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HpkeKeyRotatorConfig {
     /// How long key remains in [`HpkeKeyState::Pending`] before being moved to
     /// [`HpkeKeyState::Active`]. This should be greater than

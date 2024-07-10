@@ -68,6 +68,7 @@ pub enum Error {
 
 /// Configuration for collection/exporting of application-level metrics.
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
     #[serde(default, with = "serde_yaml::with::singleton_map")]
@@ -80,7 +81,7 @@ pub struct MetricsConfiguration {
 
 /// Selection of an exporter for OpenTelemetry metrics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum MetricsExporterConfiguration {
     Prometheus {
         host: Option<String>,
@@ -91,6 +92,7 @@ pub enum MetricsExporterConfiguration {
 
 /// Configuration options specific to the OpenTelemetry OTLP metrics exporter.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OtlpExporterConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
@@ -98,6 +100,7 @@ pub struct OtlpExporterConfiguration {
 
 /// Configuration options for Tokio's (unstable) metrics feature.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TokioMetricsConfiguration {
     /// Enable collecting metrics from Tokio. The flag `--cfg tokio_unstable` must be passsed
     /// to the compiler if this is enabled.
