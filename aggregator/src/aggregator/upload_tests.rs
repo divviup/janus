@@ -7,7 +7,6 @@ use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
-        self,
         models::{CollectionJob, CollectionJobState, TaskUploadCounter},
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -499,6 +498,7 @@ async fn upload_report_encrypted_with_task_specific_key() {
         task,
         datastore,
         ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
         ..
     } = UploadTest::new(Config {
         max_upload_batch_size: 1000,
@@ -509,30 +509,24 @@ async fn upload_report_encrypted_with_task_specific_key() {
     let leader_task = task.leader_view().unwrap();
 
     // Insert a global keypair with the same ID as the task to test having both keys to choose
-    // from.
-    let global_hpke_keypair_same_id =
-        HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into());
+    // from. (skip if there is already a global keypair with the same ID set up by the fixture)
+    if leader_task.current_hpke_key().config().id() != hpke_keypair.config().id() {
+        let global_hpke_keypair_same_id =
+            HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into());
 
-    datastore
-        .run_unnamed_tx(|tx| {
-            let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-            Box::pin(async move {
-                // Leave these in the PENDING state--they should still be decryptable.
-                match tx
-                    .put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                    .await
-                {
-                    // Prevent test flakes in case a colliding key is already in the datastore.
-                    // The test context code randomly generates an ID so there's a chance for
-                    // collision.
-                    Ok(_) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
-                    Err(err) => Err(err),
-                }
+        datastore
+            .run_unnamed_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await
+                })
             })
-        })
-        .await
-        .unwrap();
-    aggregator.refresh_caches().await.unwrap();
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+    }
 
     let report = create_report(&leader_task, leader_task.current_hpke_key(), clock.now());
     aggregator
