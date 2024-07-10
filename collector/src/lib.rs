@@ -17,45 +17,45 @@
 //! use url::Url;
 //!
 //! # async fn run() {
-//!     let task_id = TaskId::from_str("[your DAP task ID here]").unwrap();
+//! let task_id = TaskId::from_str("[your DAP task ID here]").unwrap();
 //!
-//!     let collector_credential: PrivateCollectorCredential =
-//!         serde_json::from_reader(File::open("[path to JSON encoded collector credential]").unwrap())
-//!             .unwrap();
-//!
-//!     let leader_url =
-//!         Url::from_str("[absolute URI to the DAP leader, e.g. https://leader.dap.example.com/]")
-//!             .unwrap();
-//!
-//!     // Supply a VDAF implementation, corresponding to this task.
-//!     let vdaf = Prio3::new_count(2).unwrap();
-//!
-//!     let collector = Collector::new(
-//!         task_id,
-//!         leader_url,
-//!         collector_credential.authentication_token(),
-//!         collector_credential.hpke_keypair(),
-//!         vdaf,
-//!     )
-//!     .unwrap();
-//!
-//!     // If this is a time interval task, specify the time interval over which the aggregation
-//!     // should be calculated.
-//!     let interval = Interval::new(
-//!         Time::from_seconds_since_epoch(1_656_000_000),
-//!         Duration::from_seconds(3600),
-//!     )
-//!     .unwrap();
-//!
-//!     // Make the requests and retrieve the aggregated statistic.
-//!     let aggregation_result = collector
-//!         .collect(Query::new_time_interval(interval), &())
-//!         .await
+//! let collector_credential: PrivateCollectorCredential =
+//!     serde_json::from_reader(File::open("[path to JSON encoded collector credential]").unwrap())
 //!         .unwrap();
 //!
-//!     // Or if this is a fixed size task, make a fixed size query.
-//!     let query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
-//!     let aggregation_result = collector.collect(query, &()).await.unwrap();
+//! let leader_url =
+//!     Url::from_str("[absolute URI to the DAP leader, e.g. https://leader.dap.example.com/]")
+//!         .unwrap();
+//!
+//! // Supply a VDAF implementation, corresponding to this task.
+//! let vdaf = Prio3::new_count(2).unwrap();
+//!
+//! let collector = Collector::new(
+//!     task_id,
+//!     leader_url,
+//!     collector_credential.authentication_token(),
+//!     collector_credential.hpke_keypair(),
+//!     vdaf,
+//! )
+//! .unwrap();
+//!
+//! // If this is a time interval task, specify the time interval over which the aggregation
+//! // should be calculated.
+//! let interval = Interval::new(
+//!     Time::from_seconds_since_epoch(1_656_000_000),
+//!     Duration::from_seconds(3600),
+//! )
+//! .unwrap();
+//!
+//! // Make the requests and retrieve the aggregated statistic.
+//! let aggregation_result = collector
+//!     .collect(Query::new_time_interval(interval), &())
+//!     .await
+//!     .unwrap();
+//!
+//! // Or if this is a fixed size task, make a fixed size query.
+//! let query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+//! let aggregation_result = collector.collect(query, &()).await.unwrap();
 //! # }
 //! ```
 
