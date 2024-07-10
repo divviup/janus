@@ -42,6 +42,6 @@ key_rotator:
     # required. Each entry represents a key with a particular ciphersuite.
     ciphersuites:
       # Defaults to a key with these algorithms.
-      - kem_id: P521HkdfSha512
-        kdf_id: HkdfSha512
-        aead_id: Aes256Gcm
+      - kem_id: X25519HkdfSha256
+        kdf_id: HkdfSha256
+        aead_id: Aes128Gcm
