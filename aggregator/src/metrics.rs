@@ -119,6 +119,7 @@ pub struct TokioMetricsConfiguration {
     /// Resolution of the histogram tracking poll times, in microseconds. When using a linear
     /// scale, every bucket will have this width. When using a logarithmic scale, the smallest
     /// bucket will have this width.
+    // TODO(#3293): remove this alias during next breaking changes window.
     #[serde(default, alias = "poll_time_histogram_resolution_microseconds")]
     pub poll_time_histogram_resolution_us: Option<u64>,
 

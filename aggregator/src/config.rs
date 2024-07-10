@@ -79,6 +79,7 @@ pub struct DbConfig {
     /// Timeout in seconds to apply when creating, waiting for, or recycling
     /// connection pool objects. This value will be used to construct a
     /// `deadpool_postgres::Timeouts` value.
+    // TODO(#3293): remove this alias during next breaking changes window.
     #[serde(
         default = "DbConfig::default_connection_pool_timeout",
         alias = "connection_pool_timeouts_secs"
@@ -171,6 +172,7 @@ pub struct TaskprovConfig {
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
+// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobDriverConfig {
     /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when

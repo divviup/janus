@@ -386,6 +386,7 @@ pub struct Config {
     /// Defines how long to cache tasks for, in seconds. This affects how often the aggregator
     /// becomes aware of task parameter changes. If unspecified, default is defined by
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_TTL`]. You shouldn't normally have to specify this.
+    // TODO(#3293): remove this alias during next breaking changes window.
     #[serde(default, alias = "task_cache_ttl_seconds")]
     pub task_cache_ttl_s: Option<u64>,
 
