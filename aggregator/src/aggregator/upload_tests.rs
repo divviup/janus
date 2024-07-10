@@ -254,9 +254,11 @@ async fn upload_wrong_hpke_config_id() {
     let leader_task = task.leader_view().unwrap();
     let report = create_report(&leader_task, &hpke_keypair, clock.now());
 
+    let mut hpke_keys = leader_task.hpke_keys().clone();
+    hpke_keys.insert(*hpke_keypair.config().id(), hpke_keypair);
     let unused_hpke_config_id = (0..)
         .map(HpkeConfigId::from)
-        .find(|id| !leader_task.hpke_keys().contains_key(id))
+        .find(|id| !hpke_keys.contains_key(id))
         .unwrap();
 
     let report = Report::new(
