@@ -113,20 +113,9 @@ async fn global_hpke_config() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
+        hpke_keypair: first_hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
-
-    // Retrieve the global keypair from the test fixture.
-    let first_hpke_keypair = datastore
-        .run_unnamed_tx(|tx| {
-            Box::pin(async move {
-                Ok(tx.get_global_hpke_keypairs().await.unwrap()[0]
-                    .hpke_keypair()
-                    .clone())
-            })
-        })
-        .await
-        .unwrap();
 
     let aggregator = Arc::new(
         crate::aggregator::Aggregator::new(
@@ -162,7 +151,8 @@ async fn global_hpke_config() {
     check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
 
     // Insert an inactive HPKE config.
-    let second_hpke_keypair = HpkeKeypair::test_with_id(2);
+    let first_hpke_keypair_id = u8::from(*first_hpke_keypair.config().id());
+    let second_hpke_keypair = HpkeKeypair::test_with_id(first_hpke_keypair_id.wrapping_add(1));
     datastore
         .run_unnamed_tx(|tx| {
             let keypair = second_hpke_keypair.clone();

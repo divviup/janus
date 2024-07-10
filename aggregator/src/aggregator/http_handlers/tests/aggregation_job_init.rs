@@ -13,12 +13,9 @@ use crate::aggregator::{
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
-    datastore::{
-        self,
-        models::{
-            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            ReportAggregation, ReportAggregationState,
-        },
+    datastore::models::{
+        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+        ReportAggregation, ReportAggregationState,
     },
     task::{test_util::TaskBuilder, QueryType, VerifyKey},
     test_util::noop_meter,
@@ -263,6 +260,9 @@ async fn aggregate_init() {
     let wrong_hpke_config = loop {
         let hpke_config = HpkeKeypair::test().config().clone();
         if helper_task.hpke_keys().contains_key(hpke_config.id()) {
+            continue;
+        }
+        if hpke_keypair.config().id() == hpke_config.id() {
             continue;
         }
         break hpke_config;
@@ -717,6 +717,7 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
+        hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -734,28 +735,23 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
         aggregation_param,
     );
 
-    // Same ID as the task to test having both keys to choose from.
-    let global_hpke_keypair_same_id =
-        HpkeKeypair::test_with_id((*helper_task.current_hpke_key().config().id()).into());
-    datastore
-        .run_unnamed_tx(|tx| {
-            let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-            Box::pin(async move {
-                // Leave these in the PENDING state--they should still be decryptable.
-                match tx
-                    .put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                    .await
-                {
-                    // Prevent test flakes in case a colliding key is already in the datastore.
-                    // The test context code randomly generates an ID so there's a chance for
-                    // collision.
-                    Ok(_) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
-                    Err(err) => Err(err),
-                }
+    // Same ID as the task to test having both keys to choose from. (skip if there is already a
+    // global keypair with the same ID set up by the fixture)
+    if helper_task.current_hpke_key().config().id() != hpke_keypair.config().id() {
+        let global_hpke_keypair_same_id =
+            HpkeKeypair::test_with_id((*helper_task.current_hpke_key().config().id()).into());
+        datastore
+            .run_unnamed_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await
+                })
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
+    }
 
     // Create new handler _after_ the keys have been inserted so that they come pre-cached.
     let handler = aggregator_handler(
