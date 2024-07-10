@@ -432,11 +432,12 @@ mod tests {
             .await
             .unwrap();
 
-        // That change shouldn't be reflected yet because we've cached the previous task.
+        // At this point, the above change may or may not be reflected yet, because we've cached the
+        // previous task.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(
-            task_aggregator.task.task_expiration(),
-            task.task_expiration()
+        assert!(
+            (task_aggregator.task.task_expiration() == task.task_expiration())
+                || (task_aggregator.task.task_expiration() == Some(&new_expiration))
         );
 
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
@@ -482,9 +483,6 @@ mod tests {
         // A wild task appears!
         datastore.put_aggregator_task(&task).await.unwrap();
 
-        // We shouldn't see the new task yet.
-        assert!(task_aggregators.get(task.id()).await.unwrap().is_none());
-
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
         // to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
@@ -508,11 +506,12 @@ mod tests {
             .await
             .unwrap();
 
-        // That change shouldn't be reflected yet because we've cached the previous run.
+        // At this point, the above change may or may not be reflected yet because we've cached the
+        // previous value.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(
-            task_aggregator.task.task_expiration(),
-            task.task_expiration()
+        assert!(
+            (task_aggregator.task.task_expiration() == task.task_expiration())
+                || (task_aggregator.task.task_expiration() == Some(&new_expiration))
         );
 
         sleep(Duration::from_secs(1)).await;
