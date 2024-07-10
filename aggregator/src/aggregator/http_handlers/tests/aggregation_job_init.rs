@@ -3,9 +3,7 @@ use crate::aggregator::{
     empty_batch_aggregations,
     http_handlers::{
         aggregator_handler,
-        test_util::{
-            decode_response_body, setup_http_handler_test, take_problem_details, HttpHandlerTest,
-        },
+        test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
     },
     test_util::{
         default_aggregator_config, generate_helper_report_share,
@@ -48,7 +46,12 @@ use trillium_testing::{assert_headers, prelude::put, TestConn};
 
 #[tokio::test]
 async fn aggregate_leader() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
     datastore
@@ -111,7 +114,12 @@ async fn aggregate_leader() {
 
 #[tokio::test]
 async fn aggregate_wrong_agg_auth_token() {
-    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+    let HttpHandlerTest {
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
 
     let dap_auth_token = AuthenticationToken::DapAuth(random());
 
