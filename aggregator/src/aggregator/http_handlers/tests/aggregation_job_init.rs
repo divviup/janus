@@ -265,6 +265,9 @@ async fn aggregate_init() {
         if helper_task.hpke_keys().contains_key(hpke_config.id()) {
             continue;
         }
+        if hpke_keypair.config().id() == hpke_config.id() {
+            continue;
+        }
         break hpke_config;
     };
 
