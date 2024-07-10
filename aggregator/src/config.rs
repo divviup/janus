@@ -79,8 +79,12 @@ pub struct DbConfig {
     /// Timeout in seconds to apply when creating, waiting for, or recycling
     /// connection pool objects. This value will be used to construct a
     /// `deadpool_postgres::Timeouts` value.
-    #[serde(default = "DbConfig::default_connection_pool_timeout")]
-    pub connection_pool_timeouts_secs: u64,
+    // TODO(#3293): remove this alias during next breaking changes window.
+    #[serde(
+        default = "DbConfig::default_connection_pool_timeout",
+        alias = "connection_pool_timeouts_secs"
+    )]
+    pub connection_pool_timeouts_s: u64,
 
     /// Maximum size of the connection pool. Affects the number of concurrent database operations.
     /// If unspecified, the default is `cpu_count * 4`, see [`deadpool_postgres::PoolConfig`].
@@ -168,75 +172,92 @@ pub struct TaskprovConfig {
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
+// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobDriverConfig {
     /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when
     /// there are no jobs to be stepped.
-    pub job_discovery_interval_secs: u64,
+    #[serde(alias = "job_discovery_interval_secs")]
+    pub job_discovery_interval_s: u64,
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
     pub max_concurrent_job_workers: usize,
     /// The length of time, in seconds, workers will acquire a lease for the jobs they are stepping.
     /// Along with worker_lease_clock_skew_allowance, determines the effective timeout of stepping a
     /// single job.
-    pub worker_lease_duration_secs: u64,
+    #[serde(alias = "worker_lease_duration_secs")]
+    pub worker_lease_duration_s: u64,
     /// The length of time, in seconds, workers decrease their timeouts from the lease length in
     /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
     /// determines the effective timeout of stepping a single job.
-    pub worker_lease_clock_skew_allowance_secs: u64,
+    #[serde(alias = "worker_lease_clock_skew_allowance_secs")]
+    pub worker_lease_clock_skew_allowance_s: u64,
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
 
     /// Timeout to apply when establishing connections to the helper for HTTP requests. See
     /// [`reqwest::ClientBuilder::connect_timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_connection_timeout_secs")]
-    pub http_request_connection_timeout_secs: u64,
+    #[serde(
+        default = "JobDriverConfig::default_http_connection_timeout_s",
+        alias = "http_request_connection_timeout_secs"
+    )]
+    pub http_request_connection_timeout_s: u64,
     /// Timeout to apply to HTTP requests overall (including connection establishment) when
     /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_request_timeout_secs")]
-    pub http_request_timeout_secs: u64,
+    #[serde(
+        default = "JobDriverConfig::default_http_request_timeout_s",
+        alias = "http_request_timeout_secs"
+    )]
+    pub http_request_timeout_s: u64,
 
     /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.
-    #[serde(default = "JobDriverConfig::default_retry_initial_interval_millis")]
-    pub retry_initial_interval_millis: u64,
+    #[serde(
+        default = "JobDriverConfig::default_retry_initial_interval_ms",
+        alias = "retry_initial_interval_millis"
+    )]
+    pub retry_initial_interval_ms: u64,
     /// The maximum interval, in milliseconds, to wait before retrying a retryable HTTP request.
-    #[serde(default = "JobDriverConfig::default_retry_max_interval_millis")]
-    pub retry_max_interval_millis: u64,
+    #[serde(
+        default = "JobDriverConfig::default_retry_max_interval_ms",
+        alias = "retry_max_interval_millis"
+    )]
+    pub retry_max_interval_ms: u64,
     /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
     /// HTTP request.
-    #[serde(default = "JobDriverConfig::default_retry_max_elapsed_time_millis")]
-    pub retry_max_elapsed_time_millis: u64,
+    #[serde(
+        default = "JobDriverConfig::default_retry_max_elapsed_time_ms",
+        alias = "retry_max_elapsed_time_millis"
+    )]
+    pub retry_max_elapsed_time_ms: u64,
 }
 
 impl JobDriverConfig {
     pub fn retry_config(&self) -> ExponentialBackoff {
         ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(self.retry_initial_interval_millis))
-            .with_max_interval(Duration::from_millis(self.retry_max_interval_millis))
-            .with_max_elapsed_time(Some(Duration::from_millis(
-                self.retry_max_elapsed_time_millis,
-            )))
+            .with_initial_interval(Duration::from_millis(self.retry_initial_interval_ms))
+            .with_max_interval(Duration::from_millis(self.retry_max_interval_ms))
+            .with_max_elapsed_time(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
             .build()
     }
 
-    fn default_http_connection_timeout_secs() -> u64 {
+    fn default_http_connection_timeout_s() -> u64 {
         10
     }
 
-    fn default_http_request_timeout_secs() -> u64 {
+    fn default_http_request_timeout_s() -> u64 {
         30
     }
 
-    fn default_retry_initial_interval_millis() -> u64 {
+    fn default_retry_initial_interval_ms() -> u64 {
         1000
     }
 
-    fn default_retry_max_interval_millis() -> u64 {
+    fn default_retry_max_interval_ms() -> u64 {
         30_000
     }
 
-    fn default_retry_max_elapsed_time_millis() -> u64 {
+    fn default_retry_max_elapsed_time_ms() -> u64 {
         300_000
     }
 }
@@ -257,7 +278,7 @@ pub mod test_util {
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
-            connection_pool_timeouts_secs: DbConfig::default_connection_pool_timeout(),
+            connection_pool_timeouts_s: DbConfig::default_connection_pool_timeout(),
             connection_pool_max_size: None,
             check_schema_version: DbConfig::default_check_schema_version(),
             tls_trust_store_path: None,
@@ -318,7 +339,7 @@ mod tests {
         let db_config: DbConfig =
             serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
                 .unwrap();
-        assert_eq!(db_config.connection_pool_timeouts_secs, 60);
+        assert_eq!(db_config.connection_pool_timeouts_s, 60);
     }
 
     #[test]
@@ -350,16 +371,16 @@ connection_pool_max_size: 42",
     #[test]
     fn roundtrip_job_driver_config() {
         roundtrip_encoding(JobDriverConfig {
-            job_discovery_interval_secs: 10,
+            job_discovery_interval_s: 10,
             max_concurrent_job_workers: 10,
-            worker_lease_duration_secs: 600,
-            worker_lease_clock_skew_allowance_secs: 60,
+            worker_lease_duration_s: 600,
+            worker_lease_clock_skew_allowance_s: 60,
             maximum_attempts_before_failure: 5,
-            http_request_connection_timeout_secs: 10,
-            http_request_timeout_secs: 30,
-            retry_initial_interval_millis: 1000,
-            retry_max_interval_millis: 30_000,
-            retry_max_elapsed_time_millis: 300_000,
+            http_request_connection_timeout_s: 10,
+            http_request_timeout_s: 30,
+            retry_initial_interval_ms: 1000,
+            retry_max_interval_ms: 30_000,
+            retry_max_elapsed_time_ms: 300_000,
         })
     }
 
@@ -414,10 +435,7 @@ metrics_config:
         assert!(tokio_config.enabled);
         assert!(tokio_config.enable_poll_time_histogram);
         assert_eq!(tokio_config.poll_time_histogram_scale, HistogramScale::Log);
-        assert_eq!(
-            tokio_config.poll_time_histogram_resolution_microseconds,
-            Some(100)
-        );
+        assert_eq!(tokio_config.poll_time_histogram_resolution_us, Some(100));
         assert_eq!(tokio_config.poll_time_histogram_buckets, Some(15));
     }
 }

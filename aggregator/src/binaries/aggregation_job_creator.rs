@@ -16,8 +16,8 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.datastore,
         ctx.meter,
         ctx.config.batch_aggregation_shard_count,
-        Duration::from_secs(ctx.config.tasks_update_frequency_secs),
-        Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
+        Duration::from_secs(ctx.config.tasks_update_frequency_s),
+        Duration::from_secs(ctx.config.aggregation_job_creation_interval_s),
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
         ctx.config.aggregation_job_creation_report_window,
@@ -66,6 +66,7 @@ impl BinaryOptions for Options {
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
+// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
@@ -76,9 +77,11 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
-    pub tasks_update_frequency_secs: u64,
+    #[serde(alias = "tasks_update_frequency_secs")]
+    pub tasks_update_frequency_s: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
-    pub aggregation_job_creation_interval_secs: u64,
+    #[serde(alias = "aggregation_job_creation_interval_secs")]
+    pub aggregation_job_creation_interval_s: u64,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
     /// "current" batch only; historical batches will create aggregation jobs of any size, on the
     /// theory that almost all reports will have be received for these batches already.
@@ -132,8 +135,8 @@ mod tests {
                 max_transaction_retries: default_max_transaction_retries(),
             },
             batch_aggregation_shard_count: 32,
-            tasks_update_frequency_secs: 3600,
-            aggregation_job_creation_interval_secs: 60,
+            tasks_update_frequency_s: 3600,
+            aggregation_job_creation_interval_s: 60,
             min_aggregation_job_size: 100,
             max_aggregation_job_size: 500,
             aggregation_job_creation_report_window: 5000,
