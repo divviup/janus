@@ -32,7 +32,7 @@ key_rotator:
     pending_duration_s: 3600
 
     # The TTL of keys. Defaults to 12 weeks.
-    active_duration_s: 2419200
+    active_duration_s: 7257600
 
     # How long keys can be expired before being deleted. Should be greater than
     # how long clients cache HPKE keys. Defaults to 1 week.
