@@ -62,7 +62,7 @@ key_rotator:
 
 Then restart the aggregator. This will create a single key and rotate it
 through a reasonable lifecycle. See the
-[advanced sample](./samples/advanced_config/key_rotator.yaml) to see defaults 
+[advanced sample](./samples/advanced_config/aggregator.yaml) to see defaults
 and what options are available.
 
 Note that each aggregator replica will run the key rotator. This isn't harmful,
