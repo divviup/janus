@@ -2725,7 +2725,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "prometheus",
  "quickcheck",
  "quickcheck_macros",
@@ -2832,7 +2832,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "regex",
  "reqwest",
@@ -2873,7 +2873,7 @@ dependencies = [
  "janus_messages 0.7.23",
  "mockito",
  "ohttp",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "reqwest",
  "thiserror",
@@ -2900,7 +2900,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.23",
  "mockito",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "reqwest",
  "retry-after",
@@ -2935,7 +2935,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "quickcheck",
  "rand",
  "regex",
@@ -2985,7 +2985,7 @@ dependencies = [
  "janus_messages 0.7.23",
  "k8s-openapi",
  "kube",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "reqwest",
  "rstest",
@@ -3020,7 +3020,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.7.23",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "regex",
  "reqwest",
@@ -3052,7 +3052,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio",
+ "prio 0.16.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand",
  "serde",
  "thiserror",
@@ -3070,7 +3070,7 @@ dependencies = [
  "hex",
  "num_enum",
  "pretty_assertions",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "serde",
  "serde_test",
@@ -3092,7 +3092,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.7.23",
- "prio",
+ "prio 0.16.5 (git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f)",
  "rand",
  "reqwest",
  "serde_json",
@@ -3560,11 +3560,10 @@ dependencies = [
 
 [[package]]
 name = "num-rational"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0638a1c9d0a3c0914158145bc76cff373a75a627e6ecbfb71cbe6f453a5a19b0"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "autocfg",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -4196,6 +4195,30 @@ name = "prio"
 version = "0.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d81f366140fb9dfdaf6f3be9b937bf598e5dbf8aafb9dbd182b1f3be196bc2"
+dependencies = [
+ "bitvec",
+ "byteorder",
+ "fiat-crypto",
+ "fixed",
+ "getrandom",
+ "num-bigint",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+ "rand",
+ "rand_core",
+ "rayon",
+ "serde",
+ "sha3",
+ "subtle",
+ "thiserror",
+]
+
+[[package]]
+name = "prio"
+version = "0.16.5"
+source = "git+https://github.com/divviup/libprio-rs.git?rev=3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f#3f8e69f94ad17104e9bdc1dcc12e9603a9fe113f"
 dependencies = [
  "aes 0.8.4",
  "bitvec",

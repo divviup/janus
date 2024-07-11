@@ -96,6 +96,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => json!({
             "type": "Prio3SumVec",
             "bits": format!("{bits}"),
@@ -107,6 +108,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => json!({
             "type": "Prio3SumVecField64MultiproofHmacSha256Aes128",
             "proofs": format!("{proofs}"),
@@ -117,6 +119,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
         VdafInstance::Prio3Histogram {
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             json!({
                 "type": "Prio3Histogram",

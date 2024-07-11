@@ -925,10 +925,15 @@ impl<C: Clock> TaskAggregator<C> {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let vdaf = Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
-                VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
+                VdafOps::Prio3SumVec(
+                    Arc::new(vdaf),
+                    verify_key,
+                    vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
+                )
             }
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
@@ -936,21 +941,31 @@ impl<C: Clock> TaskAggregator<C> {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                     ParallelSum<Field64, Mul<Field64>>,
                 >(*proofs, *bits, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
-                VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(Arc::new(vdaf), verify_key)
+                VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(
+                    Arc::new(vdaf),
+                    verify_key,
+                    vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
+                )
             }
 
             VdafInstance::Prio3Histogram {
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let vdaf = Prio3::new_histogram(2, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
-                VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
+                VdafOps::Prio3Histogram(
+                    Arc::new(vdaf),
+                    verify_key,
+                    vdaf_ops_strategies::Prio3Histogram::from_vdaf_dp_strategy(dp_strategy.clone()),
+                )
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -958,22 +973,32 @@ impl<C: Clock> TaskAggregator<C> {
                 bitsize,
                 dp_strategy,
                 length,
-            } => {
-                match bitsize {
-                    Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                        let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
-                            Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
-                        let verify_key = task.vdaf_verify_key()?;
-                        VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(Arc::new(vdaf), verify_key, vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(dp_strategy.clone()))
-                    }
-                    Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                        let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
-                            Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
-                        let verify_key = task.vdaf_verify_key()?;
-                        VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(Arc::new(vdaf), verify_key, vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(dp_strategy.clone()))
-                    }
+            } => match bitsize {
+                Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
+                    let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
+                        Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
+                    let verify_key = task.vdaf_verify_key()?;
+                    VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(
+                        Arc::new(vdaf),
+                        verify_key,
+                        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(
+                            dp_strategy.clone(),
+                        ),
+                    )
                 }
-            }
+                Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
+                    let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
+                        Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
+                    let verify_key = task.vdaf_verify_key()?;
+                    VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(
+                        Arc::new(vdaf),
+                        verify_key,
+                        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(
+                            dp_strategy.clone(),
+                        ),
+                    )
+                }
+            },
 
             VdafInstance::Poplar1 { bits } => {
                 let vdaf = Poplar1::new_turboshake128(*bits);
@@ -1164,19 +1189,60 @@ impl<C: Clock> TaskAggregator<C> {
     }
 }
 
-#[cfg(feature = "fpvec_bounded_l2")]
 mod vdaf_ops_strategies {
     use std::sync::Arc;
 
     use janus_core::vdaf::vdaf_dp_strategies;
+    use prio::dp::distributions::PureDpDiscreteLaplace;
+    #[cfg(feature = "fpvec_bounded_l2")]
     use prio::dp::distributions::ZCdpDiscreteGaussian;
 
+    #[derive(Debug)]
+    pub enum Prio3Histogram {
+        NoDifferentialPrivacy,
+        PureDpDiscreteLaplace(Arc<PureDpDiscreteLaplace>),
+    }
+
+    impl Prio3Histogram {
+        pub fn from_vdaf_dp_strategy(dp_strategy: vdaf_dp_strategies::Prio3Histogram) -> Self {
+            match dp_strategy {
+                vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy => {
+                    Prio3Histogram::NoDifferentialPrivacy
+                }
+                vdaf_dp_strategies::Prio3Histogram::PureDpDiscreteLaplace(s) => {
+                    Prio3Histogram::PureDpDiscreteLaplace(Arc::new(s))
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum Prio3SumVec {
+        NoDifferentialPrivacy,
+        PureDpDiscreteLaplace(Arc<PureDpDiscreteLaplace>),
+    }
+
+    impl Prio3SumVec {
+        pub fn from_vdaf_dp_strategy(dp_strategy: vdaf_dp_strategies::Prio3SumVec) -> Self {
+            match dp_strategy {
+                vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy => {
+                    Prio3SumVec::NoDifferentialPrivacy
+                }
+                vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(s) => {
+                    Prio3SumVec::PureDpDiscreteLaplace(Arc::new(s))
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "fpvec_bounded_l2")]
     #[derive(Debug)]
     pub enum Prio3FixedPointBoundedL2VecSum {
         NoDifferentialPrivacy,
         ZCdpDiscreteGaussian(Arc<ZCdpDiscreteGaussian>),
     }
 
+    #[cfg(feature = "fpvec_bounded_l2")]
     impl Prio3FixedPointBoundedL2VecSum {
         pub fn from_vdaf_dp_strategy(
             dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
@@ -1199,12 +1265,21 @@ mod vdaf_ops_strategies {
 enum VdafOps {
     Prio3Count(Arc<Prio3Count>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),
-    Prio3SumVec(Arc<Prio3SumVec>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3SumVec(
+        Arc<Prio3SumVec>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
+        vdaf_ops_strategies::Prio3SumVec,
+    ),
     Prio3SumVecField64MultiproofHmacSha256Aes128(
         Arc<Prio3SumVecField64MultiproofHmacSha256Aes128<ParallelSum<Field64, Mul<Field64>>>>,
         VerifyKey<32>,
+        vdaf_ops_strategies::Prio3SumVec,
     ),
-    Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3Histogram(
+        Arc<Prio3Histogram>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
+        vdaf_ops_strategies::Prio3Histogram,
+    ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum(
         Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>,
@@ -1255,18 +1330,28 @@ macro_rules! vdaf_ops_dispatch {
                 body
             }
 
-            crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
+            crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key, _dp_strategy) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                let body = $body;
-                body
+                match _dp_strategy {
+                    vdaf_ops_strategies::Prio3SumVec::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
+                        let body = $body;
+                        body
+                    }
+                    vdaf_ops_strategies::Prio3SumVec::PureDpDiscreteLaplace(_strategy) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = &_strategy;
+                        let body = $body;
+                        body
+                    }
+                }
             }
 
-            crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(vdaf, verify_key) => {
+            crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(vdaf, verify_key, _dp_strategy) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
@@ -1276,21 +1361,41 @@ macro_rules! vdaf_ops_dispatch {
                     >,
                 >;
                 const $VERIFY_KEY_LENGTH: usize = 32;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                let body = $body;
-                body
+                match _dp_strategy {
+                    vdaf_ops_strategies::Prio3SumVec::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
+                        let body = $body;
+                        body
+                    }
+                    vdaf_ops_strategies::Prio3SumVec::PureDpDiscreteLaplace(_strategy) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = &_strategy;
+                        let body = $body;
+                        body
+                    }
+                }
             }
 
-            crate::aggregator::VdafOps::Prio3Histogram(vdaf, verify_key) => {
+            crate::aggregator::VdafOps::Prio3Histogram(vdaf, verify_key, _dp_strategy) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                let body = $body;
-                body
+                match _dp_strategy {
+                    vdaf_ops_strategies::Prio3Histogram::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
+                        let body = $body;
+                        body
+                    }
+                    vdaf_ops_strategies::Prio3Histogram::PureDpDiscreteLaplace(_strategy) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = &_strategy;
+                        let body = $body;
+                        body
+                    }
+                }
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]

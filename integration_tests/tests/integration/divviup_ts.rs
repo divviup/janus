@@ -6,7 +6,10 @@ use crate::{
     initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
+use janus_core::{
+    test_util::install_test_trace_subscriber,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
+};
 use janus_integration_tests::{
     client::{ClientBackend, InteropClient},
     janus::JanusContainer,
@@ -67,6 +70,7 @@ async fn janus_divviup_ts_histogram() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
     )
     .await;
@@ -83,6 +87,7 @@ async fn janus_divviup_ts_sumvec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
     )
     .await;

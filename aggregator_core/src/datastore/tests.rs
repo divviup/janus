@@ -28,7 +28,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, run_vdaf},
     time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    vdaf::{vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -39,6 +39,9 @@ use janus_messages::{
 };
 use prio::{
     codec::{Decode, Encode},
+    dp::{
+        distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
+    },
     idpf::IdpfInput,
     topology::ping_pong::PingPongMessage,
     vdaf::{
@@ -153,6 +156,20 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
                 bits: 1,
                 length: 8,
                 chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
+            },
+            Role::Leader,
+        ),
+        (
+            VdafInstance::Prio3SumVec {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                    PureDpDiscreteLaplace::from_budget(PureDpBudget::new(
+                        Rational::from_unsigned(1u128, 4u128).unwrap(),
+                    )),
+                ),
             },
             Role::Leader,
         ),
@@ -161,6 +178,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
                 bits: 1,
                 length: 64,
                 chunk_length: 10,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
             Role::Helper,
         ),
@@ -170,6 +188,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             VdafInstance::Prio3Histogram {
                 length: 4,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             },
             Role::Leader,
         ),
@@ -177,6 +196,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             VdafInstance::Prio3Histogram {
                 length: 5,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             },
             Role::Leader,
         ),

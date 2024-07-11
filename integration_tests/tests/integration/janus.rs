@@ -6,7 +6,10 @@ use crate::{
     initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
+use janus_core::{
+    test_util::install_test_trace_subscriber,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
+};
 #[cfg(feature = "testcontainer")]
 use janus_integration_tests::janus::JanusContainer;
 use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, TaskParameters};
@@ -205,6 +208,7 @@ async fn janus_janus_histogram_4_buckets() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
         QueryType::TimeInterval,
     )
@@ -220,7 +224,7 @@ async fn janus_janus_histogram_4_buckets() {
     .await;
 }
 
-/// This test exercises Prio3Sum with Janus as both the leader and the helper.
+/// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_histogram_4_buckets() {
     install_test_trace_subscriber();
@@ -232,6 +236,7 @@ async fn janus_in_process_histogram_4_buckets() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
     ))
     .await;
@@ -315,6 +320,7 @@ async fn janus_janus_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
         QueryType::TimeInterval,
     )
@@ -341,6 +347,7 @@ async fn janus_in_process_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
     ))
     .await;
@@ -368,6 +375,7 @@ async fn janus_in_process_customized_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
     ))
     .await;

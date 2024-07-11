@@ -420,6 +420,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length).unwrap();
 
@@ -469,6 +470,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                 ParallelSumMultithreaded<_, _>,
@@ -519,6 +521,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         VdafInstance::Prio3Histogram {
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let vdaf = Prio3::new_histogram_multithreaded(2, *length, *chunk_length).unwrap();
 

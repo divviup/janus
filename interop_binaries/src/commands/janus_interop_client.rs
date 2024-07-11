@@ -133,6 +133,7 @@ async fn handle_upload(
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
             let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length, chunk_length)
@@ -145,6 +146,7 @@ async fn handle_upload(
             bits,
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
@@ -157,6 +159,7 @@ async fn handle_upload(
         VdafInstance::Prio3Histogram {
             length,
             chunk_length,
+            dp_strategy: _,
         } => {
             let measurement = parse_primitive_measurement::<usize>(request.measurement.clone())?;
             let vdaf = Prio3::new_histogram_multithreaded(2, length, chunk_length)
