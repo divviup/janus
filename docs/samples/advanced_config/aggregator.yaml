@@ -184,7 +184,7 @@ key_rotator:
     pending_duration_s: 3600
 
     # The TTL of keys. Defaults to 4 weeks.
-    active_duration_s: 2419200
+    active_duration_s: 7257600
 
     # How long keys can be expired before being deleted. Should be greater than
     # how long clients cache HPKE keys. Defaults to 1 week.
@@ -194,9 +194,9 @@ key_rotator:
     # required. Each entry represents a key with a particular ciphersuite.
     ciphersuites:
       # Defaults to a key with these algorithms.
-      - kem_id: P521HkdfSha512
-        kdf_id: HkdfSha512
-        aead_id: Aes256Gcm
+      - kem_id: X25519HkdfSha256
+        kdf_id: HkdfSha256
+        aead_id: Aes128Gcm
 
 # Defines how often to refresh the global HPKE configs cache, in milliseconds.
 # This affects how often an aggregator becomes aware of key state changes.
