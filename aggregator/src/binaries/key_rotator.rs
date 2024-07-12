@@ -60,6 +60,7 @@ impl BinaryOptions for Options {
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,
@@ -77,6 +78,7 @@ impl BinaryConfig for Config {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyRotatorConfig {
     #[serde(deserialize_with = "deserialize_hpke_key_rotator_config")]
     pub hpke: HpkeKeyRotatorConfig,

@@ -330,6 +330,7 @@ where
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,
@@ -403,6 +404,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyRotatorConfig {
     /// How frequently the key rotator is run, in seconds.
     pub frequency_s: u64,
@@ -416,6 +418,7 @@ fn default_task_counter_shard_count() -> u64 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GarbageCollectorConfig {
     /// How frequently garbage collection is run, in seconds.
     pub gc_frequency_s: u64,

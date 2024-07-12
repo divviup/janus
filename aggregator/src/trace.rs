@@ -33,6 +33,7 @@ pub enum Error {
 
 /// Configuration for the tracing subscriber.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraceConfiguration {
     /// If true, uses a [`tracing_subscriber::fmt::TestWriter`] to capture trace
     /// events when running tests
@@ -63,6 +64,7 @@ pub struct TraceConfiguration {
 
 /// Configuration related to tokio-console.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TokioConsoleConfiguration {
     /// If true, a tokio-console tracing subscriber is configured to monitor
     /// the async runtime, and listen for TCP connections. (Requires building
@@ -79,13 +81,14 @@ pub struct TokioConsoleConfiguration {
 
 /// Selection of an exporter for OpenTelemetry spans.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum OpenTelemetryTraceConfiguration {
     Otlp(OtlpTraceConfiguration),
 }
 
 /// Configuration options specific to the OpenTelemetry OTLP exporter.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OtlpTraceConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
