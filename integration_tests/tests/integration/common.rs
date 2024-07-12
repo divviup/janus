@@ -225,6 +225,33 @@ pub async fn verify_aggregate_generic<V>(
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
+    let (report_count, aggregate_result) = collect_aggregate_result_generic(
+        task_parameters,
+        leader_port,
+        vdaf,
+        before_timestamp,
+        &test_case.aggregation_parameter,
+    )
+    .await;
+
+    assert_eq!(
+        report_count,
+        u64::try_from(test_case.measurements.len()).unwrap()
+    );
+    assert_eq!(aggregate_result, test_case.aggregate_result);
+}
+
+pub async fn collect_aggregate_result_generic<V>(
+    task_parameters: &TaskParameters,
+    leader_port: u16,
+    vdaf: V,
+    before_timestamp: Time,
+    aggregation_parameter: &V::AggregationParam,
+) -> (u64, V::AggregateResult)
+where
+    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
+    V::AggregateResult: PartialEq,
+{
     let leader_endpoint = task_parameters
         .endpoint_fragments
         .leader_endpoint_for_host(leader_port);
@@ -247,7 +274,7 @@ pub async fn verify_aggregate_generic<V>(
     .unwrap();
 
     // Send a collect request and verify that we got the correct result.
-    match &task_parameters.query_type {
+    let (report_count, aggregate_result) = match &task_parameters.query_type {
         QueryType::TimeInterval => {
             let batch_interval = Interval::new(
                 before_timestamp
@@ -259,43 +286,42 @@ pub async fn verify_aggregate_generic<V>(
             )
             .unwrap();
 
-            let collection = collect_generic(
+            let collection_1 = collect_generic(
                 &collector,
                 Query::new_time_interval(batch_interval),
-                &test_case.aggregation_parameter,
+                aggregation_parameter,
             )
             .await
             .unwrap();
-
-            assert_eq!(
-                collection.report_count(),
-                u64::try_from(test_case.measurements.len()).unwrap()
-            );
-            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
 
             // Collect again to verify that collections can be repeated.
-            let collection = collect_generic(
+            let collection_2 = collect_generic(
                 &collector,
                 Query::new_time_interval(batch_interval),
-                &test_case.aggregation_parameter,
+                aggregation_parameter,
             )
             .await
             .unwrap();
 
+            assert_eq!(collection_1.report_count(), collection_2.report_count());
             assert_eq!(
-                collection.report_count(),
-                u64::try_from(test_case.measurements.len()).unwrap()
+                collection_1.aggregate_result(),
+                collection_2.aggregate_result()
             );
-            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
+
+            (
+                collection_2.report_count(),
+                collection_2.aggregate_result().clone(),
+            )
         }
         QueryType::FixedSize { .. } => {
             let mut requests = 0;
-            let collection = loop {
+            let collection_1 = loop {
                 requests += 1;
                 let collection_res = collect_generic::<_, FixedSize>(
                     &collector,
                     Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-                    &test_case.aggregation_parameter,
+                    aggregation_parameter,
                 )
                 .await;
                 match collection_res {
@@ -313,29 +339,30 @@ pub async fn verify_aggregate_generic<V>(
                 }
             };
 
-            let batch_id = *collection.partial_batch_selector().batch_id();
-            assert_eq!(
-                collection.report_count(),
-                u64::try_from(test_case.measurements.len()).unwrap()
-            );
-            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
+            let batch_id = *collection_1.partial_batch_selector().batch_id();
 
             // Collect again to verify that collections can be repeated.
-            let collection = collect_generic(
+            let collection_2 = collect_generic(
                 &collector,
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-                &test_case.aggregation_parameter,
+                aggregation_parameter,
             )
             .await
             .unwrap();
 
+            assert_eq!(collection_1.report_count(), collection_2.report_count());
             assert_eq!(
-                collection.report_count(),
-                u64::try_from(test_case.measurements.len()).unwrap()
+                collection_1.aggregate_result(),
+                collection_2.aggregate_result()
             );
-            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
+
+            (
+                collection_2.report_count(),
+                collection_2.aggregate_result().clone(),
+            )
         }
     };
+    (report_count, aggregate_result)
 }
 
 pub async fn submit_measurements_and_verify_aggregate(
