@@ -475,7 +475,7 @@ async fn janus_in_process_histogram_dp_noise() {
             length: HISTOGRAM_LENGTH,
             chunk_length: CHUNK_LENGTH,
             dp_strategy: vdaf_dp_strategies::Prio3Histogram::PureDpDiscreteLaplace(
-                PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon)),
+                PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
             ),
         },
     ))

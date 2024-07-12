@@ -684,9 +684,9 @@ mod tests {
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
-                    PureDpDiscreteLaplace::from_budget(PureDpBudget::new(
-                        Rational::from_unsigned(2u128, 1u128).unwrap(),
-                    )),
+                    PureDpDiscreteLaplace::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(2u128, 1u128).unwrap()).unwrap(),
+                    ),
                 ),
             },
             &[
@@ -900,9 +900,9 @@ dp_strategy:
                 length: 2,
                 chunk_length: 2,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
-                    DiscreteLaplaceDpStrategy::from_budget(PureDpBudget::new(
-                        Rational::from_unsigned(1u128, 1u128).unwrap(),
-                    )),
+                    DiscreteLaplaceDpStrategy::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(1u128, 1u128).unwrap()).unwrap()
+                    ),
                 ),
             }
         );

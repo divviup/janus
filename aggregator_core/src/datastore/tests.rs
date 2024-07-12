@@ -166,9 +166,9 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
-                    PureDpDiscreteLaplace::from_budget(PureDpBudget::new(
-                        Rational::from_unsigned(1u128, 4u128).unwrap(),
-                    )),
+                    PureDpDiscreteLaplace::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(1u128, 4u128).unwrap()).unwrap(),
+                    ),
                 ),
             },
             Role::Leader,
