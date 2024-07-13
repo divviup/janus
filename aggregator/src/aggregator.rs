@@ -103,6 +103,7 @@ use ring::{
     signature::{EcdsaKeyPair, Signature},
 };
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
@@ -2294,6 +2295,7 @@ impl VdafOps {
 
         let mut report_share_data = Vec::with_capacity(req.prepare_inits().len());
         while receiver.recv_many(&mut report_share_data, 10).await > 0 {}
+        let report_share_data = Arc::new(report_share_data);
 
         // Await the producer task to resume any panics that may have occurred, and to ensure we can
         // unwrap the aggregation parameter's Arc in a few lines. The only other errors that can
@@ -2346,11 +2348,11 @@ impl VdafOps {
 
         Ok(datastore
             .run_tx("aggregate_init", |tx| {
-                let vdaf = vdaf.clone();
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
                 let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
                 let aggregation_job = Arc::clone(&aggregation_job);
-                let mut report_share_data = report_share_data.clone();
+                let report_share_data = Arc::clone(&report_share_data);
                 let req = Arc::clone(&req);
                 let log_forbidden_mutations = log_forbidden_mutations.clone();
 
@@ -2373,24 +2375,23 @@ impl VdafOps {
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
-                    try_join_all(report_share_data.iter_mut().map(|rsd| {
+                    let report_aggregations = try_join_all(report_share_data.iter().map(|rsd| {
                         let task = Arc::clone(&task);
 
                         async move {
-                            let report_already_aggregated =
-                                match tx.put_scrubbed_report(task.id(), &rsd.report_share).await {
-                                    Ok(()) => false,
-                                    Err(datastore::Error::MutationTargetAlreadyExists) => true,
-                                    Err(err) => return Err(err),
-                                };
-
-                            if report_already_aggregated {
-                                rsd.report_aggregation = rsd
-                                    .report_aggregation
-                                    .clone()
-                                    .with_failure(PrepareError::ReportReplayed);
-                            }
-                            Ok::<_, datastore::Error>(())
+                            let mut report_aggregation = Cow::Borrowed(&rsd.report_aggregation);
+                            match tx.put_scrubbed_report(task.id(), &rsd.report_share).await {
+                                Ok(()) => (),
+                                Err(datastore::Error::MutationTargetAlreadyExists) => {
+                                    report_aggregation = Cow::Owned(
+                                        report_aggregation
+                                            .into_owned()
+                                            .with_failure(PrepareError::ReportReplayed),
+                                    )
+                                }
+                                Err(err) => return Err(err),
+                            };
+                            Ok(report_aggregation)
                         }
                     }))
                     .await?;
@@ -2402,13 +2403,8 @@ impl VdafOps {
                             batch_aggregation_shard_count,
                             Some(aggregation_job_writer_metrics),
                         );
-                    aggregation_job_writer.put(
-                        aggregation_job.as_ref().clone(),
-                        report_share_data
-                            .into_iter()
-                            .map(|rsd| rsd.report_aggregation)
-                            .collect(),
-                    )?;
+                    aggregation_job_writer
+                        .put(aggregation_job.as_ref().clone(), report_aggregations)?;
                     let prepare_resps = aggregation_job_writer
                         .write(tx, vdaf)
                         .await?

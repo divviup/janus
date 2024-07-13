@@ -252,7 +252,7 @@ where
                         .report_aggregations
                         .iter()
                         .map(AsRef::as_ref)
-                        .filter_map(RA::last_prep_resp)
+                        .filter_map(RA::Borrowed::last_prep_resp)
                         .cloned()
                         .collect(),
                 )
@@ -452,7 +452,7 @@ where
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, Q, A>>,
-    report_aggregations: Vec<Cow<'a, RA>>,
+    report_aggregations: Vec<Cow<'a, RA::Borrowed>>,
 }
 
 impl<'a, const SEED_SIZE: usize, Q, A, WT, RA> WriteState<'a, SEED_SIZE, Q, A, WT, RA>
@@ -507,7 +507,7 @@ where
                             aggregation_job: Cow::Borrowed(aggregation_job),
                             report_aggregations: report_aggregations
                                 .iter()
-                                .map(Cow::Borrowed)
+                                .map(RA::borrow)
                                 .collect::<Vec<_>>(),
                         },
                     )
@@ -939,6 +939,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>:
     Clone + Send + Sync
 {
+    type Borrowed: ReportAggregationUpdate<SEED_SIZE, A>;
+
     /// Returns the order of this report aggregation in its aggregation job.
     fn ord(&self) -> u64;
 
@@ -970,6 +972,9 @@ pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SE
     /// existing report aggregations.
     async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error>;
 
+    /// Returns a borrowed `Cow` referring to this report aggregation.
+    fn borrow(&self) -> Cow<'_, Self::Borrowed>;
+
     /// Returns whether this report aggregation is in a terminal state ("Finished" or "Failed").
     fn is_terminal(&self) -> bool {
         self.is_finished().is_some() || self.is_failed()
@@ -987,6 +992,8 @@ where
     A::PrepareMessage: Send + Sync,
     A::PublicShare: Send + Sync,
 {
+    type Borrowed = Self;
+
     fn ord(&self) -> u64 {
         self.report_aggregation.ord()
     }
@@ -1044,6 +1051,10 @@ where
     async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
         tx.update_report_aggregation(&self.report_aggregation).await
     }
+
+    fn borrow(&self) -> Cow<'_, Self::Borrowed> {
+        Cow::Borrowed(self)
+    }
 }
 
 #[async_trait]
@@ -1051,6 +1062,8 @@ impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A> for Report
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
+    type Borrowed = Self;
+
     fn ord(&self) -> u64 {
         self.ord()
     }
@@ -1086,5 +1099,61 @@ where
 
     async fn write_update(&self, _tx: &Transaction<impl Clock>) -> Result<(), Error> {
         panic!("tried to update an existing report aggregation via ReportAggregationMetadata")
+    }
+
+    fn borrow(&self) -> Cow<'_, Self::Borrowed> {
+        Cow::Borrowed(self)
+    }
+}
+
+#[async_trait]
+impl<const SEED_SIZE: usize, A, RA> ReportAggregationUpdate<SEED_SIZE, A> for Cow<'_, RA>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    RA: ReportAggregationUpdate<SEED_SIZE, A>,
+{
+    // All methods are implemented as a fallthrough to the implementation in `RA`.
+    type Borrowed = RA::Borrowed;
+
+    fn ord(&self) -> u64 {
+        self.as_ref().ord()
+    }
+
+    fn report_id(&self) -> &ReportId {
+        self.as_ref().report_id()
+    }
+
+    fn time(&self) -> &Time {
+        self.as_ref().time()
+    }
+
+    fn is_finished(&self) -> Option<&A::OutputShare> {
+        self.as_ref().is_finished()
+    }
+
+    fn is_failed(&self) -> bool {
+        self.as_ref().is_failed()
+    }
+
+    fn with_failure(self, prepare_error: PrepareError) -> Self {
+        // Since `with_failure` consumes the caller, we must own the CoW.
+        Self::Owned(self.into_owned().with_failure(prepare_error))
+    }
+
+    /// Returns the last preparation response from this report aggregation, if any.
+    fn last_prep_resp(&self) -> Option<&PrepareResp> {
+        self.as_ref().last_prep_resp()
+    }
+
+    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+        self.as_ref().write_new(tx).await
+    }
+
+    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+        self.as_ref().write_update(tx).await
+    }
+
+    fn borrow(&self) -> Cow<'_, RA::Borrowed> {
+        self.as_ref().borrow()
     }
 }
