@@ -93,13 +93,13 @@ impl BinaryOptions for Options {
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
 /// max_concurrent_job_workers: 10
-/// job_discovery_interval_secs: 10
-/// worker_lease_duration_secs: 600
-/// worker_lease_clock_skew_allowance_secs: 60
+/// job_discovery_interval_s: 10
+/// worker_lease_duration_s: 600
+/// worker_lease_clock_skew_allowance_s: 60
 /// maximum_attempts_before_failure: 5
-/// retry_initial_interval_millis: 1000
-/// retry_max_interval_millis: 30000
-/// retry_max_elapsed_time_millis: 300000
+/// retry_initial_interval_ms: 1000
+/// retry_max_interval_ms: 30000
+/// retry_max_elapsed_time_ms: 300000
 /// batch_aggregation_shard_count: 32
 /// taskprov_config:
 ///   enabled: false

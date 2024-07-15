@@ -5,7 +5,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeouts_secs: 60
+  connection_pool_timeouts_s: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8
@@ -84,7 +84,7 @@ metrics_config:
     poll_time_histogram_scale: linear
     # Sets the poll time histogram's resolution. Defaults to 100 microseconds.
     # (optional)
-    poll_time_histogram_resolution_microseconds: 100
+    poll_time_histogram_resolution_us: 100
     # Sets the number of buckets in the poll time histogram. Defaults to 10.
     # (optional)
     poll_time_histogram_buckets: 10
@@ -206,7 +206,7 @@ global_hpke_configs_refresh_interval: 1800000
 # Defines how long to cache tasks for, in seconds. This affects how soon the
 # aggregator becomes aware of task parameter changes. (optional, defaults to 10
 # minutes)
-task_cache_ttl_seconds: 600
+task_cache_ttl_s: 600
 
 # Defines how many tasks can be cached. This affects how much memory the
 # aggregator might use to store cached tasks. (optional)

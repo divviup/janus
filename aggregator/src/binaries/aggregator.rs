@@ -620,7 +620,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -640,7 +640,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -669,7 +669,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -703,7 +703,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -734,7 +734,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     logging_config:
         tokio_console_config:
             enabled: true
@@ -765,7 +765,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -792,7 +792,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -819,7 +819,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -841,7 +841,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -864,7 +864,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     logging_config:
         tokio_console_config:
             enabled: true
@@ -894,7 +894,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     logging_config:
         tokio_console_config:
             enabled: true
@@ -923,7 +923,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     logging_config:
         open_telemetry_config:
             otlp:
@@ -951,7 +951,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     logging_config:
         open_telemetry_config:
             otlp:
@@ -979,7 +979,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     metrics_config:
         exporter:
             prometheus:
@@ -1007,7 +1007,7 @@ mod tests {
     health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
+        connection_pool_timeouts_s: 60
     metrics_config:
         exporter:
             otlp:
