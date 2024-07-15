@@ -69,6 +69,27 @@ async fn run_aggregator(
 
     let datastore = Arc::new(datastore);
 
+    let key_rotator_handle = {
+        let datastore = Arc::clone(&datastore);
+        let config = config.key_rotator.take();
+        let stopper = stopper.clone();
+        spawn(async move {
+            if let Some(config) = config {
+                info!("Running key rotator");
+                let key_rotator = KeyRotator::new(datastore, config.hpke);
+                let mut interval = interval(Duration::from_secs(config.frequency_s));
+                // Note that `interval` fires immediately at first, so the key rotator runs
+                // immediately on boot. This takes care of bootstrapping keys on the first run of
+                // Janus.
+                while stopper.stop_future(interval.tick()).await.is_some() {
+                    if let Err(err) = key_rotator.run().await {
+                        error!(?err, "key rotator error");
+                    }
+                }
+            }
+        })
+    };
+
     let mut handlers = (
         aggregator_handler(
             Arc::clone(&datastore),
@@ -90,27 +111,6 @@ async fn run_aggregator(
             if let Some(gc_config) = gc_config {
                 info!("Running garbage collector");
                 run_garbage_collector(datastore, gc_config, meter, stopper).await;
-            }
-        })
-    };
-
-    let key_rotator_handle = {
-        let datastore = Arc::clone(&datastore);
-        let config = config.key_rotator.take();
-        let stopper = stopper.clone();
-        spawn(async move {
-            if let Some(config) = config {
-                info!("Running key rotator");
-                let key_rotator = KeyRotator::new(datastore, config.hpke);
-                let mut interval = interval(Duration::from_secs(config.frequency_s));
-                // Note that `interval` fires immediately at first, so the key rotator runs
-                // immediately on boot. This takes care of bootstrapping keys on the first run of
-                // Janus.
-                while stopper.stop_future(interval.tick()).await.is_some() {
-                    if let Err(err) = key_rotator.run().await {
-                        error!(?err, "key rotator error");
-                    }
-                }
             }
         })
     };
