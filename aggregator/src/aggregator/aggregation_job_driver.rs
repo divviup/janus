@@ -528,10 +528,7 @@ where
             AggregationJobResp::new(Vec::new())
         };
 
-        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
-        let aggregation_job =
-            Arc::try_unwrap(aggregation_job).unwrap_or_else(|arc| arc.as_ref().clone());
-
+        let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
         self.process_response_from_helper(
             datastore,
             vdaf,
@@ -911,11 +908,8 @@ where
             expected_report_aggregation_count
         );
 
-        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
-        let aggregation_job =
-            Arc::try_unwrap(aggregation_job).unwrap_or_else(|arc| arc.as_ref().clone());
-
         // Write everything back to storage.
+        let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
         let mut aggregation_job_writer =
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 Arc::clone(&task),
