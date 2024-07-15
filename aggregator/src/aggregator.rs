@@ -2309,9 +2309,6 @@ impl VdafOps {
         });
         assert_eq!(report_share_data.len(), req.prepare_inits().len());
 
-        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
-        let agg_param = Arc::try_unwrap(agg_param).unwrap_or_else(|arc| arc.as_ref().clone());
-
         // Store data to datastore.
         let min_client_timestamp = req
             .prepare_inits()
@@ -2335,7 +2332,7 @@ impl VdafOps {
             AggregationJob::<SEED_SIZE, Q, A>::new(
                 *task.id(),
                 *aggregation_job_id,
-                agg_param,
+                Arc::unwrap_or_clone(agg_param),
                 req.batch_selector().batch_identifier().clone(),
                 client_timestamp_interval,
                 // For one-round VDAFs, the aggregation job will actually be finished, but the

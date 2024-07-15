@@ -271,9 +271,7 @@ impl VdafOps {
         // Write accumulated aggregation values back to the datastore; this will mark any reports
         // that can't be aggregated because the batch is collected with error BatchCollected.
         let aggregation_job_id = *aggregation_job.id();
-        // TODO: Use Arc::unwrap_or_clone() once the MSRV is at least 1.76.0.
-        let aggregation_job = Arc::try_unwrap(aggregation_job)
-            .unwrap_or_else(|arc| arc.as_ref().clone())
+        let aggregation_job = Arc::unwrap_or_clone(aggregation_job)
             .with_step(request_step) // Advance the job to the leader's step
             .with_last_request_hash(request_hash);
         let mut aggregation_job_writer =
