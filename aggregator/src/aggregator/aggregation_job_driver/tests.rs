@@ -28,20 +28,19 @@ use janus_core::{
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
     time::{Clock, IntervalExt, MockClock, TimeExt},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    vdaf::{
+        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance, VERIFY_KEY_LENGTH,
+    },
     Runtime,
 };
 use janus_messages::{
-    problem_type::DapProblemType,
-    query_type::{FixedSize, TimeInterval},
-    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
-    PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata,
-    ReportShare, Role, Time,
+    problem_type::DapProblemType, query_type::{FixedSize, TimeInterval}, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time
 };
 use mockito::ServerGuard;
 use prio::{
     codec::Encode,
+    field::Field64,
+    flp::gadgets::{Mul, ParallelSum},
     idpf::IdpfInput,
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
@@ -51,8 +50,88 @@ use prio::{
     },
 };
 use rand::random;
-use std::{sync::Arc, time::Duration as StdDuration};
+use std::{iter, sync::Arc, time::Duration as StdDuration};
 use trillium_tokio::Stopper;
+
+// XXX
+#[tokio::test]
+async fn xxx_vdaf_sizes() {
+    const BITS: usize = 1;
+    const LEN: usize = 100000;
+    const MAX_MEASUREMENT: u128 = 1 << BITS;
+    let chunk_length: usize = ((BITS * LEN) as f64).sqrt() as usize;
+
+    println!("bits = {BITS}, len = {LEN}, chunk_length = {chunk_length}");
+
+    let vdaf = Prio3::new_sum_vec(2, BITS, LEN, chunk_length).unwrap();
+    // let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
+    //     ParallelSum<Field64, Mul<Field64>>,
+    // >(2, BITS, LEN, chunk_length)
+    // .unwrap();
+    let verify_key = random();
+    let report_id = random();
+
+    // Modulus is always a power of 2, so this is uniform. (also, it doesn't particularly matter
+    // if this is uniform.)
+    let measurement: Vec<u128> = iter::from_fn(|| Some(random::<u128>() % MAX_MEASUREMENT))
+        .take(LEN)
+        .collect();
+
+    let transcript = run_vdaf(&vdaf, &verify_key, &(), &report_id, &measurement);
+
+    assert_eq!(transcript.leader_prepare_transitions.len(), 1);
+    assert_eq!(transcript.helper_prepare_transitions.len(), 1);
+
+    println!(
+        "public_share length = {}",
+        transcript.public_share.get_encoded().unwrap().len()
+    );
+    println!(
+        "leader_input_share length = {}",
+        transcript.leader_input_share.get_encoded().unwrap().len()
+    );
+    println!(
+        "helper_input_share length = {}",
+        transcript.helper_input_share.get_encoded().unwrap().len()
+    );
+
+    let leader_prepare_transition = transcript.leader_prepare_transitions.first().unwrap();
+    let helper_prepare_transition = transcript.helper_prepare_transitions.first().unwrap();
+
+    println!(
+        "leader message length = {}",
+        leader_prepare_transition
+            .message
+            .get_encoded()
+            .unwrap()
+            .len()
+    );
+    println!(
+        "helper message length = {}",
+        helper_prepare_transition
+            .message
+            .get_encoded()
+            .unwrap()
+            .len()
+    ); // in DAP, this will be encapsulated in a PrepareStepResult, resulting in +1 byte
+
+    println!(
+        "leader aggregate share length = {}",
+        transcript
+            .leader_aggregate_share
+            .get_encoded()
+            .unwrap()
+            .len()
+    );
+    println!(
+        "helper aggregate share length = {}",
+        transcript
+            .helper_aggregate_share
+            .get_encoded()
+            .unwrap()
+            .len()
+    );
+}
 
 #[tokio::test]
 async fn aggregation_job_driver() {
