@@ -3,7 +3,7 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
   # Timeout for new database connections. Defaults to 60 seconds.
-  connection_pool_timeouts_secs: 60
+  connection_pool_timeouts_s: 60
 
   # Maximum number of database connections. Defaults to CPUs * 4.
   connection_pool_max_size: 8

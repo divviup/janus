@@ -14,10 +14,10 @@ health_check_listen_address: "0.0.0.0:8000"
 batch_aggregation_shard_count: 32
 
 # Interval on which to check the database for new tasks. (required)
-tasks_update_frequency_secs: 3600
+tasks_update_frequency_s: 3600
 
 # Interval on which to create new aggregation jobs. (required)
-aggregation_job_creation_interval_secs: 60
+aggregation_job_creation_interval_s: 60
 
 # Minimum aggregation job size, in reports. (required)
 min_aggregation_job_size: 10

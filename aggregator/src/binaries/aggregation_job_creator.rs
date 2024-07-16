@@ -58,8 +58,8 @@ impl BinaryOptions for Options {
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
 /// batch_aggregation_shard_count: 32
-/// tasks_update_frequency_secs: 3600
-/// aggregation_job_creation_interval_secs: 60
+/// tasks_update_frequency_s: 3600
+/// aggregation_job_creation_interval_s: 60
 /// min_aggregation_job_size: 100
 /// max_aggregation_job_size: 500
 /// "#;
