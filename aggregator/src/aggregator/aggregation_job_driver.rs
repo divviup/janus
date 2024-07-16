@@ -28,7 +28,11 @@ use janus_aggregator_core::{
     },
     task::{self, AggregatorTask, VerifyKey},
 };
-use janus_core::{retries::is_retryable_http_status, time::Clock, vdaf_dispatch};
+use janus_core::{
+    retries::{is_retryable_http_client_error, is_retryable_http_status},
+    time::Clock,
+    vdaf_dispatch,
+};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
@@ -1187,6 +1191,7 @@ where
             Error::Http(http_error_response) => {
                 is_retryable_http_status(http_error_response.status())
             }
+            Error::HttpClient(error) => is_retryable_http_client_error(error),
             Error::Datastore(error) => match error {
                 datastore::Error::Db(_) | datastore::Error::Pool(_) => true,
                 datastore::Error::User(error) => match error.downcast_ref::<Error>() {

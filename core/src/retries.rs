@@ -207,6 +207,10 @@ pub fn is_retryable_http_status(status: StatusCode) -> bool {
         || status == StatusCode::TOO_MANY_REQUESTS
 }
 
+pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect() || error.is_request() || error.is_body()
+}
+
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
