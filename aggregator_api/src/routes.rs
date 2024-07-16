@@ -45,7 +45,12 @@ pub(super) async fn get_config(
             SupportedQueryType::TimeInterval,
             SupportedQueryType::FixedSize,
         ],
-        features: &["TokenHash", "UploadMetrics", "TimeBucketedFixedSize"],
+        features: &[
+            "TokenHash",
+            "UploadMetrics",
+            "TimeBucketedFixedSize",
+            "PureDpDiscreteLaplace",
+        ],
     })
 }
 

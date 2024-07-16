@@ -76,7 +76,7 @@ async fn get_config() {
             r#"{"protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize"]}"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"]}"#,
         )
     );
 }
