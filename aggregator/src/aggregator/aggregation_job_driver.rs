@@ -503,6 +503,8 @@ where
                 prepare_inits,
             );
 
+            // TODO(inahga): poll the helper here
+
             let resp_bytes = send_request_to_helper(
                 &self.http_client,
                 self.backoff.clone(),
@@ -693,6 +695,8 @@ where
 
         // Construct request, send it to the helper, and process the response.
         let request = AggregationJobContinueReq::new(aggregation_job.step(), prepare_continues);
+
+        // TODO(inahga): poll the helper here
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,

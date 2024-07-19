@@ -444,6 +444,50 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
+    async fn handle_get_aggregation_job(
+        &self,
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+        auth_token: Option<AuthenticationToken>,
+        taskprov_task_config: Option<&TaskConfig>,
+    ) -> Result<Option<AggregationJobResp>, Error> {
+        let task_aggregator = self
+            .task_aggregators
+            .get(task_id)
+            .await?
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
+        if task_aggregator.task.role() != &Role::Helper {
+            return Err(Error::UnrecognizedTask(*task_id));
+        }
+
+        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
+            self.taskprov_authorize_request(
+                &Role::Leader,
+                task_id,
+                taskprov_task_config.unwrap(),
+                auth_token.as_ref(),
+            )
+            .await?;
+        } else if !task_aggregator
+            .task
+            .check_aggregator_auth_token(auth_token.as_ref())
+        {
+            return Err(Error::UnauthorizedRequest(*task_id));
+        }
+
+        task_aggregator
+            .handle_get_aggregation_job(
+                &self.datastore,
+                &self.clock,
+                &self.global_hpke_keypairs,
+                &self.metrics,
+                self.cfg.batch_aggregation_shard_count,
+                aggregation_job_id,
+                taskprov_task_config.is_some(),
+            )
+            .await
+    }
+
     async fn handle_aggregate_init(
         &self,
         task_id: &TaskId,
@@ -451,7 +495,7 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<(), Error> {
         let task_aggregator = match self.task_aggregators.get(task_id).await? {
             Some(task_aggregator) => {
                 if task_aggregator.task.role() != &Role::Helper {
@@ -1073,6 +1117,30 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
+    async fn handle_get_aggregation_job(
+        &self,
+        datastore: &Datastore<C>,
+        clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        metrics: &AggregatorMetrics,
+        batch_aggregation_shard_count: u64,
+        aggregation_job_id: &AggregationJobId,
+        require_taskprov_extension: bool,
+    ) -> Result<Option<AggregationJobResp>, Error> {
+        self.vdaf_ops
+            .handle_get_aggregation_job(
+                datastore,
+                clock,
+                global_hpke_keypairs,
+                metrics,
+                Arc::clone(&self.task),
+                batch_aggregation_shard_count,
+                aggregation_job_id,
+                require_taskprov_extension,
+            )
+            .await
+    }
+
     async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
@@ -1084,7 +1152,7 @@ impl<C: Clock> TaskAggregator<C> {
         require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<(), Error> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
@@ -1523,6 +1591,60 @@ impl VdafOps {
         }
     }
 
+    #[tracing::instrument(
+        skip(self, datastore, global_hpke_keypairs, metrics, task),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_get_aggregation_job<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        metrics: &AggregatorMetrics,
+        task: Arc<AggregatorTask>,
+        batch_aggregation_shard_count: u64,
+        aggregation_job_id: &AggregationJobId,
+        require_taskprov_extension: bool,
+    ) -> Result<Option<AggregationJobResp>, Error> {
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_get_aggregation_job_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                        datastore,
+                        clock,
+                        global_hpke_keypairs,
+                        Arc::clone(vdaf),
+                        metrics,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        verify_key,
+                        require_taskprov_extension,
+                    )
+                    .await
+                })
+            }
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_get_aggregation_job_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                        datastore,
+                        clock,
+                        global_hpke_keypairs,
+                        Arc::clone(vdaf),
+                        metrics,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        verify_key,
+                        require_taskprov_extension,
+                    )
+                    .await
+                })
+            }
+        }
+    }
+
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
@@ -1543,7 +1665,7 @@ impl VdafOps {
         require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<(), Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
@@ -1974,6 +2096,38 @@ impl VdafOps {
         Ok(None)
     }
 
+    async fn handle_get_aggregation_job_generic<const SEED_SIZE: usize, Q, A, C: Clock>(
+        datastore: &Datastore<C>,
+        clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        vdaf: Arc<A>,
+        metrics: &AggregatorMetrics,
+        task: Arc<AggregatorTask>,
+        batch_aggregation_shard_count: u64,
+        aggregation_job_id: &AggregationJobId,
+        verify_key: &VerifyKey<SEED_SIZE>,
+        require_taskprov_extension: bool,
+    ) -> Result<Option<AggregationJobResp>, Error> {
+        let response = datastore
+            .run_tx("get_aggregation_job", |tx| {
+                //
+                Box::pin(async move {
+                    // get aggregation job
+                    // check status
+                    // if ready, compute response
+                    // else return none
+                    //
+                    Ok(())
+                })
+            })
+            .await?;
+
+        // match response {
+        //     Some(response) => Ok
+        // }
+        todo!()
+    }
+
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
@@ -1990,7 +2144,7 @@ impl VdafOps {
         require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error>
+    ) -> Result<(), Error>
     where
         Q: AccumulableQueryType,
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
@@ -2011,6 +2165,8 @@ impl VdafOps {
             AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
                 .map_err(Error::MessageDecode)?,
         );
+
+        // TODO(inahga): enqueue aggregation job in the transaction below
 
         // Check if this is a repeated request, and if it is the same as before, send
         // the same response as last time.
@@ -2037,7 +2193,8 @@ impl VdafOps {
             })
             .await?
         {
-            return Ok(response);
+            todo!("should be Ok(())");
+            // return Ok(response);
         }
 
         let agg_param = Arc::new(
@@ -2448,7 +2605,7 @@ impl VdafOps {
             .with_last_request_hash(request_hash),
         );
 
-        Ok(datastore
+        datastore
             .run_tx("aggregate_init", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2515,7 +2672,9 @@ impl VdafOps {
                     Ok(AggregationJobResp::new(prepare_resps))
                 })
             })
-            .await?)
+            .await?;
+
+        todo!("should be Ok(())");
     }
 
     async fn handle_aggregate_continue_generic<
