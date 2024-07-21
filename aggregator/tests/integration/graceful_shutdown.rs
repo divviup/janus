@@ -410,6 +410,7 @@ async fn aggregation_job_driver_shutdown() {
         },
         taskprov_config: TaskprovConfig::default(),
         batch_aggregation_shard_count: 32,
+        task_counter_shard_count: 32,
     };
 
     graceful_shutdown("aggregation_job_driver", config).await;

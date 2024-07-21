@@ -6,7 +6,7 @@ use crate::{
             CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval, TaskUploadCounter,
+            SqlInterval, TaskAggregationCounter, TaskUploadCounter,
         },
         schema_versions_template,
         test_util::{
@@ -7577,6 +7577,75 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                         task_expired: 20,
                     })
                 );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                // Returns None for non-existent task.
+                let counter = tx.get_task_aggregation_counter(&random()).await.unwrap();
+                assert_eq!(counter, None);
+
+                // Put a task for us to increment counters for.
+                let task = TaskBuilder::new(
+                    task::QueryType::FixedSize {
+                        max_batch_size: None,
+                        batch_time_window_size: None,
+                    },
+                    VdafInstance::Fake { rounds: 1 },
+                )
+                .build()
+                .leader_view()
+                .unwrap();
+
+                tx.put_aggregator_task(&task).await.unwrap();
+
+                // Returns Some for a task that has just been created and has no counters.
+                let counter = tx.get_task_aggregation_counter(task.id()).await.unwrap();
+                assert_eq!(counter, Some(TaskAggregationCounter::default()));
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_aggregation_counter(
+                    task.id(),
+                    ord,
+                    &TaskAggregationCounter { success: 4 },
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_aggregation_counter(
+                    task.id(),
+                    ord,
+                    &TaskAggregationCounter { success: 6 },
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_aggregation_counter(
+                    task.id(),
+                    ord,
+                    &TaskAggregationCounter::default(),
+                )
+                .await
+                .unwrap();
+
+                let counter = tx.get_task_aggregation_counter(task.id()).await.unwrap();
+                assert_eq!(counter, Some(TaskAggregationCounter { success: 10 }));
 
                 Ok(())
             })

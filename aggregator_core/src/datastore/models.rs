@@ -2334,3 +2334,22 @@ impl TaskUploadCounter {
         self.task_expired += 1
     }
 }
+
+/// Per-task counts of aggregated reports.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TaskAggregationCounter {
+    /// The number of successfully-aggregated reports.
+    pub(crate) success: u64,
+}
+
+impl TaskAggregationCounter {
+    #[cfg(feature = "test-util")]
+    pub fn new_with_values(success: u64) -> Self {
+        Self { success }
+    }
+
+    /// Increments the counter of successfully-aggregated reports.
+    pub fn increment_success(&mut self) {
+        self.success += 1
+    }
+}

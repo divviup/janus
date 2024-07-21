@@ -4,13 +4,16 @@ use crate::aggregator::{
     },
     empty_batch_aggregations,
     http_handlers::test_util::HttpHandlerTest,
-    test_util::{generate_helper_report_share, BATCH_AGGREGATION_SHARD_COUNT},
+    test_util::{
+        assert_task_aggregation_counter, generate_helper_report_share,
+        BATCH_AGGREGATION_SHARD_COUNT,
+    },
 };
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::models::{
         merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState, BatchAggregation,
-        BatchAggregationState, ReportAggregation, ReportAggregationState,
+        BatchAggregationState, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
     query_type::CollectableQueryType,
     task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -372,6 +375,13 @@ async fn aggregate_continue() {
             )
         ])
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(1),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -760,6 +770,13 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         second_batch_want_batch_aggregations
     );
 
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(2),
+    )
+    .await;
+
     // Aggregate some more reports, which should get accumulated into the batch_aggregations
     // rows created earlier.
     // report_share_3 gets aggreated into the first batch interval.
@@ -1052,6 +1069,13 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         second_batch_got_batch_aggregations,
         second_batch_want_batch_aggregations
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(3),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1168,6 +1192,13 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
             PrepareStepResult::Reject(PrepareError::VdafPrepError),
         )
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1342,6 +1373,13 @@ async fn aggregate_continue_prep_step_fails() {
             },
         )
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1456,6 +1494,13 @@ async fn aggregate_continue_unexpected_transition() {
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         None,
+    )
+    .await;
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
     )
     .await;
 }
@@ -1633,6 +1678,13 @@ async fn aggregate_continue_out_of_order_transition() {
         None,
     )
     .await;
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1722,6 +1774,13 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         None,
+    )
+    .await;
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
     )
     .await;
 }

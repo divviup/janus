@@ -207,6 +207,7 @@ impl JanusInProcess {
             },
             taskprov_config: TaskprovConfig::default(),
             batch_aggregation_shard_count: 32,
+            task_counter_shard_count: 32,
         };
         let collection_job_driver_options = CollectionJobDriverOptions {
             common: common_binary_options.clone(),

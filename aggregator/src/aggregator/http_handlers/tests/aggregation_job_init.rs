@@ -6,7 +6,7 @@ use crate::aggregator::{
         test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
     },
     test_util::{
-        default_aggregator_config, generate_helper_report_share,
+        assert_task_aggregation_counter, default_aggregator_config, generate_helper_report_share,
         generate_helper_report_share_for_plaintext, BATCH_AGGREGATION_SHARD_COUNT,
     },
 };
@@ -15,7 +15,7 @@ use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-        ReportAggregation, ReportAggregationState,
+        ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
     task::{test_util::TaskBuilder, QueryType, VerifyKey},
     test_util::noop_meter,
@@ -602,6 +602,13 @@ async fn aggregate_init() {
 
     assert!(aggregation_jobs_results.windows(2).all(|v| v[0] == v[1]));
     assert!(batch_aggregations_results.windows(2).all(|v| v[0] == v[1]));
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(1),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -708,6 +715,13 @@ async fn aggregate_init_batch_already_collected() {
         prepare_step.result(),
         &PrepareStepResult::Reject(PrepareError::BatchCollected)
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -788,6 +802,13 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
     assert_matches!(prepare_step.result(), PrepareStepResult::Continue { message } => {
         assert_eq!(message, &transcript.helper_prepare_transitions[0].message);
     });
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(1),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -842,6 +863,13 @@ async fn aggregate_init_prep_init_failed() {
         prepare_step.result(),
         &PrepareStepResult::Reject(PrepareError::VdafPrepError)
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -895,6 +923,13 @@ async fn aggregate_init_prep_step_failed() {
         prepare_step.result(),
         &PrepareStepResult::Reject(PrepareError::VdafPrepError)
     );
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -943,4 +978,11 @@ async fn aggregate_init_duplicated_report_id() {
         })
     );
     assert_eq!(want_status, test_conn.status().unwrap());
+
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }

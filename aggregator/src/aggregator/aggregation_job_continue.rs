@@ -8,7 +8,9 @@ use crate::aggregator::{
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::{AggregationJob, ReportAggregation, ReportAggregationState},
+        models::{
+            AggregationJob, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
+        },
         Transaction,
     },
     query_type::AccumulableQueryType,
@@ -42,7 +44,7 @@ impl VdafOps {
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
         metrics: &AggregatorMetrics,
-    ) -> Result<AggregationJobResp, datastore::Error>
+    ) -> Result<(AggregationJobResp, TaskAggregationCounter), datastore::Error>
     where
         C: Clock,
         Q: AccumulableQueryType,
@@ -281,12 +283,15 @@ impl VdafOps {
                 Some(metrics.for_aggregation_job_writer()),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
-        let prepare_resps = aggregation_job_writer
-            .write(tx, vdaf)
-            .await?
-            .remove(&aggregation_job_id)
-            .unwrap_or_default();
-        Ok(AggregationJobResp::new(prepare_resps))
+        let (mut prep_resps_by_agg_job, counters) = aggregation_job_writer.write(tx, vdaf).await?;
+        Ok((
+            AggregationJobResp::new(
+                prep_resps_by_agg_job
+                    .remove(&aggregation_job_id)
+                    .unwrap_or_default(),
+            ),
+            counters,
+        ))
     }
 }
 

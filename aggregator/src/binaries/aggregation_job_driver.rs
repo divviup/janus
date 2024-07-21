@@ -34,6 +34,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.job_driver_config.retry_config(),
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
+        ctx.config.task_counter_shard_count,
     ));
     let lease_duration = Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_s);
 
@@ -101,6 +102,7 @@ impl BinaryOptions for Options {
 /// retry_max_interval_ms: 30000
 /// retry_max_elapsed_time_ms: 300000
 /// batch_aggregation_shard_count: 32
+/// task_counter_shard_count: 32
 /// taskprov_config:
 ///   enabled: false
 /// "#;
@@ -121,6 +123,12 @@ pub struct Config {
     /// will reduce the amount of database contention during leader aggregation, while increasing
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
+
+    /// Defines the number of shards to break report & aggregation metric counters into. Increasing
+    /// this value will reduce the amount of database contention during report uploads &
+    /// aggregations, while increasing the cost of getting task metrics.
+    #[serde(default = "default_task_counter_shard_count")]
+    pub task_counter_shard_count: u64,
 }
 
 impl BinaryConfig for Config {
@@ -131,6 +139,10 @@ impl BinaryConfig for Config {
     fn common_config_mut(&mut self) -> &mut CommonConfig {
         &mut self.common_config
     }
+}
+
+fn default_task_counter_shard_count() -> u64 {
+    32
 }
 
 #[cfg(test)]
@@ -173,6 +185,7 @@ mod tests {
                 retry_max_elapsed_time_ms: 300_000,
             },
             batch_aggregation_shard_count: 32,
+            task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
         })
     }

@@ -8,7 +8,8 @@ use crate::{
         error::handle_ping_pong_error,
         http_handlers::AGGREGATION_JOB_ROUTE,
         query_type::CollectableQueryType,
-        report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
+        report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
+        Error, RequestBody,
     },
     metrics::aggregated_report_share_dimension_histogram,
 };
@@ -62,6 +63,7 @@ mod tests;
 pub struct AggregationJobDriver<B> {
     // Configuration.
     batch_aggregation_shard_count: u64,
+    task_counter_shard_count: u64,
 
     // Dependencies.
     http_client: reqwest::Client,
@@ -90,6 +92,7 @@ where
         backoff: B,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
     ) -> Self {
         let aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
@@ -120,6 +123,7 @@ where
 
         Self {
             batch_aggregation_shard_count,
+            task_counter_shard_count,
             http_client,
             backoff,
             aggregation_success_counter,
@@ -247,7 +251,7 @@ where
             // Only saw report aggregations in state "start" (or failed or invalid).
             (true, false, false) => {
                 self.step_aggregation_job_aggregate_init(
-                    &datastore,
+                    Arc::clone(&datastore),
                     vdaf,
                     lease,
                     task,
@@ -261,7 +265,7 @@ where
             // Only saw report aggregations in state "waiting" (or failed or invalid).
             (false, true, false) => {
                 self.step_aggregation_job_aggregate_continue(
-                    &datastore,
+                    Arc::clone(&datastore),
                     vdaf,
                     lease,
                     task,
@@ -286,7 +290,7 @@ where
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
@@ -553,7 +557,7 @@ where
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
@@ -737,7 +741,7 @@ where
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
@@ -933,21 +937,29 @@ where
         )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
-        datastore
+        let counters = datastore
             .run_tx("step_aggregation_job_2", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
-                    try_join!(
+                    let ((_, counters), _) = try_join!(
                         aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
                         tx.release_aggregation_job(&lease),
                     )?;
-                    Ok(())
+                    Ok(counters)
                 })
             })
             .await?;
+
+        write_task_aggregation_counter(
+            datastore,
+            self.task_counter_shard_count,
+            *task.id(),
+            counters,
+        );
+
         Ok(())
     }
 

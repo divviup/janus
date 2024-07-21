@@ -1,6 +1,8 @@
 use crate::{
     aggregator::{
-        aggregation_job_driver::AggregationJobDriver, test_util::BATCH_AGGREGATION_SHARD_COUNT,
+        aggregation_job_driver::AggregationJobDriver,
+        test_util::assert_task_aggregation_counter,
+        test_util::{BATCH_AGGREGATION_SHARD_COUNT, TASK_AGGREGATION_COUNTER_SHARD_COUNT},
         Error,
     },
     binary_utils::job_driver::JobDriver,
@@ -13,7 +15,7 @@ use janus_aggregator_core::{
         models::{
             merge_batch_aggregations_by_batch, AcquiredAggregationJob, AggregationJob,
             AggregationJobState, BatchAggregation, BatchAggregationState, LeaderStoredReport,
-            Lease, ReportAggregation, ReportAggregationState,
+            Lease, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -224,6 +226,7 @@ async fn aggregation_job_driver() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     ));
     let stopper = Stopper::new();
 
@@ -340,6 +343,9 @@ async fn aggregation_job_driver() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
+        .await;
 }
 
 #[tokio::test]
@@ -538,6 +544,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         LimitedRetryer::new(1),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -665,6 +672,9 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         got_repeated_extension_report_aggregation
     );
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
+        .await;
 }
 
 #[tokio::test]
@@ -832,6 +842,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -921,6 +932,9 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(0))
+        .await;
 }
 
 #[tokio::test]
@@ -1181,6 +1195,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -1283,6 +1298,9 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregations, got_report_aggregations);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(2))
+        .await;
 }
 
 #[tokio::test]
@@ -1460,6 +1478,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     let error = aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
@@ -1562,6 +1581,9 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
+        .await;
 }
 
 #[tokio::test]
@@ -1737,6 +1759,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -1826,6 +1849,9 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(0))
+        .await;
 }
 
 #[tokio::test]
@@ -2042,6 +2068,7 @@ async fn step_time_interval_aggregation_job_continue() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     let error = aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
@@ -2162,6 +2189,9 @@ async fn step_time_interval_aggregation_job_continue() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
+        .await;
 }
 
 #[tokio::test]
@@ -2358,6 +2388,7 @@ async fn step_fixed_size_aggregation_job_continue() {
         LimitedRetryer::new(1),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -2457,6 +2488,9 @@ async fn step_fixed_size_aggregation_job_continue() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
+
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
+        .await;
 }
 
 struct CancelAggregationJobTestCase {
@@ -2614,6 +2648,7 @@ async fn cancel_aggregation_job() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .abandon_aggregation_job(Arc::clone(&test_case.datastore), Arc::new(test_case.lease))
@@ -2722,6 +2757,7 @@ async fn cancel_aggregation_job_helper_aggregation_job_deletion_fails() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     );
     aggregation_job_driver
         .abandon_aggregation_job(Arc::clone(&test_case.datastore), Arc::new(test_case.lease))
@@ -2840,6 +2876,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     ));
     let job_driver = Arc::new(
         JobDriver::new(
@@ -3081,6 +3118,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
         LimitedRetryer::new(0),
         &noop_meter(),
         BATCH_AGGREGATION_SHARD_COUNT,
+        TASK_AGGREGATION_COUNTER_SHARD_COUNT,
     ));
     let job_driver = Arc::new(
         JobDriver::new(

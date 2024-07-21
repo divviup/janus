@@ -135,6 +135,11 @@ retry_max_elapsed_time_ms: 300000
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
 
+# Defines the number of shards to break report & aggregation metric counters into. Increasing this
+# value will reduce the amount of database contention during report uploads & aggregations, while
+# increasing the cost of getting task metrics.
+task_counter_shard_count: 32
+
 # Configuration for the taskprov extension. If enabled, this changes the behavior of the
 # aggregator as described in draft-wang-ppm-dap-taskprov. (optional)
 taskprov_config:

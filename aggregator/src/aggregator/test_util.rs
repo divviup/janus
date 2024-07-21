@@ -1,7 +1,11 @@
 use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
-use janus_aggregator_core::task::AggregatorTask;
+use janus_aggregator_core::{
+    datastore::{models::TaskAggregationCounter, Datastore},
+    task::AggregatorTask,
+};
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    time::MockClock,
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -15,8 +19,11 @@ use prio::{
 use rand::random;
 use ring::signature::EcdsaKeyPair;
 use std::time::Duration;
+use tokio::time::{sleep, Instant};
 
 pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
+
+pub const TASK_AGGREGATION_COUNTER_SHARD_COUNT: u64 = 16;
 
 /// HPKE config signing key for use in tests.
 ///
@@ -153,4 +160,38 @@ pub fn generate_helper_report_share_for_plaintext(
         )
         .unwrap(),
     )
+}
+
+pub async fn assert_task_aggregation_counter(
+    datastore: &Datastore<MockClock>,
+    task_id: TaskId,
+    expected_counters: TaskAggregationCounter,
+) {
+    // We can't coordinate with the counter-update tasks, so we loop on polling them.
+
+    let end_instant = Instant::now() + Duration::from_secs(10);
+    loop {
+        let counters = datastore
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move {
+                    Ok(tx
+                        .get_task_aggregation_counter(&task_id)
+                        .await
+                        .unwrap()
+                        .unwrap())
+                })
+            })
+            .await
+            .unwrap();
+
+        if counters == expected_counters {
+            return;
+        }
+        if Instant::now() > end_instant {
+            // Last chance: assert equality; this will likely fail, but the error message will
+            // provide hopefully-useful information to the caller.
+            assert_eq!(counters, expected_counters);
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
 }
