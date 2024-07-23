@@ -760,7 +760,7 @@ mod tests {
         hpke::HpkeKeypair,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
-        vdaf::VdafInstance,
+        vdaf::{vdaf_dp_strategies, VdafInstance},
     };
     use janus_messages::{
         codec::Encode, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
@@ -1296,6 +1296,7 @@ mod tests {
                 bits: 1,
                 length: 4,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
         )
         .with_id(*tasks[0].id())

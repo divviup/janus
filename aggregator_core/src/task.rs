@@ -1333,6 +1333,7 @@ mod tests {
         hpke::{HpkeKeypair, HpkePrivateKey},
         test_util::roundtrip_encoding,
         time::DurationExt,
+        vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, TaskId,
@@ -1644,6 +1645,7 @@ mod tests {
                     bits: 1,
                     length: 8,
                     chunk_length: 3,
+                    dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
                 1,
@@ -1705,7 +1707,7 @@ mod tests {
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3SumVec",
-                    len: 3,
+                    len: 4,
                 },
                 Token::Str("bits"),
                 Token::U64(1),
@@ -1713,6 +1715,14 @@ mod tests {
                 Token::U64(8),
                 Token::Str("chunk_length"),
                 Token::U64(3),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "Prio3SumVec",
+                    len: 1,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("NoDifferentialPrivacy"),
+                Token::StructEnd,
                 Token::StructVariantEnd,
                 Token::Str("role"),
                 Token::UnitVariant {

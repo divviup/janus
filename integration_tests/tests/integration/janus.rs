@@ -1,20 +1,30 @@
 use crate::{
     common::{
-        build_test_task, submit_measurements_and_verify_aggregate,
-        submit_measurements_and_verify_aggregate_varying_aggregation_parameter, TestContext,
+        build_test_task, collect_aggregate_result_generic,
+        submit_measurements_and_verify_aggregate,
+        submit_measurements_and_verify_aggregate_varying_aggregation_parameter,
+        submit_measurements_generic, TestContext,
     },
     initialize_rustls,
 };
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
+use janus_core::{
+    test_util::install_test_trace_subscriber,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
+};
 #[cfg(feature = "testcontainer")]
 use janus_integration_tests::janus::JanusContainer;
 use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, TaskParameters};
 #[cfg(feature = "testcontainer")]
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
-use prio::vdaf::dummy;
-use std::time::Duration;
+use prio::{
+    dp::{
+        distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
+    },
+    vdaf::{dummy, prio3::Prio3},
+};
+use std::{iter, time::Duration};
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 #[cfg(feature = "testcontainer")]
@@ -205,6 +215,7 @@ async fn janus_janus_histogram_4_buckets() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
         QueryType::TimeInterval,
     )
@@ -220,7 +231,7 @@ async fn janus_janus_histogram_4_buckets() {
     .await;
 }
 
-/// This test exercises Prio3Sum with Janus as both the leader and the helper.
+/// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_histogram_4_buckets() {
     install_test_trace_subscriber();
@@ -232,6 +243,7 @@ async fn janus_in_process_histogram_4_buckets() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
     ))
     .await;
@@ -315,6 +327,7 @@ async fn janus_janus_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
         QueryType::TimeInterval,
     )
@@ -341,6 +354,7 @@ async fn janus_in_process_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
     ))
     .await;
@@ -368,6 +382,7 @@ async fn janus_in_process_customized_sum_vec() {
             bits: 16,
             length: 15,
             chunk_length: 16,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
     ))
     .await;
@@ -442,4 +457,121 @@ async fn janus_in_process_one_round_with_agg_param_time_interval() {
         &ClientBackend::InProcess,
     )
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_histogram_dp_noise() {
+    static TEST_NAME: &str = "janus_in_process_histogram_dp_noise";
+    const HISTOGRAM_LENGTH: usize = 100;
+    const CHUNK_LENGTH: usize = 10;
+
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3Histogram {
+            length: HISTOGRAM_LENGTH,
+            chunk_length: CHUNK_LENGTH,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::PureDpDiscreteLaplace(
+                PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
+            ),
+        },
+    ))
+    .await;
+    let vdaf = Prio3::new_histogram_multithreaded(2, HISTOGRAM_LENGTH, CHUNK_LENGTH).unwrap();
+
+    let total_measurements: usize = janus_pair
+        .task_parameters
+        .min_batch_size
+        .try_into()
+        .unwrap();
+    let measurements = iter::repeat(0).take(total_measurements).collect::<Vec<_>>();
+    let client_implementation = ClientBackend::InProcess
+        .build(
+            TEST_NAME,
+            &janus_pair.task_parameters,
+            (janus_pair.leader.port(), janus_pair.helper.port()),
+            vdaf.clone(),
+        )
+        .await
+        .unwrap();
+    let before_timestamp = submit_measurements_generic(&measurements, &client_implementation).await;
+    let (report_count, aggregate_result) = collect_aggregate_result_generic(
+        &janus_pair.task_parameters,
+        janus_pair.leader.port(),
+        vdaf,
+        before_timestamp,
+        &(),
+    )
+    .await;
+    assert_eq!(report_count, janus_pair.task_parameters.min_batch_size);
+
+    let mut un_noised_result = [0u128; HISTOGRAM_LENGTH];
+    un_noised_result[0] = report_count.into();
+    // Smoke test: Just confirm that some noise was added. Since epsilon is small, the noise will be
+    // large (drawn from Laplace_Z(20) + Laplace_Z(20)), and it is highly unlikely that all 100
+    // noise values will be zero simultaneously.
+    assert_ne!(aggregate_result, un_noised_result);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_sumvec_dp_noise() {
+    static TEST_NAME: &str = "janus_in_process_sumvec_dp_noise";
+    const VECTOR_LENGTH: usize = 50;
+    const BITS: usize = 2;
+    const CHUNK_LENGTH: usize = 10;
+
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3SumVec {
+            bits: BITS,
+            length: VECTOR_LENGTH,
+            chunk_length: CHUNK_LENGTH,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
+            ),
+        },
+    ))
+    .await;
+    let vdaf = Prio3::new_sum_vec_multithreaded(2, BITS, VECTOR_LENGTH, CHUNK_LENGTH).unwrap();
+
+    let total_measurements: usize = janus_pair
+        .task_parameters
+        .min_batch_size
+        .try_into()
+        .unwrap();
+    let measurements = iter::repeat(vec![0; VECTOR_LENGTH])
+        .take(total_measurements)
+        .collect::<Vec<_>>();
+    let client_implementation = ClientBackend::InProcess
+        .build(
+            TEST_NAME,
+            &janus_pair.task_parameters,
+            (janus_pair.leader.port(), janus_pair.helper.port()),
+            vdaf.clone(),
+        )
+        .await
+        .unwrap();
+    let before_timestamp = submit_measurements_generic(&measurements, &client_implementation).await;
+    let (report_count, aggregate_result) = collect_aggregate_result_generic(
+        &janus_pair.task_parameters,
+        janus_pair.leader.port(),
+        vdaf,
+        before_timestamp,
+        &(),
+    )
+    .await;
+    assert_eq!(report_count, janus_pair.task_parameters.min_batch_size);
+
+    let un_noised_result = [0u128; VECTOR_LENGTH];
+    // Smoke test: Just confirm that some noise was added. Since epsilon is small, the noise will be
+    // large (drawn from Laplace_Z(150) + Laplace_Z(150)), and it is highly unlikely that all 50
+    // noise values will be zero simultaneously.
+    assert_ne!(aggregate_result, un_noised_result);
 }

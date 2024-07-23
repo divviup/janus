@@ -26,7 +26,7 @@ use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     test_util::install_test_trace_subscriber,
     time::MockClock,
-    vdaf::VdafInstance,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
@@ -76,7 +76,7 @@ async fn get_config() {
             r#"{"protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize"]}"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"]}"#,
         )
     );
 }
@@ -1575,6 +1575,7 @@ fn post_task_req_serialization() {
                 bits: 1,
                 length: 5,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
             role: Role::Helper,
             vdaf_verify_key: "encoded".to_owned(),
@@ -1615,7 +1616,7 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3SumVec",
-                len: 3,
+                len: 4,
             },
             Token::Str("bits"),
             Token::U64(1),
@@ -1623,6 +1624,14 @@ fn post_task_req_serialization() {
             Token::U64(5),
             Token::Str("chunk_length"),
             Token::U64(2),
+            Token::Str("dp_strategy"),
+            Token::Struct {
+                name: "Prio3SumVec",
+                len: 1,
+            },
+            Token::Str("dp_strategy"),
+            Token::Str("NoDifferentialPrivacy"),
+            Token::StructEnd,
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {
@@ -1688,6 +1697,7 @@ fn post_task_req_serialization() {
                 bits: 1,
                 length: 5,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
@@ -1732,7 +1742,7 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3SumVec",
-                len: 3,
+                len: 4,
             },
             Token::Str("bits"),
             Token::U64(1),
@@ -1740,6 +1750,14 @@ fn post_task_req_serialization() {
             Token::U64(5),
             Token::Str("chunk_length"),
             Token::U64(2),
+            Token::Str("dp_strategy"),
+            Token::Struct {
+                name: "Prio3SumVec",
+                len: 1,
+            },
+            Token::Str("dp_strategy"),
+            Token::Str("NoDifferentialPrivacy"),
+            Token::StructEnd,
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {
@@ -1833,6 +1851,7 @@ fn task_resp_serialization() {
             bits: 1,
             length: 5,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
         SecretBytes::new(b"vdaf verify key!".to_vec()),
         1,
@@ -1897,7 +1916,7 @@ fn task_resp_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3SumVec",
-                len: 3,
+                len: 4,
             },
             Token::Str("bits"),
             Token::U64(1),
@@ -1905,6 +1924,14 @@ fn task_resp_serialization() {
             Token::U64(5),
             Token::Str("chunk_length"),
             Token::U64(2),
+            Token::Str("dp_strategy"),
+            Token::Struct {
+                name: "Prio3SumVec",
+                len: 1,
+            },
+            Token::Str("dp_strategy"),
+            Token::Str("NoDifferentialPrivacy"),
+            Token::StructEnd,
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {

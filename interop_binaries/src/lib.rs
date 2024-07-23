@@ -2,8 +2,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_aggregator_core::task::{test_util::Task, QueryType};
 #[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::{vdaf_dp_strategies, Prio3FixedPointBoundedL2VecSumBitSize};
-use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
+use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
+use janus_core::{
+    hpke::HpkeKeypair,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
+};
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
     HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
@@ -147,6 +150,7 @@ impl From<VdafInstance> for VdafObject {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy: _,
             } => VdafObject::Prio3SumVec {
                 bits: NumberAsString(bits),
                 length: NumberAsString(length),
@@ -158,6 +162,7 @@ impl From<VdafInstance> for VdafObject {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy: _,
             } => VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: NumberAsString(proofs),
                 bits: NumberAsString(bits),
@@ -168,6 +173,7 @@ impl From<VdafInstance> for VdafObject {
             VdafInstance::Prio3Histogram {
                 length,
                 chunk_length,
+                dp_strategy: _,
             } => VdafObject::Prio3Histogram {
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
@@ -204,6 +210,7 @@ impl From<VdafObject> for VdafInstance {
                 bits: bits.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
 
             VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
@@ -216,6 +223,7 @@ impl From<VdafObject> for VdafInstance {
                 bits: bits.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
 
             VdafObject::Prio3Histogram {
@@ -224,6 +232,7 @@ impl From<VdafObject> for VdafInstance {
             } => VdafInstance::Prio3Histogram {
                 length: length.0,
                 chunk_length: chunk_length.0,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]

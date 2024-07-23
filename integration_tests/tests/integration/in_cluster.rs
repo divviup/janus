@@ -21,7 +21,7 @@ use janus_core::{
         kubernetes::{Cluster, PortForward},
     },
     time::DurationExt,
-    vdaf::VdafInstance,
+    vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_integration_tests::{client::ClientBackend, TaskParameters};
 use janus_messages::{Duration as JanusDuration, TaskId};
@@ -408,6 +408,7 @@ impl InClusterJanusPair {
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 } => Vdaf::SumVec {
                     bits: bits.try_into().unwrap(),
                     length: length.try_into().unwrap(),
@@ -416,6 +417,7 @@ impl InClusterJanusPair {
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 } => Vdaf::Histogram(Histogram::Length {
                     length: length.try_into().unwrap(),
                     chunk_length: Some(chunk_length.try_into().unwrap()),
@@ -566,6 +568,7 @@ async fn in_cluster_histogram() {
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
+            dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
         QueryType::TimeInterval,
     )

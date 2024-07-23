@@ -338,6 +338,7 @@ async fn handle_collection_start(
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Prio3::new_sum_vec(2, bits, length, chunk_length)
@@ -364,6 +365,7 @@ async fn handle_collection_start(
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
@@ -395,6 +397,7 @@ async fn handle_collection_start(
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Prio3::new_histogram(2, length, chunk_length)
@@ -546,6 +549,7 @@ async fn handle_collection_start(
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Prio3::new_sum_vec(2, bits, length, chunk_length)
@@ -572,6 +576,7 @@ async fn handle_collection_start(
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
@@ -603,6 +608,7 @@ async fn handle_collection_start(
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Prio3::new_histogram(2, length, chunk_length)

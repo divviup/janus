@@ -699,6 +699,7 @@ where
                                         bits,
                                         length,
                                         chunk_length: _,
+                                        dp_strategy: _,
                                     } => {
                                         metrics.aggregated_report_share_dimension_histogram.record(
                                             u64::try_from(*bits)
@@ -715,6 +716,7 @@ where
                                         bits,
                                         length,
                                         chunk_length: _,
+                                        dp_strategy: _,
                                     } => {
                                         metrics.aggregated_report_share_dimension_histogram.record(
                                             u64::try_from(*bits)
@@ -732,6 +734,7 @@ where
                                     Prio3Histogram {
                                         length,
                                         chunk_length: _,
+                                        dp_strategy: _,
                                     } => {
                                         metrics.aggregated_report_share_dimension_histogram.record(
                                             u64::try_from(*length).unwrap_or(u64::MAX),

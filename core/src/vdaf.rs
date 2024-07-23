@@ -34,20 +34,50 @@ pub enum Prio3FixedPointBoundedL2VecSumBitSize {
 /// Contains dedicated enums which describe the differential privacy strategies
 /// of a given VDAF. If a VDAF only supports a single strategy, such as for example
 /// `NoDifferentialPrivacy`, then no enum is required.
-#[cfg(feature = "fpvec_bounded_l2")]
 pub mod vdaf_dp_strategies {
-    use derivative::Derivative;
+    use prio::dp::distributions::PureDpDiscreteLaplace;
+    #[cfg(feature = "fpvec_bounded_l2")]
     use prio::dp::distributions::ZCdpDiscreteGaussian;
     use serde::{Deserialize, Serialize};
 
+    /// Differential privacy strategies supported by `Prio3Histogram`.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(tag = "dp_strategy")]
+    pub enum Prio3Histogram {
+        NoDifferentialPrivacy,
+        PureDpDiscreteLaplace(PureDpDiscreteLaplace),
+    }
+
+    impl Default for Prio3Histogram {
+        fn default() -> Self {
+            Self::NoDifferentialPrivacy
+        }
+    }
+
+    /// Differential privacy strategies supported by `Prio3SumVec`.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(tag = "dp_strategy")]
+    pub enum Prio3SumVec {
+        NoDifferentialPrivacy,
+        PureDpDiscreteLaplace(PureDpDiscreteLaplace),
+    }
+
+    impl Default for Prio3SumVec {
+        fn default() -> Self {
+            Self::NoDifferentialPrivacy
+        }
+    }
+
     /// Differential privacy strategies supported by `Prio3FixedPointBoundedL2VecSum`.
-    #[derive(Debug, Derivative, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[cfg(feature = "fpvec_bounded_l2")]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
     #[serde(tag = "dp_strategy")]
     pub enum Prio3FixedPointBoundedL2VecSum {
         NoDifferentialPrivacy,
         ZCdpDiscreteGaussian(ZCdpDiscreteGaussian),
     }
 
+    #[cfg(feature = "fpvec_bounded_l2")]
     impl Default for Prio3FixedPointBoundedL2VecSum {
         fn default() -> Self {
             Self::NoDifferentialPrivacy
@@ -72,6 +102,8 @@ pub enum VdafInstance {
         bits: usize,
         length: usize,
         chunk_length: usize,
+        #[serde(default)]
+        dp_strategy: vdaf_dp_strategies::Prio3SumVec,
     },
     /// Prio3SumVec with additional customizations: a smaller field, multiple proofs, and a
     /// different XOF.
@@ -80,9 +112,16 @@ pub enum VdafInstance {
         bits: usize,
         length: usize,
         chunk_length: usize,
+        #[serde(default)]
+        dp_strategy: vdaf_dp_strategies::Prio3SumVec,
     },
     /// A `Prio3` histogram with `length` buckets in it.
-    Prio3Histogram { length: usize, chunk_length: usize },
+    Prio3Histogram {
+        length: usize,
+        chunk_length: usize,
+        #[serde(default)]
+        dp_strategy: vdaf_dp_strategies::Prio3Histogram,
+    },
     /// A `Prio3` fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPointBoundedL2VecSum {
@@ -143,6 +182,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 bits: *bits as usize,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
             taskprov::VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 bits,
@@ -154,6 +194,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 bits: *bits as usize,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
             taskprov::VdafType::Prio3Histogram {
                 length,
@@ -161,6 +202,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
             } => Ok(Self::Prio3Histogram {
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             }),
             taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
                 bits: *bits as usize,
@@ -223,14 +265,26 @@ macro_rules! vdaf_dispatch_impl_base {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
+                match dp_strategy.clone() {
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
+                        $body
+                    }
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                        _strategy,
+                    ) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = _strategy;
+                        $body
+                    }
+                }
             }
 
             ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
@@ -238,6 +292,7 @@ macro_rules! vdaf_dispatch_impl_base {
                 bits,
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let $vdaf =
                     janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
@@ -254,21 +309,42 @@ macro_rules! vdaf_dispatch_impl_base {
                 >;
                 const $VERIFY_KEY_LEN: usize =
                     ::janus_core::vdaf::VERIFY_KEY_LENGTH_HMACSHA256_AES128;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
+                match dp_strategy.clone() {
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
+                        $body
+                    }
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                        _strategy,
+                    ) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = _strategy;
+                        $body
+                    }
+                }
             }
 
             ::janus_core::vdaf::VdafInstance::Prio3Histogram {
                 length,
                 chunk_length,
+                dp_strategy,
             } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *length, *chunk_length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
+                match dp_strategy.clone() {
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy => {
+                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                        let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
+                        $body
+                    }
+                    ::janus_core::vdaf::vdaf_dp_strategies::Prio3Histogram::PureDpDiscreteLaplace(_strategy) => {
+                        type $DpStrategy = ::prio::dp::distributions::PureDpDiscreteLaplace;
+                        let $dp_strategy = _strategy;
+                        $body
+                    }
+                }
             }
 
             ::janus_core::vdaf::VdafInstance::Poplar1 { bits } => {
@@ -536,8 +612,16 @@ macro_rules! vdaf_dispatch {
 
 #[cfg(test)]
 mod tests {
-    use super::VdafInstance;
+    #[cfg(feature = "fpvec_bounded_l2")]
+    use crate::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
+    use crate::vdaf::{vdaf_dp_strategies, VdafInstance};
     use assert_matches::assert_matches;
+    #[cfg(feature = "fpvec_bounded_l2")]
+    use prio::dp::{distributions::ZCdpDiscreteGaussian, ZCdpBudget};
+    use prio::dp::{
+        distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
+        DifferentialPrivacyStrategy, PureDpBudget, Rational,
+    };
     use serde_test::{assert_tokens, Token};
 
     #[test]
@@ -569,12 +653,13 @@ mod tests {
                 bits: 1,
                 length: 8,
                 chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3SumVec",
-                    len: 3,
+                    len: 4,
                 },
                 Token::Str("bits"),
                 Token::U64(1),
@@ -582,6 +667,63 @@ mod tests {
                 Token::U64(8),
                 Token::Str("chunk_length"),
                 Token::U64(3),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "Prio3SumVec",
+                    len: 1,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("NoDifferentialPrivacy"),
+                Token::StructEnd,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3SumVec {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                    PureDpDiscreteLaplace::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(2u128, 1u128).unwrap()).unwrap(),
+                    ),
+                ),
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVec",
+                    len: 4,
+                },
+                Token::Str("bits"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "DiscreteLaplaceDpStrategy",
+                    len: 2,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("PureDpDiscreteLaplace"),
+                Token::Str("budget"),
+                Token::Struct {
+                    name: "PureDpBudget",
+                    len: 1,
+                },
+                Token::Str("epsilon"),
+                Token::Tuple { len: 2 },
+                Token::Seq { len: Some(1) },
+                Token::U32(2),
+                Token::SeqEnd,
+                Token::Seq { len: Some(1) },
+                Token::U32(1),
+                Token::SeqEnd,
+                Token::TupleEnd,
+                Token::StructEnd,
+                Token::StructEnd,
                 Token::StructVariantEnd,
             ],
         );
@@ -591,12 +733,13 @@ mod tests {
                 bits: 1,
                 length: 8,
                 chunk_length: 3,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3SumVecField64MultiproofHmacSha256Aes128",
-                    len: 4,
+                    len: 5,
                 },
                 Token::Str("proofs"),
                 Token::U8(2),
@@ -606,6 +749,14 @@ mod tests {
                 Token::U64(8),
                 Token::Str("chunk_length"),
                 Token::U64(3),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "Prio3SumVec",
+                    len: 1,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("NoDifferentialPrivacy"),
+                Token::StructEnd,
                 Token::StructVariantEnd,
             ],
         );
@@ -613,17 +764,26 @@ mod tests {
             &VdafInstance::Prio3Histogram {
                 length: 6,
                 chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3Histogram",
-                    len: 2,
+                    len: 3,
                 },
                 Token::Str("length"),
                 Token::U64(6),
                 Token::Str("chunk_length"),
                 Token::U64(2),
+                Token::Str("dp_strategy"),
+                Token::Struct {
+                    name: "Prio3Histogram",
+                    len: 1,
+                },
+                Token::Str("dp_strategy"),
+                Token::Str("NoDifferentialPrivacy"),
+                Token::StructEnd,
                 Token::StructVariantEnd,
             ],
         );
@@ -667,15 +827,84 @@ mod tests {
                 variant: "FakeFailsPrepStep",
             }],
         );
+    }
 
-        // Backwards compatibility
+    #[cfg(feature = "fpvec_bounded_l2")]
+    #[test]
+    fn vdaf_deserialization_backwards_compatibility_fpvec_bounded_l2() {
+        assert_eq!(
+            serde_yaml::from_str::<VdafInstance>(
+                "---
+!Prio3FixedPointBoundedL2VecSum
+bitsize: BitSize16
+dp_strategy:
+    dp_strategy: ZCdpDiscreteGaussian
+    budget:
+        epsilon:
+        - - 1
+        - - 2
+length: 10"
+            )
+            .unwrap(),
+            VdafInstance::Prio3FixedPointBoundedL2VecSum {
+                bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
+                dp_strategy:
+                    vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(
+                        ZCdpDiscreteGaussian::from_budget(ZCdpBudget::new(
+                            Rational::from_unsigned(1u128, 2u128).unwrap(),
+                        )),
+                    ),
+                length: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn vdaf_deserialization_backwards_compatibility() {
         assert_matches!(
             serde_yaml::from_str(
                 "---
 !Prio3Sum
-  bits: 12"
+bits: 12"
             ),
             Ok(VdafInstance::Prio3Sum { bits: 12 })
+        );
+        assert_matches!(
+            serde_yaml::from_str(
+                "---
+!Prio3Histogram
+length: 4
+chunk_length: 2"
+            ),
+            Ok(VdafInstance::Prio3Histogram {
+                length: 4,
+                chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
+            })
+        );
+        assert_eq!(
+            serde_yaml::from_str::<VdafInstance>(
+                "---
+!Prio3SumVec
+bits: 2
+length: 2
+chunk_length: 2
+dp_strategy:
+    dp_strategy: PureDpDiscreteLaplace
+    budget:
+        epsilon: [[1], [1]]"
+            )
+            .unwrap(),
+            VdafInstance::Prio3SumVec {
+                bits: 2,
+                length: 2,
+                chunk_length: 2,
+                dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                    DiscreteLaplaceDpStrategy::from_budget(
+                        PureDpBudget::new(Rational::from_unsigned(1u128, 1u128).unwrap()).unwrap()
+                    ),
+                ),
+            }
         );
     }
 }

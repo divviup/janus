@@ -321,6 +321,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
@@ -335,6 +336,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
@@ -351,6 +353,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
@@ -431,6 +434,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
@@ -452,6 +456,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     bits,
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
@@ -473,6 +478,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
+                    dp_strategy: _,
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
