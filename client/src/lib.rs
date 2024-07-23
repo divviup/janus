@@ -713,7 +713,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// Send a DAP upload request via OHTTP, if the client is configured to use it, or directly if
     /// not. This is only intended for DAP uploads and so does not handle response bodies.
     #[cfg(feature = "ohttp")]
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, request_body), err)]
     async fn upload_with_ohttp(
         &self,
         upload_endpoint: &Url,
