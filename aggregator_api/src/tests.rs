@@ -128,7 +128,7 @@ async fn get_task_ids() {
 
     // Verify: the lower_bound is respected, if specified.
     assert_response!(
-        get(&format!(
+        get(format!(
             "/task_ids?pagination_token={}",
             task_ids.first().unwrap()
         ))
@@ -143,7 +143,7 @@ async fn get_task_ids() {
     // Verify: if the lower bound is large enough, nothing is returned.
     // (also verifies the "last" response will not include a pagination token)
     assert_response!(
-        get(&format!(
+        get(format!(
             "/task_ids?pagination_token={}",
             task_ids.last().unwrap()
         ))
@@ -570,7 +570,7 @@ async fn get_task(#[case] role: Role) {
 
     // Verify: getting the task returns the expected result.
     let want_task_resp = TaskResp::try_from(&task).unwrap();
-    let mut conn = get(&format!("/tasks/{}", task.id()))
+    let mut conn = get(format!("/tasks/{}", task.id()))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .run_async(&handler)
@@ -589,7 +589,7 @@ async fn get_task(#[case] role: Role) {
 
     // Verify: getting a nonexistent task returns NotFound.
     assert_response!(
-        get(&format!("/tasks/{}", random::<TaskId>()))
+        get(format!("/tasks/{}", random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -600,7 +600,7 @@ async fn get_task(#[case] role: Role) {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        get(&format!("/tasks/{}", task.id()))
+        get(format!("/tasks/{}", task.id()))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -633,7 +633,7 @@ async fn delete_task() {
 
     // Verify: deleting a task succeeds (and actually deletes the task).
     assert_response!(
-        delete(&format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -653,7 +653,7 @@ async fn delete_task() {
 
     // Verify: deleting a task twice returns NoContent.
     assert_response!(
-        delete(&format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -664,7 +664,7 @@ async fn delete_task() {
 
     // Verify: deleting an arbitrary nonexistent task ID returns NoContent.
     assert_response!(
-        delete(&format!("/tasks/{}", &random::<TaskId>()))
+        delete(format!("/tasks/{}", &random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -675,7 +675,7 @@ async fn delete_task() {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        delete(&format!("/tasks/{}", &task_id))
+        delete(format!("/tasks/{}", &task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -703,7 +703,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with empty body does nothing.
     let want_task_resp = TaskResp::try_from(&task).unwrap();
-    let mut conn = patch(&format!("/tasks/{}", task.id()))
+    let mut conn = patch(format!("/tasks/{}", task.id()))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_body("{}")
@@ -730,7 +730,7 @@ async fn patch_task(#[case] role: Role) {
     );
 
     // Verify: patching the task with a null task expiration returns the expected result.
-    let mut conn = patch(&format!("/tasks/{}", task_id))
+    let mut conn = patch(format!("/tasks/{}", task_id))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_body(r#"{"task_expiration": null}"#)
@@ -755,7 +755,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with a task expiration returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000));
-    let mut conn = patch(&format!("/tasks/{}", task_id))
+    let mut conn = patch(format!("/tasks/{}", task_id))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_body(r#"{"task_expiration": 2000}"#)
@@ -780,7 +780,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching a nonexistent task returns NotFound.
     assert_response!(
-        patch(&format!("/tasks/{}", random::<TaskId>()))
+        patch(format!("/tasks/{}", random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_body("{}")
@@ -792,7 +792,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        patch(&format!("/tasks/{}", task_id))
+        patch(format!("/tasks/{}", task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_body("{}")
             .run_async(&handler)
@@ -824,7 +824,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: requesting metrics on a fresh task returns zeroes.
     assert_response!(
-        get(&format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -847,7 +847,7 @@ async fn get_task_upload_metrics() {
     .await
     .unwrap();
     assert_response!(
-        get(&format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -861,7 +861,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
     assert_response!(
-        get(&format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
+        get(format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -872,7 +872,7 @@ async fn get_task_upload_metrics() {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        get(&format!("/tasks/{}/metrics/uploads", &task_id))
+        get(format!("/tasks/{}/metrics/uploads", &task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -1032,7 +1032,7 @@ async fn get_global_hpke_config() {
         (keypair1, HpkeKeyState::Pending),
         (keypair2, HpkeKeyState::Active),
     ] {
-        let mut conn = get(&format!("/hpke_configs/{}", key.config().id()))
+        let mut conn = get(format!("/hpke_configs/{}", key.config().id()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1211,7 +1211,7 @@ async fn patch_global_hpke_config() {
     .await
     .unwrap();
 
-    let conn = patch(&format!("/hpke_configs/{}", keypair.config().id()))
+    let conn = patch(format!("/hpke_configs/{}", keypair.config().id()))
         .with_request_body(serde_json::to_vec(&req).unwrap())
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
@@ -1282,7 +1282,7 @@ async fn delete_global_hpke_config() {
     .await
     .unwrap();
 
-    let conn = delete(&format!("/hpke_configs/{}", keypair.config().id()))
+    let conn = delete(format!("/hpke_configs/{}", keypair.config().id()))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_header("Content-Type", CONTENT_TYPE)

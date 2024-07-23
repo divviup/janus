@@ -72,7 +72,7 @@ async fn task_specific_hpke_config() {
     );
 
     // Unknown task ID provided
-    let mut test_conn = get(&format!("/hpke_config?task_id={unknown_task_id}"))
+    let mut test_conn = get(format!("/hpke_config?task_id={unknown_task_id}"))
         .run_async(&handler)
         .await;
     // Expected status and problem type should be per the protocol
@@ -89,7 +89,7 @@ async fn task_specific_hpke_config() {
     );
 
     // Recognized task ID provided
-    let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+    let mut test_conn = get(format!("/hpke_config?task_id={}", task.id()))
         .run_async(&handler)
         .await;
 
@@ -290,7 +290,7 @@ async fn global_hpke_config_with_taskprov() {
         .await
         .unwrap();
 
-    let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+    let mut test_conn = get(format!("/hpke_config?task_id={}", task.id()))
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -343,7 +343,7 @@ async fn hpke_config_cors_headers() {
     // Check for appropriate CORS headers in response to a preflight request.
     let test_conn = TestConn::build(
         trillium::Method::Options,
-        &format!("/hpke_config?task_id={}", task.id()),
+        format!("/hpke_config?task_id={}", task.id()),
         (),
     )
     .with_request_header(KnownHeaderName::Origin, "https://example.com/")
@@ -359,7 +359,7 @@ async fn hpke_config_cors_headers() {
     );
 
     // Check for appropriate CORS headers with a simple GET request.
-    let test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+    let test_conn = get(format!("/hpke_config?task_id={}", task.id()))
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
         .run_async(&handler)
         .await;
@@ -429,7 +429,7 @@ async fn require_global_hpke_keys() {
         .await
         .unwrap();
 
-    let mut test_conn = get(&format!("/hpke_config?task_id={}", &random::<TaskId>()))
+    let mut test_conn = get(format!("/hpke_config?task_id={}", &random::<TaskId>()))
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));

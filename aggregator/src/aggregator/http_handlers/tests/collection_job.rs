@@ -495,7 +495,7 @@ async fn collection_job_post_request_no_such_collection_job() {
         .task
         .collector_auth_token()
         .request_authentication();
-    let test_conn = post(&format!(
+    let test_conn = post(format!(
         "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
         test_case.task.id()
     ))
