@@ -18,7 +18,7 @@ fn successful_collection_time_interval() {
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 4,
-            max_batch_size: Some(6),
+            max_batch_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
@@ -44,8 +44,12 @@ fn successful_collection_time_interval() {
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSize(janus_messages::Query::new_fixed_size(
-                    FixedSizeQuery::CurrentBatch,
+                query: Query::TimeInterval(janus_messages::Query::new_time_interval(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1_699_999_200),
+                        Duration::from_seconds(3600),
+                    )
+                    .unwrap(),
                 )),
             },
             Op::CollectionJobDriver,
@@ -67,7 +71,11 @@ fn successful_collection_time_interval() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(janus_messages::Query::new_time_interval(
-                    Interval::new(START_TIME, Duration::from_seconds(3600)).unwrap(),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1_699_999_200),
+                        Duration::from_seconds(3600),
+                    )
+                    .unwrap(),
                 )),
             },
             Op::CollectionJobDriver,
