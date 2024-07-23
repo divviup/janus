@@ -515,3 +515,63 @@ async fn janus_in_process_histogram_dp_noise() {
     // noise values will be zero simultaneously.
     assert_ne!(aggregate_result, un_noised_result);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_sumvec_dp_noise() {
+    static TEST_NAME: &str = "janus_in_process_sumvec_dp_noise";
+    const VECTOR_LENGTH: usize = 50;
+    const BITS: usize = 2;
+    const CHUNK_LENGTH: usize = 10;
+
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3SumVec {
+            bits: BITS,
+            length: VECTOR_LENGTH,
+            chunk_length: CHUNK_LENGTH,
+            dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
+                PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
+            ),
+        },
+    ))
+    .await;
+    let vdaf = Prio3::new_sum_vec_multithreaded(2, BITS, VECTOR_LENGTH, CHUNK_LENGTH).unwrap();
+
+    let total_measurements: usize = janus_pair
+        .task_parameters
+        .min_batch_size
+        .try_into()
+        .unwrap();
+    let measurements = iter::repeat(vec![0; VECTOR_LENGTH])
+        .take(total_measurements)
+        .collect::<Vec<_>>();
+    let client_implementation = ClientBackend::InProcess
+        .build(
+            TEST_NAME,
+            &janus_pair.task_parameters,
+            (janus_pair.leader.port(), janus_pair.helper.port()),
+            vdaf.clone(),
+        )
+        .await
+        .unwrap();
+    let before_timestamp = submit_measurements_generic(&measurements, &client_implementation).await;
+    let (report_count, aggregate_result) = collect_aggregate_result_generic(
+        &janus_pair.task_parameters,
+        janus_pair.leader.port(),
+        vdaf,
+        before_timestamp,
+        &(),
+    )
+    .await;
+    assert_eq!(report_count, janus_pair.task_parameters.min_batch_size);
+
+    let un_noised_result = [0u128; VECTOR_LENGTH];
+    // Smoke test: Just confirm that some noise was added. Since epsilon is small, the noise will be
+    // large (drawn from Laplace_Z(150) + Laplace_Z(150)), and it is highly unlikely that all 50
+    // noise values will be zero simultaneously.
+    assert_ne!(aggregate_result, un_noised_result);
+}
