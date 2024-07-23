@@ -9,8 +9,8 @@ RUN cargo install sqlx-cli \
 FROM alpine:3.20.1
 ARG SQLX_VERSION=unknown
 ARG GIT_REVISION=unknown
-LABEL revision ${GIT_REVISION}
-LABEL sqlx_version ${SQLX_VERSION}
+LABEL revision=${GIT_REVISION}
+LABEL sqlx_version=${SQLX_VERSION}
 COPY --from=builder /usr/local/cargo/bin/sqlx /sqlx
 COPY db /migrations
 ENTRYPOINT ["/sqlx"]

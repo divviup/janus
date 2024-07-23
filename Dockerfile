@@ -43,7 +43,7 @@ RUN cargo build --release -p janus_aggregator --features=prometheus,otlp
 FROM alpine:3.20.1 AS final
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
-LABEL revision ${GIT_REVISION}
+LABEL revision=${GIT_REVISION}
 COPY --from=builder /src/target/release/janus_aggregator /janus_aggregator
 RUN ln -s /janus_aggregator /aggregator && \
     ln -s /janus_aggregator /garbage_collector && \
