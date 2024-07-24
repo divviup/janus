@@ -36,7 +36,26 @@ impl Arbitrary for Config {
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        empty_shrinker()
+        let mut choices = Vec::with_capacity(3);
+        if self.max_batch_size.is_some() {
+            choices.push(Self {
+                max_batch_size: None,
+                ..self.clone()
+            });
+        }
+        if self.batch_time_window_size.is_some() {
+            choices.push(Self {
+                batch_time_window_size: None,
+                ..self.clone()
+            });
+        }
+        if self.report_expiry_age.is_some() {
+            choices.push(Self {
+                report_expiry_age: None,
+                ..self.clone()
+            });
+        }
+        Box::new(choices.into_iter())
     }
 }
 
