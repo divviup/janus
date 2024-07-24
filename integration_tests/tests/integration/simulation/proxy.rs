@@ -4,6 +4,7 @@ use std::{
 };
 
 use regex::bytes::Regex;
+use tracing::error;
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
 
@@ -121,6 +122,7 @@ impl<H: Handler> InspectHandler<H> {
         let mut conn = self.inner.before_send(conn).await;
         if conn.state::<InspectMarker>().is_some() {
             if conn.status() == Some(Status::Conflict) {
+                error!("409 Conflict response");
                 *self.failure.lock().unwrap() = true;
             }
             if conn.path().ends_with("/aggregate_shares") {
@@ -130,6 +132,7 @@ impl<H: Handler> InspectHandler<H> {
                         Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
                     });
                     if batch_mismatch_regex.is_match(bytes) {
+                        error!("batch mismatch response");
                         *self.failure.lock().unwrap() = true;
                     }
                 })

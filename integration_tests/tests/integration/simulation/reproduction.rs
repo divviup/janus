@@ -1,4 +1,4 @@
-use janus_core::test_util::install_test_trace_subscriber;
+use janus_core::{test_util::install_test_trace_subscriber, time::TimeExt};
 use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
@@ -218,6 +218,82 @@ fn repro_slow_uploads_with_max_batch_size() {
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
+        ]),
+    };
+    assert!(!Simulation::run(input).is_failure());
+}
+
+#[test]
+/// Regression test for https://github.com/divviup/janus/issues/2442.
+fn repro_gc_changes_aggregation_job_retry_time_interval() {
+    install_test_trace_subscriber();
+
+    let input = Input {
+        is_fixed_size: false,
+        config: Config {
+            time_precision: Duration::from_seconds(3600),
+            min_batch_size: 1,
+            max_batch_size: None,
+            batch_time_window_size: None,
+            report_expiry_age: Some(Duration::from_seconds(7200)),
+            min_aggregation_job_size: 2,
+            max_aggregation_job_size: 2,
+        },
+        ops: Vec::from([
+            Op::Upload {
+                report_time: START_TIME,
+            },
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(3600),
+            },
+            Op::Upload {
+                report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+            },
+            Op::AggregationJobCreator,
+            Op::AggregationJobDriverResponseError,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(5400),
+            },
+            Op::LeaderGarbageCollector,
+            Op::AggregationJobDriver,
+        ]),
+    };
+    assert!(!Simulation::run(input).is_failure());
+}
+
+#[test]
+/// Regression test for https://github.com/divviup/janus/issues/2442.
+fn repro_gc_changes_aggregation_job_retry_fixed_size() {
+    install_test_trace_subscriber();
+
+    let input = Input {
+        is_fixed_size: true,
+        config: Config {
+            time_precision: Duration::from_seconds(3600),
+            min_batch_size: 1,
+            max_batch_size: None,
+            batch_time_window_size: None,
+            report_expiry_age: Some(Duration::from_seconds(7200)),
+            min_aggregation_job_size: 2,
+            max_aggregation_job_size: 2,
+        },
+        ops: Vec::from([
+            Op::Upload {
+                report_time: START_TIME,
+            },
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(3600),
+            },
+            Op::Upload {
+                report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+            },
+            Op::AggregationJobCreator,
+            Op::AggregationJobDriverResponseError,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(5400),
+            },
+            Op::LeaderGarbageCollector,
+            Op::AggregationJobDriver,
         ]),
     };
     assert!(!Simulation::run(input).is_failure());

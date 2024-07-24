@@ -262,7 +262,7 @@ impl Components {
             ),
         );
         let aggregation_job_driver_stepper_cb = Box::new(
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&leader.datastore), 1),
+            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&leader.datastore), 2),
         );
 
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
@@ -278,7 +278,7 @@ impl Components {
                 StdDuration::from_secs(600),
             ));
         let collection_job_driver_stepper_cb = Box::new(
-            collection_job_driver.make_job_stepper_callback(Arc::clone(&leader.datastore), 1),
+            collection_job_driver.make_job_stepper_callback(Arc::clone(&leader.datastore), 2),
         );
 
         let collector = Collector::builder(

@@ -10,6 +10,7 @@ use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use divviup_client::{Decode, Encode};
 use http::header::CONTENT_TYPE;
+use janus_aggregator::aggregator;
 use janus_aggregator_core::{
     datastore::models::AggregatorRole,
     task::{test_util::Task, AggregatorTask},
@@ -21,7 +22,7 @@ use janus_core::{
     http::HttpErrorResponse,
     retries::retry_http_request,
     test_util::runtime::TestRuntimeManager,
-    time::{MockClock, TimeExt},
+    time::{Clock, MockClock, TimeExt},
     vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
@@ -79,7 +80,7 @@ impl Simulation {
             for op in input.ops.iter() {
                 let span = info_span!("operation", op = ?op);
                 let timeout_result = timeout(StdDuration::from_secs(15), async {
-                    info!("starting operation");
+                    info!(time = ?simulation.state.clock.now(), "starting operation");
                     let result = match op {
                         Op::AdvanceTime { amount } => simulation.execute_advance_time(amount).await,
                         Op::Upload { report_time } => simulation.execute_upload(report_time).await,
@@ -269,8 +270,13 @@ impl Simulation {
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
         };
+        debug!(count = leases.len(), "acquired aggregation jobs");
         for lease in leases {
             if let Err(error) = (self.components.aggregation_job_driver_stepper_cb)(lease).await {
+                if let aggregator::Error::Http(_) = error {
+                    warn!(?error, "aggregation job driver error");
+                    return ControlFlow::Continue(());
+                }
                 error!(?error, "aggregation job driver error");
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
@@ -300,8 +306,13 @@ impl Simulation {
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
         };
+        debug!(count = leases.len(), "acquired collection jobs");
         for lease in leases {
             if let Err(error) = (self.components.collection_job_driver_stepper_cb)(lease).await {
+                if let aggregator::Error::Http(_) = error {
+                    warn!(?error, "collection job driver error");
+                    return ControlFlow::Continue(());
+                }
                 error!(?error, "collection job driver error");
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
