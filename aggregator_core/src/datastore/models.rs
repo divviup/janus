@@ -320,6 +320,77 @@ impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
     }
 }
 
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
+pub struct HelperStoredReport<const SEED_SIZE: usize, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+{
+    task_id: TaskId,
+    metadata: ReportMetadata,
+    #[derivative(Debug = "ignore")]
+    public_share: A::PublicShare,
+    #[derivative(Debug = "ignore")]
+    helper_encrypted_input_share: HpkeCiphertext,
+}
+
+impl<const SEED_SIZE: usize, A> HelperStoredReport<SEED_SIZE, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+{
+    pub fn new(
+        task_id: TaskId,
+        metadata: ReportMetadata,
+        public_share: A::PublicShare,
+        helper_encrypted_input_share: HpkeCiphertext,
+    ) -> Self {
+        Self {
+            task_id,
+            metadata,
+            public_share,
+            helper_encrypted_input_share,
+        }
+    }
+
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    pub fn metadata(&self) -> &ReportMetadata {
+        &self.metadata
+    }
+
+    pub fn public_share(&self) -> &A::PublicShare {
+        &self.public_share
+    }
+
+    pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
+        &self.helper_encrypted_input_share
+    }
+}
+
+impl<const SEED_SIZE: usize, A> PartialEq for HelperStoredReport<SEED_SIZE, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A::InputShare: PartialEq,
+    A::PublicShare: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.task_id == other.task_id
+            && self.metadata == other.metadata
+            && self.public_share == other.public_share
+            && self.helper_encrypted_input_share == other.helper_encrypted_input_share
+    }
+}
+
+impl<const SEED_SIZE: usize, A> Eq for HelperStoredReport<SEED_SIZE, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A::InputShare: Eq,
+    A::PublicShare: PartialEq,
+{
+}
+
 /// AggregatorRole corresponds to the `AGGREGATOR_ROLE` enum in the schema.
 #[derive(Clone, Debug, ToSql, FromSql)]
 #[postgres(name = "aggregator_role")]

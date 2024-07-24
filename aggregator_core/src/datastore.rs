@@ -4,8 +4,8 @@ use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+    GlobalHpkeKeypair, HelperStoredReport, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken,
+    OutstandingBatch, ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
 };
 #[cfg(feature = "test-util")]
@@ -1683,6 +1683,58 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* extensions */ &encoded_extensions,
                     /* public_share */ &encoded_public_share,
                     /* leader_input_share */ &encoded_leader_share,
+                    /* helper_encrypted_input_share */ &encoded_helper_share,
+                    /* created_at */ &now,
+                    /* updated_at */ &now,
+                    /* updated_by */ &self.name,
+                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                ],
+            )
+            .await?,
+        )
+    }
+
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn put_helper_client_report<const SEED_SIZE: usize, A>(
+        &self,
+        report: &HelperStoredReport<SEED_SIZE, A>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+    {
+        let task_info = match self.task_info_for(report.task_id()).await? {
+            Some(task_info) => task_info,
+            None => return Err(Error::MutationTargetNotFound),
+        };
+        let now = self.clock.now().as_naive_date_time()?;
+
+        let encoded_public_share = report.public_share().get_encoded()?;
+        let encoded_helper_share = report.helper_encrypted_input_share().get_encoded()?;
+
+        let stmt = self
+            .prepare_cached(
+                "-- put_client_report()
+INSERT INTO client_reports (
+    task_id, report_id, client_timestamp, public_share,
+    helper_encrypted_input_share, created_at, updated_at,
+    updated_by
+)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)",
+            )
+            .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* report_id */ report.metadata().id().as_ref(),
+                    /* client_timestamp */
+                    &report.metadata().time().as_naive_date_time()?,
+                    /* public_share */ &encoded_public_share,
                     /* helper_encrypted_input_share */ &encoded_helper_share,
                     /* created_at */ &now,
                     /* updated_at */ &now,

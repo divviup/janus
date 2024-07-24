@@ -16,8 +16,8 @@ use janus_core::{
 use janus_messages::{
     codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-    AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
-    HpkeConfigList, Report, TaskId,
+    AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, Collection,
+    CollectionJobId, CollectionReq, HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter, Unit},
@@ -95,6 +95,11 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             )
             .with_task_id(task_id)
             .with_aggregation_job_id(aggregation_job_id),
+        ),
+        Error::AbandonedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
+            &ProblemDocument::new("owie!", "ouchie!", Status::InternalServerError)
+                .with_task_id(task_id)
+                .with_aggregation_job_id(aggregation_job_id),
         ),
         Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
         Error::AbandonedCollectionJob(task_id, collection_job_id) => conn.with_problem_document(
@@ -369,6 +374,12 @@ struct HpkeConfigQuery {
     task_id: Option<String>,
 }
 
+/// Deserialization helper struct to extract a "step" parameter from a query string.
+#[derive(Deserialize)]
+struct StepQuery {
+    step: AggregationJobStep,
+}
+
 const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";
 
 /// API handler for the "/hpke_config" GET endpoint.
@@ -472,6 +483,9 @@ async fn aggregation_jobs_get<C: Clock>(
     State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(Status, Option<EncodedBody<AggregationJobResp>>), Error> {
     let task_id = parse_task_id(conn)?;
+    let step = serde_urlencoded::from_str::<StepQuery>(conn.querystring())
+        .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?
+        .step;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
@@ -479,6 +493,7 @@ async fn aggregation_jobs_get<C: Clock>(
         .cancel_on_disconnect(aggregator.handle_get_aggregation_job(
             &task_id,
             &aggregation_job_id,
+            step,
             auth_token,
             taskprov_task_config.as_ref(),
         ))
@@ -508,16 +523,15 @@ async fn aggregation_jobs_put<C: Clock>(
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_init(
-            &task_id,
-            &aggregation_job_id,
-            &body,
-            auth_token,
-            taskprov_task_config.as_ref(),
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+    conn.cancel_on_disconnect(aggregator.handle_aggregate_init(
+        &task_id,
+        &aggregation_job_id,
+        &body,
+        auth_token,
+        taskprov_task_config.as_ref(),
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
 
     Ok(Status::Created)
 }
@@ -526,7 +540,7 @@ async fn aggregation_jobs_put<C: Clock>(
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Status, Error> {
+) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
@@ -544,7 +558,7 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(Status::Accepted)
+    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
