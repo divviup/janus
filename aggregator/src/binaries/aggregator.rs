@@ -371,9 +371,9 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
-    /// Defines the number of shards to break report counters into. Increasing this value will
-    /// reduce the amount of database contention during report uploads, while increasing the cost
-    /// of getting task metrics.
+    /// Defines the number of shards to break report & aggregation metric counters into. Increasing
+    /// this value will reduce the amount of database contention during report uploads &
+    /// aggregations, while increasing the cost of getting task metrics.
     #[serde(default = "default_task_counter_shard_count")]
     pub task_counter_shard_count: u64,
 

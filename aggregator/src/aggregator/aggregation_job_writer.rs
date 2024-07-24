@@ -9,7 +9,7 @@ use janus_aggregator_core::{
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
             ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-            ReportAggregationState,
+            ReportAggregationState, TaskAggregationCounter,
         },
         Error, Transaction,
     },
@@ -174,7 +174,8 @@ where
     /// will be written with a `Failed(BatchCollected)` state.
     ///
     /// A map from aggregation job ID to the associated preparation responses (if any) will be
-    /// returned. In the case that a report aggregation was unaggregatable, these preparation
+    /// returned, along with aggregation counters indicating occurrences of aggregation-related
+    /// events. In the case that a report aggregation was unaggregatable, these preparation
     /// responses will be updated from the preparation responses originally included in the given
     /// report aggregations.
     #[tracing::instrument(
@@ -186,7 +187,13 @@ where
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
-    ) -> Result<HashMap<AggregationJobId, Vec<PrepareResp>>, Error>
+    ) -> Result<
+        (
+            HashMap<AggregationJobId, Vec<PrepareResp>>,
+            TaskAggregationCounter,
+        ),
+        Error,
+    >
     where
         C: Clock,
         A: Send + Sync,
@@ -242,22 +249,25 @@ where
             }));
         try_join!(write_agg_jobs_future, write_batch_aggs_future)?;
 
-        Ok(state
-            .by_aggregation_job
-            .into_iter()
-            .map(|(agg_job_id, agg_job_info)| {
-                (
-                    agg_job_id,
-                    agg_job_info
-                        .report_aggregations
-                        .iter()
-                        .map(AsRef::as_ref)
-                        .filter_map(RA::Borrowed::last_prep_resp)
-                        .cloned()
-                        .collect(),
-                )
-            })
-            .collect())
+        Ok((
+            state
+                .by_aggregation_job
+                .into_iter()
+                .map(|(agg_job_id, agg_job_info)| {
+                    (
+                        agg_job_id,
+                        agg_job_info
+                            .report_aggregations
+                            .iter()
+                            .map(AsRef::as_ref)
+                            .filter_map(RA::Borrowed::last_prep_resp)
+                            .cloned()
+                            .collect(),
+                    )
+                })
+                .collect(),
+            state.counters,
+        ))
     }
 
     fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
@@ -431,6 +441,7 @@ where
     batch_aggregation_ord: u64,
     by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>>,
     batch_aggregations: HashMap<Q::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, Q, A>)>,
+    counters: TaskAggregationCounter,
 }
 
 /// An aggregation job and its accompanying report aggregations.
@@ -480,8 +491,9 @@ where
                 return Ok(Self {
                     writer,
                     batch_aggregation_ord: 0,
-                    by_aggregation_job: HashMap::new(),
-                    batch_aggregations: HashMap::new(),
+                    by_aggregation_job: HashMap::default(),
+                    batch_aggregations: HashMap::default(),
+                    counters: TaskAggregationCounter::default(),
                 });
             }
         };
@@ -541,6 +553,7 @@ where
             batch_aggregation_ord,
             by_aggregation_job,
             batch_aggregations,
+            counters: TaskAggregationCounter::default(),
         })
     }
 
@@ -650,6 +663,7 @@ where
                         .get_mut(*ra_idx)
                         .unwrap();
 
+                    let mut is_finished = false;
                     let ra_batch_aggregation = BatchAggregation::new(
                         *self.writer.task.id(),
                         batch_identifier.clone(),
@@ -657,6 +671,7 @@ where
                         self.batch_aggregation_ord,
                         Interval::from_time(report_aggregation.time())?,
                         if let Some(output_share) = report_aggregation.is_finished() {
+                            is_finished = true;
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(output_share.clone().into()),
                                 report_count: 1,
@@ -679,121 +694,126 @@ where
 
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
-                            self.writer.update_metrics(|metrics| {
-                                metrics.report_aggregation_success_counter.add(1, &[]);
+                            if is_finished {
+                                self.counters.increment_success();
+                                self.writer.update_metrics(|metrics| {
+                                    metrics.report_aggregation_success_counter.add(1, &[]);
 
-                                use VdafInstance::*;
-                                match self.writer.task.vdaf() {
-                                    Prio3Count => metrics
-                                        .aggregated_report_share_dimension_histogram
-                                        .record(1, &[KeyValue::new("type", "Prio3Count")]),
-
-                                    Prio3Sum { bits } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*bits).unwrap_or(u64::MAX),
-                                            &[KeyValue::new("type", "Prio3Sum")],
-                                        )
-                                    }
-
-                                    Prio3SumVec {
-                                        bits,
-                                        length,
-                                        chunk_length: _,
-                                        dp_strategy: _,
-                                    } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*bits)
-                                                .unwrap_or(u64::MAX)
-                                                .saturating_mul(
-                                                    u64::try_from(*length).unwrap_or(u64::MAX),
-                                                ),
-                                            &[KeyValue::new("type", "Prio3SumVec")],
-                                        )
-                                    }
-
-                                    Prio3SumVecField64MultiproofHmacSha256Aes128 {
-                                        proofs: _,
-                                        bits,
-                                        length,
-                                        chunk_length: _,
-                                        dp_strategy: _,
-                                    } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*bits)
-                                                .unwrap_or(u64::MAX)
-                                                .saturating_mul(
-                                                    u64::try_from(*length).unwrap_or(u64::MAX),
-                                                ),
-                                            &[KeyValue::new(
-                                                "type",
-                                                "Prio3SumVecField64MultiproofHmacSha256Aes128",
-                                            )],
-                                        )
-                                    }
-
-                                    Prio3Histogram {
-                                        length,
-                                        chunk_length: _,
-                                        dp_strategy: _,
-                                    } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*length).unwrap_or(u64::MAX),
-                                            &[KeyValue::new("type", "Prio3Histogram")],
-                                        )
-                                    }
-
-                                    #[cfg(feature = "fpvec_bounded_l2")]
-                                    Prio3FixedPointBoundedL2VecSum {
-                                        bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
-                                        dp_strategy: _,
-                                        length,
-                                    } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*length)
-                                                .unwrap_or(u64::MAX)
-                                                .saturating_mul(16),
-                                            &[KeyValue::new(
-                                                "type",
-                                                "Prio3FixedPointBoundedL2VecSum",
-                                            )],
-                                        )
-                                    }
-
-                                    #[cfg(feature = "fpvec_bounded_l2")]
-                                    Prio3FixedPointBoundedL2VecSum {
-                                        bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize32,
-                                        dp_strategy: _,
-                                        length,
-                                    } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*length)
-                                                .unwrap_or(u64::MAX)
-                                                .saturating_mul(32),
-                                            &[KeyValue::new(
-                                                "type",
-                                                "Prio3FixedPointBoundedL2VecSum",
-                                            )],
-                                        )
-                                    }
-
-                                    Poplar1 { bits } => {
-                                        metrics.aggregated_report_share_dimension_histogram.record(
-                                            u64::try_from(*bits).unwrap_or(u64::MAX),
-                                            &[KeyValue::new("type", "Poplar1")],
-                                        )
-                                    }
-
-                                    #[cfg(feature = "test-util")]
-                                    Fake { rounds: _ } | FakeFailsPrepInit | FakeFailsPrepStep => {
-                                        metrics
+                                    use VdafInstance::*;
+                                    match self.writer.task.vdaf() {
+                                        Prio3Count => metrics
                                             .aggregated_report_share_dimension_histogram
-                                            .record(0, &[KeyValue::new("type", "Fake")])
+                                            .record(1, &[KeyValue::new("type", "Prio3Count")]),
+
+                                        Prio3Sum { bits } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*bits).unwrap_or(u64::MAX),
+                                                &[KeyValue::new("type", "Prio3Sum")],
+                                            ),
+
+                                        Prio3SumVec {
+                                            bits,
+                                            length,
+                                            chunk_length: _,
+                                            dp_strategy: _,
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*bits)
+                                                    .unwrap_or(u64::MAX)
+                                                    .saturating_mul(
+                                                        u64::try_from(*length).unwrap_or(u64::MAX),
+                                                    ),
+                                                &[KeyValue::new("type", "Prio3SumVec")],
+                                            ),
+
+                                        Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                                            proofs: _,
+                                            bits,
+                                            length,
+                                            chunk_length: _,
+                                            dp_strategy: _,
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*bits)
+                                                    .unwrap_or(u64::MAX)
+                                                    .saturating_mul(
+                                                        u64::try_from(*length).unwrap_or(u64::MAX),
+                                                    ),
+                                                &[KeyValue::new(
+                                                    "type",
+                                                    "Prio3SumVecField64MultiproofHmacSha256Aes128",
+                                                )],
+                                            ),
+
+                                        Prio3Histogram {
+                                            length,
+                                            chunk_length: _,
+                                            dp_strategy: _,
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*length).unwrap_or(u64::MAX),
+                                                &[KeyValue::new("type", "Prio3Histogram")],
+                                            ),
+
+                                        #[cfg(feature = "fpvec_bounded_l2")]
+                                        Prio3FixedPointBoundedL2VecSum {
+                                            bitsize:
+                                                Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
+                                            dp_strategy: _,
+                                            length,
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*length)
+                                                    .unwrap_or(u64::MAX)
+                                                    .saturating_mul(16),
+                                                &[KeyValue::new(
+                                                    "type",
+                                                    "Prio3FixedPointBoundedL2VecSum",
+                                                )],
+                                            ),
+
+                                        #[cfg(feature = "fpvec_bounded_l2")]
+                                        Prio3FixedPointBoundedL2VecSum {
+                                            bitsize:
+                                                Prio3FixedPointBoundedL2VecSumBitSize::BitSize32,
+                                            dp_strategy: _,
+                                            length,
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*length)
+                                                    .unwrap_or(u64::MAX)
+                                                    .saturating_mul(32),
+                                                &[KeyValue::new(
+                                                    "type",
+                                                    "Prio3FixedPointBoundedL2VecSum",
+                                                )],
+                                            ),
+
+                                        Poplar1 { bits } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                u64::try_from(*bits).unwrap_or(u64::MAX),
+                                                &[KeyValue::new("type", "Poplar1")],
+                                            ),
+
+                                        #[cfg(feature = "test-util")]
+                                        Fake { rounds: _ }
+                                        | FakeFailsPrepInit
+                                        | FakeFailsPrepStep => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(0, &[KeyValue::new("type", "Fake")]),
+                                        _ => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(0, &[KeyValue::new("type", "unknown")]),
                                     }
-                                    _ => metrics
-                                        .aggregated_report_share_dimension_histogram
-                                        .record(0, &[KeyValue::new("type", "unknown")]),
-                                }
-                            });
+                                });
+                            }
                             *batch_aggregation = merged_batch_aggregation
                         }
                         Err(err) => {

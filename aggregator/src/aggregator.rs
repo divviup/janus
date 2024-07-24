@@ -43,7 +43,7 @@ use janus_aggregator_core::{
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
             BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState,
+            ReportAggregation, ReportAggregationState, TaskAggregationCounter,
         },
         Datastore, Error as DatastoreError, Transaction,
     },
@@ -95,6 +95,7 @@ use prio::{
         xof::XofTurboShake128,
     },
 };
+use rand::{thread_rng, Rng};
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefIterator as _, ParallelIterator};
 use reqwest::Client;
 use ring::{
@@ -113,7 +114,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::mpsc, try_join};
-use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
+use tracing::{debug, error, info, info_span, trace_span, warn, Level, Span};
 use url::Url;
 
 #[cfg(test)]
@@ -499,11 +500,12 @@ impl<C: Clock> Aggregator<C> {
 
         task_aggregator
             .handle_aggregate_init(
-                &self.datastore,
+                Arc::clone(&self.datastore),
                 &self.clock,
                 &self.global_hpke_keypairs,
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
+                self.cfg.task_counter_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
                 self.cfg.log_forbidden_mutations.clone(),
@@ -551,9 +553,10 @@ impl<C: Clock> Aggregator<C> {
 
         task_aggregator
             .handle_aggregate_continue(
-                &self.datastore,
+                Arc::clone(&self.datastore),
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
+                self.cfg.task_counter_shard_count,
                 aggregation_job_id,
                 req,
                 request_hash,
@@ -1075,11 +1078,12 @@ impl<C: Clock> TaskAggregator<C> {
 
     async fn handle_aggregate_init(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
@@ -1093,6 +1097,7 @@ impl<C: Clock> TaskAggregator<C> {
                 metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
+                task_counter_shard_count,
                 aggregation_job_id,
                 require_taskprov_extension,
                 log_forbidden_mutations,
@@ -1103,9 +1108,10 @@ impl<C: Clock> TaskAggregator<C> {
 
     async fn handle_aggregate_continue(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
         request_hash: [u8; 32],
@@ -1116,6 +1122,7 @@ impl<C: Clock> TaskAggregator<C> {
                 metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
+                task_counter_shard_count,
                 aggregation_job_id,
                 Arc::new(req),
                 request_hash,
@@ -1533,12 +1540,13 @@ impl VdafOps {
     )]
     async fn handle_aggregate_init<C: Clock>(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
@@ -1555,6 +1563,7 @@ impl VdafOps {
                         metrics,
                         task,
                         batch_aggregation_shard_count,
+                        task_counter_shard_count,
                         aggregation_job_id,
                         verify_key,
                         require_taskprov_extension,
@@ -1574,6 +1583,7 @@ impl VdafOps {
                         metrics,
                         task,
                         batch_aggregation_shard_count,
+                        task_counter_shard_count,
                         aggregation_job_id,
                         verify_key,
                         require_taskprov_extension,
@@ -1593,10 +1603,11 @@ impl VdafOps {
     )]
     async fn handle_aggregate_continue<C: Clock>(
         &self,
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
@@ -1610,6 +1621,7 @@ impl VdafOps {
                         metrics,
                         task,
                         batch_aggregation_shard_count,
+                        task_counter_shard_count,
                         aggregation_job_id,
                         req,
                         request_hash,
@@ -1625,6 +1637,7 @@ impl VdafOps {
                         metrics,
                         task,
                         batch_aggregation_shard_count,
+                        task_counter_shard_count,
                         aggregation_job_id,
                         req,
                         request_hash,
@@ -1978,13 +1991,14 @@ impl VdafOps {
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
         require_taskprov_extension: bool,
@@ -2448,7 +2462,7 @@ impl VdafOps {
             .with_last_request_hash(request_hash),
         );
 
-        Ok(datastore
+        let (response, counters) = datastore
             .run_tx("aggregate_init", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2473,7 +2487,7 @@ impl VdafOps {
                     )
                     .await?
                     {
-                        return Ok(response);
+                        return Ok((response, TaskAggregationCounter::default()));
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
@@ -2507,15 +2521,23 @@ impl VdafOps {
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let prepare_resps = aggregation_job_writer
-                        .write(tx, vdaf)
-                        .await?
-                        .remove(aggregation_job.id())
-                        .unwrap_or_default();
-                    Ok(AggregationJobResp::new(prepare_resps))
+                    let (mut prep_resps_by_agg_job, counters) =
+                        aggregation_job_writer.write(tx, vdaf).await?;
+                    Ok((
+                        AggregationJobResp::new(
+                            prep_resps_by_agg_job
+                                .remove(aggregation_job.id())
+                                .unwrap_or_default(),
+                        ),
+                        counters,
+                    ))
                 })
             })
-            .await?)
+            .await?;
+
+        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
+
+        Ok(response)
     }
 
     async fn handle_aggregate_continue_generic<
@@ -2524,11 +2546,12 @@ impl VdafOps {
         A,
         C: Clock,
     >(
-        datastore: &Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
+        task_counter_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
@@ -2553,7 +2576,7 @@ impl VdafOps {
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
-        Ok(datastore
+        let (response, counters) = datastore
             .run_tx("aggregate_continue", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let metrics = metrics.clone();
@@ -2615,12 +2638,15 @@ impl VdafOps {
                                 }
                             }
                         }
-                        return Ok(AggregationJobResp::new(
-                            report_aggregations
-                                .iter()
-                                .filter_map(ReportAggregation::last_prep_resp)
-                                .cloned()
-                                .collect(),
+                        return Ok((
+                            AggregationJobResp::new(
+                                report_aggregations
+                                    .iter()
+                                    .filter_map(ReportAggregation::last_prep_resp)
+                                    .cloned()
+                                    .collect(),
+                            ),
+                            TaskAggregationCounter::default(),
                         ));
                     } else if aggregation_job.step().increment() != req.step() {
                         // If this is not a replay, the leader should be advancing our state to the next
@@ -2652,7 +2678,11 @@ impl VdafOps {
                     .await
                 })
             })
-            .await?)
+            .await?;
+
+        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
+
+        Ok(response)
     }
 
     /// Handle requests to the helper to delete an aggregation job.
@@ -3323,6 +3353,38 @@ impl VdafOps {
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
     }
+}
+
+fn write_task_aggregation_counter<C: Clock>(
+    datastore: Arc<Datastore<C>>,
+    shard_count: u64,
+    task_id: TaskId,
+    counters: TaskAggregationCounter,
+) {
+    // We write task aggregation counters back in a separate tokio task & datastore transaction,
+    // so that any slowness induced by writing the counters (e.g. due to transaction retry) does
+    // not slow the main processing. The lack of transactionality between writing the updated
+    // aggregation job & updating the counters means that process failure may cause us to leave
+    // some counter updates unaccounted for, but that is an acceptable tradeoff.
+    let ord = thread_rng().gen_range(0..shard_count);
+    tokio::task::spawn(async move {
+        let rslt = datastore
+            .run_tx("update_task_aggregation_counters", |tx| {
+                Box::pin(async move {
+                    tx.increment_task_aggregation_counter(&task_id, ord, &counters)
+                        .await
+                })
+            })
+            .await;
+
+        if let Err(err) = rslt {
+            error!(
+                ?task_id,
+                ?err,
+                "Couldn't increment task aggregation counter"
+            );
+        }
+    });
 }
 
 fn empty_batch_aggregations<

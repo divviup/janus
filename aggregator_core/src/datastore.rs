@@ -6,7 +6,8 @@ use self::models::{
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
     GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskAggregationCounter,
+    TaskUploadCounter,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -102,7 +103,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(7, 6);
+supported_schema_versions!(7);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -5490,6 +5491,74 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     &i64::try_from(counter.report_success)?,
                     &i64::try_from(counter.report_too_early)?,
                     &i64::try_from(counter.task_expired)?,
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Retrieves the task aggregation counters for a given task. This result reflects the overall
+    /// counter values, merged across all shards.
+    pub async fn get_task_aggregation_counter(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<TaskAggregationCounter>, Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_task_aggregation_counter()
+SELECT
+    COALESCE(SUM(success)::BIGINT, 0) AS success
+FROM task_aggregation_counters
+WHERE task_id = $1",
+            )
+            .await?;
+
+        self.query_opt(&stmt, &[/* task_id */ &task_info.pkey])
+            .await?
+            .map(|row| {
+                Ok(TaskAggregationCounter {
+                    success: row.get_bigint_and_convert("success")?,
+                })
+            })
+            .transpose()
+    }
+
+    /// Increments the task aggregation counters for a given task by the values in the provided
+    /// counters. The `ord` parameter determines which "shard" of the counters to increment;
+    /// generally this value would be randomly-generated.
+    pub async fn increment_task_aggregation_counter(
+        &self,
+        task_id: &TaskId,
+        ord: u64,
+        counter: &TaskAggregationCounter,
+    ) -> Result<(), Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Err(Error::MutationTargetNotFound),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- increment_task_aggregation_counter()
+INSERT INTO task_aggregation_counters (task_id, ord, success)
+VALUES ($1, $2, $3)
+ON CONFLICT (task_id, ord) DO UPDATE SET
+    success = task_aggregation_counters.success + $3",
+            )
+            .await?;
+
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* ord */ &i64::try_from(ord)?,
+                    /* success */ &i64::try_from(counter.success)?,
                 ],
             )
             .await?,
