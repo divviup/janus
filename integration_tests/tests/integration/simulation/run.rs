@@ -151,6 +151,12 @@ impl Simulation {
                     Ok(ControlFlow::Continue(())) => {}
                     Err(error) => return TestResult::error(error.to_string()),
                 }
+
+                if simulation.components.leader.inspect_monitor.has_failed()
+                    || simulation.components.helper.inspect_monitor.has_failed()
+                {
+                    return TestResult::failed();
+                }
             }
 
             if !check_aggregate_results_valid(

@@ -1,17 +1,16 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
+use regex::bytes::Regex;
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
-
-// TODO: should also snoop on request and response bodies, in order to trigger test failures.
 
 /// A [`Handler`] wrapper that can be configured to drop requests or responses.
 #[derive(Handler)]
 pub(super) struct FaultInjectorHandler<H> {
-    #[handler(except=[run, before_send, name])]
+    #[handler(except = [run, before_send, name])]
     inner: H,
     error_before: Arc<Mutex<bool>>,
     error_after: Arc<Mutex<bool>>,
@@ -34,11 +33,11 @@ impl<H> FaultInjectorHandler<H> {
     }
 }
 
-struct Marker;
+struct FaultInjectorMarker;
 
 impl<H: Handler> FaultInjectorHandler<H> {
     async fn run(&self, mut conn: Conn) -> Conn {
-        conn.insert_state(Marker);
+        conn.insert_state(FaultInjectorMarker);
         if *self.error_before.lock().unwrap() {
             conn.with_status(Status::InternalServerError)
         } else {
@@ -48,7 +47,7 @@ impl<H: Handler> FaultInjectorHandler<H> {
 
     async fn before_send(&self, conn: Conn) -> Conn {
         let mut conn = self.inner.before_send(conn).await;
-        if conn.state::<Marker>().is_some() && *self.error_after.lock().unwrap() {
+        if conn.state::<FaultInjectorMarker>().is_some() && *self.error_after.lock().unwrap() {
             conn.set_status(Status::InternalServerError);
             let header_names = conn
                 .response_headers()
@@ -62,7 +61,7 @@ impl<H: Handler> FaultInjectorHandler<H> {
     }
 
     fn name(&self) -> Cow<'static, str> {
-        format!("FaultInjector({})", std::any::type_name::<H>()).into()
+        format!("FaultInjectorHandler({})", std::any::type_name::<H>()).into()
     }
 }
 
@@ -84,5 +83,83 @@ impl FaultInjector {
 
     pub fn error_after(&self) {
         *self.error_after.lock().unwrap() = true;
+    }
+}
+
+/// A [`Handler`] wrapper that inspects request and response bodies, in order to trigger test failures.
+#[derive(Handler)]
+pub(super) struct InspectHandler<H> {
+    #[handler(except = [run, before_send, name])]
+    inner: H,
+    failure: Arc<Mutex<bool>>,
+}
+
+impl<H> InspectHandler<H> {
+    pub fn new(handler: H) -> Self {
+        Self {
+            inner: handler,
+            failure: Arc::new(Mutex::new(false)),
+        }
+    }
+
+    pub fn monitor(&self) -> InspectMonitor {
+        InspectMonitor {
+            failure: Arc::clone(&self.failure),
+        }
+    }
+}
+
+struct InspectMarker;
+
+impl<H: Handler> InspectHandler<H> {
+    async fn run(&self, mut conn: Conn) -> Conn {
+        conn.insert_state(InspectMarker);
+        self.inner.run(conn).await
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        let mut conn = self.inner.before_send(conn).await;
+        if conn.state::<InspectMarker>().is_some() {
+            if conn.status() == Some(Status::Conflict) {
+                *self.failure.lock().unwrap() = true;
+            }
+            if conn.path().ends_with("/aggregate_shares") {
+                inspect_response_body(&mut conn, |bytes| {
+                    static ONCE: OnceLock<Regex> = OnceLock::new();
+                    let batch_mismatch_regex = ONCE.get_or_init(|| {
+                        Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
+                    });
+                    if batch_mismatch_regex.is_match(bytes) {
+                        *self.failure.lock().unwrap() = true;
+                    }
+                })
+                .await;
+            }
+        }
+        conn
+    }
+
+    fn name(&self) -> Cow<'static, str> {
+        format!("InspectHandler({})", std::any::type_name::<H>()).into()
+    }
+}
+
+/// Takes the response body from a connection, runs the provided closure on it, and replaces the
+/// response body. If no body has been set yet, the closure is not run.
+async fn inspect_response_body(conn: &mut Conn, f: impl Fn(&[u8])) {
+    if let Some(body) = conn.take_response_body() {
+        let bytes = body.into_bytes().await.unwrap();
+        f(&bytes);
+        conn.set_body(bytes);
+    }
+}
+
+pub(super) struct InspectMonitor {
+    failure: Arc<Mutex<bool>>,
+}
+
+impl InspectMonitor {
+    pub fn has_failed(&self) -> bool {
+        *self.failure.lock().unwrap()
     }
 }

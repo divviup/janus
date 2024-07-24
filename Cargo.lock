@@ -2990,6 +2990,7 @@ dependencies = [
  "prio",
  "quickcheck",
  "rand",
+ "regex",
  "reqwest",
  "rstest",
  "serde",

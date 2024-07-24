@@ -41,7 +41,7 @@ use tokio::net::TcpListener;
 
 use crate::simulation::{
     model::Input,
-    proxy::{FaultInjector, FaultInjectorHandler},
+    proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
     run::{http_request_exponential_backoff, State},
 };
 
@@ -59,6 +59,7 @@ pub(super) struct SimulationAggregator {
     pub(super) datastore: Arc<Datastore<MockClock>>,
     pub(super) socket_address: SocketAddr,
     pub(super) fault_injector: FaultInjector,
+    pub(super) inspect_monitor: InspectMonitor,
 }
 
 impl SimulationAggregator {
@@ -95,8 +96,13 @@ impl SimulationAggregator {
         )
         .await
         .unwrap();
-        let fault_injector_handler = FaultInjectorHandler::new(aggregator_handler);
+
+        let inspect_handler = InspectHandler::new(aggregator_handler);
+        let inspect_monitor = inspect_handler.monitor();
+
+        let fault_injector_handler = FaultInjectorHandler::new(inspect_handler);
         let fault_injector = fault_injector_handler.controller();
+
         let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let socket_address = server.local_addr().unwrap();
         let aggregator_future = trillium_tokio::config()
@@ -111,6 +117,7 @@ impl SimulationAggregator {
             datastore,
             socket_address,
             fault_injector,
+            inspect_monitor,
         }
     }
 }
@@ -121,7 +128,7 @@ type JobStepperCallback<Job> =
     Box<dyn Fn(Lease<Job>) -> BoxFuture<'static, Result<(), aggregator::Error>>>;
 
 pub(super) struct Components {
-    pub(super) _leader: SimulationAggregator,
+    pub(super) leader: SimulationAggregator,
     pub(super) helper: SimulationAggregator,
     pub(super) http_client: reqwest::Client,
     pub(super) client: Client<Prio3Histogram>,
@@ -286,7 +293,7 @@ impl Components {
 
         (
             Self {
-                _leader: leader,
+                leader,
                 helper,
                 http_client,
                 client,
