@@ -334,3 +334,51 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
     };
     assert!(!Simulation::run(input).is_failure());
 }
+
+#[test]
+#[ignore = "failing test"]
+fn repro_abandoned_aggregation_job_batch_mismatch() {
+    install_test_trace_subscriber();
+
+    let collection_job_id = random();
+    let input = Input {
+        is_fixed_size: false,
+        config: Config {
+            time_precision: Duration::from_seconds(1000),
+            min_batch_size: 1,
+            max_batch_size: None,
+            batch_time_window_size: None,
+            report_expiry_age: None,
+            min_aggregation_job_size: 1,
+            max_aggregation_job_size: 1,
+        },
+        ops: Vec::from([
+            Op::Upload {
+                report_time: START_TIME,
+            },
+            Op::AggregationJobCreator,
+            Op::AggregationJobDriver,
+            Op::Upload {
+                report_time: START_TIME,
+            },
+            Op::AggregationJobCreator,
+            Op::AggregationJobDriverResponseError,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(610),
+            },
+            Op::AggregationJobDriverResponseError,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(610),
+            },
+            Op::AggregationJobDriver,
+            Op::CollectorStart {
+                collection_job_id,
+                query: Query::TimeInterval(
+                    Interval::new(START_TIME, Duration::from_seconds(1000)).unwrap(),
+                ),
+            },
+            Op::CollectionJobDriver,
+        ]),
+    };
+    assert!(!Simulation::run(input).is_failure());
+}
