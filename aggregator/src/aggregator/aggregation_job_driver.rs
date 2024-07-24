@@ -122,7 +122,7 @@ impl AggregationJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -130,7 +130,6 @@ impl AggregationJobDriver {
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<()>
     where
-        A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
@@ -304,7 +303,6 @@ impl AggregationJobDriver {
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<()>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
@@ -470,7 +468,6 @@ impl AggregationJobDriver {
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<()>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
@@ -569,7 +566,6 @@ impl AggregationJobDriver {
         helper_prep_resps: &[PrepareResp],
     ) -> Result<()>
     where
-        A: 'static,
         A::AggregationParam: Send + Sync + Eq + PartialEq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
@@ -793,7 +789,7 @@ impl AggregationJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         vdaf: A,
@@ -801,7 +797,6 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()>
     where
-        A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::PrepareMessage: Send + Sync,

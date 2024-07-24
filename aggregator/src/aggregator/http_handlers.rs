@@ -811,7 +811,7 @@ mod tests {
         );
 
         // Unknown task ID provided
-        let mut test_conn = get(&format!("/hpke_config?task_id={unknown_task_id}"))
+        let mut test_conn = get(format!("/hpke_config?task_id={unknown_task_id}"))
             .run_async(&handler)
             .await;
         // Expected status and problem type should be per the protocol
@@ -828,7 +828,7 @@ mod tests {
         );
 
         // Recognized task ID provided
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        let mut test_conn = get(format!("/hpke_config?task_id={}", task.id()))
             .run_async(&handler)
             .await;
 
@@ -1029,7 +1029,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        let mut test_conn = get(format!("/hpke_config?task_id={}", task.id()))
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -1077,7 +1077,7 @@ mod tests {
         // Check for appropriate CORS headers in response to a preflight request.
         let test_conn = TestConn::build(
             trillium::Method::Options,
-            &format!("/hpke_config?task_id={}", task.id()),
+            format!("/hpke_config?task_id={}", task.id()),
             (),
         )
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
@@ -1093,7 +1093,7 @@ mod tests {
         );
 
         // Check for appropriate CORS headers with a simple GET request.
-        let test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        let test_conn = get(format!("/hpke_config?task_id={}", task.id()))
             .with_request_header(KnownHeaderName::Origin, "https://example.com/")
             .run_async(&handler)
             .await;
@@ -4717,7 +4717,7 @@ mod tests {
             .task
             .collector_auth_token()
             .request_authentication();
-        let test_conn = post(&format!(
+        let test_conn = post(format!(
             "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
             test_case.task.id()
         ))

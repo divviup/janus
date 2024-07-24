@@ -1108,7 +1108,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3CountVec(vdaf, verify_key) => {
@@ -1118,7 +1119,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3Sum(vdaf, verify_key) => {
@@ -1128,7 +1130,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
@@ -1138,7 +1141,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3Histogram(vdaf, verify_key) => {
@@ -1148,7 +1152,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -1165,12 +1170,14 @@ macro_rules! vdaf_ops_dispatch {
                     vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(_strategy) => {
                         type $DpStrategy = ::prio::dp::distributions::ZCdpDiscreteGaussian;
                         let $dp_strategy = &_strategy;
-                        $body
+                        let body = $body;
+                        body
                     },
                     vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
                         type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                         let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                        $body
+                        let body = $body;
+                        body
                     }
                 }
             }
@@ -1189,12 +1196,14 @@ macro_rules! vdaf_ops_dispatch {
                     vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(_strategy) => {
                         type $DpStrategy = ::prio::dp::distributions::ZCdpDiscreteGaussian;
                         let $dp_strategy = &_strategy;
-                        $body
+                        let body = $body;
+                        body
                     },
                     vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
                         type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                         let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                        $body
+                        let body = $body;
+                        body
                     }
                 }
             }
@@ -1206,7 +1215,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "test-util")]
@@ -1217,7 +1227,8 @@ macro_rules! vdaf_ops_dispatch {
                 const $VERIFY_KEY_LENGTH: usize = 0;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
+                let body = $body;
+                body
             }
         }
     };
@@ -2157,7 +2168,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -2170,7 +2181,6 @@ impl VdafOps {
         request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error>
     where
-        A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
@@ -2898,7 +2908,6 @@ impl VdafOps {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
         A::AggregateShare: Send + Sync,
-        S: Send + Sync,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.

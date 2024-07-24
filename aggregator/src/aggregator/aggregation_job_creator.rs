@@ -44,7 +44,7 @@ use super::batch_creator::BatchCreator;
 
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
-    datastore: Datastore<C>,
+    datastore: Arc<Datastore<C>>,
     meter: Meter,
 
     // Configuration values.
@@ -64,7 +64,7 @@ pub struct AggregationJobCreator<C: Clock> {
 
 impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub fn new(
-        datastore: Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         meter: Meter,
         tasks_update_frequency: Duration,
         aggregation_job_creation_interval: Duration,
@@ -258,7 +258,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     // Returns true if at least one aggregation job was created.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
-    async fn create_aggregation_jobs_for_task(
+    pub async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
     ) -> anyhow::Result<bool> {
@@ -499,14 +499,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     async fn create_aggregation_jobs_for_time_interval_task_no_param<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
     >(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
-        A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
@@ -600,7 +599,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
     >(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
@@ -609,7 +608,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task_batch_time_window_size: Option<janus_messages::Duration>,
     ) -> anyhow::Result<bool>
     where
-        A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
@@ -740,7 +738,7 @@ mod tests {
         // kill it.
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             Duration::from_secs(3600),
             AGGREGATION_JOB_CREATION_INTERVAL,
@@ -860,7 +858,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -957,7 +955,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1106,7 +1104,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1231,7 +1229,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1395,7 +1393,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1514,7 +1512,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1700,7 +1698,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             Duration::from_secs(3600),
             Duration::from_secs(1),
@@ -1899,7 +1897,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             Duration::from_secs(3600),
             Duration::from_secs(1),

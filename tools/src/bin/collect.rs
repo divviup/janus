@@ -585,46 +585,53 @@ macro_rules! options_vdaf_dispatch {
         match ($options.vdaf, $options.length, $options.bits) {
             (VdafType::Count, None, None) => {
                 let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             (VdafType::CountVec, Some(length), None) => {
                 // We can take advantage of the fact that Prio3SumVec unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf =
                     Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             (VdafType::Sum, None, Some(bits)) => {
                 let $vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             (VdafType::SumVec, Some(length), Some(bits)) => {
                 // We can take advantage of the fact that Prio3SumVec unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf = Prio3::new_sum_vec(2, bits, length, 1)
                     .map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             (VdafType::Histogram, Some(length), None) => {
                 // We can take advantage of the fact that Prio3Histogram unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf =
                     Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             #[cfg(feature = "fpvec_bounded_l2")]
             (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
                 let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             #[cfg(feature = "fpvec_bounded_l2")]
             (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
                 let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
-                $body
+                let body = $body;
+                body
             }
             _ => Err(clap::Error::raw(
                 ErrorKind::ArgumentConflict,
@@ -646,9 +653,9 @@ macro_rules! options_vdaf_dispatch {
 macro_rules! options_dispatch {
     ($options:expr, ($query:ident, $vdaf:ident) => $body:tt) => {
         options_query_dispatch!($options, ($query) => {
-            options_vdaf_dispatch!($options, ($vdaf) => {
+            options_vdaf_dispatch!($options, ($vdaf) =>
                 $body
-            })
+            )
         })
     }
 }
