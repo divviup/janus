@@ -468,6 +468,28 @@ async fn aggregate_init() {
     for _ in 0..2 {
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+
+        // Check aggregation job in datastore.
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task = task.clone();
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    dbg!(tx
+                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
+                        .await
+                        .unwrap());
+                    dbg!(tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, _>(&vdaf, task.id())
+                        .await
+                        .unwrap());
+                    dbg!(tx.get_report_metadatas_for_task(task.id()).await.unwrap());
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,

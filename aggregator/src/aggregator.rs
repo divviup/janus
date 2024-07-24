@@ -2296,19 +2296,13 @@ impl VdafOps {
                                         let task = Arc::clone(&task);
                                         let vdaf = Arc::clone(&vdaf);
                                         async move {
-                                            let public_share =
-                                                A::PublicShare::get_decoded_with_param(
-                                                    &vdaf,
-                                                    prepare_init.report_share().public_share(),
-                                                )?;
                                             let state = match tx
-                                                .put_helper_client_report(&HelperStoredReport::<
-                                                    SEED_SIZE,
-                                                    A,
-                                                >::new(
+                                                .put_helper_client_report(&HelperStoredReport::new(
                                                     *task.id(),
                                                     prepare_init.report_share().metadata().clone(),
-                                                    public_share,
+                                                    Vec::from(
+                                                        prepare_init.report_share().public_share(),
+                                                    ),
                                                     prepare_init
                                                         .report_share()
                                                         .encrypted_input_share()

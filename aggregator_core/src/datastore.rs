@@ -1695,22 +1695,14 @@ ON CONFLICT(task_id, report_id) DO UPDATE
     }
 
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_helper_client_report<const SEED_SIZE: usize, A>(
-        &self,
-        report: &HelperStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
-    {
+    pub async fn put_helper_client_report(&self, report: &HelperStoredReport) -> Result<(), Error> {
         let task_info = match self.task_info_for(report.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
         let now = self.clock.now().as_naive_date_time()?;
 
-        let encoded_public_share = report.public_share().get_encoded()?;
+        let encoded_public_share = report.encoded_public_share();
         let encoded_helper_share = report.helper_encrypted_input_share().get_encoded()?;
 
         let stmt = self
@@ -1722,8 +1714,9 @@ INSERT INTO client_reports (
     updated_by
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-)",
+    $1, $2, $3, $4, $5, $6, $7, $8
+)
+ON CONFLICT DO NOTHING",
             )
             .await?;
         check_insert(
@@ -1739,7 +1732,6 @@ VALUES (
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
                 ],
             )
             .await?,

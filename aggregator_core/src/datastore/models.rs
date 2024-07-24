@@ -322,32 +322,26 @@ impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct HelperStoredReport<const SEED_SIZE: usize, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
+pub struct HelperStoredReport {
     task_id: TaskId,
     metadata: ReportMetadata,
     #[derivative(Debug = "ignore")]
-    public_share: A::PublicShare,
+    encoded_public_share: Vec<u8>,
     #[derivative(Debug = "ignore")]
     helper_encrypted_input_share: HpkeCiphertext,
 }
 
-impl<const SEED_SIZE: usize, A> HelperStoredReport<SEED_SIZE, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
+impl HelperStoredReport {
     pub fn new(
         task_id: TaskId,
         metadata: ReportMetadata,
-        public_share: A::PublicShare,
+        encoded_public_share: Vec<u8>,
         helper_encrypted_input_share: HpkeCiphertext,
     ) -> Self {
         Self {
             task_id,
             metadata,
-            public_share,
+            encoded_public_share,
             helper_encrypted_input_share,
         }
     }
@@ -360,8 +354,8 @@ where
         &self.metadata
     }
 
-    pub fn public_share(&self) -> &A::PublicShare {
-        &self.public_share
+    pub fn encoded_public_share(&self) -> &[u8] {
+        self.encoded_public_share.as_ref()
     }
 
     pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
@@ -369,27 +363,16 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, A> PartialEq for HelperStoredReport<SEED_SIZE, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::InputShare: PartialEq,
-    A::PublicShare: PartialEq,
-{
+impl PartialEq for HelperStoredReport {
     fn eq(&self, other: &Self) -> bool {
         self.task_id == other.task_id
             && self.metadata == other.metadata
-            && self.public_share == other.public_share
+            && self.encoded_public_share == other.encoded_public_share
             && self.helper_encrypted_input_share == other.helper_encrypted_input_share
     }
 }
 
-impl<const SEED_SIZE: usize, A> Eq for HelperStoredReport<SEED_SIZE, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::InputShare: Eq,
-    A::PublicShare: PartialEq,
-{
-}
+impl Eq for HelperStoredReport {}
 
 /// AggregatorRole corresponds to the `AGGREGATOR_ROLE` enum in the schema.
 #[derive(Clone, Debug, ToSql, FromSql)]
