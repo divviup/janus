@@ -171,6 +171,7 @@ pub async fn assert_task_aggregation_counter(
 
     let end_instant = Instant::now() + Duration::from_secs(10);
     loop {
+        let now = Instant::now();
         let counters = datastore
             .run_unnamed_tx(|tx| {
                 Box::pin(async move {
@@ -187,7 +188,7 @@ pub async fn assert_task_aggregation_counter(
         if counters == expected_counters {
             return;
         }
-        if Instant::now() > end_instant {
+        if now > end_instant {
             // Last chance: assert equality; this will likely fail, but the error message will
             // provide hopefully-useful information to the caller.
             assert_eq!(counters, expected_counters);

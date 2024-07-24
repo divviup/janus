@@ -118,9 +118,9 @@ max_upload_batch_write_delay_ms: 250
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
 
-# Number of sharded database records per task counter. Increasing this value will reduce the amount
-# of database contention during report uploads, while increasing the cost of getting task metrics.
-# (optional, default: 32)
+# Defines the number of shards to break report & aggregation metric counters into. Increasing this
+# value will reduce the amount of database contention during report uploads & aggregations, while
+# increasing the cost of getting task metrics. (optional, default: 32)
 task_counter_shard_count: 32
 
 # Configuration for the taskprov extension. If enabled, this changes the behavior of the

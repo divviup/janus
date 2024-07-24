@@ -3369,7 +3369,7 @@ fn write_task_aggregation_counter<C: Clock>(
     let ord = thread_rng().gen_range(0..shard_count);
     tokio::task::spawn(async move {
         let rslt = datastore
-            .run_tx("aggregate_continue_counters", |tx| {
+            .run_tx("update_task_aggregation_counters", |tx| {
                 Box::pin(async move {
                     tx.increment_task_aggregation_counter(&task_id, ord, &counters)
                         .await
