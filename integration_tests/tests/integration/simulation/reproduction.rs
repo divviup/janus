@@ -298,3 +298,39 @@ fn repro_gc_changes_aggregation_job_retry_fixed_size() {
     };
     assert!(!Simulation::run(input).is_failure());
 }
+
+#[test]
+/// Regression test for https://github.com/divviup/janus/issues/2464.
+fn repro_recreate_gcd_batch_job_count_underflow() {
+    install_test_trace_subscriber();
+
+    let input = Input {
+        is_fixed_size: false,
+        config: Config {
+            time_precision: Duration::from_seconds(1000),
+            min_batch_size: 100,
+            max_batch_size: None,
+            batch_time_window_size: None,
+            report_expiry_age: Some(Duration::from_seconds(4000)),
+            min_aggregation_job_size: 2,
+            max_aggregation_job_size: 2,
+        },
+        ops: Vec::from([
+            Op::Upload {
+                report_time: START_TIME,
+            },
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(2000),
+            },
+            Op::Upload {
+                report_time: START_TIME.add(&Duration::from_seconds(2000)).unwrap(),
+            },
+            Op::AggregationJobCreator,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(3500),
+            },
+            Op::AggregationJobDriver,
+        ]),
+    };
+    assert!(!Simulation::run(input).is_failure());
+}
