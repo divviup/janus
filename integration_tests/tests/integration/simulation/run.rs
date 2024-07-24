@@ -26,8 +26,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    CollectionJobId, Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare,
-    Report, ReportId, ReportMetadata, Role, Time,
+    CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, HpkeConfigList, InputShareAad,
+    PlaintextInputShare, Report, ReportId, ReportMetadata, Role, Time,
 };
 use opentelemetry::metrics::Meter;
 use prio::vdaf::{
@@ -329,11 +329,12 @@ impl Simulation {
         query: &Query,
     ) -> ControlFlow<TestResult> {
         match query {
-            Query::TimeInterval(query) => {
+            Query::TimeInterval(interval) => {
+                let query = janus_messages::Query::new_time_interval(*interval);
                 match self
                     .components
                     .collector
-                    .start_collection_with_id(*collection_job_id, query.clone(), &())
+                    .start_collection_with_id(*collection_job_id, query, &())
                     .await
                 {
                     Ok(collection_job) => {
@@ -344,11 +345,12 @@ impl Simulation {
                     Err(error) => info!(?error, "collector error"),
                 }
             }
-            Query::FixedSize(query) => {
+            Query::FixedSizeCurrentBatch => {
+                let query = janus_messages::Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
                 match self
                     .components
                     .collector
-                    .start_collection_with_id(*collection_job_id, query.clone(), &())
+                    .start_collection_with_id(*collection_job_id, query, &())
                     .await
                 {
                     Ok(collection_job) => {
@@ -357,6 +359,44 @@ impl Simulation {
                             .insert(*collection_job_id, collection_job);
                     }
                     Err(error) => info!(?error, "collector error"),
+                }
+            }
+            Query::FixedSizeByBatchId(previous_collection_job_id) => {
+                if let Some(collection) = self
+                    .state
+                    .aggregate_results_fixed_size
+                    .get(previous_collection_job_id)
+                {
+                    let query = janus_messages::Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                        batch_id: *collection.partial_batch_selector().batch_id(),
+                    });
+                    match self
+                        .components
+                        .collector
+                        .start_collection_with_id(*collection_job_id, query, &())
+                        .await
+                    {
+                        Ok(collection_job) => {
+                            self.state
+                                .collection_jobs_fixed_size
+                                .insert(*collection_job_id, collection_job);
+
+                            // Store a copy of the collection results from the previous collection
+                            // job under this new collection job as well. When we get results from
+                            // pollng the "by batch ID" job, we will then compare results from the
+                            // two jobs to ensure they are the same.
+                            self.state.aggregate_results_fixed_size.insert(
+                                *collection_job_id,
+                                Collection::new(
+                                    collection.partial_batch_selector().clone(),
+                                    collection.report_count(),
+                                    *collection.interval(),
+                                    collection.aggregate_result().clone(),
+                                ),
+                            );
+                        }
+                        Err(error) => info!(?error, "collector error"),
+                    }
                 }
             }
         }

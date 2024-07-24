@@ -55,7 +55,8 @@ pub(super) struct FixedSizeFaultInjectionInput(pub(super) Input);
 struct Context {
     current_time: Time,
     time_precision: Duration,
-    collection_job_ids: Vec<CollectionJobId>,
+    started_collection_job_ids: Vec<CollectionJobId>,
+    polled_collection_job_ids: Vec<CollectionJobId>,
 }
 
 impl Context {
@@ -63,7 +64,8 @@ impl Context {
         Self {
             current_time: START_TIME,
             time_precision: config.time_precision,
-            collection_job_ids: Vec::new(),
+            started_collection_job_ids: Vec::new(),
+            polled_collection_job_ids: Vec::new(),
         }
     }
 
@@ -75,7 +77,12 @@ impl Context {
             Op::CollectorStart {
                 collection_job_id,
                 query: _,
-            } => self.collection_job_ids.push(*collection_job_id),
+            } => self.started_collection_job_ids.push(*collection_job_id),
+            Op::CollectorPoll { collection_job_id } => {
+                if !self.polled_collection_job_ids.contains(collection_job_id) {
+                    self.polled_collection_job_ids.push(*collection_job_id);
+                }
+            }
             _ => {}
         }
     }
@@ -190,9 +197,25 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
         .unwrap();
     Op::CollectorStart {
         collection_job_id: random(),
-        query: super::model::Query::TimeInterval(janus_messages::Query::new_time_interval(
+        query: super::model::Query::TimeInterval(
             Interval::new(start, duration_fn(g, context)).unwrap(),
-        )),
+        ),
+    }
+}
+
+fn arbitrary_collector_start_op_fixed_size(g: &mut Gen, context: &Context) -> Op {
+    if context.polled_collection_job_ids.is_empty() || bool::arbitrary(g) {
+        Op::CollectorStart {
+            collection_job_id: random(),
+            query: super::model::Query::FixedSizeCurrentBatch,
+        }
+    } else {
+        Op::CollectorStart {
+            collection_job_id: random(),
+            query: super::model::Query::FixedSizeByBatchId(
+                *g.choose(&context.polled_collection_job_ids).unwrap(),
+            ),
+        }
     }
 }
 
@@ -200,7 +223,7 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
 fn arbitrary_collector_poll_op(g: &mut Gen, context: &Context) -> Op {
     Op::CollectorPoll {
         collection_job_id: g
-            .choose(&context.collection_job_ids)
+            .choose(&context.started_collection_job_ids)
             .copied()
             .unwrap_or_else(|| {
                 CollectionJobId::try_from([0u8; CollectionJobId::LEN].as_slice()).unwrap()
@@ -390,12 +413,7 @@ fn arbitrary_op_fixed_size(g: &mut Gen, context: &Context, choices: &[OpKind]) -
         OpKind::CollectionJobDriver => Op::CollectionJobDriver,
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
-        OpKind::CollectorStart => Op::CollectorStart {
-            collection_job_id: random(),
-            query: super::model::Query::FixedSize(janus_messages::Query::new_fixed_size(
-                janus_messages::FixedSizeQuery::CurrentBatch,
-            )),
-        },
+        OpKind::CollectorStart => arbitrary_collector_start_op_fixed_size(g, context),
         OpKind::CollectorPoll => arbitrary_collector_poll_op(g, context),
     }
 }

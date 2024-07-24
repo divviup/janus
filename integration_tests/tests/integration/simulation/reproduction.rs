@@ -1,5 +1,5 @@
 use janus_core::test_util::install_test_trace_subscriber;
-use janus_messages::{Duration, FixedSizeQuery, Interval, Time};
+use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
 use crate::simulation::{
@@ -44,13 +44,13 @@ fn successful_collection_time_interval() {
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::TimeInterval(janus_messages::Query::new_time_interval(
+                query: Query::TimeInterval(
                     Interval::new(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
                     .unwrap(),
-                )),
+                ),
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -70,13 +70,13 @@ fn successful_collection_time_interval() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::TimeInterval(janus_messages::Query::new_time_interval(
+                query: Query::TimeInterval(
                     Interval::new(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
                     .unwrap(),
-                )),
+                ),
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -121,9 +121,7 @@ fn successful_collection_fixed_size() {
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSize(janus_messages::Query::new_fixed_size(
-                    FixedSizeQuery::CurrentBatch,
-                )),
+                query: Query::FixedSizeCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -143,9 +141,7 @@ fn successful_collection_fixed_size() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSize(janus_messages::Query::new_fixed_size(
-                    FixedSizeQuery::CurrentBatch,
-                )),
+                query: Query::FixedSizeCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -215,9 +211,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSize(janus_messages::Query::new_fixed_size(
-                    FixedSizeQuery::CurrentBatch,
-                )),
+                query: Query::FixedSizeCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },

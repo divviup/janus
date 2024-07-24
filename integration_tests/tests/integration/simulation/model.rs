@@ -1,7 +1,4 @@
-use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
-    CollectionJobId, Duration, Time,
-};
+use janus_messages::{CollectionJobId, Duration, Interval, Time};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {
@@ -51,8 +48,14 @@ pub(super) enum Op {
     },
 }
 
+/// Representation of a DAP query used in a collection job.
 #[derive(Debug, Clone)]
 pub(super) enum Query {
-    TimeInterval(janus_messages::Query<TimeInterval>),
-    FixedSize(janus_messages::Query<FixedSize>),
+    /// A time interval query, parameterized with a batch interval.
+    TimeInterval(Interval),
+    /// A current batch query.
+    FixedSizeCurrentBatch,
+    /// A "by batch ID" query. The batch ID will be taken from a previous collection result, with
+    /// the given collection job ID.
+    FixedSizeByBatchId(CollectionJobId),
 }
