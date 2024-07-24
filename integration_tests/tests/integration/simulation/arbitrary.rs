@@ -26,6 +26,8 @@ impl Arbitrary for Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: batch_size_limits[0].into(),
             max_batch_size: bool::arbitrary(g).then_some(batch_size_limits[1].into()),
+            batch_time_window_size: bool::arbitrary(g)
+                .then_some(Duration::from_seconds(u8::arbitrary(g).into())),
             report_expiry_age: bool::arbitrary(g)
                 .then_some(Duration::from_seconds(u16::arbitrary(g).into())),
             min_aggregation_job_size: aggregation_job_size_limits[0].into(),

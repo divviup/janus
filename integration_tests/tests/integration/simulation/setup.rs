@@ -167,7 +167,7 @@ impl Components {
         let query_type = if input.is_fixed_size {
             QueryType::FixedSize {
                 max_batch_size: input.config.max_batch_size,
-                batch_time_window_size: None,
+                batch_time_window_size: input.config.batch_time_window_size,
             }
         } else {
             QueryType::TimeInterval

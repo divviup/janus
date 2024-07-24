@@ -12,6 +12,7 @@ pub(super) struct Config {
     pub(super) time_precision: Duration,
     pub(super) min_batch_size: u64,
     pub(super) max_batch_size: Option<u64>,
+    pub(super) batch_time_window_size: Option<Duration>,
     pub(super) report_expiry_age: Option<Duration>,
     pub(super) min_aggregation_job_size: usize,
     pub(super) max_aggregation_job_size: usize,
