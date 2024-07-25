@@ -75,7 +75,7 @@ use janus_messages::{
     TaskId,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter, Unit},
+    metrics::{Counter, Histogram, Meter},
     KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -302,7 +302,7 @@ impl<C: Clock> Aggregator<C> {
             .with_description(
                 "Number of decryption failures in the tasks/{task-id}/reports endpoint.",
             )
-            .with_unit(Unit::new("{error}"))
+            .with_unit("{error}")
             .init();
         upload_decrypt_failure_counter.add(0, &[]);
 
@@ -311,7 +311,7 @@ impl<C: Clock> Aggregator<C> {
             .with_description(
                 "Number of message decode failures in the tasks/{task-id}/reports endpoint.",
             )
-            .with_unit(Unit::new("{error}"))
+            .with_unit("{error}")
             .init();
         upload_decode_failure_counter.add(0, &[]);
 

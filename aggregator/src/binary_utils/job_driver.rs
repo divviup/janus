@@ -4,10 +4,7 @@ use anyhow::Context as _;
 use chrono::NaiveDateTime;
 use janus_aggregator_core::datastore::{self, models::Lease};
 use janus_core::{time::Clock, Runtime};
-use opentelemetry::{
-    metrics::{Meter, Unit},
-    KeyValue,
-};
+use opentelemetry::{metrics::Meter, KeyValue};
 use rand::{thread_rng, Rng};
 use std::{
     fmt::{Debug, Display},
@@ -103,13 +100,13 @@ where
             .meter
             .f64_histogram("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
-            .with_unit(Unit::new("s"))
+            .with_unit("s")
             .init();
         let job_step_time_histogram = self
             .meter
             .f64_histogram("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
-            .with_unit(Unit::new("s"))
+            .with_unit("s")
             .init();
 
         // Set up state for the job driver run.

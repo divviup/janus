@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter, Unit},
+    metrics::{Counter, Histogram, Meter},
     KeyValue,
 };
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,6 @@ use tokio::runtime::Runtime;
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
-    opentelemetry::global::set_meter_provider,
     prometheus::Registry,
     std::{
         net::{IpAddr, Ipv4Addr},
@@ -38,7 +37,7 @@ use {
 use {
     crate::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::metrics::MetricsError,
+    opentelemetry::{global::set_meter_provider, metrics::MetricsError},
     opentelemetry_sdk::{
         metrics::{
             new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
@@ -378,6 +377,7 @@ pub async fn install_metrics_exporter(
                 .with_view(CustomView::new()?)
                 .with_resource(resource())
                 .build();
+            set_meter_provider(meter_provider.clone());
             // We can't drop the PushController, as that would stop pushes, so return it to the
             // caller.
             Ok(MetricsExporterHandle::Otlp(meter_provider))
@@ -417,7 +417,7 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
     let report_aggregation_success_counter = meter
         .u64_counter("janus_report_aggregation_success_counter")
         .with_description("Number of successfully-aggregated report shares")
-        .with_unit(Unit::new("{report}"))
+        .with_unit("{report}")
         .init();
     report_aggregation_success_counter.add(0, &[]);
     report_aggregation_success_counter
@@ -440,7 +440,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
             "Failures while stepping aggregation jobs; these failures are ",
             "related to individual client reports rather than entire aggregation jobs."
         ))
-        .with_unit(Unit::new("{error}"))
+        .with_unit("{error}")
         .init();
 
     // Initialize counters with desired status labels. This causes Prometheus to see the first

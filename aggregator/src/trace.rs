@@ -13,7 +13,10 @@ use tracing_subscriber::{
 };
 
 #[cfg(feature = "otlp")]
-use opentelemetry_otlp::WithExportConfig;
+use {
+    opentelemetry::{global::set_tracer_provider, trace::TracerProvider},
+    opentelemetry_otlp::WithExportConfig,
+};
 
 /// Errors from initializing trace subscriber.
 #[derive(Debug, thiserror::Error)]
@@ -187,7 +190,7 @@ pub fn install_trace_subscriber(
     #[cfg(feature = "otlp")]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &config.open_telemetry_config
     {
-        let tracer = opentelemetry_otlp::new_pipeline()
+        let tracer_provider = opentelemetry_otlp::new_pipeline()
             .tracing()
             .with_exporter(
                 opentelemetry_otlp::new_exporter()
@@ -195,6 +198,8 @@ pub fn install_trace_subscriber(
                     .with_endpoint(otlp_config.endpoint.clone()),
             )
             .install_batch(opentelemetry_sdk::runtime::Tokio)?;
+        set_tracer_provider(tracer_provider.clone());
+        let tracer = tracer_provider.tracer("janus_aggregator");
 
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)

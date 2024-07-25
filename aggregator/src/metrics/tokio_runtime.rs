@@ -1,10 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use derivative::Derivative;
-use opentelemetry::{
-    metrics::{MetricsError, Unit},
-    InstrumentationLibrary, KeyValue,
-};
+use opentelemetry::{metrics::MetricsError, InstrumentationLibrary, KeyValue};
 use opentelemetry_sdk::{
     metrics::{
         data::{
@@ -185,7 +182,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.thread.worker.count".into(),
                 description: "Number of runtime worker threads".into(),
-                unit: Unit::new("{thread}"),
+                unit: "{thread}",
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -201,7 +198,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 description: "Number of additional threads spawned by the runtime for blocking \
                               operations"
                     .into(),
-                unit: Unit::new("{thread}"),
+                unit: "{thread}",
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -215,7 +212,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.task.active.count".into(),
                 description: "Number of active tasks in the runtime".into(),
-                unit: Unit::new("{task}"),
+                unit: "{task}",
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -230,7 +227,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 name: "tokio.thread.blocking.idle.count".into(),
                 description: "Number of additional threads for blocking operations which are idle"
                     .into(),
-                unit: Unit::new("{thread}"),
+                unit: "{thread}",
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -247,7 +244,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                               from a worker thread to the injection queue due to overflow, or \
                               from a remote thread to the injection queue"
                     .into(),
-                unit: Unit::new("{task}"),
+                unit: "{task}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([
                         DataPoint {
@@ -281,7 +278,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 description: "Number of times tasks have been forced to yield because their task \
                               budget was exhausted"
                     .into(),
-                unit: Unit::new(""),
+                unit: "",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -297,7 +294,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.park".into(),
                 description: "Total number of times worker threads have parked".into(),
-                unit: Unit::new(""),
+                unit: "",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -315,7 +312,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 description: "Total number of times worker threads unparked and parked again \
                               without doing any work"
                     .into(),
-                unit: Unit::new(""),
+                unit: "",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -331,7 +328,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.task.stolen".into(),
                 description: "Total number of tasks stolen between worker threads".into(),
-                unit: Unit::new("{task}"),
+                unit: "{task}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -348,7 +345,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 name: "tokio.steals".into(),
                 description: "Number of times worker threads successfully stole one or more tasks"
                     .into(),
-                unit: Unit::new("{operation}"),
+                unit: "{operation}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -364,7 +361,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.thread.worker.busy.time".into(),
                 description: "Total amount of time that all worker threads have been busy".into(),
-                unit: Unit::new("s"),
+                unit: "s",
                 data: Box::new(Sum::<f64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -382,7 +379,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 description: "Number of tasks currently in the runtime's injection queue, \
                               blocking thread pool queue, or a worker's local queue"
                     .into(),
-                unit: Unit::new("{task}"),
+                unit: "{task}",
                 data: Box::new(Gauge::<u64> {
                     data_points: {
                         let mut data_points = Vec::with_capacity(self.num_workers + 2);
@@ -420,7 +417,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.task.poll.time".into(),
                 description: "Histogram of task poll times".into(),
-                unit: Unit::new("s"),
+                unit: "s",
                 data: Box::new(Histogram::<f64> {
                     data_points: Vec::from([HistogramDataPoint {
                         attributes: AttributeSet::default(),
@@ -440,7 +437,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.task.poll.time.average".into(),
                 description: "Exponentially weighted moving average of task poll times".into(),
-                unit: Unit::new("s"),
+                unit: "s",
                 data: Box::new(Gauge::<f64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -455,7 +452,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 name: "tokio.io.fd.count".into(),
                 description: "Number of file descriptors currently registered with the I/O driver"
                     .into(),
-                unit: Unit::new("{fd}"),
+                unit: "{fd}",
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -470,7 +467,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.io.fd.registered".into(),
                 description: "Total number of file descriptors registered by the I/O driver".into(),
-                unit: Unit::new("{fd}"),
+                unit: "{fd}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -487,7 +484,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                 name: "tokio.io.fd.deregistered".into(),
                 description: "Total number of file descriptors deregistered by the I/O driver"
                     .into(),
-                unit: Unit::new("{fd}"),
+                unit: "{fd}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
@@ -503,7 +500,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.io.ready_events".into(),
                 description: "Number of ready events processed by the I/O driver".into(),
-                unit: Unit::new("{event}"),
+                unit: "{event}",
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: AttributeSet::default(),
