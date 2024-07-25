@@ -1,9 +1,7 @@
 use crate::{
     aggregator_api_handler,
     models::{
-        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskUploadMetricsResp,
-        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
+        DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp
     },
     Config, CONTENT_TYPE,
 };
@@ -12,7 +10,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
-        models::{HpkeKeyState, TaskUploadCounter},
+        models::{HpkeKeyState, TaskAggregationCounter, TaskUploadCounter},
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
@@ -880,6 +878,86 @@ async fn get_task_upload_metrics() {
         "",
     );
 }
+
+#[tokio::test]
+async fn get_task_aggregation_metrics() {
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+    let task_id = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let task =
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                        .build()
+                        .leader_view()
+                        .unwrap();
+                let task_id = *task.id();
+                tx.put_aggregator_task(&task).await.unwrap();
+
+                Ok(task_id)
+            })
+        })
+        .await
+        .unwrap();
+
+    // Verify: requesting metrics on a fresh task returns zeroes.
+    assert_response!(
+        get(format!("/tasks/{task_id}/metrics/aggregations"))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Ok,
+        serde_json::to_string(&GetTaskAggregationMetricsResp(TaskAggregationCounter::default())).unwrap(),
+    );
+
+    // Verify: requesting metrics on a task returns the correct result.
+    ds.run_unnamed_tx(|tx| {
+        Box::pin(async move {
+            tx.increment_task_aggregation_counter(
+                &task_id,
+                5,
+                &TaskAggregationCounter::new_with_values(15),
+            )
+            .await
+        })
+    })
+    .await
+    .unwrap();
+    assert_response!(
+        get(format!("/tasks/{task_id}/metrics/aggregations"))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Ok,
+        serde_json::to_string(&GetTaskAggregationMetricsResp(
+            TaskAggregationCounter::new_with_values(15)
+        ))
+        .unwrap(),
+    );
+
+    // Verify: requesting metrics on a nonexistent task returns NotFound.
+    assert_response!(
+        get(format!("/tasks/{}/metrics/aggregations", &random::<TaskId>()))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::NotFound,
+        "",
+    );
+
+    // Verify: unauthorized requests are denied appropriately.
+    assert_response!(
+        get(format!("/tasks/{task_id}/metrics/aggregations"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized,
+        "",
+    );
+}
+
 
 #[tokio::test]
 async fn get_global_hpke_configs() {
