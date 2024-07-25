@@ -1,7 +1,9 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_aggregator_core::{
-    datastore::models::{GlobalHpkeKeypair, HpkeKeyState, TaskAggregationCounter, TaskUploadCounter},
+    datastore::models::{
+        GlobalHpkeKeypair, HpkeKeyState, TaskAggregationCounter, TaskUploadCounter,
+    },
     task::{AggregatorTask, QueryType},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };

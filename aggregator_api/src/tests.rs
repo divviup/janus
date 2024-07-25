@@ -1,7 +1,10 @@
 use crate::{
     aggregator_api_handler,
     models::{
-        DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp
+        DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp,
+        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -907,7 +910,10 @@ async fn get_task_aggregation_metrics() {
             .run_async(&handler)
             .await,
         Status::Ok,
-        serde_json::to_string(&GetTaskAggregationMetricsResp(TaskAggregationCounter::default())).unwrap(),
+        serde_json::to_string(&GetTaskAggregationMetricsResp(
+            TaskAggregationCounter::default()
+        ))
+        .unwrap(),
     );
 
     // Verify: requesting metrics on a task returns the correct result.
@@ -938,11 +944,14 @@ async fn get_task_aggregation_metrics() {
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
     assert_response!(
-        get(format!("/tasks/{}/metrics/aggregations", &random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
+        get(format!(
+            "/tasks/{}/metrics/aggregations",
+            &random::<TaskId>()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
         Status::NotFound,
         "",
     );
@@ -957,7 +966,6 @@ async fn get_task_aggregation_metrics() {
         "",
     );
 }
-
 
 #[tokio::test]
 async fn get_global_hpke_configs() {

@@ -1,6 +1,10 @@
 use crate::{
     models::{
-        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp
+        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
+        GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp,
+        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
@@ -298,11 +302,11 @@ pub(super) async fn get_task_aggregation_metrics<C: Clock>(
 ) -> Result<Json<GetTaskAggregationMetricsResp>, Error> {
     let task_id = conn.task_id_param()?;
     Ok(Json(GetTaskAggregationMetricsResp(
-        ds.run_tx("get_task_aggregation_metrics", |tx| Box::pin(async move {
-            tx.get_task_aggregation_counter(&task_id).await
-        }))
+        ds.run_tx("get_task_aggregation_metrics", |tx| {
+            Box::pin(async move { tx.get_task_aggregation_counter(&task_id).await })
+        })
         .await?
-        .ok_or(Error::NotFound)?
+        .ok_or(Error::NotFound)?,
     )))
 }
 
