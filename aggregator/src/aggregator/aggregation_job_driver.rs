@@ -375,7 +375,10 @@ where
 
                     // Check for repeated extensions.
                     let mut extension_types = HashSet::new();
+                    // TODO(inahga): evil unwrap due to doctoring StartLeader
                     if !leader_extensions
+                        .as_ref()
+                        .unwrap()
                         .iter()
                         .all(|extension| extension_types.insert(extension.extension_type()))
                     {
@@ -416,7 +419,8 @@ where
                             // DAP report ID is used as VDAF nonce
                             report_aggregation.report_id().as_ref(),
                             public_share,
-                            leader_input_share,
+                            // TODO(inahga): evil unwrap due to doctoring StartLeader
+                            &leader_input_share.as_ref().unwrap(),
                         )
                         .map_err(|ping_pong_error| {
                             handle_ping_pong_error(

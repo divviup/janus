@@ -848,6 +848,7 @@ pub mod test_util {
         pub datastore: Arc<Datastore<MockClock>>,
         pub handler: Box<dyn Handler>,
         pub hpke_keypair: HpkeKeypair,
+        // TODO(inahga): create aggregation job driver
     }
 
     impl HttpHandlerTest {
@@ -882,6 +883,8 @@ pub mod test_util {
             )
             .await
             .unwrap();
+
+            // TODO(inahga): create aggregation job driver
 
             Self {
                 clock,

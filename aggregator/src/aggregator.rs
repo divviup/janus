@@ -2296,7 +2296,20 @@ impl VdafOps {
                                         let task = Arc::clone(&task);
                                         let vdaf = Arc::clone(&vdaf);
                                         async move {
-                                            let state = match tx
+                                            // TODO(inahga): refactor, this is horribly ugly
+                                            let mut state = ReportAggregationMetadataState::Start;
+                                            let public_share =
+                                                A::PublicShare::get_decoded_with_param(
+                                                    &vdaf,
+                                                    prepare_init.report_share().public_share(),
+                                                );
+                                            if let Err(err) = public_share {
+                                                state = ReportAggregationMetadataState::Failed {
+                                                    prepare_error: PrepareError::InvalidMessage,
+                                                };
+                                            }
+
+                                            match tx
                                                 .put_helper_client_report(&HelperStoredReport::new(
                                                     *task.id(),
                                                     prepare_init.report_share().metadata().clone(),
@@ -2310,12 +2323,14 @@ impl VdafOps {
                                                 ))
                                                 .await
                                             {
-                                                Ok(()) => ReportAggregationMetadataState::Start,
+                                                Ok(()) => {}
                                                 Err(
                                                     DatastoreError::MutationTargetAlreadyExists,
-                                                ) => ReportAggregationMetadataState::Failed {
-                                                    prepare_error: PrepareError::ReportReplayed,
-                                                },
+                                                ) => {
+                                                    state = ReportAggregationMetadataState::Failed {
+                                                        prepare_error: PrepareError::ReportReplayed,
+                                                    }
+                                                }
                                                 Err(err) => return Err(err),
                                             };
 

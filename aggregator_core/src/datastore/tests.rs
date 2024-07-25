@@ -2285,11 +2285,11 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             Role::Leader,
             ReportAggregationState::StartLeader {
                 public_share: vdaf_transcript.public_share.clone(),
-                leader_extensions: Vec::from([
+                leader_extensions: Some(Vec::from([
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-                ]),
-                leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                ])),
+                leader_input_share: Some(vdaf_transcript.leader_input_share.clone()),
                 helper_encrypted_input_share: HpkeCiphertext::new(
                     HpkeConfigId::from(13),
                     Vec::from("encapsulated_context"),
@@ -2653,8 +2653,8 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 for (ord, state) in [
                     ReportAggregationState::StartLeader {
                         public_share: vdaf_transcript.public_share.clone(),
-                        leader_extensions: Vec::new(),
-                        leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                        leader_extensions: Some(Vec::new()),
+                        leader_input_share: Some(vdaf_transcript.leader_input_share.clone()),
                         helper_encrypted_input_share: HpkeCiphertext::new(
                             HpkeConfigId::from(13),
                             Vec::from("encapsulated_context"),
@@ -2848,8 +2848,10 @@ async fn create_report_aggregation_from_client_reports_table(
                     None,
                     ReportAggregationState::<16, Poplar1<XofTurboShake128, 16>>::StartLeader {
                         public_share: leader_stored_report.public_share().clone(),
-                        leader_extensions: leader_stored_report.leader_extensions().to_owned(),
-                        leader_input_share: leader_stored_report.leader_input_share().clone(),
+                        leader_extensions: Some(
+                            leader_stored_report.leader_extensions().to_owned(),
+                        ),
+                        leader_input_share: Some(leader_stored_report.leader_input_share().clone()),
                         helper_encrypted_input_share: leader_stored_report
                             .helper_encrypted_input_share()
                             .clone(),

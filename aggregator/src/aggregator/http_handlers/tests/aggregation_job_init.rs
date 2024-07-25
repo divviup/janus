@@ -479,18 +479,31 @@ async fn aggregate_init() {
                         .get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
                         .await
                         .unwrap());
+                    // dbg!(tx
+                    //     .get_batch_aggregations_for_task::<0, TimeInterval, _>(&vdaf, task.id())
+                    //     .await
+                    //     .unwrap());
+                    // dbg!(tx.get_report_metadatas_for_task(task.id()).await.unwrap());
+
                     dbg!(tx
-                        .get_batch_aggregations_for_task::<0, TimeInterval, _>(&vdaf, task.id())
+                        .get_report_aggregations_for_aggregation_job(
+                            &vdaf,
+                            &janus_messages::Role::Helper,
+                            task.id(),
+                            &aggregation_job_id
+                        )
                         .await
                         .unwrap());
-                    dbg!(tx.get_report_metadatas_for_task(task.id()).await.unwrap());
                     Ok(())
                 })
             })
             .await
             .unwrap();
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(test_conn.status(), Some(Status::Created));
+
+        // poll aggregation job
+
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)

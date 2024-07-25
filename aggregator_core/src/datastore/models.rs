@@ -176,8 +176,8 @@ where
             None,
             ReportAggregationState::StartLeader {
                 public_share: self.public_share().clone(),
-                leader_extensions: self.leader_extensions().to_vec(),
-                leader_input_share: self.leader_input_share().clone(),
+                leader_extensions: Some(self.leader_extensions().to_vec()),
+                leader_input_share: Some(self.leader_input_share().clone()),
                 helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
             },
         )
@@ -949,16 +949,17 @@ where
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+    // TODO(inahga): this isn't actuall StartLeader anymore, it's more like Start.
     StartLeader {
         /// Public share for this report.
         #[derivative(Debug = "ignore")]
         public_share: A::PublicShare,
         /// The sequence of extensions from the Leader's input share for this report.
         #[derivative(Debug = "ignore")]
-        leader_extensions: Vec<Extension>,
+        leader_extensions: Option<Vec<Extension>>,
         /// The Leader's input share for this report.
         #[derivative(Debug = "ignore")]
-        leader_input_share: A::InputShare,
+        leader_input_share: Option<A::InputShare>,
         /// The Helper's encrypted input share for this report.
         #[derivative(Debug = "ignore")]
         helper_encrypted_input_share: HpkeCiphertext,
@@ -1008,13 +1009,19 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 leader_input_share,
                 helper_encrypted_input_share,
             } => {
+                // TODO(inahga): probably wrong use of APIs here
                 let mut encoded_extensions = Vec::new();
-                encode_u16_items(&mut encoded_extensions, &(), leader_extensions).unwrap();
+                if let Some(leader_extensions) = leader_extensions {
+                    encode_u16_items(&mut encoded_extensions, &(), leader_extensions).unwrap();
+                }
 
                 EncodedReportAggregationStateValues {
                     public_share: Some(public_share.get_encoded()?),
-                    leader_extensions: Some(encoded_extensions),
-                    leader_input_share: Some(leader_input_share.get_encoded()?),
+                    leader_extensions: leader_extensions.as_ref().map(|_| encoded_extensions),
+                    leader_input_share: leader_input_share
+                        .as_ref()
+                        .map(|leader_input_share| leader_input_share.get_encoded())
+                        .transpose()?,
                     helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()?),
                     ..Default::default()
                 }

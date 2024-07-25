@@ -2025,7 +2025,6 @@ WHERE aggregation_jobs.task_id = $1
 WITH incomplete_jobs AS (
     SELECT aggregation_jobs.id FROM aggregation_jobs
     JOIN tasks ON tasks.id = aggregation_jobs.task_id
-    WHERE tasks.aggregator_role = 'LEADER'
     AND aggregation_jobs.state = 'IN_PROGRESS'
     AND aggregation_jobs.lease_expiry <= $2
     AND UPPER(aggregation_jobs.client_timestamp_interval) >=
@@ -2447,22 +2446,8 @@ WHERE report_aggregations.task_id = $1
                                     .to_string(),
                             )
                         })?;
-                let leader_extensions_bytes = row
-                    .get::<_, Option<Vec<u8>>>("leader_extensions")
-                    .ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state START but leader_extensions is NULL"
-                                .to_string(),
-                        )
-                    })?;
-                let leader_input_share_bytes = row
-                    .get::<_, Option<Vec<u8>>>("leader_input_share")
-                    .ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state START but leader_input_share is NULL"
-                                .to_string(),
-                        )
-                    })?;
+                let leader_extensions_bytes = row.get::<_, Option<Vec<u8>>>("leader_extensions");
+                let leader_input_share_bytes = row.get::<_, Option<Vec<u8>>>("leader_input_share");
                 let helper_encrypted_input_share_bytes =
                     row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
                         .ok_or_else(|| {
@@ -2474,12 +2459,21 @@ WHERE report_aggregations.task_id = $1
 
                 let public_share =
                     A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
-                let leader_extensions =
-                    decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))?;
-                let leader_input_share = A::InputShare::get_decoded_with_param(
-                    &(vdaf, Role::Leader.index().unwrap()),
-                    &leader_input_share_bytes,
-                )?;
+
+                let leader_extensions = leader_extensions_bytes
+                    .map(|leader_extensions_bytes| {
+                        decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))
+                    })
+                    .transpose()?;
+
+                let leader_input_share = leader_input_share_bytes
+                    .map(|leader_input_share_bytes| {
+                        A::InputShare::get_decoded_with_param(
+                            &(vdaf, Role::Leader.index().unwrap()),
+                            &leader_input_share_bytes,
+                        )
+                    })
+                    .transpose()?;
                 let helper_encrypted_input_share =
                     HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
 
