@@ -38,6 +38,8 @@ use janus_messages::{
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
+use std::time::Duration as StdDuration;
+use tokio::time::sleep;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::put, TestConn};
 
@@ -503,6 +505,8 @@ async fn aggregate_init() {
         assert_eq!(test_conn.status(), Some(Status::Created));
 
         // poll aggregation job
+
+        sleep(StdDuration::from_secs(5)).await;
 
         assert_headers!(
             &test_conn,

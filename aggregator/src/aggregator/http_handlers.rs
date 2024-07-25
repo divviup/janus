@@ -801,7 +801,13 @@ impl TryFromConn for BodyBytes {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::aggregator_handler;
-    use crate::aggregator::test_util::default_aggregator_config;
+    use crate::{
+        aggregator::{
+            aggregation_job_driver::AggregationJobDriver, test_util::default_aggregator_config,
+        },
+        binary_utils::job_driver::JobDriver,
+        config::JobDriverConfig,
+    };
     use janus_aggregator_core::{
         datastore::{
             models::HpkeKeyState,
@@ -816,9 +822,11 @@ pub mod test_util {
         time::MockClock,
     };
     use janus_messages::codec::Decode;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
+    use tokio::task::{spawn, JoinHandle};
     use trillium::Handler;
     use trillium_testing::{assert_headers, TestConn};
+    use trillium_tokio::Stopper;
 
     pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn
@@ -849,6 +857,7 @@ pub mod test_util {
         pub handler: Box<dyn Handler>,
         pub hpke_keypair: HpkeKeypair,
         // TODO(inahga): create aggregation job driver
+        pub aggregation_job_driver_handle: JoinHandle<()>,
     }
 
     impl HttpHandlerTest {
@@ -884,7 +893,57 @@ pub mod test_util {
             .await
             .unwrap();
 
-            // TODO(inahga): create aggregation job driver
+            let aggregation_job_driver_handle = {
+                let datastore = datastore.clone();
+                let clock = clock.clone();
+                spawn(async move {
+                    let job_driver_config = JobDriverConfig {
+                        job_discovery_interval_s: 1,
+                        max_concurrent_job_workers: 10,
+                        worker_lease_duration_s: 600,
+                        worker_lease_clock_skew_allowance_s: 60,
+                        maximum_attempts_before_failure: 5,
+                        http_request_timeout_s: 10,
+                        http_request_connection_timeout_s: 30,
+                        retry_initial_interval_ms: 1000,
+                        retry_max_interval_ms: 30_000,
+                        retry_max_elapsed_time_ms: 300_000,
+                    };
+
+                    let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
+                        reqwest::Client::builder().build().unwrap(),
+                        job_driver_config.retry_config(),
+                        &noop_meter(),
+                        32,
+                    ));
+                    let lease_duration = Duration::from_secs(600);
+
+                    // Start running.
+                    let job_driver = Arc::new(
+                        JobDriver::new(
+                            clock.clone(),
+                            TestRuntime::default(),
+                            noop_meter(),
+                            Stopper::new(),
+                            Duration::from_secs(job_driver_config.job_discovery_interval_s),
+                            job_driver_config.max_concurrent_job_workers,
+                            Duration::from_secs(
+                                job_driver_config.worker_lease_clock_skew_allowance_s,
+                            ),
+                            aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                                Arc::clone(&datastore),
+                                lease_duration,
+                            ),
+                            aggregation_job_driver.make_job_stepper_callback(
+                                Arc::clone(&datastore),
+                                job_driver_config.maximum_attempts_before_failure,
+                            ),
+                        )
+                        .unwrap(),
+                    );
+                    job_driver.run().await;
+                })
+            };
 
             Self {
                 clock,
@@ -892,7 +951,15 @@ pub mod test_util {
                 datastore,
                 handler: Box::new(handler),
                 hpke_keypair,
+                aggregation_job_driver_handle,
             }
         }
     }
+
+    // TODO(inahga): this blows up a bunch of tests
+    // impl Drop for HttpHandlerTest {
+    //     fn drop(&mut self) {
+    //         self.aggregation_job_driver_handle.abort();
+    //     }
+    // }
 }

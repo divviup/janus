@@ -199,7 +199,7 @@ where
                     let report_aggregations_future = tx
                         .get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
-                            &Role::Leader,
+                            task.role(),
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id(),
                         );
@@ -243,10 +243,10 @@ where
                 ReportAggregationState::Failed { .. } => (), // ignore failed aggregations
             }
         }
-        match (saw_start, saw_waiting, saw_finished) {
+        match (task.role(), saw_start, saw_waiting, saw_finished) {
             // Only saw report aggregations in state "start" (or failed or invalid).
-            (true, false, false) => {
-                self.step_aggregation_job_aggregate_init(
+            (Role::Leader, true, false, false) => {
+                self.step_aggregation_job_aggregate_init_leader(
                     &datastore,
                     vdaf,
                     lease,
@@ -259,8 +259,8 @@ where
             }
 
             // Only saw report aggregations in state "waiting" (or failed or invalid).
-            (false, true, false) => {
-                self.step_aggregation_job_aggregate_continue(
+            (Role::Leader, false, true, false) => {
+                self.step_aggregation_job_aggregate_continue_leader(
                     &datastore,
                     vdaf,
                     lease,
@@ -271,6 +271,23 @@ where
                 .await
             }
 
+            (Role::Helper, true, false, false) => {
+                self.step_aggregation_job_aggregate_init_helper(
+                    &datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                    verify_key,
+                )
+                .await
+            }
+
+            (Role::Helper, false, true, false) => {
+                todo!("helper aggregate continue not supported yet");
+            }
+
             _ => Err(Error::Internal(format!(
                 "unexpected combination of report aggregation states (saw_start = {saw_start}, \
                 saw_waiting = {saw_waiting}, saw_finished = {saw_finished})",
@@ -279,7 +296,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn step_aggregation_job_aggregate_init<
+    async fn step_aggregation_job_aggregate_init_leader<
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
@@ -552,7 +569,38 @@ where
         .await
     }
 
-    async fn step_aggregation_job_aggregate_continue<
+    #[allow(clippy::too_many_arguments)]
+    async fn step_aggregation_job_aggregate_init_helper<
+        const SEED_SIZE: usize,
+        C: Clock,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    >(
+        &self,
+        datastore: &Datastore<C>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: Arc<AggregatorTask>,
+        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+        verify_key: VerifyKey<SEED_SIZE>,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
+        A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
+        A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
+    {
+        dbg!(aggregation_job);
+        dbg!(report_aggregations);
+        todo!("working on it!")
+    }
+
+    async fn step_aggregation_job_aggregate_continue_leader<
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
