@@ -22,6 +22,7 @@ use prio::{
     dp::{
         distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
     },
+    field::{Field128, FieldElementWithInteger},
     vdaf::{dummy, prio3::Prio3},
 };
 use std::{iter, time::Duration};
@@ -514,6 +515,10 @@ async fn janus_in_process_histogram_dp_noise() {
     // large (drawn from Laplace_Z(20) + Laplace_Z(20)), and it is highly unlikely that all 100
     // noise values will be zero simultaneously.
     assert_ne!(aggregate_result, un_noised_result);
+
+    assert!(aggregate_result
+        .iter()
+        .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -574,4 +579,8 @@ async fn janus_in_process_sumvec_dp_noise() {
     // large (drawn from Laplace_Z(150) + Laplace_Z(150)), and it is highly unlikely that all 50
     // noise values will be zero simultaneously.
     assert_ne!(aggregate_result, un_noised_result);
+
+    assert!(aggregate_result
+        .iter()
+        .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3));
 }
