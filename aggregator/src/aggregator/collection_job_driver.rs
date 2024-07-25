@@ -28,7 +28,7 @@ use janus_messages::{
     AggregateShare, AggregateShareReq, BatchSelector,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter, Unit},
+    metrics::{Counter, Histogram, Meter},
     KeyValue, Value,
 };
 use prio::{
@@ -665,7 +665,7 @@ impl CollectionJobDriverMetrics {
         let jobs_finished_counter = meter
             .u64_counter("janus_collection_jobs_finished")
             .with_description("Count of finished collection jobs.")
-            .with_unit(Unit::new("{job}"))
+            .with_unit("{job}")
             .init();
         jobs_finished_counter.add(0, &[]);
 
@@ -674,13 +674,13 @@ impl CollectionJobDriverMetrics {
             .with_description(
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
-            .with_unit(Unit::new("s"))
+            .with_unit("s")
             .init();
 
         let jobs_abandoned_counter = meter
             .u64_counter("janus_collection_jobs_abandoned")
             .with_description("Count of abandoned collection jobs.")
-            .with_unit(Unit::new("{job}"))
+            .with_unit("{job}")
             .init();
         jobs_abandoned_counter.add(0, &[]);
 
@@ -690,7 +690,7 @@ impl CollectionJobDriverMetrics {
                 "Count of collection jobs that were run to completion but found to have been \
                  deleted.",
             )
-            .with_unit(Unit::new("{job}"))
+            .with_unit("{job}")
             .init();
         deleted_jobs_encountered_counter.add(0, &[]);
 
@@ -700,14 +700,14 @@ impl CollectionJobDriverMetrics {
                 "Count of collection jobs that were run to completion but found in an unexpected \
                  state.",
             )
-            .with_unit(Unit::new("{job}"))
+            .with_unit("{job}")
             .init();
         unexpected_job_state_counter.add(0, &[]);
 
         let job_steps_retried_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
-            .with_unit(Unit::new("{step}"))
+            .with_unit("{step}")
             .init();
         job_steps_retried_counter.add(0, &[]);
 

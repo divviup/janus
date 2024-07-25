@@ -699,9 +699,9 @@ async fn upload_client_early_disconnect() {
                 data_point
                     .attributes
                     .iter()
-                    .find(|attribute| attribute.0 == &error_code_key)
+                    .find(|attribute| attribute.key == error_code_key)
                     .unwrap()
-                    .1
+                    .value
                     .to_string()
             })
             .collect::<HashSet<String>>(),
@@ -726,8 +726,8 @@ async fn upload_client_early_disconnect() {
                 data_point
                     .attributes
                     .iter()
-                    .find(|attribute| attribute.0 == &error_type_key)
-                    .map(|(_key, value)| value.to_string())
+                    .find(|attribute| attribute.key == error_type_key)
+                    .map(|attribute| attribute.value.to_string())
             })
             .collect::<HashSet<Option<String>>>(),
         HashSet::from([Some("client_disconnected".to_string()), None])
@@ -740,9 +740,9 @@ async fn upload_client_early_disconnect() {
                 data_point
                     .attributes
                     .iter()
-                    .find(|attribute| attribute.0 == &status_code_key)
+                    .find(|attribute| attribute.key == status_code_key)
                     .unwrap()
-                    .1
+                    .value
                     .to_string()
             })
             .collect::<HashSet<String>>(),

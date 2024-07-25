@@ -146,7 +146,6 @@ mod tests {
         problem_type::{DapProblemType, DapProblemTypeParseError},
         Duration, Interval, ReportIdChecksum,
     };
-    use opentelemetry::metrics::Unit;
     use rand::random;
     use reqwest::Client;
     use std::{borrow::Cow, sync::Arc};
@@ -179,7 +178,7 @@ mod tests {
     async fn problem_details_round_trip() {
         let request_histogram = noop_meter()
             .f64_histogram("janus_http_request_duration")
-            .with_unit(Unit::new("s"))
+            .with_unit("s")
             .init();
 
         struct TestCase {

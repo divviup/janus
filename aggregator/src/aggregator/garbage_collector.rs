@@ -3,7 +3,7 @@ use futures::future::{join_all, try_join_all, OptionFuture};
 use janus_aggregator_core::datastore::{self, Datastore};
 use janus_core::time::Clock;
 use janus_messages::TaskId;
-use opentelemetry::metrics::{Counter, Meter, Unit};
+use opentelemetry::metrics::{Counter, Meter};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -41,17 +41,17 @@ impl<C: Clock> GarbageCollector<C> {
         let deleted_report_counter = meter
             .u64_counter("janus_gc_deleted_reports")
             .with_description("Count of client reports deleted by the garbage collector.")
-            .with_unit(Unit::new("{report}"))
+            .with_unit("{report}")
             .init();
         let deleted_aggregation_job_counter = meter
             .u64_counter("janus_gc_deleted_aggregation_jobs")
             .with_description("Count of aggregation jobs deleted by the garbage collector.")
-            .with_unit(Unit::new("{job}"))
+            .with_unit("{job}")
             .init();
         let deleted_batch_counter = meter
             .u64_counter("janus_gc_deleted_batches")
             .with_description("Count of batches deleted by the garbage collector.")
-            .with_unit(Unit::new("{batch}"))
+            .with_unit("{batch}")
             .init();
 
         deleted_report_counter.add(0, &[]);
