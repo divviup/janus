@@ -99,6 +99,10 @@ pub fn aggregator_api_handler<C: Clock>(
                 instrumented(api(get_task_upload_metrics::<C>)),
             )
             .get(
+                "/tasks/:task_id/metrics/aggregations",
+                instrumented(api(get_task_aggregation_metrics::<C>)),
+            )
+            .get(
                 "/hpke_configs",
                 instrumented(api(get_global_hpke_configs::<C>)),
             )

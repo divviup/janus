@@ -2336,7 +2336,7 @@ impl TaskUploadCounter {
 }
 
 /// Per-task counts of aggregated reports.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAggregationCounter {
     /// The number of successfully-aggregated reports.
     pub(crate) success: u64,
