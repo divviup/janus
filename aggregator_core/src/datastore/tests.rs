@@ -1922,6 +1922,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     agg_job_id,
                     task::QueryType::TimeInterval,
                     VdafInstance::Prio3Count,
+                    Vec::new(),
                 ),
                 want_expiry_time,
             )
@@ -2044,6 +2045,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     job_id,
                     task::QueryType::TimeInterval,
                     VdafInstance::Prio3Count,
+                    Vec::new(),
                 ),
                 want_expiry_time,
             )
@@ -2295,6 +2297,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                     Vec::from("encapsulated_context"),
                     Vec::from("payload"),
                 ),
+                message: None,
             },
         ),
         (
@@ -2660,6 +2663,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                             Vec::from("encapsulated_context"),
                             Vec::from("payload"),
                         ),
+                        message: None,
                     },
                     ReportAggregationState::WaitingHelper {
                         prepare_state: vdaf_transcript.helper_prepare_transitions[0]
@@ -2855,6 +2859,7 @@ async fn create_report_aggregation_from_client_reports_table(
                         helper_encrypted_input_share: leader_stored_report
                             .helper_encrypted_input_share()
                             .clone(),
+                        message: None,
                     },
                 )]))
             })

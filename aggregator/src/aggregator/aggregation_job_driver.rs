@@ -27,17 +27,19 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask, VerifyKey},
+    test_util::noop_meter,
 };
 use janus_core::{
+    hpke::{self, HpkeApplicationInfo, Label},
     retries::{is_retryable_http_client_error, is_retryable_http_status},
-    time::Clock,
+    time::{Clock, TimeExt},
     vdaf_dispatch,
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareStepResult,
-    ReportShare, Role,
+    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, ExtensionType,
+    InputShareAad, PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError,
+    PrepareInit, PrepareResp, PrepareStepResult, ReportShare, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -48,9 +50,17 @@ use prio::{
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
-use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
+use rayon::iter::{
+    IndexedParallelIterator as _, IntoParallelIterator as _, IntoParallelRefIterator,
+    ParallelIterator as _,
+};
 use reqwest::Method;
-use std::{collections::HashSet, panic, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    panic,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{join, sync::mpsc, try_join};
 use tracing::{debug, error, info, info_span, trace_span, warn, Span};
 
@@ -375,6 +385,7 @@ where
                             leader_extensions,
                             leader_input_share,
                             helper_encrypted_input_share,
+                            ..
                         } => (
                             public_share,
                             leader_extensions,
@@ -595,9 +606,441 @@ where
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
-        dbg!(aggregation_job);
-        dbg!(report_aggregations);
-        todo!("working on it!")
+        let aggregation_job = dbg!(aggregation_job);
+        let report_aggregations = dbg!(report_aggregations);
+
+        let report_aggregations = Arc::new(report_aggregations);
+        let aggregation_job = Arc::new(aggregation_job);
+
+        // Compute the next aggregation step.
+        //
+        // We validate that each prepare_init can be represented by a `u64` ord value here, so that
+        // inside the parallel iterator we can unwrap. A conversion failure here will fail the
+        // entire aggregation. However, this is desirable: this can only happen if we receive too
+        // many report shares in an aggregation job for us to store, which is a whole-aggregation
+        // problem rather than a per-report problem. (separately, this would require more than
+        // u64::MAX report shares in a single aggregation job, which is practically impossible.)
+        u64::try_from(report_aggregations.len())?;
+
+        let report_deadline = datastore
+            .clock
+            .now()
+            .add(task.tolerable_clock_skew())
+            .map_err(Error::from)?;
+
+        // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
+        // This will cause any attempts to send on `sender` to return a `SendError`, which will be
+        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
+        // terminate early on receiving an error.
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let producer_task = tokio::task::spawn_blocking({
+            let parent_span = Span::current();
+            let vdaf = Arc::clone(&vdaf);
+            let task = Arc::clone(&task);
+            // let metrics = metrics.clone();
+            let report_aggregations = Arc::clone(&report_aggregations);
+            let aggregation_job = Arc::clone(&aggregation_job);
+            // let aggregation_job_id = *aggregation_job_id;
+            let verify_key = verify_key;
+            // let agg_param = Arc::clone(&agg_param);
+            let global_hpke_keypairs = lease.leased().global_hpke_keypairs().to_vec();
+
+            move || {
+                let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
+
+                report_aggregations
+                    .par_iter()
+                    .enumerate()
+                    .try_for_each_with(
+                        (sender, span),
+                        |(sender, span), (ord, report_aggregation)| {
+                            let _entered = span.enter();
+
+                            let (public_share, helper_encrypted_input_share, message) =
+                                match report_aggregation.state() {
+                                    ReportAggregationState::StartLeader {
+                                        public_share,
+                                        helper_encrypted_input_share,
+                                        message,
+                                        ..
+                                    } => (
+                                        public_share,
+                                        helper_encrypted_input_share,
+                                        message.as_ref().unwrap(),
+                                    ),
+                                    ReportAggregationState::Failed { prepare_error } => {
+                                        // TODO(inahga): hack, we shouldn't be doing this here, instead
+                                        // should do it in the handler
+                                        return sender.send(WritableReportAggregation::new(
+                                            ReportAggregation::<SEED_SIZE, A>::new(
+                                                *task.id(),
+                                                *aggregation_job.id(),
+                                                *report_aggregation.report_metadata().id(),
+                                                *report_aggregation.report_metadata().time(),
+                                                // Unwrap safety: we checked that all ordinal values are representable
+                                                // as a u64 before entering the parallel iterator.
+                                                ord.try_into().unwrap(),
+                                                Some(PrepareResp::new(
+                                                    *report_aggregation.report_metadata().id(),
+                                                    PrepareStepResult::Reject(
+                                                        prepare_error.clone(),
+                                                    ),
+                                                )),
+                                                ReportAggregationState::Failed {
+                                                    prepare_error: prepare_error.clone(),
+                                                },
+                                            ),
+                                            None,
+                                        ));
+                                    }
+                                    _ => {
+                                        unreachable!("unexpected state!")
+                                    }
+                                };
+
+                            // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+                            let global_hpke_keypair = global_hpke_keypairs.iter().find(|keypair| {
+                                keypair.id() == helper_encrypted_input_share.config_id()
+                            });
+
+                            let task_hpke_keypair = task
+                                .hpke_keys()
+                                .get(helper_encrypted_input_share.config_id());
+
+                            let check_keypairs = if task_hpke_keypair.is_none()
+                                && global_hpke_keypair.is_none()
+                            {
+                                debug!(
+                                    config_id = %helper_encrypted_input_share.config_id(),
+                                    "Helper encrypted input share references unknown HPKE config ID"
+                                );
+                                // self.aggregate_step_failure_counter
+                                //     .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
+                                Err(PrepareError::HpkeUnknownConfigId)
+                            } else {
+                                Ok(())
+                            };
+
+                            let input_share_aad = check_keypairs.and_then(|_| {
+                                InputShareAad::new(
+                                    *task.id(),
+                                    report_aggregation.report_metadata().clone(),
+                                    public_share.get_encoded().expect("TODO(inahga): evil"),
+                                )
+                                .get_encoded()
+                                .map_err(|err| {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        metadata = ?report_aggregation.report_metadata().clone(),
+                                        ?err,
+                                        "Couldn't encode input share AAD"
+                                    );
+                                    // self.aggregate_step_failure_counter.add(
+                                    //     1,
+                                    //     &[KeyValue::new("type", "input_share_aad_encode_failure")],
+                                    // );
+                                    // HpkeDecryptError isn't strictly accurate, but given that this
+                                    // fallible encoding is part of the HPKE decryption process, I think
+                                    // this is as close as we can get to a meaningful error signal.
+                                    PrepareError::HpkeDecryptError
+                                })
+                            });
+
+                            let plaintext = input_share_aad.and_then(|input_share_aad| {
+                                let try_hpke_open = |hpke_keypair| {
+                                    hpke::open(
+                                        hpke_keypair,
+                                        &HpkeApplicationInfo::new(
+                                            &Label::InputShare,
+                                            &Role::Client,
+                                            &Role::Helper,
+                                        ),
+                                        helper_encrypted_input_share,
+                                        &input_share_aad,
+                                    )
+                                };
+
+                                match (task_hpke_keypair, global_hpke_keypair) {
+                                    (None, None) => unreachable!("already checked this condition"),
+                                    (None, Some(global_hpke_keypair)) => {
+                                        try_hpke_open(global_hpke_keypair.hpke_keypair())
+                                    }
+                                    (Some(task_hpke_keypair), None) => {
+                                        try_hpke_open(task_hpke_keypair)
+                                    }
+                                    (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                                        try_hpke_open(task_hpke_keypair).or_else(
+                                            |error| match error {
+                                                // Only attempt second trial if _decryption_ fails, and not some
+                                                // error in server-side HPKE configuration.
+                                                hpke::Error::Hpke(_) => try_hpke_open(
+                                                    global_hpke_keypair.hpke_keypair(),
+                                                ),
+                                                error => Err(error),
+                                            },
+                                        )
+                                    }
+                                }
+                                .map_err(|error| {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        metadata = ?report_aggregation.report_metadata().clone(),
+                                        ?error,
+                                        "Couldn't decrypt helper's report share"
+                                    );
+                                    // self.aggregate_step_failure_counter
+                                    //     .add(1, &[KeyValue::new("type", "decrypt_failure")]);
+                                    PrepareError::HpkeDecryptError
+                                })
+                            });
+
+                            let plaintext_input_share = plaintext.and_then(|plaintext| {
+                            let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
+                                .map_err(|error| {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        metadata = ?report_aggregation.report_metadata().clone(),
+                                        ?error, "Couldn't decode helper's plaintext input share",
+                                    );
+                                    // self.aggregate_step_failure_counter.add(
+                                    //     1,
+                                    //     &[KeyValue::new(
+                                    //         "type",
+                                    //         "plaintext_input_share_decode_failure",
+                                    //     )],
+                                    // );
+                                    PrepareError::InvalidMessage
+                                })?;
+
+                            // Build map of extension type to extension data, checking for duplicates.
+                            let mut extensions = HashMap::new();
+                            if !plaintext_input_share.extensions().iter().all(|extension| {
+                                extensions
+                                    .insert(*extension.extension_type(), extension.extension_data())
+                                    .is_none()
+                            }) {
+                                debug!(
+                                    task_id = %task.id(),
+                                    metadata = ?report_aggregation.report_metadata().clone(),
+                                    "Received report share with duplicate extensions",
+                                );
+                                // self
+                                //     .aggregate_step_failure_counter
+                                //     .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                                return Err(PrepareError::InvalidMessage);
+                            }
+
+                            let require_taskprov_extension = false; // TODO(inahga): lol
+                            if require_taskprov_extension {
+                                let valid_taskprov_extension_present = extensions
+                                    .get(&ExtensionType::Taskprov)
+                                    .map(|data| data.is_empty())
+                                    .unwrap_or(false);
+                                if !valid_taskprov_extension_present {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        metadata = ?report_aggregation.report_metadata().clone(),
+                                        "Taskprov task received report with missing or malformed \
+                                        taskprov extension",
+                                    );
+                                    // self.aggregate_step_failure_counter.add(
+                                    //     1,
+                                    //     &[KeyValue::new(
+                                    //         "type",
+                                    //         "missing_or_malformed_taskprov_extension",
+                                    //     )],
+                                    // );
+                                    return Err(PrepareError::InvalidMessage);
+                                }
+                            } else if extensions.contains_key(&ExtensionType::Taskprov) {
+                                // taskprov not enabled, but the taskprov extension is present.
+                                debug!(
+                                    task_id = %task.id(),
+                                    metadata = ?report_aggregation.report_metadata().clone(),
+                                    "Non-taskprov task received report with unexpected taskprov \
+                                    extension",
+                                );
+                                // self
+                                //     .aggregate_step_failure_counter
+                                //     .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
+                                return Err(PrepareError::InvalidMessage);
+                            }
+
+                            Ok(plaintext_input_share)
+                        });
+
+                            let input_share =
+                                plaintext_input_share.and_then(|plaintext_input_share| {
+                                    A::InputShare::get_decoded_with_param(
+                                &(&vdaf, Role::Helper.index().unwrap()),
+                                plaintext_input_share.payload(),
+                            )
+                            .map_err(|error| {
+                                debug!(
+                                    task_id = %task.id(),
+                                    metadata = ?report_aggregation.report_metadata().clone(),
+                                    ?error, "Couldn't decode helper's input share",
+                                );
+                                // self
+                                //     .aggregate_step_failure_counter
+                                //     .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
+                                PrepareError::InvalidMessage
+                            })
+                                });
+
+                            let shares =
+                                input_share.and_then(|input_share| Ok((public_share, input_share)));
+
+                            // Reject reports from too far in the future.
+                            let shares = shares.and_then(|shares| {
+                                if report_aggregation
+                                    .report_metadata()
+                                    .time()
+                                    .is_after(&report_deadline)
+                                {
+                                    return Err(PrepareError::ReportTooEarly);
+                                }
+                                Ok(shares)
+                            });
+
+                            // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
+                            // associated with the task and computes the first state transition. [...] If either
+                            // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
+                            let init_rslt = shares.and_then(|(public_share, input_share)| {
+                                trace_span!("VDAF preparation (helper initialization)").in_scope(
+                                    || {
+                                        vdaf.helper_initialized(
+                                            verify_key.as_bytes(),
+                                            aggregation_job.aggregation_parameter(),
+                                            /* report ID is used as VDAF nonce */
+                                            report_aggregation.report_metadata().id().as_ref(),
+                                            &public_share,
+                                            &input_share,
+                                            &message,
+                                        )
+                                        .and_then(|transition| transition.evaluate(&vdaf))
+                                        .map_err(|error| {
+                                            handle_ping_pong_error(
+                                                task.id(),
+                                                Role::Helper,
+                                                report_aggregation.report_metadata().id(),
+                                                error,
+                                                &aggregate_step_failure_counter(&noop_meter()), // &self.aggregate_step_failure_counter,
+                                            )
+                                        })
+                                    },
+                                )
+                            });
+
+                            let (report_aggregation_state, prepare_step_result, output_share) =
+                                match init_rslt {
+                                    Ok((
+                                        PingPongState::Continued(prepare_state),
+                                        outgoing_message,
+                                    )) => {
+                                        // Helper is not finished. Await the next message from the Leader to advance to
+                                        // the next step.
+                                        (
+                                            ReportAggregationState::WaitingHelper { prepare_state },
+                                            PrepareStepResult::Continue {
+                                                message: outgoing_message,
+                                            },
+                                            None,
+                                        )
+                                    }
+                                    Ok((
+                                        PingPongState::Finished(output_share),
+                                        outgoing_message,
+                                    )) => (
+                                        ReportAggregationState::Finished,
+                                        PrepareStepResult::Continue {
+                                            message: outgoing_message,
+                                        },
+                                        Some(output_share),
+                                    ),
+                                    Err(prepare_error) => (
+                                        ReportAggregationState::Failed { prepare_error },
+                                        PrepareStepResult::Reject(prepare_error),
+                                        None,
+                                    ),
+                                };
+
+                            sender.send(WritableReportAggregation::new(
+                                ReportAggregation::<SEED_SIZE, A>::new(
+                                    *task.id(),
+                                    *aggregation_job.id(),
+                                    *report_aggregation.report_metadata().id(),
+                                    *report_aggregation.report_metadata().time(),
+                                    // Unwrap safety: we checked that all ordinal values are representable
+                                    // as a u64 before entering the parallel iterator.
+                                    ord.try_into().unwrap(),
+                                    Some(PrepareResp::new(
+                                        *report_aggregation.report_metadata().id(),
+                                        prepare_step_result,
+                                    )),
+                                    report_aggregation_state,
+                                ),
+                                output_share,
+                            ))
+                        },
+                    )
+            }
+        });
+
+        let mut report_data = Vec::with_capacity(report_aggregations.len());
+        while receiver.recv_many(&mut report_data, 10).await > 0 {}
+
+        // Await the producer task to resume any panics that may have occurred, and to ensure we can
+        // unwrap the aggregation parameter's Arc in a few lines. The only other errors that can
+        // occur are: a `JoinError` indicating cancellation, which is impossible because we do not
+        // cancel the task; and a `SendError`, which can only happen if this future is cancelled (in
+        // which case we will not run this code at all).
+        let _ = producer_task.await.map_err(|join_error| {
+            if let Ok(reason) = join_error.try_into_panic() {
+                panic::resume_unwind(reason);
+            }
+        });
+
+        assert_eq!(report_data.len(), report_aggregations.len());
+
+        let report_data = dbg!(report_data);
+
+        // Write everything back to storage.
+        let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
+        let mut aggregation_job_writer =
+            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
+                Arc::clone(&task),
+                self.batch_aggregation_shard_count,
+                Some(AggregationJobWriterMetrics {
+                    report_aggregation_success_counter: self.aggregation_success_counter.clone(),
+                    aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+                    aggregated_report_share_dimension_histogram: self
+                        .aggregated_report_share_dimension_histogram
+                        .clone(),
+                }),
+            );
+        let new_step = aggregation_job.step().increment();
+        aggregation_job_writer.put(aggregation_job.with_step(new_step), report_data)?;
+        let aggregation_job_writer = Arc::new(aggregation_job_writer);
+
+        datastore
+            .run_tx("step_aggregation_job_2", |tx| {
+                let vdaf = Arc::clone(&vdaf);
+                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let lease = Arc::clone(&lease);
+
+                Box::pin(async move {
+                    try_join!(
+                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
+                        tx.release_aggregation_job(&lease),
+                    )?;
+                    Ok(())
+                })
+            })
+            .await?;
+
+        Ok(())
+        // todo!("working on it!")
     }
 
     async fn step_aggregation_job_aggregate_continue_leader<

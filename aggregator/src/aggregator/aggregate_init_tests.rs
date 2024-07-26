@@ -41,7 +41,7 @@ use rand::random;
 use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{prelude::put, TestConn};
+use trillium_testing::{methods::get, prelude::put, TestConn};
 
 #[derive(Clone)]
 pub(super) struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
@@ -298,6 +298,24 @@ async fn setup_aggregate_init_test_without_sending_request<
         handler: Box::new(handler),
         _ephemeral_datastore: ephemeral_datastore,
     }
+}
+
+pub(crate) async fn get_aggregation_job(
+    task: &Task,
+    aggregation_job_id: &AggregationJobId,
+    handler: &impl Handler,
+) -> TestConn {
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+
+    get(task
+        .aggregation_job_uri(aggregation_job_id)
+        .unwrap()
+        .path()
+        .to_string()
+        + "?step=0")
+    .with_request_header(header, value)
+    .run_async(handler)
+    .await
 }
 
 pub(crate) async fn put_aggregation_job<Q: query_type::QueryType>(

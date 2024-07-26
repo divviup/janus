@@ -24,7 +24,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::{encode_u16_items, Encode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongMessage, PingPongTransition},
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -179,6 +179,7 @@ where
                 leader_extensions: Some(self.leader_extensions().to_vec()),
                 leader_input_share: Some(self.leader_input_share().clone()),
                 helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
+                message: None,
             },
         )
     }
@@ -690,6 +691,7 @@ pub struct AcquiredAggregationJob {
     aggregation_job_id: AggregationJobId,
     query_type: task::QueryType,
     vdaf: VdafInstance,
+    global_hpke_keypairs: Vec<GlobalHpkeKeypair>,
 }
 
 impl AcquiredAggregationJob {
@@ -699,12 +701,14 @@ impl AcquiredAggregationJob {
         aggregation_job_id: AggregationJobId,
         query_type: task::QueryType,
         vdaf: VdafInstance,
+        global_hpke_keypairs: Vec<GlobalHpkeKeypair>,
     ) -> Self {
         Self {
             task_id,
             aggregation_job_id,
             query_type,
             vdaf,
+            global_hpke_keypairs,
         }
     }
 
@@ -726,6 +730,10 @@ impl AcquiredAggregationJob {
     /// Returns the VDAF associated with this acquired aggregation job.
     pub fn vdaf(&self) -> &VdafInstance {
         &self.vdaf
+    }
+
+    pub fn global_hpke_keypairs(&self) -> &[GlobalHpkeKeypair] {
+        self.global_hpke_keypairs.as_ref()
     }
 }
 
@@ -949,7 +957,7 @@ where
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
-    // TODO(inahga): this isn't actuall StartLeader anymore, it's more like Start.
+    // TODO(inahga): this isn't actually StartLeader anymore, it's more like Start.
     StartLeader {
         /// Public share for this report.
         #[derivative(Debug = "ignore")]
@@ -963,6 +971,8 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
         /// The Helper's encrypted input share for this report.
         #[derivative(Debug = "ignore")]
         helper_encrypted_input_share: HpkeCiphertext,
+        #[derivative(Debug = "ignore")]
+        message: Option<PingPongMessage>,
     },
     WaitingLeader {
         /// Most recent transition for this report aggregation.
@@ -1008,8 +1018,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 leader_extensions,
                 leader_input_share,
                 helper_encrypted_input_share,
+                message,
             } => {
-                // TODO(inahga): probably wrong use of APIs here
+                // TODO(inahga): probably can use these APIs a bit better...
                 let mut encoded_extensions = Vec::new();
                 if let Some(leader_extensions) = leader_extensions {
                     encode_u16_items(&mut encoded_extensions, &(), leader_extensions).unwrap();
@@ -1023,6 +1034,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                         .map(|leader_input_share| leader_input_share.get_encoded())
                         .transpose()?,
                     helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()?),
+                    message: message
+                        .as_ref()
+                        .map(|message| message.get_encoded())
+                        .transpose()?,
                     ..Default::default()
                 }
             }
@@ -1056,6 +1071,7 @@ pub(super) struct EncodedReportAggregationStateValues {
     pub(super) leader_extensions: Option<Vec<u8>>,
     pub(super) leader_input_share: Option<Vec<u8>>,
     pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
+    pub(super) message: Option<Vec<u8>>,
 
     // State for WaitingLeader.
     pub(super) leader_prep_transition: Option<Vec<u8>>,
@@ -1103,18 +1119,21 @@ where
                     leader_extensions: lhs_leader_extensions,
                     leader_input_share: lhs_leader_input_share,
                     helper_encrypted_input_share: lhs_helper_encrypted_input_share,
+                    message: lhs_message,
                 },
                 Self::StartLeader {
                     public_share: rhs_public_share,
                     leader_extensions: rhs_leader_extensions,
                     leader_input_share: rhs_leader_input_share,
                     helper_encrypted_input_share: rhs_helper_encrypted_input_share,
+                    message: rhs_message,
                 },
             ) => {
                 lhs_public_share == rhs_public_share
                     && lhs_leader_extensions == rhs_leader_extensions
                     && lhs_leader_input_share == rhs_leader_input_share
                     && lhs_helper_encrypted_input_share == rhs_helper_encrypted_input_share
+                    && lhs_message == rhs_message
             }
             (
                 Self::WaitingLeader {
@@ -1180,6 +1199,7 @@ pub struct ReportAggregationMetadata {
     time: Time,
     ord: u64,
     state: ReportAggregationMetadataState,
+    message: Option<PingPongMessage>,
 }
 
 impl ReportAggregationMetadata {
@@ -1199,6 +1219,7 @@ impl ReportAggregationMetadata {
             time,
             ord,
             state,
+            message: None,
         }
     }
 
@@ -1241,6 +1262,17 @@ impl ReportAggregationMetadata {
     /// to have the given state.
     pub fn with_state(self, state: ReportAggregationMetadataState) -> Self {
         Self { state, ..self }
+    }
+
+    pub fn message(&self) -> Option<&PingPongMessage> {
+        self.message.as_ref()
+    }
+
+    pub fn with_message(self, message: PingPongMessage) -> Self {
+        Self {
+            message: Some(message),
+            ..self
+        }
     }
 }
 
@@ -2239,7 +2271,19 @@ impl ToSql for SqlInterval {
 
 /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.
 #[derive(
-    Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql, Serialize, Deserialize, ValueEnum,
+    Copy,
+    Clone,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    ToSql,
+    FromSql,
+    Serialize,
+    Deserialize,
+    ValueEnum,
+    PartialOrd,
+    Ord,
 )]
 #[postgres(name = "hpke_key_state")]
 #[serde(rename_all = "snake_case")]
@@ -2263,7 +2307,7 @@ pub enum HpkeKeyState {
     Expired,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GlobalHpkeKeypair {
     hpke_keypair: HpkeKeypair,
     state: HpkeKeyState,

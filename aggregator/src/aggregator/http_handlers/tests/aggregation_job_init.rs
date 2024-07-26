@@ -1,5 +1,5 @@
 use crate::aggregator::{
-    aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
+    aggregate_init_tests::{get_aggregation_job, put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
     http_handlers::{
         aggregator_handler,
@@ -468,8 +468,7 @@ async fn aggregate_init() {
     // Send request, parse response. Do this twice to prove that the request is idempotent.
     let aggregation_job_id: AggregationJobId = random();
     for _ in 0..2 {
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         // Check aggregation job in datastore.
         datastore
@@ -504,15 +503,26 @@ async fn aggregate_init() {
 
         assert_eq!(test_conn.status(), Some(Status::Created));
 
-        // poll aggregation job
+        // Poll aggregation job
+        let mut aggregate_resp: Option<AggregationJobResp> = None;
+        for _ in 0..4 {
+            let mut get_conn =
+                dbg!(get_aggregation_job(&task, &aggregation_job_id, &handler).await);
 
-        sleep(StdDuration::from_secs(5)).await;
+            if get_conn.status() == Some(Status::Ok) {
+                assert_headers!(
+                    &get_conn,
+                    "content-type" => (AggregationJobResp::MEDIA_TYPE)
+                );
+                aggregate_resp = Some(decode_response_body(&mut get_conn).await);
+                break;
+            }
 
-        assert_headers!(
-            &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
-        );
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+            sleep(StdDuration::from_millis(500)).await;
+        }
+
+        assert!(aggregate_resp.is_some());
+        let aggregate_resp = aggregate_resp.unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_resps().len(), 8);

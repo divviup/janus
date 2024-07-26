@@ -763,7 +763,18 @@ impl<'de> Deserialize<'de> for TaskId {
 
 /// DAP protocol message representing an HPKE key encapsulation mechanism.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    FromPrimitive,
+    IntoPrimitive,
+    Serialize,
+    Deserialize,
+    Hash,
+    PartialOrd,
+    Ord,
 )]
 #[repr(u16)]
 #[non_exhaustive]
@@ -802,7 +813,18 @@ impl Decode for HpkeKemId {
 
 /// DAP protocol message representing an HPKE key derivation function.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    FromPrimitive,
+    IntoPrimitive,
+    Serialize,
+    Deserialize,
+    Hash,
+    PartialOrd,
+    Ord,
 )]
 #[repr(u16)]
 #[non_exhaustive]
@@ -837,7 +859,18 @@ impl Decode for HpkeKdfId {
 
 /// DAP protocol message representing an HPKE AEAD.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize, Hash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    FromPrimitive,
+    IntoPrimitive,
+    Serialize,
+    Deserialize,
+    Hash,
+    PartialOrd,
+    Ord,
 )]
 #[repr(u16)]
 #[non_exhaustive]
@@ -1027,7 +1060,7 @@ impl Decode for HpkeCiphertext {
 
 /// DAP protocol message representing an HPKE public key.
 // TODO(#230): refactor HpkePublicKey & HpkeConfig to simplify usage
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HpkePublicKey(Vec<u8>);
 
 impl From<Vec<u8>> for HpkePublicKey {
@@ -1123,7 +1156,7 @@ impl<'de> Deserialize<'de> for HpkePublicKey {
 }
 
 /// DAP protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct HpkeConfig {
     id: HpkeConfigId,
     kem_id: HpkeKemId,

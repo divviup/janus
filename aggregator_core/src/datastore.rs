@@ -37,7 +37,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongMessage, PingPongTransition},
     vdaf,
 };
 use rand::random;
@@ -109,7 +109,7 @@ supported_schema_versions!(7, 6);
 pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
-    clock: C,
+    pub clock: C, // TODO(inahga): shouldn't be pub
     task_infos: Arc<Mutex<HashMap<TaskId, TaskInfo>>>,
     transaction_status_counter: Counter<u64>,
     transaction_retry_histogram: Histogram<u64>,
@@ -2009,6 +2009,10 @@ WHERE aggregation_jobs.task_id = $1
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredAggregationJob>>, Error> {
+        // TODO(inahga): this is the worst thing ever, should properly plumb GlobalHpkeKeypairCache
+        // instead
+        let global_hpke_keypairs = self.get_global_hpke_keypairs().await?;
+
         let now = self.clock.now().as_naive_date_time()?;
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -2067,7 +2071,13 @@ RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
             Ok(Lease::new(
-                AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
+                AcquiredAggregationJob::new(
+                    task_id,
+                    aggregation_job_id,
+                    query_type,
+                    vdaf,
+                    global_hpke_keypairs.clone(),
+                ),
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -2260,7 +2270,7 @@ SELECT
     ord, client_report_id, client_timestamp, last_prep_resp,
     report_aggregations.state, public_share, leader_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code
+    error_code, message
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2456,6 +2466,7 @@ WHERE report_aggregations.task_id = $1
                                 .to_string(),
                         )
                         })?;
+                let message_bytes = row.get::<_, Option<Vec<u8>>>("message");
 
                 let public_share =
                     A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
@@ -2477,11 +2488,16 @@ WHERE report_aggregations.task_id = $1
                 let helper_encrypted_input_share =
                     HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
 
+                let message = message_bytes
+                    .map(|message_bytes| PingPongMessage::get_decoded(&message_bytes))
+                    .transpose()?;
+
                 ReportAggregationState::StartLeader {
                     public_share,
                     leader_extensions,
                     leader_input_share,
                     helper_encrypted_input_share,
+                    message,
                 }
             }
 
@@ -2591,10 +2607,10 @@ INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
     last_prep_resp, state, public_share, leader_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code, created_at, updated_at, updated_by)
+    error_code, created_at, updated_at, updated_by, message)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17
+    $15, $16, $17, $18
 FROM aggregation_jobs
 WHERE task_id = $1
   AND aggregation_job_id = $2
@@ -2603,18 +2619,18 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         client_report_id, client_timestamp, last_prep_resp, state, public_share,
         leader_extensions, leader_input_share, helper_encrypted_input_share,
         leader_prep_transition, helper_prep_state, error_code, created_at,
-        updated_at, updated_by
+        updated_at, updated_by, message
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
         excluded.last_prep_resp, excluded.state, excluded.public_share,
         excluded.leader_extensions, excluded.leader_input_share,
         excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
         excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.updated_at, excluded.updated_by, excluded.message
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $18",
+           WHERE id = report_aggregations.aggregation_job_id) >= $19",
             )
             .await?;
         check_insert(
@@ -2641,7 +2657,10 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    /* message */
+                    &encoded_state_values.message,
+                    &task_info.report_expiry_threshold(&now)?,
                 ],
             )
             .await?,
@@ -2673,12 +2692,12 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
 INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
     state, public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, created_at, updated_at, updated_by)
+    helper_encrypted_input_share, created_at, updated_at, updated_by, message)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
     client_reports.public_share, client_reports.extensions,
     client_reports.leader_input_share,
-    client_reports.helper_encrypted_input_share, $6, $7, $8
+    client_reports.helper_encrypted_input_share, $6, $7, $8, $9
 FROM aggregation_jobs
 JOIN client_reports
     ON aggregation_jobs.task_id = client_reports.task_id
@@ -2701,7 +2720,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
         FROM aggregation_jobs
-        WHERE id = report_aggregations.aggregation_job_id) >= $9",
+        WHERE id = report_aggregations.aggregation_job_id) >= $10",
                     )
                     .await?;
                 check_insert(
@@ -2720,6 +2739,11 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* created_at */ &now,
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
+                            /* message */
+                            &report_aggregation_metadata
+                                .message()
+                                .map(|message| message.get_encoded())
+                                .transpose()?,
                             /* threshold */ &task_info.report_expiry_threshold(&now)?,
                         ],
                     )

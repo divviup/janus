@@ -192,7 +192,7 @@ impl Drop for GlobalHpkeKeypairCache {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GlobalHpkeKeypairCacheView {
     // We use a std::sync::Mutex in this cache because we won't hold locks across
     // `.await` boundaries. StdMutex is lighter weight than `tokio::sync::Mutex`.

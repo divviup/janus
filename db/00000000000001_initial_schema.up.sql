@@ -266,6 +266,7 @@ CREATE TABLE report_aggregations(
     leader_extensions             BYTEA,  -- encoded sequence of Extension messages from Leader input share (opaque DAP messages)
     leader_input_share            BYTEA,  -- encoded leader input share (opaque VDAF message)
     helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
+    message                       BYTEA,  -- optional encoded ping pong message (opaque VDAF message)
 
     -- Additional data for state WaitingLeader.
     leader_prep_transition  BYTEA,  -- the current VDAF prepare transition (opaque VDAF message)

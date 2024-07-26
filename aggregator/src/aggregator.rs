@@ -4,14 +4,8 @@ pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
-            ReportAggregationUpdate as _, WritableReportAggregation,
-        },
-        error::{
-            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
-            ReportRejectionReason,
-        },
+        aggregation_job_writer::{AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite},
+        error::{BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason},
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
@@ -44,7 +38,7 @@ use janus_aggregator_core::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
             BatchAggregationState, CollectionJob, CollectionJobState, HelperStoredReport,
             LeaderStoredReport, ReportAggregation, ReportAggregationMetadata,
-            ReportAggregationMetadataState, ReportAggregationState,
+            ReportAggregationMetadataState,
         },
         Datastore, Error as DatastoreError, Transaction,
     },
@@ -70,10 +64,9 @@ use janus_messages::{
     taskprov::{DpMechanism, TaskConfig},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, ExtensionType, HpkeConfig,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareError, PrepareResp, PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role,
-    TaskId,
+    PrepareError, Report, ReportIdChecksum, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -88,7 +81,6 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
     field::Field64,
     flp::gadgets::{Mul, ParallelSum},
-    topology::ping_pong::{PingPongState, PingPongTopology},
     vdaf::{
         self,
         poplar1::Poplar1,
@@ -96,7 +88,6 @@ use prio::{
         xof::XofTurboShake128,
     },
 };
-use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefIterator as _, ParallelIterator};
 use reqwest::Client;
 use ring::{
     digest::{digest, SHA256},
@@ -104,8 +95,7 @@ use ring::{
     signature::{EcdsaKeyPair, Signature},
 };
 use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt::Debug,
     hash::Hash,
     panic,
@@ -113,8 +103,8 @@ use std::{
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::mpsc, try_join};
-use tracing::{debug, info, info_span, trace_span, warn, Level, Span};
+use tokio::try_join;
+use tracing::{debug, info, warn, Level};
 use url::Url;
 
 #[cfg(test)]
@@ -478,16 +468,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_get_aggregation_job(
-                &self.datastore,
-                &self.clock,
-                &self.global_hpke_keypairs,
-                &self.metrics,
-                self.cfg.batch_aggregation_shard_count,
-                aggregation_job_id,
-                step,
-                taskprov_task_config.is_some(),
-            )
+            .handle_get_aggregation_job(&self.datastore, aggregation_job_id, step)
             .await
     }
 
@@ -548,7 +529,6 @@ impl<C: Clock> Aggregator<C> {
             .handle_aggregate_init(
                 &self.datastore,
                 &self.clock,
-                &self.global_hpke_keypairs,
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
@@ -1123,26 +1103,11 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_get_aggregation_job(
         &self,
         datastore: &Datastore<C>,
-        clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        metrics: &AggregatorMetrics,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
-        require_taskprov_extension: bool,
     ) -> Result<Option<AggregationJobResp>, Error> {
         self.vdaf_ops
-            .handle_get_aggregation_job(
-                datastore,
-                clock,
-                global_hpke_keypairs,
-                metrics,
-                Arc::clone(&self.task),
-                batch_aggregation_shard_count,
-                aggregation_job_id,
-                step,
-                require_taskprov_extension,
-            )
+            .handle_get_aggregation_job(datastore, Arc::clone(&self.task), aggregation_job_id, step)
             .await
     }
 
@@ -1150,7 +1115,6 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1162,7 +1126,6 @@ impl<C: Clock> TaskAggregator<C> {
             .handle_aggregate_init(
                 datastore,
                 clock,
-                global_hpke_keypairs,
                 metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
@@ -1597,55 +1560,38 @@ impl VdafOps {
     }
 
     #[tracing::instrument(
-        skip(self, datastore, global_hpke_keypairs, metrics, task),
+        skip(self, datastore, task),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
     async fn handle_get_aggregation_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
-        require_taskprov_extension: bool,
     ) -> Result<Option<AggregationJobResp>, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_aggregation_job_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
-                        clock,
-                        global_hpke_keypairs,
                         Arc::clone(vdaf),
-                        metrics,
                         task,
-                        batch_aggregation_shard_count,
                         aggregation_job_id,
                         step,
-                        verify_key,
-                        require_taskprov_extension,
                     )
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_aggregation_job_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
-                        clock,
-                        global_hpke_keypairs,
                         Arc::clone(vdaf),
-                        metrics,
                         task,
-                        batch_aggregation_shard_count,
                         aggregation_job_id,
                         step,
-                        verify_key,
-                        require_taskprov_extension,
                     )
                     .await
                 })
@@ -1657,7 +1603,7 @@ impl VdafOps {
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     #[tracing::instrument(
-        skip(self, datastore, global_hpke_keypairs, metrics, task, req_bytes),
+        skip(self, datastore, metrics, task, req_bytes),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
@@ -1665,7 +1611,6 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
@@ -1676,18 +1621,14 @@ impl VdafOps {
     ) -> Result<(), Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
-                        clock,
-                        global_hpke_keypairs,
                         Arc::clone(vdaf),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
-                        verify_key,
-                        require_taskprov_extension,
                         log_forbidden_mutations,
                         req_bytes,
                     )
@@ -1695,18 +1636,14 @@ impl VdafOps {
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
-                        clock,
-                        global_hpke_keypairs,
                         Arc::clone(vdaf),
                         metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
-                        verify_key,
-                        require_taskprov_extension,
                         log_forbidden_mutations,
                         req_bytes,
                     )
@@ -1977,17 +1914,6 @@ impl VdafOps {
     }
 }
 
-/// Used by the aggregation job initialization handler to represent initialization of a report
-/// share.
-#[derive(Clone)]
-struct ReportShareData<const SEED_SIZE: usize, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
-    report_share: ReportShare,
-    report_aggregation: WritableReportAggregation<SEED_SIZE, A>,
-}
-
 impl VdafOps {
     async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, Q, A, C>(
         tx: &Transaction<'_, C>,
@@ -2093,16 +2019,10 @@ impl VdafOps {
 
     async fn handle_get_aggregation_job_generic<const SEED_SIZE: usize, Q, A, C: Clock>(
         datastore: &Datastore<C>,
-        clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
-        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         _step: AggregationJobStep,
-        verify_key: &VerifyKey<SEED_SIZE>,
-        require_taskprov_extension: bool,
     ) -> Result<Option<AggregationJobResp>, Error>
     where
         Q: AccumulableQueryType,
@@ -2167,15 +2087,11 @@ impl VdafOps {
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
-        clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
-        verify_key: &VerifyKey<SEED_SIZE>,
-        require_taskprov_extension: bool,
         log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<(), Error>
@@ -2204,11 +2120,6 @@ impl VdafOps {
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
         );
-
-        let report_deadline = clock
-            .now()
-            .add(task.tolerable_clock_skew())
-            .map_err(Error::from)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
@@ -2245,6 +2156,7 @@ impl VdafOps {
                     {
                         Some(_) => Ok(()),
                         None => {
+                            // TODO(inahga): move this stuff out of the transaction.
                             let min_client_timestamp = req
                                 .prepare_inits()
                                 .iter()
@@ -2280,7 +2192,8 @@ impl VdafOps {
                                 client_timestamp_interval,
                                 AggregationJobState::InProgress,
                                 AggregationJobStep::from(0),
-                            );
+                            )
+                            .with_last_request_hash(request_hash);
 
                             let mut aggregation_job_writer =
                                 AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
@@ -2296,14 +2209,14 @@ impl VdafOps {
                                         let task = Arc::clone(&task);
                                         let vdaf = Arc::clone(&vdaf);
                                         async move {
-                                            // TODO(inahga): refactor, this is horribly ugly
+                                            // TODO(inahga): refactor
                                             let mut state = ReportAggregationMetadataState::Start;
                                             let public_share =
                                                 A::PublicShare::get_decoded_with_param(
                                                     &vdaf,
                                                     prepare_init.report_share().public_share(),
                                                 );
-                                            if let Err(err) = public_share {
+                                            if let Err(_) = public_share {
                                                 state = ReportAggregationMetadataState::Failed {
                                                     prepare_error: PrepareError::InvalidMessage,
                                                 };
@@ -2341,14 +2254,29 @@ impl VdafOps {
                                                 *prepare_init.report_share().metadata().time(),
                                                 ord.try_into()?,
                                                 state,
-                                            ))
+                                            )
+                                            .with_message(prepare_init.message().clone()))
                                         }
                                     },
                                 ))
                                 .await?;
 
+                            let report_ids_to_scrub: Vec<_> = report_share_metadatas
+                                .iter()
+                                .map(|metadata| *metadata.report_id())
+                                .collect();
+
                             aggregation_job_writer.put(aggregation_job, report_share_metadatas)?;
                             aggregation_job_writer.write(tx, vdaf).await?;
+
+                            // Report scrubbing must wait until after report aggregations have been created,
+                            // because they have a write-after-read antidependency on the report shares.
+                            try_join_all(
+                                report_ids_to_scrub
+                                    .iter()
+                                    .map(|report_id| tx.scrub_client_report(task.id(), report_id)),
+                            )
+                            .await?;
                             Ok(())
                         }
                     }
@@ -2357,463 +2285,6 @@ impl VdafOps {
             .await?;
 
         Ok(())
-
-        // // Compute the next aggregation step.
-        // //
-        // // We validate that each prepare_init can be represented by a `u64` ord value here, so that
-        // // inside the parallel iterator we can unwrap. A conversion failure here will fail the
-        // // entire aggregation. However, this is desirable: this can only happen if we receive too
-        // // many report shares in an aggregation job for us to store, which is a whole-aggregation
-        // // problem rather than a per-report problem. (separately, this would require more than
-        // // u64::MAX report shares in a single aggregation job, which is practically impossible.)
-        // u64::try_from(req.prepare_inits().len())?;
-
-        // // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
-        // // This will cause any attempts to send on `sender` to return a `SendError`, which will be
-        // // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
-        // // terminate early on receiving an error.
-        // let (sender, mut receiver) = mpsc::unbounded_channel();
-        // let producer_task = tokio::task::spawn_blocking({
-        //     let parent_span = Span::current();
-        //     let global_hpke_keypairs = global_hpke_keypairs.view();
-        //     let vdaf = Arc::clone(&vdaf);
-        //     let task = Arc::clone(&task);
-        //     let metrics = metrics.clone();
-        //     let req = Arc::clone(&req);
-        //     let aggregation_job_id = *aggregation_job_id;
-        //     let verify_key = *verify_key;
-        //     let agg_param = Arc::clone(&agg_param);
-
-        //     move || {
-        //         let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
-
-        //         req
-        //             .prepare_inits()
-        //             .par_iter()
-        //             .enumerate()
-        //             .try_for_each_with((sender, span), |(sender, span), (ord, prepare_init)| {
-        //                 let _entered = span.enter();
-
-        //                 // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-        //                 let global_hpke_keypair = global_hpke_keypairs.keypair(
-        //                     prepare_init
-        //                         .report_share()
-        //                         .encrypted_input_share()
-        //                         .config_id(),
-        //                 );
-
-        //                 let task_hpke_keypair = task.hpke_keys().get(
-        //                     prepare_init
-        //                         .report_share()
-        //                         .encrypted_input_share()
-        //                         .config_id(),
-        //                 );
-
-        //                 let check_keypairs = if task_hpke_keypair.is_none()
-        //                     && global_hpke_keypair.is_none()
-        //                 {
-        //                     debug!(
-        //                         config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
-        //                         "Helper encrypted input share references unknown HPKE config ID"
-        //                     );
-        //                     metrics
-        //                         .aggregate_step_failure_counter
-        //                         .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
-        //                     Err(PrepareError::HpkeUnknownConfigId)
-        //                 } else {
-        //                     Ok(())
-        //                 };
-
-        //                 let input_share_aad = check_keypairs.and_then(|_| {
-        //                     InputShareAad::new(
-        //                         *task.id(),
-        //                         prepare_init.report_share().metadata().clone(),
-        //                         prepare_init.report_share().public_share().to_vec(),
-        //                     )
-        //                     .get_encoded()
-        //                     .map_err(|err| {
-        //                         debug!(
-        //                             task_id = %task.id(),
-        //                             metadata = ?prepare_init.report_share().metadata(),
-        //                             ?err,
-        //                             "Couldn't encode input share AAD"
-        //                         );
-        //                         metrics.aggregate_step_failure_counter.add(
-        //                             1,
-        //                             &[KeyValue::new("type", "input_share_aad_encode_failure")],
-        //                         );
-        //                         // HpkeDecryptError isn't strictly accurate, but given that this
-        //                         // fallible encoding is part of the HPKE decryption process, I think
-        //                         // this is as close as we can get to a meaningful error signal.
-        //                         PrepareError::HpkeDecryptError
-        //                     })
-        //                 });
-
-        //                 let plaintext = input_share_aad.and_then(|input_share_aad| {
-        //                     let try_hpke_open = |hpke_keypair| {
-        //                         hpke::open(
-        //                             hpke_keypair,
-        //                             &HpkeApplicationInfo::new(
-        //                                 &Label::InputShare,
-        //                                 &Role::Client,
-        //                                 &Role::Helper,
-        //                             ),
-        //                             prepare_init.report_share().encrypted_input_share(),
-        //                             &input_share_aad,
-        //                         )
-        //                     };
-
-        //                     match (task_hpke_keypair, global_hpke_keypair) {
-        //                         (None, None) => unreachable!("already checked this condition"),
-        //                         (None, Some(global_hpke_keypair)) => {
-        //                             try_hpke_open(&global_hpke_keypair)
-        //                         }
-        //                         (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-        //                         (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-        //                             try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-        //                                 // Only attempt second trial if _decryption_ fails, and not some
-        //                                 // error in server-side HPKE configuration.
-        //                                 hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-        //                                 error => Err(error),
-        //                             })
-        //                         }
-        //                     }
-        //                     .map_err(|error| {
-        //                         debug!(
-        //                             task_id = %task.id(),
-        //                             metadata = ?prepare_init.report_share().metadata(),
-        //                             ?error,
-        //                             "Couldn't decrypt helper's report share"
-        //                         );
-        //                         metrics
-        //                             .aggregate_step_failure_counter
-        //                             .add(1, &[KeyValue::new("type", "decrypt_failure")]);
-        //                         PrepareError::HpkeDecryptError
-        //                     })
-        //                 });
-
-        //                 let plaintext_input_share = plaintext.and_then(|plaintext| {
-        //                     let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
-        //                         .map_err(|error| {
-        //                             debug!(
-        //                                 task_id = %task.id(),
-        //                                 metadata = ?prepare_init.report_share().metadata(),
-        //                                 ?error, "Couldn't decode helper's plaintext input share",
-        //                             );
-        //                             metrics.aggregate_step_failure_counter.add(
-        //                                 1,
-        //                                 &[KeyValue::new(
-        //                                     "type",
-        //                                     "plaintext_input_share_decode_failure",
-        //                                 )],
-        //                             );
-        //                             PrepareError::InvalidMessage
-        //                         })?;
-
-        //                     // Build map of extension type to extension data, checking for duplicates.
-        //                     let mut extensions = HashMap::new();
-        //                     if !plaintext_input_share.extensions().iter().all(|extension| {
-        //                         extensions
-        //                             .insert(*extension.extension_type(), extension.extension_data())
-        //                             .is_none()
-        //                     }) {
-        //                         debug!(
-        //                             task_id = %task.id(),
-        //                             metadata = ?prepare_init.report_share().metadata(),
-        //                             "Received report share with duplicate extensions",
-        //                         );
-        //                         metrics
-        //                             .aggregate_step_failure_counter
-        //                             .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-        //                         return Err(PrepareError::InvalidMessage);
-        //                     }
-
-        //                     if require_taskprov_extension {
-        //                         let valid_taskprov_extension_present = extensions
-        //                             .get(&ExtensionType::Taskprov)
-        //                             .map(|data| data.is_empty())
-        //                             .unwrap_or(false);
-        //                         if !valid_taskprov_extension_present {
-        //                             debug!(
-        //                                 task_id = %task.id(),
-        //                                 metadata = ?prepare_init.report_share().metadata(),
-        //                                 "Taskprov task received report with missing or malformed \
-        //                                 taskprov extension",
-        //                             );
-        //                             metrics.aggregate_step_failure_counter.add(
-        //                                 1,
-        //                                 &[KeyValue::new(
-        //                                     "type",
-        //                                     "missing_or_malformed_taskprov_extension",
-        //                                 )],
-        //                             );
-        //                             return Err(PrepareError::InvalidMessage);
-        //                         }
-        //                     } else if extensions.contains_key(&ExtensionType::Taskprov) {
-        //                         // taskprov not enabled, but the taskprov extension is present.
-        //                         debug!(
-        //                             task_id = %task.id(),
-        //                             metadata = ?prepare_init.report_share().metadata(),
-        //                             "Non-taskprov task received report with unexpected taskprov \
-        //                             extension",
-        //                         );
-        //                         metrics
-        //                             .aggregate_step_failure_counter
-        //                             .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
-        //                         return Err(PrepareError::InvalidMessage);
-        //                     }
-
-        //                     Ok(plaintext_input_share)
-        //                 });
-
-        //                 let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
-        //                     A::InputShare::get_decoded_with_param(
-        //                         &(&vdaf, Role::Helper.index().unwrap()),
-        //                         plaintext_input_share.payload(),
-        //                     )
-        //                     .map_err(|error| {
-        //                         debug!(
-        //                             task_id = %task.id(),
-        //                             metadata = ?prepare_init.report_share().metadata(),
-        //                             ?error, "Couldn't decode helper's input share",
-        //                         );
-        //                         metrics
-        //                             .aggregate_step_failure_counter
-        //                             .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
-        //                         PrepareError::InvalidMessage
-        //                     })
-        //                 });
-
-        //                 let public_share = A::PublicShare::get_decoded_with_param(
-        //                     &vdaf,
-        //                     prepare_init.report_share().public_share(),
-        //                 )
-        //                 .map_err(|error| {
-        //                     debug!(
-        //                         task_id = %task.id(),
-        //                         metadata = ?prepare_init.report_share().metadata(),
-        //                         ?error, "Couldn't decode public share",
-        //                     );
-        //                     metrics
-        //                         .aggregate_step_failure_counter
-        //                         .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
-        //                     PrepareError::InvalidMessage
-        //                 });
-
-        //                 let shares =
-        //                     input_share.and_then(|input_share| Ok((public_share?, input_share)));
-
-        //                 // Reject reports from too far in the future.
-        //                 let shares = shares.and_then(|shares| {
-        //                     if prepare_init
-        //                         .report_share()
-        //                         .metadata()
-        //                         .time()
-        //                         .is_after(&report_deadline)
-        //                     {
-        //                         return Err(PrepareError::ReportTooEarly);
-        //                     }
-        //                     Ok(shares)
-        //                 });
-
-        //                 // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
-        //                 // associated with the task and computes the first state transition. [...] If either
-        //                 // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
-        //                 let init_rslt = shares.and_then(|(public_share, input_share)| {
-        //                     trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
-        //                         vdaf.helper_initialized(
-        //                             verify_key.as_bytes(),
-        //                             &agg_param,
-        //                             /* report ID is used as VDAF nonce */
-        //                             prepare_init.report_share().metadata().id().as_ref(),
-        //                             &public_share,
-        //                             &input_share,
-        //                             prepare_init.message(),
-        //                         )
-        //                         .and_then(|transition| transition.evaluate(&vdaf))
-        //                         .map_err(|error| {
-        //                             handle_ping_pong_error(
-        //                                 task.id(),
-        //                                 Role::Helper,
-        //                                 prepare_init.report_share().metadata().id(),
-        //                                 error,
-        //                                 &metrics.aggregate_step_failure_counter,
-        //                             )
-        //                         })
-        //                     })
-        //                 });
-
-        //                 let (report_aggregation_state, prepare_step_result, output_share) =
-        //                     match init_rslt {
-        //                         Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
-        //                             // Helper is not finished. Await the next message from the Leader to advance to
-        //                             // the next step.
-        //                             (
-        //                                 ReportAggregationState::WaitingHelper { prepare_state },
-        //                                 PrepareStepResult::Continue {
-        //                                     message: outgoing_message,
-        //                                 },
-        //                                 None,
-        //                             )
-        //                         }
-        //                         Ok((PingPongState::Finished(output_share), outgoing_message)) => (
-        //                             ReportAggregationState::Finished,
-        //                             PrepareStepResult::Continue {
-        //                                 message: outgoing_message,
-        //                             },
-        //                             Some(output_share),
-        //                         ),
-        //                         Err(prepare_error) => (
-        //                             ReportAggregationState::Failed { prepare_error },
-        //                             PrepareStepResult::Reject(prepare_error),
-        //                             None,
-        //                         ),
-        //                     };
-
-        //                 sender.send(ReportShareData {
-        //                     report_share: prepare_init.report_share().clone(),
-        //                     report_aggregation: WritableReportAggregation::new(
-        //                         ReportAggregation::<SEED_SIZE, A>::new(
-        //                             *task.id(),
-        //                             aggregation_job_id,
-        //                             *prepare_init.report_share().metadata().id(),
-        //                             *prepare_init.report_share().metadata().time(),
-        //                             // Unwrap safety: we checked that all ordinal values are representable
-        //                             // as a u64 before entering the parallel iterator.
-        //                             ord.try_into().unwrap(),
-        //                             Some(PrepareResp::new(
-        //                                 *prepare_init.report_share().metadata().id(),
-        //                                 prepare_step_result,
-        //                             )),
-        //                             report_aggregation_state,
-        //                         ),
-        //                         output_share,
-        //                     ),
-        //                 })
-        //             })
-        //     }
-        // });
-
-        // let mut report_share_data = Vec::with_capacity(req.prepare_inits().len());
-        // while receiver.recv_many(&mut report_share_data, 10).await > 0 {}
-        // let report_share_data = Arc::new(report_share_data);
-
-        // // Await the producer task to resume any panics that may have occurred, and to ensure we can
-        // // unwrap the aggregation parameter's Arc in a few lines. The only other errors that can
-        // // occur are: a `JoinError` indicating cancellation, which is impossible because we do not
-        // // cancel the task; and a `SendError`, which can only happen if this future is cancelled (in
-        // // which case we will not run this code at all).
-        // let _ = producer_task.await.map_err(|join_error| {
-        //     if let Ok(reason) = join_error.try_into_panic() {
-        //         panic::resume_unwind(reason);
-        //     }
-        // });
-        // assert_eq!(report_share_data.len(), req.prepare_inits().len());
-
-        // // Store data to datastore.
-        // let min_client_timestamp = req
-        //     .prepare_inits()
-        //     .iter()
-        //     .map(|prepare_init| *prepare_init.report_share().metadata().time())
-        //     .min()
-        //     .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        // let max_client_timestamp = req
-        //     .prepare_inits()
-        //     .iter()
-        //     .map(|prepare_init| *prepare_init.report_share().metadata().time())
-        //     .max()
-        //     .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        // let client_timestamp_interval = Interval::new(
-        //     min_client_timestamp,
-        //     max_client_timestamp
-        //         .difference(&min_client_timestamp)?
-        //         .add(&Duration::from_seconds(1))?,
-        // )?;
-        // let aggregation_job = Arc::new(
-        //     AggregationJob::<SEED_SIZE, Q, A>::new(
-        //         *task.id(),
-        //         *aggregation_job_id,
-        //         Arc::unwrap_or_clone(agg_param),
-        //         req.batch_selector().batch_identifier().clone(),
-        //         client_timestamp_interval,
-        //         // For one-round VDAFs, the aggregation job will actually be finished, but the
-        //         // aggregation job writer handles updating its state.
-        //         AggregationJobState::InProgress,
-        //         AggregationJobStep::from(0),
-        //     )
-        //     .with_last_request_hash(request_hash),
-        // );
-
-        // datastore
-        //     .run_tx("aggregate_init", |tx| {
-        //         let vdaf = Arc::clone(&vdaf);
-        //         let task = Arc::clone(&task);
-        //         let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
-        //         let aggregation_job = Arc::clone(&aggregation_job);
-        //         let report_share_data = Arc::clone(&report_share_data);
-        //         let req = Arc::clone(&req);
-        //         let log_forbidden_mutations = log_forbidden_mutations.clone();
-
-        //         Box::pin(async move {
-        //             // Check if this is a repeated request, and if it is the same as before, send
-        //             // the same response as last time. We check again to avoid the possibility of
-        //             // races.
-        //             if let Some(response) = Self::check_aggregate_init_idempotency(
-        //                 tx,
-        //                 vdaf.as_ref(),
-        //                 task.id(),
-        //                 aggregation_job.id(),
-        //                 &req,
-        //                 request_hash,
-        //                 log_forbidden_mutations,
-        //             )
-        //             .await?
-        //             {
-        //                 return Ok(response);
-        //             }
-
-        //             // Write report shares, and ensure this isn't a repeated report aggregation.
-        //             let report_aggregations = try_join_all(report_share_data.iter().map(|rsd| {
-        //                 let task = Arc::clone(&task);
-
-        //                 async move {
-        //                     let mut report_aggregation = Cow::Borrowed(&rsd.report_aggregation);
-        //                     match tx.put_scrubbed_report(task.id(), &rsd.report_share).await {
-        //                         Ok(()) => (),
-        //                         Err(datastore::Error::MutationTargetAlreadyExists) => {
-        //                             report_aggregation = Cow::Owned(
-        //                                 report_aggregation
-        //                                     .into_owned()
-        //                                     .with_failure(PrepareError::ReportReplayed),
-        //                             )
-        //                         }
-        //                         Err(err) => return Err(err),
-        //                     };
-        //                     Ok(report_aggregation)
-        //                 }
-        //             }))
-        //             .await?;
-
-        //             // Write aggregation job, report aggregations, and batch aggregations.
-        //             let mut aggregation_job_writer =
-        //                 AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
-        //                     task,
-        //                     batch_aggregation_shard_count,
-        //                     Some(aggregation_job_writer_metrics),
-        //                 );
-        //             aggregation_job_writer
-        //                 .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-        //             let prepare_resps = aggregation_job_writer
-        //                 .write(tx, vdaf)
-        //                 .await?
-        //                 .remove(aggregation_job.id())
-        //                 .unwrap_or_default();
-        //             Ok(AggregationJobResp::new(prepare_resps))
-        //         })
-        //     })
-        //     .await?;
-
-        // todo!("should be Ok(())");
     }
 
     async fn handle_aggregate_continue_generic<

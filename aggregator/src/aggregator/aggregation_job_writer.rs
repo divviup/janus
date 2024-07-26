@@ -902,7 +902,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct WritableReportAggregation<const SEED_SIZE: usize, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,

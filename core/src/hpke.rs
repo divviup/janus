@@ -90,7 +90,7 @@ impl HpkeApplicationInfo {
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as
 /// described in RFC 9180, §4 and §7.1.2.
 // TODO(#230): refactor HpkePrivateKey to simplify usage
-#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq, PartialOrd, Ord)]
 #[derivative(Debug)]
 pub struct HpkePrivateKey(#[derivative(Debug = "ignore")] Vec<u8>);
 
@@ -210,7 +210,7 @@ pub fn open(
 }
 
 /// An HPKE configuration and its corresponding private key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct HpkeKeypair {
     config: HpkeConfig,
     private_key: HpkePrivateKey, // uses unpadded base64url
