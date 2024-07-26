@@ -373,7 +373,7 @@ pub(crate) fn handle_ping_pong_error(
     role: Role,
     report_id: &ReportId,
     ping_pong_error: PingPongError,
-    aggregate_step_failure_counter: &Counter<u64>,
+    aggregate_step_failure_counter: Option<&Counter<u64>>,
 ) -> PrepareError {
     let peer_role = match role {
         Role::Leader => Role::Helper,
@@ -426,7 +426,9 @@ pub(crate) fn handle_ping_pong_error(
         error_desc,
     );
 
-    aggregate_step_failure_counter.add(1, &[KeyValue::new("type", value)]);
+    if let Some(aggregate_step_failure_counter) = aggregate_step_failure_counter {
+        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", value)]);
+    }
 
     // Per DAP, any occurrence of state Rejected() from a ping-pong routime is translated to
     // VdafPrepError

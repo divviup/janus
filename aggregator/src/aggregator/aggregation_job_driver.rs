@@ -27,7 +27,6 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask, VerifyKey},
-    test_util::noop_meter,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
@@ -456,7 +455,7 @@ where
                                 Role::Leader,
                                 report_aggregation.report_id(),
                                 ping_pong_error,
-                                &aggregate_step_failure_counter,
+                                Some(&aggregate_step_failure_counter),
                             )
                         })
                     }) {
@@ -921,7 +920,7 @@ where
                                                 Role::Helper,
                                                 report_aggregation.report_metadata().id(),
                                                 error,
-                                                &aggregate_step_failure_counter(&noop_meter()), // &self.aggregate_step_failure_counter,
+                                                None, // &self.aggregate_step_failure_counter,
                                             )
                                         })
                                     },
@@ -1121,7 +1120,7 @@ where
                                     Role::Leader,
                                     report_aggregation.report_id(),
                                     error,
-                                    &aggregate_step_failure_counter,
+                                    Some(&aggregate_step_failure_counter),
                                 );
                                 return ra_sender
                                     .send(WritableReportAggregation::new(
@@ -1312,7 +1311,7 @@ where
                                                 Role::Leader,
                                                 stepped_aggregation.report_aggregation.report_id(),
                                                 ping_pong_error,
-                                                &aggregate_step_failure_counter,
+                                                Some(&aggregate_step_failure_counter),
                                             )
                                         })
                                     });

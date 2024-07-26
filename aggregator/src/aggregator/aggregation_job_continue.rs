@@ -224,7 +224,7 @@ impl VdafOps {
                                         Role::Leader,
                                         prep_step.report_id(),
                                         error,
-                                        &metrics.aggregate_step_failure_counter,
+                                        Some(&metrics.aggregate_step_failure_counter),
                                     )
                                 })
                                 .unwrap_or_else(|prepare_error| {
