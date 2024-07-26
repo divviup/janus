@@ -448,7 +448,7 @@ where
                             report_aggregation.report_id().as_ref(),
                             public_share,
                             // TODO(inahga): evil unwrap due to doctoring StartLeader
-                            &leader_input_share.as_ref().unwrap(),
+                            leader_input_share.as_ref().unwrap(),
                         )
                         .map_err(|ping_pong_error| {
                             handle_ping_pong_error(
@@ -641,7 +641,6 @@ where
             let report_aggregations = Arc::clone(&report_aggregations);
             let aggregation_job = Arc::clone(&aggregation_job);
             // let aggregation_job_id = *aggregation_job_id;
-            let verify_key = verify_key;
             // let agg_param = Arc::clone(&agg_param);
             let global_hpke_keypairs = lease.leased().global_hpke_keypairs().to_vec();
 
@@ -682,12 +681,10 @@ where
                                                 ord.try_into().unwrap(),
                                                 Some(PrepareResp::new(
                                                     *report_aggregation.report_metadata().id(),
-                                                    PrepareStepResult::Reject(
-                                                        prepare_error.clone(),
-                                                    ),
+                                                    PrepareStepResult::Reject(*prepare_error),
                                                 )),
                                                 ReportAggregationState::Failed {
-                                                    prepare_error: prepare_error.clone(),
+                                                    prepare_error: *prepare_error,
                                                 },
                                             ),
                                             None,
@@ -888,8 +885,7 @@ where
                             })
                                 });
 
-                            let shares =
-                                input_share.and_then(|input_share| Ok((public_share, input_share)));
+                            let shares = input_share.map(|input_share| (public_share, input_share));
 
                             // Reject reports from too far in the future.
                             let shares = shares.and_then(|shares| {
@@ -914,9 +910,9 @@ where
                                             aggregation_job.aggregation_parameter(),
                                             /* report ID is used as VDAF nonce */
                                             report_aggregation.report_metadata().id().as_ref(),
-                                            &public_share,
+                                            public_share,
                                             &input_share,
-                                            &message,
+                                            message,
                                         )
                                         .and_then(|transition| transition.evaluate(&vdaf))
                                         .map_err(|error| {

@@ -2017,7 +2017,7 @@ impl VdafOps {
         Ok(None)
     }
 
-    async fn handle_get_aggregation_job_generic<const SEED_SIZE: usize, Q, A, C: Clock>(
+    async fn handle_get_aggregation_job_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         task: Arc<AggregatorTask>,
@@ -2216,7 +2216,7 @@ impl VdafOps {
                                                     &vdaf,
                                                     prepare_init.report_share().public_share(),
                                                 );
-                                            if let Err(_) = public_share {
+                                            if public_share.is_err() {
                                                 state = ReportAggregationMetadataState::Failed {
                                                     prepare_error: PrepareError::InvalidMessage,
                                                 };
