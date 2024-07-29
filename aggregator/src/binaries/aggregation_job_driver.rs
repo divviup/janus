@@ -8,6 +8,7 @@ use clap::Parser;
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc, time::Duration};
+use tracing::info;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     const CLIENT_USER_AGENT: &str = concat!(
@@ -58,6 +59,8 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
             ctx.config.job_driver_config.maximum_attempts_before_failure,
         ),
     )?);
+
+    info!("Running aggregation job driver");
     job_driver.run().await;
 
     Ok(())

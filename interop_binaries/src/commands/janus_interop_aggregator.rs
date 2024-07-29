@@ -254,27 +254,33 @@ impl BinaryConfig for Config {
 
 impl Options {
     pub fn run(self) -> anyhow::Result<()> {
-        janus_main::<_, _, Config, _, _>(self, RealClock::default(), true, |ctx| async move {
-            let datastore = Arc::new(ctx.datastore);
+        janus_main::<_, _, Config, _, _>(
+            "janus_interop_aggregator",
+            self,
+            RealClock::default(),
+            true,
+            |ctx| async move {
+                let datastore = Arc::new(ctx.datastore);
 
-            // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
-            // endpoints.
-            let handler = make_handler(
-                Arc::clone(&datastore),
-                ctx.config.dap_serving_prefix,
-                ctx.config.aggregator_address,
-                ctx.config.health_check_peers,
-            )
-            .await?;
-            trillium_tokio::config()
-                .with_host(&ctx.config.listen_address.ip().to_string())
-                .with_port(ctx.config.listen_address.port())
-                .without_signals()
-                .run_async(handler)
-                .await;
+                // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
+                // endpoints.
+                let handler = make_handler(
+                    Arc::clone(&datastore),
+                    ctx.config.dap_serving_prefix,
+                    ctx.config.aggregator_address,
+                    ctx.config.health_check_peers,
+                )
+                .await?;
+                trillium_tokio::config()
+                    .with_host(&ctx.config.listen_address.ip().to_string())
+                    .with_port(ctx.config.listen_address.port())
+                    .without_signals()
+                    .run_async(handler)
+                    .await;
 
-            Ok(())
-        })
+                Ok(())
+            },
+        )
     }
 }
 
