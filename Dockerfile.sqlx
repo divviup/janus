@@ -6,7 +6,7 @@ RUN cargo install sqlx-cli \
     --version ${SQLX_VERSION} \
     --no-default-features --features rustls,postgres
 
-FROM alpine:3.20.1
+FROM alpine:3.20.2
 ARG SQLX_VERSION=unknown
 ARG GIT_REVISION=unknown
 LABEL revision=${GIT_REVISION}
