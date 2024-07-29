@@ -7,7 +7,7 @@ use janus_core::time::RealClock;
 use opentelemetry::metrics::Meter;
 use serde::{Deserialize, Serialize};
 use tokio::time::interval;
-use tracing::error;
+use tracing::{error, info};
 use trillium_tokio::Stopper;
 
 use crate::{
@@ -49,6 +49,7 @@ pub(super) async fn run_garbage_collector(
         gc_config.tasks_per_tx,
         gc_config.concurrent_tx_limit,
     );
+    info!("Running garbage collector");
     let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
     while stopper.stop_future(interval.tick()).await.is_some() {
         if let Err(err) = gc.run().await {

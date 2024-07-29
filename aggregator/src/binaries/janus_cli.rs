@@ -59,7 +59,7 @@ pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
             version = env!("CARGO_PKG_VERSION"),
             git_revision = git_revision(),
             rust_version = env!("RUSTC_SEMVER"),
-            "Starting up"
+            "Starting janus_cli"
         );
 
         if command_line_options.dry_run {

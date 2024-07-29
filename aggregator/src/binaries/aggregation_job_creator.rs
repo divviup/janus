@@ -9,6 +9,7 @@ use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     // Start creating aggregation jobs.
@@ -22,6 +23,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.max_aggregation_job_size,
         ctx.config.aggregation_job_creation_report_window,
     ));
+    info!("Running aggregation job creator");
     aggregation_job_creator.run(ctx.stopper).await;
 
     Ok(())

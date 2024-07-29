@@ -247,6 +247,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
 }
 
 pub fn janus_main<C, Options, Config, F, Fut>(
+    service_name: &str,
     options: Options,
     clock: C,
     uses_rayon: bool,
@@ -309,7 +310,8 @@ where
             version = env!("CARGO_PKG_VERSION"),
             git_revision = git_revision(),
             rust_version = env!("RUSTC_SEMVER"),
-            "Starting up"
+            "Starting {}",
+            service_name,
         );
 
         // Connect to database.
