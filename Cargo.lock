@@ -494,9 +494,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.7.1"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8487b59d62764df8231cb371c459314df895b41756df457a1fb1243d65c89195"
+checksum = "4ae74d9bd0a7530e8afd1770739ad34b36838829d6ad61818f9230f683f5ad77"
 dependencies = [
  "aws-lc-sys",
  "mirai-annotations",
@@ -506,9 +506,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.16.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c15eb61145320320eb919d9bab524617a7aa4216c78d342fae3a758bc33073e4"
+checksum = "2e89b6941c2d1a7045538884d6e760ccfffdf8e1ffc2613d8efa74305e1f3752"
 dependencies = [
  "bindgen",
  "cc",
@@ -1933,7 +1933,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f2f12607f92c69b12ed746fabf9ca4f5c482cba46679c1a75b874ed7c26adb"
 dependencies = [
  "futures-io",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pki-types",
 ]
 
@@ -2520,7 +2520,7 @@ dependencies = [
  "hyper 1.4.1",
  "hyper-util",
  "log",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
@@ -2786,7 +2786,7 @@ dependencies = [
  "ring",
  "rstest",
  "rustc_version",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pemfile 2.1.2",
  "sec1",
  "serde",
@@ -2993,7 +2993,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rstest",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "serde",
  "serde_json",
  "serde_test",
@@ -3267,7 +3267,7 @@ dependencies = [
  "kube-core",
  "pem",
  "rand",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pemfile 2.1.2",
  "secrecy",
  "serde",
@@ -4445,7 +4445,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "thiserror",
  "tokio",
  "tracing",
@@ -4461,7 +4461,7 @@ dependencies = [
  "rand",
  "ring",
  "rustc-hash",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "slab",
  "thiserror",
  "tinyvec",
@@ -4652,7 +4652,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-native-certs",
  "rustls-pemfile 2.1.2",
  "rustls-pki-types",
@@ -4855,23 +4855,23 @@ dependencies = [
  "log",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.102.5",
+ "rustls-webpki 0.102.6",
  "subtle",
  "zeroize",
 ]
 
 [[package]]
 name = "rustls"
-version = "0.23.11"
+version = "0.23.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4828ea528154ae444e5a642dbb7d5623354030dc9822b83fd9bb79683c7399d0"
+checksum = "c58f8c84392efc0a126acce10fa59ff7b3d2ac06ab451a33f2741989b806b044"
 dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.102.5",
+ "rustls-webpki 0.102.6",
  "subtle",
  "zeroize",
 ]
@@ -4925,10 +4925,10 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
- "rustls-webpki 0.102.5",
+ "rustls-webpki 0.102.6",
  "security-framework",
  "security-framework-sys",
  "webpki-roots 0.26.1",
@@ -4953,9 +4953,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.102.5"
+version = "0.102.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a6fccd794a42c2c105b513a2f62bc3fd8f3ba57a4593677ceb0bd035164d78"
+checksum = "8e6b52d4fda176fd835fdc55a835d4a89b8499cad995885a21149d5ad62f852e"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5958,7 +5958,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04fb792ccd6bbcd4bba408eb8a292f70fc4a3589e5d793626f45190e6454b6ab"
 dependencies = [
  "ring",
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "tokio",
  "tokio-postgres",
  "tokio-rustls 0.26.0",
@@ -5982,7 +5982,7 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c7bc40d0e5a97695bb96e27995cd3a08538541b0a846f65bba7a359f36700d4"
 dependencies = [
- "rustls 0.23.11",
+ "rustls 0.23.12",
  "rustls-pki-types",
  "tokio",
 ]
