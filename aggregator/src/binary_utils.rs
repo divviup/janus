@@ -4,7 +4,6 @@ pub mod job_driver;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
-    git_revision,
     metrics::install_metrics_exporter,
     trace::{install_trace_subscriber, TraceReloadHandle},
 };
@@ -15,6 +14,7 @@ use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
+use janus_aggregator_api::git_revision;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::metrics::{Meter, MetricsError};

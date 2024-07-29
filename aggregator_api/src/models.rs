@@ -37,6 +37,8 @@ pub(crate) struct AggregatorApiConfig {
     pub vdafs: Vec<SupportedVdaf>,
     pub query_types: Vec<SupportedQueryType>,
     pub features: &'static [&'static str],
+    pub software_name: &'static str,
+    pub software_version: &'static str,
 }
 
 #[allow(clippy::enum_variant_names)]

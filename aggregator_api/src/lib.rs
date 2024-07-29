@@ -5,6 +5,7 @@ mod routes;
 mod tests;
 
 use async_trait::async_trait;
+use git_version::git_version;
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     instrumented,
@@ -244,4 +245,16 @@ impl ConnExt for Conn {
                 .map_err(|_| Error::BadRequest("Invalid config_id parameter".to_string()))?,
         ))
     }
+}
+
+/// Returns the git revision used to build this crate, using `git describe` if available, or the
+/// environment variable `GIT_REVISION`. Returns `"unknown"` instead if neither is available.
+pub fn git_revision() -> &'static str {
+    let mut git_revision: &'static str = git_version!(fallback = "unknown");
+    if git_revision == "unknown" {
+        if let Some(value) = option_env!("GIT_REVISION") {
+            git_revision = value;
+        }
+    }
+    git_revision
 }

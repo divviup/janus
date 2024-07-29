@@ -51,7 +51,6 @@ deadpool-postgres = { workspace = true }
 derivative.workspace = true
 fixed = { workspace = true, optional = true }
 futures = { workspace = true }
-git-version = { workspace = true }
 hex = { workspace = true, features = ["serde"] }
 http.workspace = true
 http-api-problem.workspace = true

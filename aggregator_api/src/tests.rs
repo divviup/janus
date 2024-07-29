@@ -38,7 +38,7 @@ use serde_test::{assert_ser_tokens, assert_tokens, Token};
 use std::{iter, sync::Arc};
 use trillium::{Handler, Status};
 use trillium_testing::{
-    assert_response, assert_status,
+    assert_body_contains, assert_response, assert_status,
     prelude::{delete, get, patch, post, put},
     Url,
 };
@@ -66,18 +66,20 @@ async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<Mo
 #[tokio::test]
 async fn get_config() {
     let (handler, ..) = setup_api_test().await;
-    assert_response!(
-        get("/")
-            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
+    let mut conn = get("/")
+        .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .run_async(&handler)
+        .await;
+    assert_status!(conn, Status::Ok);
+    assert_body_contains!(
+        conn,
         concat!(
-            r#"{"protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
+            r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"]}"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"],"#,
+            r#""software_name":"Janus","software_version":""#,
         )
     );
 }
