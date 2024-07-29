@@ -127,6 +127,7 @@ impl MetricProducer for TokioRuntimeMetrics {
         let num_blocking_threads = self.runtime_metrics.num_blocking_threads();
         let num_alive_tasks = self.runtime_metrics.num_alive_tasks();
         let num_idle_blocking_threads = self.runtime_metrics.num_idle_blocking_threads();
+        let spawned_task_count = self.runtime_metrics.spawned_tasks_count();
         let remote_schedule_count = self.runtime_metrics.remote_schedule_count();
         let budget_forced_yield_count = self.runtime_metrics.budget_forced_yield_count();
         let injection_queue_depth = self.runtime_metrics.injection_queue_depth();
@@ -227,6 +228,22 @@ impl MetricProducer for TokioRuntimeMetrics {
                         value: u64::try_from(num_idle_blocking_threads).unwrap_or(u64::MAX),
                         exemplars: Vec::new(),
                     }]),
+                }),
+            },
+            Metric {
+                name: "tokio.task.spawned".into(),
+                description: "Total number of tasks spawned in the runtime".into(),
+                unit: "{task}".into(),
+                data: Box::new(Sum::<u64> {
+                    data_points: Vec::from([DataPoint {
+                        attributes: Vec::new(),
+                        start_time: Some(self.start_time),
+                        time: Some(now),
+                        value: spawned_task_count,
+                        exemplars: Vec::new(),
+                    }]),
+                    temporality: Temporality::Cumulative,
+                    is_monotonic: true,
                 }),
             },
             Metric {
