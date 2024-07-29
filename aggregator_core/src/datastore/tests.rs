@@ -5176,7 +5176,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 1,
+                        report_count: 0,
                         checksum: ReportIdChecksum::default(),
                         aggregation_jobs_created: 4,
                         aggregation_jobs_terminated: 1,

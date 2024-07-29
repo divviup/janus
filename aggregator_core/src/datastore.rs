@@ -4444,7 +4444,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
         // Note that this ignores aggregation parameter, as `outstanding_batches` does not need to
         // worry about aggregation parameters.
         //
-        // TODO(#225): reevaluate whether we can ignore aggregation parameter here once we have experience with VDAFs requiring multiple aggregations per batch.
+        // TODO(#225): reevaluate whether we can ignore aggregation parameter here once we have
+        // experience with VDAFs requiring multiple aggregations per batch.
         let stmt = self
             .prepare_cached(
                 "-- put_outstanding_batch()
@@ -4570,7 +4571,7 @@ WHERE task_id = $1
 
         try_join_all(rows.into_iter().map(|row| async move {
             let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-            let size = self.read_batch_size(task_id, &batch_id).await?;
+            let size = self.read_batch_size(task_info.pkey, &batch_id).await?;
             Ok(OutstandingBatch::new(*task_id, batch_id, size))
         }))
         .await
@@ -4583,26 +4584,30 @@ WHERE task_id = $1
     //    aggregations in the batch which are in a non-failure state (START/WAITING/FINISHED).
     async fn read_batch_size(
         &self,
-        task_id: &TaskId,
+        task_pkey: i64,
         batch_id: &BatchId,
     ) -> Result<RangeInclusive<usize>, Error> {
-        // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
                 "-- read_batch_size()
-WITH batch_report_aggregation_statuses AS
-    (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
-     JOIN aggregation_jobs
+WITH report_aggregations_count AS (
+    SELECT COUNT(*) as count FROM report_aggregations
+    JOIN aggregation_jobs
         ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-     AND report_aggregations.task_id = aggregation_jobs.task_id
-     AND aggregation_jobs.batch_id = $2
-     GROUP BY report_aggregations.state)
+    WHERE aggregation_jobs.task_id = $1
+    AND report_aggregations.task_id = aggregation_jobs.task_id
+    AND aggregation_jobs.batch_id = $2
+    AND report_aggregations.state in ('START', 'WAITING')
+),
+batch_aggregation_count AS (
+    SELECT SUM(report_count) as count FROM batch_aggregations
+    WHERE batch_aggregations.task_id = $1
+    AND batch_aggregations.batch_identifier = $2
+)
 SELECT
-    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-     WHERE state IN ('FINISHED')) AS min_size,
-    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size",
+    (SELECT count FROM batch_aggregation_count)::BIGINT AS min_size,
+    (SELECT count FROM report_aggregations_count)::BIGINT
+        + (SELECT count FROM batch_aggregation_count)::BIGINT AS max_size",
             )
             .await?;
 
@@ -4610,7 +4615,7 @@ SELECT
             .query_one(
                 &stmt,
                 &[
-                    /* task_id */ task_id.as_ref(),
+                    /* task_id */ &task_pkey,
                     /* batch_id */ batch_id.as_ref(),
                 ],
             )
