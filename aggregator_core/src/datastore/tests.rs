@@ -5176,7 +5176,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 0,
+                        // Let report_count be 1 without an accompanying report_aggregation in a
+                        // terminal state. This captures the case where a FINISHED report_aggregation
+                        // was garbage collected and no longer exists in the database.
+                        report_count: 1,
                         checksum: ReportIdChecksum::default(),
                         aggregation_jobs_created: 4,
                         aggregation_jobs_terminated: 1,
@@ -5429,7 +5432,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         Vec::from([OutstandingBatch::new(
             task_id_2,
             batch_id_2,
-            RangeInclusive::new(0, 1)
+            RangeInclusive::new(1, 2)
         )])
     );
     assert_eq!(outstanding_batches_task_2_after_mark, Vec::new());
