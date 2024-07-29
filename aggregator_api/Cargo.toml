@@ -13,6 +13,7 @@ anyhow.workspace = true
 async-trait = { workspace = true }
 base64.workspace = true
 derivative.workspace = true
+git-version.workspace = true
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true

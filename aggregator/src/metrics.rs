@@ -35,7 +35,7 @@ use {
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
-    crate::git_revision,
+    janus_aggregator_api::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
     opentelemetry::{global::set_meter_provider, metrics::MetricsError},
     opentelemetry_sdk::{

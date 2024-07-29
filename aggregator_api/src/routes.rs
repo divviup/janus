@@ -1,4 +1,5 @@
 use crate::{
+    git_revision,
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
         GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp,
@@ -24,7 +25,11 @@ use janus_messages::{
 use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
-use std::{str::FromStr, sync::Arc, unreachable};
+use std::{
+    str::FromStr,
+    sync::{Arc, OnceLock},
+    unreachable,
+};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
 
@@ -32,6 +37,10 @@ pub(super) async fn get_config(
     _: &mut Conn,
     State(config): State<Arc<Config>>,
 ) -> Json<AggregatorApiConfig> {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    let software_version =
+        VERSION.get_or_init(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
+
     Json(AggregatorApiConfig {
         protocol: "DAP-09",
         dap_url: config.public_dap_url.clone(),
@@ -52,6 +61,8 @@ pub(super) async fn get_config(
             "TimeBucketedFixedSize",
             "PureDpDiscreteLaplace",
         ],
+        software_name: "Janus",
+        software_version,
     })
 }
 

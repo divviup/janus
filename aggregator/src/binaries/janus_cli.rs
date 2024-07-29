@@ -1,13 +1,13 @@
 use crate::{
     binary_utils::{database_pool, datastore, initialize_rustls, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
-    git_revision,
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
 };
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
+use janus_aggregator_api::git_revision;
 use janus_aggregator_core::{
     datastore::{self, models::HpkeKeyState, Datastore},
     task::{AggregatorTask, SerializedAggregatorTask},
