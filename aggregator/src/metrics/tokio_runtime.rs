@@ -125,7 +125,7 @@ impl MetricProducer for TokioRuntimeMetrics {
         let now = SystemTime::now();
 
         let num_blocking_threads = self.runtime_metrics.num_blocking_threads();
-        let active_tasks_count = self.runtime_metrics.active_tasks_count();
+        let num_alive_tasks = self.runtime_metrics.num_alive_tasks();
         let num_idle_blocking_threads = self.runtime_metrics.num_idle_blocking_threads();
         let remote_schedule_count = self.runtime_metrics.remote_schedule_count();
         let budget_forced_yield_count = self.runtime_metrics.budget_forced_yield_count();
@@ -201,15 +201,15 @@ impl MetricProducer for TokioRuntimeMetrics {
                 }),
             },
             Metric {
-                name: "tokio.task.active.count".into(),
-                description: "Number of active tasks in the runtime".into(),
+                name: "tokio.task.alive.count".into(),
+                description: "Number of alive tasks in the runtime".into(),
                 unit: "{task}".into(),
                 data: Box::new(Gauge::<u64> {
                     data_points: Vec::from([DataPoint {
                         attributes: Vec::new(),
                         start_time: Some(self.start_time),
                         time: Some(now),
-                        value: u64::try_from(active_tasks_count).unwrap_or(u64::MAX),
+                        value: u64::try_from(num_alive_tasks).unwrap_or(u64::MAX),
                         exemplars: Vec::new(),
                     }]),
                 }),
