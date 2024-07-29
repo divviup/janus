@@ -13,7 +13,13 @@ use trillium_macros::Handler;
 pub(super) struct FaultInjectorHandler<H> {
     #[handler(except = [run, before_send, name])]
     inner: H,
+
+    /// Flag to inject an error before request handling. This will skip running the wrapped
+    /// `Handler`.
     error_before: Arc<Mutex<bool>>,
+
+    /// Flag to inject an error after request handling. This will drop the response and replace it
+    /// with an error response.
     error_after: Arc<Mutex<bool>>,
 }
 
@@ -73,15 +79,19 @@ pub(super) struct FaultInjector {
 }
 
 impl FaultInjector {
+    /// Disable all fault injection.
     pub fn reset(&self) {
         *self.error_before.lock().unwrap() = false;
         *self.error_after.lock().unwrap() = false;
     }
 
+    /// Inject an error before request handling. This will skip running the wrapped `Handler`.
     pub fn error_before(&self) {
         *self.error_before.lock().unwrap() = true;
     }
 
+    /// Inject an error after request handling. This will drop the response and replace it with an
+    /// error response.
     pub fn error_after(&self) {
         *self.error_after.lock().unwrap() = true;
     }

@@ -27,39 +27,7 @@
 //! simulation share a `MockClock`. None of the components should run any asynchronous tasks
 //! continuously throughout the simulation (except for tokio-postgres connection tasks).
 //! Initialization will be akin to `JanusInProcessPair`, but more low-level. The simulation is fed a
-//! list of `Op` values, and it executes the operations described one after another. The operations
-//! are as follows:
-//!
-//! - AdvanceTime: Advance the `MockClock`'s time by some amount.
-//! - Upload: Have the client shard a report at the given timestamp, with the next sequential
-//!   measurement, and send it to the leader aggregator. The leader will handle the request and
-//!   store the report to the database. Note that, as currently implemented, this will wait for the
-//!   report batching timeout to expire, so the client's upload method won't return until the
-//!   leader's database transaction is complete.
-//! - UploadReplay: Have the client shard a report at the given timestamp as before, but with a
-//!   fixed report ID.
-//! - LeaderGarbageCollector: Run the garbage collector once in the leader.
-//! - HelperGarbageCollector: Run the garbage collector once in the helper.
-//! - LeaderKeyRotator: Run the key rotator once in the leader.
-//! - HelperKeyRotator: Run the key rotator once in the helper.
-//! - AggregationJobCreator: Run the aggregation job creator once.
-//! - AggregationJobDriver: Run the aggregation job driver once, and wait until it is done stepping
-//!   all the jobs it acquired. Requests and responses will pass through an inspecting proxy in
-//!   front of the helper.
-//! - AggregationJobDriverRequestError: Same as above, with fault injection. Drop all requests and
-//!   return some sort of error.
-//! - AggregationJobDriverResponseError: Same as above, with fault injection. Forward all requests,
-//!   but drop the responses, and return some sort of error.
-//! - CollectionJobDriver: Run the collection job driver once, and wait until it is done stepping
-//!   all the jobs it acquired. Requests and responses will pass through an inspecting proxy in
-//!   front of the helper.
-//! - CollectionJobDriverRequestError: Same as above, with fault injection. Drop all requests and
-//!   return some sort of error.
-//! - CollectionJobDriverResponseError: Same as above, with fault injection. Forward all requests,
-//!   but drop the responses, and return some sort of error.
-//! - CollectorStart: The collector sends a collection request to the leader. It remembers the
-//!   collection job ID.
-//! - CollectorPoll: The collector sends a request to the leader to poll an existing collection job.
+//! list of [`Op`](model::Op) values, and it executes the operations described one after another.
 //!
 //! The following are possible failure conditions:
 //! - The main Tokio task panics while calling into any component.
