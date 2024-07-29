@@ -28,7 +28,7 @@ pub(crate) fn configure_runtime(
     if config.enable_poll_time_histogram {
         runtime_builder.enable_metrics_poll_count_histogram();
         runtime_builder.metrics_poll_count_histogram_scale(config.poll_time_histogram_scale.into());
-        if let Some(resolution) = config.poll_time_histogram_resolution_microseconds {
+        if let Some(resolution) = config.poll_time_histogram_resolution_us {
             let resolution = Duration::from_micros(resolution);
             runtime_builder.metrics_poll_count_histogram_resolution(resolution);
         }
