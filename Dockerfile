@@ -1,4 +1,4 @@
-FROM rust:1.79.0-alpine AS chef
+FROM rust:1.80.0-alpine AS chef
 ENV CARGO_INCREMENTAL=0
 RUN apk add --no-cache libc-dev cmake make
 RUN cargo install cargo-chef --version 0.1.60 && \
