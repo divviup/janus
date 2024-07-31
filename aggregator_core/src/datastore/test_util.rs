@@ -104,8 +104,7 @@ impl EphemeralDatabase {
     fn postgres_configuration<'a>(settings: &[&'a str]) -> Vec<&'a str> {
         settings
             .iter()
-            .map(|setting| ["-c", setting])
-            .flatten()
+            .flat_map(|setting| ["-c", setting])
             .collect::<Vec<_>>()
     }
 }
