@@ -5,6 +5,7 @@ use crate::{
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
+use futures::{prelude::future::BoxFuture, FutureExt};
 use janus_core::{
     test_util::testcontainers::Postgres,
     time::{Clock, MockClock, TimeExt},
@@ -17,12 +18,17 @@ use sqlx::{
     Connection, PgConnection,
 };
 use std::{
+    env,
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Weak},
     time::Duration,
 };
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ContainerRequest, ImageExt};
+use testcontainers::{
+    core::logs::{consumer::LogConsumer, LogFrame},
+    runners::AsyncRunner,
+    ContainerAsync, ContainerRequest, ImageExt,
+};
 use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
@@ -50,14 +56,31 @@ impl EphemeralDatabase {
 
     async fn start() -> Self {
         // Start an instance of Postgres running in a container.
-        let db_container = ContainerRequest::from(Postgres::default())
-            .with_cmd(Vec::from([
-                "-c".to_string(),
-                "max_connections=200".to_string(),
-            ]))
-            .start()
-            .await
-            .unwrap();
+        let container_request =
+            ContainerRequest::from(Postgres::default()).with_cmd(Self::postgres_configuration(&[
+                // Many tests running concurrently can overwhelm the available connections, so bump
+                // the limit.
+                "max_connections=200",
+                // Enable logging of query plans.
+                "shared_preload_libraries=auto_explain",
+                "log_min_messages=LOG",
+                "auto_explain.log_min_duration=0",
+                "auto_explain.log_analyze=true",
+                // Discourage postgres from doing sequential scans, so we can analyze whether we
+                // have appropriate indexes in unit tests. Because test databases are not seeded
+                // with data, the query planner will often choose a sequential scan because it
+                // would be faster than hitting an index.
+                "enable_seqscan=false",
+            ]));
+        let container_request = if env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").is_some() {
+            // We don't use the default testcontainers LoggingConsumer, because it'll split query
+            // plans across multiple lines, interspersed with other logs, making them
+            // incomprehensible.
+            container_request.with_log_consumer(StdoutLogConsumer)
+        } else {
+            container_request
+        };
+        let db_container = container_request.start().await.unwrap();
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
         let port_number = db_container
             .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
@@ -76,6 +99,27 @@ impl EphemeralDatabase {
             "postgres://postgres:postgres@127.0.0.1:{}/{db_name}",
             self.port_number
         )
+    }
+
+    fn postgres_configuration<'a>(settings: &[&'a str]) -> Vec<&'a str> {
+        settings
+            .iter()
+            .map(|setting| ["-c", setting])
+            .flatten()
+            .collect::<Vec<_>>()
+    }
+}
+
+struct StdoutLogConsumer;
+
+impl LogConsumer for StdoutLogConsumer {
+    /// Writes log bytes to stdout
+    fn accept<'a>(&'a self, record: &'a LogFrame) -> BoxFuture<'a, ()> {
+        async move {
+            let message = String::from_utf8_lossy(record.bytes());
+            println!("{}", message.trim_end_matches(|c| c == '\n' || c == '\r'));
+        }
+        .boxed()
     }
 }
 
