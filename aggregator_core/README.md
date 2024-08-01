@@ -9,8 +9,7 @@ It is not published to crates.io and should not be depended on directly by users
 ## PostgreSQL Logs
 
 During tests, you can have PostgreSQL dump its logs to stdout by setting
-`JANUS_TEST_DUMP_POSTGRESQL_LOGS`. The test database is set to log all query plans. You should only
-run this option with one test at a time, otherwise you might not get all the logs.
+`JANUS_TEST_DUMP_POSTGRESQL_LOGS`. The test database is set to log all query plans.
 
 Example:
 ```
