@@ -4600,7 +4600,7 @@ WITH report_aggregations_count AS (
     AND report_aggregations.state in ('START', 'WAITING')
 ),
 batch_aggregation_count AS (
-    SELECT SUM(report_count) as count FROM batch_aggregations
+    SELECT SUM(report_count) AS count FROM batch_aggregations
     WHERE batch_aggregations.task_id = $1
     AND batch_aggregations.batch_identifier = $2
 )
