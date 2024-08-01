@@ -4591,7 +4591,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- read_batch_size()
 WITH report_aggregations_count AS (
-    SELECT COUNT(*) as count FROM report_aggregations
+    SELECT COUNT(*) AS count FROM report_aggregations
     JOIN aggregation_jobs
         ON report_aggregations.aggregation_job_id = aggregation_jobs.id
     WHERE aggregation_jobs.task_id = $1
