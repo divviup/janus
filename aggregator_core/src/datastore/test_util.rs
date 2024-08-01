@@ -5,7 +5,6 @@ use crate::{
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
-use futures::{future::try_join_all, FutureExt, TryFutureExt};
 use janus_core::{
     test_util::testcontainers::Postgres,
     time::{Clock, MockClock, TimeExt},
