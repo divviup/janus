@@ -70,36 +70,32 @@ impl EphemeralDatabase {
                 .build()
                 .unwrap()
                 .block_on(async move {
-                    // Start an instance of Postgres running in a container.
-                    let db_container = ContainerRequest::from(Postgres::default())
-                        .with_cmd(Self::postgres_configuration(&[
-                            // Many tests running concurrently can overwhelm the available,
-                            // connections, so bump the limit.
-                            "max_connections=200",
+                    let should_log = env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").is_some();
+                    let mut configuration = Vec::from(["max_connections=200"]);
+                    if should_log {
+                        configuration.append(&mut Vec::from([
                             // Enable logging of query plans.
                             "shared_preload_libraries=auto_explain",
                             "log_min_messages=LOG",
                             "auto_explain.log_min_duration=0",
                             "auto_explain.log_analyze=true",
-                            // Discourage postgres from doing sequential scans, so we can analyze
-                            // whether we have appropriate indexes in unit tests. Because test
-                            // databases are not seeded with data, the query planner will often
-                            // choose a sequential scan because it would be faster than hitting an
-                            // index.
-                            "enable_seqscan=false",
                         ]))
+                    }
+
+                    // Start an instance of Postgres running in a container.
+                    let db_container = ContainerRequest::from(Postgres::default())
+                        .with_cmd(Self::postgres_configuration(&configuration))
                         .start()
                         .await
                         .unwrap();
 
                     let stdout = db_container.stdout(true);
                     let stderr = db_container.stderr(true);
-                    let log_consumer_handle =
-                        env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").map(|_| {
-                            tokio::spawn(async move {
-                                join!(buffer_printer(stdout), buffer_printer(stderr));
-                            })
-                        });
+                    let log_consumer_handle = should_log.then(|| {
+                        tokio::spawn(async move {
+                            join!(buffer_printer(stdout), buffer_printer(stderr));
+                        })
+                    });
 
                     const POSTGRES_DEFAULT_PORT: u16 = 5432;
                     let port_number = db_container
@@ -113,9 +109,9 @@ impl EphemeralDatabase {
 
                     // Wait for shutdown to be signalled.
                     shutdown_rx.await.unwrap();
-                    drop(db_container);
 
-                    // Wait for log consumers to shutdown.
+                    // Shutdown container and Wait for log consumers to stop.
+                    db_container.stop().await.unwrap();
                     if let Some(log_consumer_handle) = log_consumer_handle {
                         log_consumer_handle.await.unwrap();
                     }
