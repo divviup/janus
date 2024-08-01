@@ -5,7 +5,7 @@ use crate::{
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
-use futures::{prelude::future::BoxFuture, FutureExt};
+use futures::{future::try_join_all, FutureExt, TryFutureExt};
 use janus_core::{
     test_util::testcontainers::Postgres,
     time::{Clock, MockClock, TimeExt},
@@ -22,21 +22,26 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Weak},
+    thread::JoinHandle,
     time::Duration,
 };
-use testcontainers::{
-    core::logs::{consumer::LogConsumer, LogFrame},
-    runners::AsyncRunner,
-    ContainerAsync, ContainerRequest, ImageExt,
+use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
+use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt},
+    join,
+    sync::{
+        oneshot::{self, Sender},
+        Mutex,
+    },
 };
-use tokio::sync::Mutex;
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
 
 struct EphemeralDatabase {
-    _db_container: ContainerAsync<Postgres>,
+    db_thread: Option<JoinHandle<()>>,
+    db_thread_shutdown: Option<Sender<()>>,
     port_number: u16,
 }
 
@@ -55,41 +60,73 @@ impl EphemeralDatabase {
     }
 
     async fn start() -> Self {
-        // Start an instance of Postgres running in a container.
-        let container_request =
-            ContainerRequest::from(Postgres::default()).with_cmd(Self::postgres_configuration(&[
-                // Many tests running concurrently can overwhelm the available connections, so bump
-                // the limit.
-                "max_connections=200",
-                // Enable logging of query plans.
-                "shared_preload_libraries=auto_explain",
-                "log_min_messages=LOG",
-                "auto_explain.log_min_duration=0",
-                "auto_explain.log_analyze=true",
-                // Discourage postgres from doing sequential scans, so we can analyze whether we
-                // have appropriate indexes in unit tests. Because test databases are not seeded
-                // with data, the query planner will often choose a sequential scan because it
-                // would be faster than hitting an index.
-                "enable_seqscan=false",
-            ]));
-        let container_request = if env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").is_some() {
-            // We don't use the default testcontainers LoggingConsumer, because it'll split query
-            // plans across multiple lines, interspersed with other logs, making them
-            // incomprehensible.
-            container_request.with_log_consumer(StdoutLogConsumer)
-        } else {
-            container_request
-        };
-        let db_container = container_request.start().await.unwrap();
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container
-            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
-            .await
-            .unwrap();
-        trace!("Postgres container is up with port {port_number}");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (port_tx, port_rx) = oneshot::channel();
 
+        // Hack: run testcontainer logic under its own thread with its own tokio runtime, to avoid
+        // deadlocking the main runtime when waiting for logs to finish in the Drop implementation.
+        let db_thread = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    // Start an instance of Postgres running in a container.
+                    let db_container = ContainerRequest::from(Postgres::default())
+                        .with_cmd(Self::postgres_configuration(&[
+                            // Many tests running concurrently can overwhelm the available,
+                            // connections, so bump the limit.
+                            "max_connections=200",
+                            // Enable logging of query plans.
+                            "shared_preload_libraries=auto_explain",
+                            "log_min_messages=LOG",
+                            "auto_explain.log_min_duration=0",
+                            "auto_explain.log_analyze=true",
+                            // Discourage postgres from doing sequential scans, so we can analyze
+                            // whether we have appropriate indexes in unit tests. Because test
+                            // databases are not seeded with data, the query planner will often
+                            // choose a sequential scan because it would be faster than hitting an
+                            // index.
+                            "enable_seqscan=false",
+                        ]))
+                        .start()
+                        .await
+                        .unwrap();
+
+                    let stdout = db_container.stdout(true);
+                    let stderr = db_container.stderr(true);
+                    let log_consumer_handle =
+                        env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").map(|_| {
+                            tokio::spawn(async move {
+                                join!(buffer_printer(stdout), buffer_printer(stderr));
+                            })
+                        });
+
+                    const POSTGRES_DEFAULT_PORT: u16 = 5432;
+                    let port_number = db_container
+                        .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+                        .await
+                        .unwrap();
+                    trace!("Postgres container is up with port {port_number}");
+
+                    // Send port information, which frees this function to continue.
+                    port_tx.send(port_number).unwrap();
+
+                    // Wait for shutdown to be signalled.
+                    shutdown_rx.await.unwrap();
+                    drop(db_container);
+
+                    // Wait for log consumers to shutdown.
+                    if let Some(log_consumer_handle) = log_consumer_handle {
+                        log_consumer_handle.await.unwrap();
+                    }
+                })
+        });
+
+        let port_number = port_rx.await.unwrap();
         Self {
-            _db_container: db_container,
+            db_thread: Some(db_thread),
+            db_thread_shutdown: Some(shutdown_tx),
             port_number,
         }
     }
@@ -109,16 +146,17 @@ impl EphemeralDatabase {
     }
 }
 
-struct StdoutLogConsumer;
+async fn buffer_printer(buffer: std::pin::Pin<Box<dyn AsyncBufRead + Send>>) {
+    let mut lines = buffer.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        println!("{}", line);
+    }
+}
 
-impl LogConsumer for StdoutLogConsumer {
-    /// Writes log bytes to stdout
-    fn accept<'a>(&'a self, record: &'a LogFrame) -> BoxFuture<'a, ()> {
-        async move {
-            let message = String::from_utf8_lossy(record.bytes());
-            println!("{}", message.trim_end_matches(|c| c == '\n' || c == '\r'));
-        }
-        .boxed()
+impl Drop for EphemeralDatabase {
+    fn drop(&mut self) {
+        self.db_thread_shutdown.take().map(|tx| tx.send(()));
+        self.db_thread.take().map(|thread| thread.join());
     }
 }
 
