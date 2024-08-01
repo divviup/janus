@@ -3,6 +3,7 @@ mod daphne;
 mod divviup_ts;
 mod in_cluster;
 mod janus;
+mod simulation;
 
 fn initialize_rustls() {
     // Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by

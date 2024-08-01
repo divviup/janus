@@ -46,8 +46,15 @@ uuid.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+derivative.workspace = true
 divviup-client = { workspace = true, features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
+opentelemetry.workspace = true
+quickcheck.workspace = true
+regex.workspace = true
 rstest.workspace = true
 tempfile = { workspace = true }
+tracing.workspace = true
+trillium.workspace = true
+trillium-macros.workspace = true
 trillium-rustls.workspace = true

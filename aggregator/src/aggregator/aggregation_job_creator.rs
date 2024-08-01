@@ -68,7 +68,7 @@ use trillium_tokio::{CloneCounterObserver, Stopper};
 
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
-    datastore: Datastore<C>,
+    datastore: Arc<Datastore<C>>,
     meter: Meter,
 
     // Configuration values.
@@ -92,7 +92,7 @@ pub struct AggregationJobCreator<C: Clock> {
 
 impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub fn new(
-        datastore: Datastore<C>,
+        datastore: Arc<Datastore<C>>,
         meter: Meter,
         batch_aggregation_shard_count: u64,
         tasks_update_frequency: Duration,
@@ -298,7 +298,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         fields(task_id = ?task.id()),
         err
     )]
-    async fn create_aggregation_jobs_for_task(
+    pub async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
     ) -> anyhow::Result<bool> {
@@ -1034,7 +1034,7 @@ mod tests {
         // kill it.
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -1215,7 +1215,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -1400,7 +1400,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -1626,7 +1626,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             1,
             Duration::from_secs(3600),
@@ -1793,7 +1793,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -2010,7 +2010,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -2179,7 +2179,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -2443,7 +2443,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -2738,7 +2738,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             meter,
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -3030,7 +3030,7 @@ mod tests {
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
@@ -3235,7 +3235,7 @@ mod tests {
         .unwrap();
 
         let job_creator = Arc::new(AggregationJobCreator::new(
-            ds,
+            Arc::new(ds),
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),

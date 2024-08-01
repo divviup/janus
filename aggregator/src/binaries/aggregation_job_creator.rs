@@ -14,7 +14,7 @@ use tracing::info;
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     // Start creating aggregation jobs.
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
-        ctx.datastore,
+        Arc::new(ctx.datastore),
         ctx.meter,
         ctx.config.batch_aggregation_shard_count,
         Duration::from_secs(ctx.config.tasks_update_frequency_s),
