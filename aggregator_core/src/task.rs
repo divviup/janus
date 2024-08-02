@@ -161,11 +161,14 @@ impl CommonTaskParameters {
 
         if let QueryType::FixedSize {
             max_batch_size: Some(max_batch_size),
-            ..
+            batch_time_window_size: Some(batch_time_window_size),
         } = query_type
         {
             if max_batch_size < min_batch_size {
                 return Err(Error::InvalidParameter("max_batch_size"));
+            }
+            if batch_time_window_size.as_seconds() == 0 {
+                return Err(Error::InvalidParameter("batch_time_window_size is zero"));
             }
         }
 
@@ -181,6 +184,10 @@ impl CommonTaskParameters {
             task_expiration
                 .as_naive_date_time()
                 .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+        }
+
+        if time_precision.as_seconds() == 0 {
+            return Err(Error::InvalidParameter("time_precision is zero"));
         }
 
         Ok(Self {
