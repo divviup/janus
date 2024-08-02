@@ -1,10 +1,19 @@
+use std::{net::Ipv4Addr, sync::Arc};
+
 use http::header::CONTENT_TYPE;
-use janus_aggregator_core::task::test_util::Task;
+use janus_aggregator::aggregator::http_handlers::aggregator_handler;
+use janus_aggregator_core::{
+    datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
+    task::test_util::{Task, TaskBuilder},
+    test_util::noop_meter,
+};
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::HttpErrorResponse,
     retries::retry_http_request,
-    time::TimeExt,
+    test_util::{install_test_trace_subscriber, runtime::TestRuntime},
+    time::{Clock, RealClock, TimeExt},
+    vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
@@ -14,14 +23,16 @@ use prio::{
     codec::{Decode, Encode},
     field::Field128,
     vdaf::{
-        prio3::{Prio3Histogram, Prio3InputShare, Prio3PublicShare},
+        prio3::{optimal_chunk_length, Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare},
         Client as _,
     },
 };
 use rand::random;
+use tokio::net::TcpListener;
+use trillium_tokio::Stopper;
 use url::Url;
 
-use crate::simulation::http_request_exponential_backoff;
+use crate::simulation::{http_request_exponential_backoff, run::MAX_REPORTS};
 
 /// Shard and upload a report, but with a fixed ReportId.
 pub(super) async fn upload_replay_report(
@@ -163,4 +174,83 @@ async fn aggregator_hpke_config(
     let list = HpkeConfigList::get_decoded(response.body())?;
 
     Ok(list.hpke_configs()[0].clone())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bad_client_report_validity() {
+    install_test_trace_subscriber();
+
+    let clock = RealClock::default();
+    let ephemeral_datastore = ephemeral_datastore().await;
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock).await);
+    let http_client = reqwest::Client::new();
+    let keypair = HpkeKeypair::test();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await?;
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let socket_address = server.local_addr().unwrap();
+
+    let chunk_length = optimal_chunk_length(MAX_REPORTS);
+    let vdaf = Prio3::new_histogram(2, MAX_REPORTS, chunk_length).unwrap();
+    let vdaf_instance = VdafInstance::Prio3Histogram {
+        length: MAX_REPORTS,
+        chunk_length,
+        dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
+    };
+    let task = TaskBuilder::new(
+        janus_aggregator_core::task::QueryType::TimeInterval,
+        vdaf_instance,
+    )
+    .with_leader_aggregator_endpoint(format!("http://{socket_address}/").parse().unwrap())
+    .with_helper_aggregator_endpoint(format!("http://{socket_address}/").parse().unwrap())
+    .build();
+    datastore
+        .put_aggregator_task(&task.leader_view().unwrap())
+        .await
+        .unwrap();
+
+    let handler = aggregator_handler(
+        Arc::clone(&datastore),
+        clock,
+        TestRuntime::default(),
+        &noop_meter(),
+        Default::default(),
+    )
+    .await;
+    let stopper = Stopper::new();
+    let server_handle = trillium_tokio::config()
+        .with_stopper(stopper.clone())
+        .without_signals()
+        .with_prebound_server(server)
+        .spawn(handler);
+
+    let report_time = clock.now();
+    upload_replay_report(0, &task, &vdaf, &report_time, &http_client)
+        .await
+        .unwrap();
+    upload_report_not_rounded(0, &task, &vdaf, &report_time, &http_client)
+        .await
+        .unwrap();
+
+    let task_id = *task.id();
+    let counters = datastore
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_task_upload_counter(&task_id).await }))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(counters.report_success(), 2);
+
+    stopper.stop();
+    server_handle.await;
 }

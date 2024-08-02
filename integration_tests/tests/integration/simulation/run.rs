@@ -38,7 +38,7 @@ use crate::simulation::{
     START_TIME,
 };
 
-const MAX_REPORTS: usize = 1_000;
+pub(super) const MAX_REPORTS: usize = 1_000;
 
 pub(super) struct Simulation {
     state: State,
