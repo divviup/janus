@@ -12,7 +12,11 @@ use janus_messages::{
 };
 use prio::{
     codec::{Decode, Encode},
-    vdaf::{prio3::Prio3Histogram, Client as _},
+    field::Field128,
+    vdaf::{
+        prio3::{Prio3Histogram, Prio3InputShare, Prio3PublicShare},
+        Client as _,
+    },
 };
 use url::Url;
 
@@ -30,12 +34,33 @@ pub(super) async fn upload_replay_report(
     let report_id = ReportId::from([
         173, 234, 101, 107, 42, 222, 166, 86, 178, 173, 234, 101, 107, 42, 222, 166,
     ]);
-    let task_id = *task.id();
     let (public_share, input_shares) = vdaf.shard(&measurement, report_id.as_ref())?;
     let rounded_time = report_time
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let report_metadata = ReportMetadata::new(report_id, rounded_time);
+
+    let report = prepare_report(
+        http_client,
+        task,
+        public_share,
+        input_shares,
+        report_id,
+        rounded_time,
+    )
+    .await?;
+    upload_report(http_client, task, report).await
+}
+
+async fn prepare_report(
+    http_client: &reqwest::Client,
+    task: &Task,
+    public_share: Prio3PublicShare<16>,
+    input_shares: Vec<Prio3InputShare<Field128, 16>>,
+    report_id: ReportId,
+    report_time: Time,
+) -> Result<Report, janus_client::Error> {
+    let task_id = *task.id();
+    let report_metadata = ReportMetadata::new(report_id, report_time);
     let encoded_public_share = public_share.get_encoded().unwrap();
 
     let leader_hpke_config =
@@ -68,7 +93,15 @@ pub(super) async fn upload_replay_report(
         leader_encrypted_input_share,
         helper_encrypted_input_share,
     );
+    Ok(report)
+}
 
+async fn upload_report(
+    http_client: &reqwest::Client,
+    task: &Task,
+    report: Report,
+) -> Result<(), janus_client::Error> {
+    let task_id = task.id();
     let url = task
         .leader_aggregator_endpoint()
         .join(&format!("tasks/{task_id}/reports"))
@@ -82,7 +115,6 @@ pub(super) async fn upload_replay_report(
             .await
     })
     .await?;
-
     Ok(())
 }
 
