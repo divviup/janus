@@ -40,9 +40,10 @@ use prio::vdaf::prio3::Prio3Histogram;
 use tokio::net::TcpListener;
 
 use crate::simulation::{
+    http_request_exponential_backoff,
     model::Input,
     proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
-    run::{http_request_exponential_backoff, State},
+    run::State,
 };
 
 // Labels for TestRuntimeManager.
