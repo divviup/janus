@@ -4,6 +4,8 @@
 // and/or "interesting", to control more configuration from simulation inputs, and to introduce new
 // forms of fault injection. See https://users.cs.utah.edu/~regehr/papers/swarm12.pdf for example.
 
+use std::cmp::max;
+
 use janus_core::time::TimeExt;
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{empty_shrinker, Arbitrary, Gen};
@@ -19,7 +21,7 @@ impl Arbitrary for Config {
         let mut batch_size_limits = [u8::arbitrary(g), u8::arbitrary(g)];
         batch_size_limits.sort();
 
-        let mut aggregation_job_size_limits = [u8::arbitrary(g), u8::arbitrary(g)];
+        let mut aggregation_job_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
         aggregation_job_size_limits.sort();
 
         Self {
