@@ -270,17 +270,7 @@ impl Arbitrary for TimeIntervalInput {
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(shrink_ops(&self.0.ops).map({
-            let config = self.0.config.clone();
-            let is_fixed_size = self.0.is_fixed_size;
-            move |ops| {
-                Self(Input {
-                    config: config.clone(),
-                    ops,
-                    is_fixed_size,
-                })
-            }
-        }))
+        shrink_input(&self.0, Self)
     }
 }
 
@@ -401,17 +391,7 @@ impl Arbitrary for FixedSizeInput {
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(shrink_ops(&self.0.ops).map({
-            let config = self.0.config.clone();
-            let is_fixed_size = self.0.is_fixed_size;
-            move |ops| {
-                Self(Input {
-                    config: config.clone(),
-                    ops,
-                    is_fixed_size,
-                })
-            }
-        }))
+        shrink_input(&self.0, Self)
     }
 }
 
@@ -457,17 +437,7 @@ impl Arbitrary for TimeIntervalFaultInjectionInput {
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(shrink_ops(&self.0.ops).map({
-            let config = self.0.config.clone();
-            let is_fixed_size = self.0.is_fixed_size;
-            move |ops| {
-                Self(Input {
-                    config: config.clone(),
-                    ops,
-                    is_fixed_size,
-                })
-            }
-        }))
+        shrink_input(&self.0, Self)
     }
 }
 
@@ -489,16 +459,35 @@ impl Arbitrary for FixedSizeFaultInjectionInput {
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        Box::new(shrink_ops(&self.0.ops).map({
-            let config = self.0.config.clone();
-            let is_fixed_size = self.0.is_fixed_size;
-            move |ops| {
-                Self(Input {
-                    config: config.clone(),
-                    ops,
-                    is_fixed_size,
-                })
-            }
-        }))
+        shrink_input(&self.0, Self)
     }
+}
+
+fn shrink_input<T>(input: &Input, constructor: fn(Input) -> T) -> Box<dyn Iterator<Item = T>>
+where
+    T: 'static,
+{
+    let with_shrunk_ops = shrink_ops(&input.ops).map({
+        let config = input.config.clone();
+        let is_fixed_size = input.is_fixed_size;
+        move |ops| {
+            constructor(Input {
+                config: config.clone(),
+                ops,
+                is_fixed_size,
+            })
+        }
+    });
+    let with_shrunk_config = input.config.shrink().map({
+        let is_fixed_size = input.is_fixed_size;
+        let ops = input.ops.clone();
+        move |config| {
+            constructor(Input {
+                is_fixed_size,
+                config,
+                ops: ops.clone(),
+            })
+        }
+    });
+    Box::new(with_shrunk_ops.chain(with_shrunk_config))
 }
