@@ -43,12 +43,12 @@ pub(super) enum Op {
     /// Advance the `MockClock`'s time by `amount`.
     AdvanceTime { amount: Duration },
 
-    /// Have the client shard a report at the given timestamp, with the next sequential measurement,
-    /// and send it to the leader aggregator. The leader will handle the request and store the
-    /// report to the database. Note that, as currently implemented, this will wait for the report
-    /// batching timeout to expire, so the client's upload method won't return until the leader's
-    /// database transaction is complete.
-    Upload { report_time: Time },
+    /// Have the client shard some reports at the given timestamp, with the next sequential
+    /// measurements, and send them to the leader aggregator. The leader will handle the requests
+    /// and store the reports to the database. Note that, as currently implemented, this will wait
+    /// for the report batching timeout to expire, so the client's upload method won't return until
+    /// the leader's database transaction is complete.
+    Upload { report_time: Time, count: u8 },
 
     ///  Have the client shard a report at the given timestamp as with `Upload`, but with a fixed
     ///  report ID.

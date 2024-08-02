@@ -171,6 +171,7 @@ fn shrink_ops(ops: &[Op]) -> Box<dyn Iterator<Item = Vec<Op>>> {
 fn arbitrary_upload_op(g: &mut Gen, context: &Context) -> Op {
     Op::Upload {
         report_time: arbitrary_report_time(g, context),
+        count: max(u8::arbitrary(g) & 0x1f, 1),
     }
 }
 

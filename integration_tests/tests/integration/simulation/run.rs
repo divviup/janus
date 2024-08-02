@@ -9,6 +9,7 @@ use std::{
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use divviup_client::{Decode, Encode};
+use futures::future::join_all;
 use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator;
 use janus_aggregator_core::{
@@ -83,7 +84,9 @@ impl Simulation {
                     info!(time = ?simulation.state.clock.now(), "starting operation");
                     let result = match op {
                         Op::AdvanceTime { amount } => simulation.execute_advance_time(amount).await,
-                        Op::Upload { report_time } => simulation.execute_upload(report_time).await,
+                        Op::Upload { report_time, count } => {
+                            simulation.execute_upload(report_time, *count).await
+                        }
                         Op::UploadReplay { report_time } => {
                             simulation.execute_upload_replay(report_time).await
                         }
@@ -190,14 +193,18 @@ impl Simulation {
         ControlFlow::Continue(())
     }
 
-    async fn execute_upload(&mut self, report_time: &Time) -> ControlFlow<TestResult> {
-        if let Some(measurement) = self.state.next_measurement() {
-            if let Err(error) = self
-                .components
-                .client
-                .upload_with_time(&measurement, *report_time)
-                .await
-            {
+    async fn execute_upload(&mut self, report_time: &Time, count: u8) -> ControlFlow<TestResult> {
+        let report_time = *report_time;
+        let client = self.components.client.clone();
+        let results = join_all((0..count).flat_map(|_| self.state.next_measurement()).map(
+            move |measurement| {
+                let client = client.clone();
+                async move { client.upload_with_time(&measurement, report_time).await }
+            },
+        ))
+        .await;
+        for result in results {
+            if let Err(error) = result {
                 warn!(?error, "client error");
                 // We expect to receive an error if the report timestamp is too far away from the
                 // current time, so we'll allow errors for now.

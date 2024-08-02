@@ -27,18 +27,21 @@ fn successful_collection_time_interval() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -57,15 +60,19 @@ fn successful_collection_time_interval() {
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -105,18 +112,21 @@ fn successful_collection_fixed_size() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -129,15 +139,19 @@ fn successful_collection_fixed_size() {
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -173,6 +187,7 @@ fn repro_slow_uploads_with_max_batch_size() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -182,6 +197,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_003_600),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -191,6 +207,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_007_200),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -200,15 +217,19 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_010_800),
+                count: 1,
             },
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_010_800),
+                count: 1,
             },
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_010_800),
+                count: 1,
             },
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_010_800),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -242,12 +263,14 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AdvanceTime {
                 amount: Duration::from_seconds(3600),
             },
             Op::Upload {
                 report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriverResponseError,
@@ -280,12 +303,14 @@ fn repro_gc_changes_aggregation_job_retry_fixed_size() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AdvanceTime {
                 amount: Duration::from_seconds(3600),
             },
             Op::Upload {
                 report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriverResponseError,
@@ -318,12 +343,14 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AdvanceTime {
                 amount: Duration::from_seconds(2000),
             },
             Op::Upload {
                 report_time: START_TIME.add(&Duration::from_seconds(2000)).unwrap(),
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AdvanceTime {
@@ -355,11 +382,13 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriverResponseError,
@@ -402,6 +431,7 @@ fn repro_helper_accumulate_on_retried_request() {
         ops: Vec::from([
             Op::Upload {
                 report_time: START_TIME,
+                count: 1,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriverResponseError,
