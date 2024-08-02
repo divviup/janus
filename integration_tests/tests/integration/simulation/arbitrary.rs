@@ -71,6 +71,9 @@ pub(super) struct TimeIntervalFaultInjectionInput(pub(super) Input);
 #[derive(Debug, Clone)]
 pub(super) struct FixedSizeFaultInjectionInput(pub(super) Input);
 
+#[derive(Debug, Clone)]
+pub(super) struct KeyRotatorInput(pub(super) Input);
+
 /// This models the effect that the operations generated so far have on the simulation, and it is
 /// used when generating subsequent operations.
 struct Context {
@@ -347,6 +350,7 @@ mod choices {
         CollectorStart,
         CollectorPoll,
     ];
+    pub(super) static OP_KIND_CHOICES_KEY_ROTATOR: &[OpKind] = &[AdvanceTime, LeaderKeyRotator];
 }
 
 /// Generate an operation, using time interval queries.
@@ -453,6 +457,28 @@ impl Arbitrary for FixedSizeFaultInjectionInput {
         );
         Self(Input {
             is_fixed_size: true,
+            config,
+            ops,
+        })
+    }
+
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+        shrink_input(&self.0, Self)
+    }
+}
+
+impl Arbitrary for KeyRotatorInput {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let config = Config::arbitrary(g);
+        let context = Context::new(&config);
+        let ops = arbitrary_vec_with_context(
+            arbitrary_op_time_interval,
+            g,
+            context,
+            choices::OP_KIND_CHOICES_KEY_ROTATOR,
+        );
+        Self(Input {
+            is_fixed_size: false,
             config,
             ops,
         })

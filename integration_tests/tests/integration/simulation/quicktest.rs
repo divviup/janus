@@ -3,8 +3,8 @@ use quickcheck::{QuickCheck, TestResult};
 
 use crate::simulation::{
     arbitrary::{
-        FixedSizeFaultInjectionInput, FixedSizeInput, TimeIntervalFaultInjectionInput,
-        TimeIntervalInput,
+        FixedSizeFaultInjectionInput, FixedSizeInput, KeyRotatorInput,
+        TimeIntervalFaultInjectionInput, TimeIntervalInput,
     },
     run::Simulation,
 };
@@ -48,5 +48,15 @@ fn simulation_test_fixed_size_with_fault_injection() {
     QuickCheck::new().quickcheck(
         (|FixedSizeFaultInjectionInput(input)| Simulation::run(input))
             as fn(FixedSizeFaultInjectionInput) -> TestResult,
+    );
+}
+
+#[test]
+#[ignore = "slow quickcheck test"]
+fn simulation_test_key_rotator() {
+    install_test_trace_subscriber();
+
+    QuickCheck::new().quickcheck(
+        (|KeyRotatorInput(input)| Simulation::run(input)) as fn(KeyRotatorInput) -> TestResult,
     );
 }
