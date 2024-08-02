@@ -182,6 +182,13 @@ fn arbitrary_upload_replay_op(g: &mut Gen, context: &Context) -> Op {
     }
 }
 
+/// Generate an upload operation, wherein the report timestamp does not get rounded by the client.
+fn arbitrary_upload_not_rounded_op(g: &mut Gen, context: &Context) -> Op {
+    Op::UploadNotRounded {
+        report_time: arbitrary_report_time(g, context),
+    }
+}
+
 /// Generate a random report time for an upload operation. The distribution has extra weight on the
 /// current time, because very new or very old reports should be rejected, and thus don't exercise
 /// much functionality.
@@ -287,6 +294,7 @@ enum OpKind {
     AdvanceTime,
     Upload,
     UploadReplay,
+    UploadNotRounded,
     LeaderGarbageCollector,
     HelperGarbageCollector,
     LeaderKeyRotator,
@@ -319,6 +327,7 @@ mod choices {
         Upload,
         Upload,
         UploadReplay,
+        UploadNotRounded,
         LeaderGarbageCollector,
         HelperGarbageCollector,
         LeaderKeyRotator,
@@ -342,6 +351,7 @@ mod choices {
         Upload,
         Upload,
         UploadReplay,
+        UploadNotRounded,
         LeaderGarbageCollector,
         HelperGarbageCollector,
         LeaderKeyRotator,
@@ -367,6 +377,7 @@ fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
+        OpKind::UploadNotRounded => arbitrary_upload_not_rounded_op(g, context),
         OpKind::LeaderGarbageCollector => Op::LeaderGarbageCollector,
         OpKind::HelperGarbageCollector => Op::HelperGarbageCollector,
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,
@@ -413,6 +424,7 @@ fn arbitrary_op_fixed_size(g: &mut Gen, context: &Context, choices: &[OpKind]) -
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
+        OpKind::UploadNotRounded => arbitrary_upload_not_rounded_op(g, context),
         OpKind::LeaderGarbageCollector => Op::LeaderGarbageCollector,
         OpKind::HelperGarbageCollector => Op::HelperGarbageCollector,
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,

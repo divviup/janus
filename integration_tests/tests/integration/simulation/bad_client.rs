@@ -18,6 +18,7 @@ use prio::{
         Client as _,
     },
 };
+use rand::random;
 use url::Url;
 
 use crate::simulation::http_request_exponential_backoff;
@@ -46,6 +47,29 @@ pub(super) async fn upload_replay_report(
         input_shares,
         report_id,
         rounded_time,
+    )
+    .await?;
+    upload_report(http_client, task, report).await
+}
+
+/// Shard and upload a report, but don't round the timestamp properly.
+pub(super) async fn upload_report_not_rounded(
+    measurement: usize,
+    task: &Task,
+    vdaf: &Prio3Histogram,
+    report_time: &Time,
+    http_client: &reqwest::Client,
+) -> Result<(), janus_client::Error> {
+    let report_id: ReportId = random();
+    let (public_share, input_shares) = vdaf.shard(&measurement, report_id.as_ref())?;
+
+    let report = prepare_report(
+        http_client,
+        task,
+        public_share,
+        input_shares,
+        report_id,
+        *report_time,
     )
     .await?;
     upload_report(http_client, task, report).await

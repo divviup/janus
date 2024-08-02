@@ -50,9 +50,13 @@ pub(super) enum Op {
     /// the leader's database transaction is complete.
     Upload { report_time: Time, count: u8 },
 
-    ///  Have the client shard a report at the given timestamp as with `Upload`, but with a fixed
-    ///  report ID.
+    ///  Have the client shard and upload a report at the given timestamp, but with a fixed report
+    ///  ID.
     UploadReplay { report_time: Time },
+
+    /// Have the client shard and upload a report at the given timestamp, but without rounding its
+    /// timestamp to the time precision.
+    UploadNotRounded { report_time: Time },
 
     /// Run the garbage collector once in the leader.
     LeaderGarbageCollector,
