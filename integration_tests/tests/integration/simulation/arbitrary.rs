@@ -31,7 +31,7 @@ impl Arbitrary for Config {
             min_batch_size: batch_size_limits[0].into(),
             max_batch_size: bool::arbitrary(g).then_some(batch_size_limits[1].into()),
             batch_time_window_size: bool::arbitrary(g).then_some(Duration::from_seconds(
-                u64::from(u8::arbitrary(g)) * time_precision.as_seconds(),
+                u64::from(max(u8::arbitrary(g), 1)) * time_precision.as_seconds(),
             )),
             report_expiry_age: bool::arbitrary(g)
                 .then_some(Duration::from_seconds(u16::arbitrary(g).into())),
