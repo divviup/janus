@@ -61,7 +61,7 @@ janus_interop_binaries = { version = "0.7.28", path = "interop_binaries" }
 janus_messages = { version = "0.7.28", path = "messages" }
 k8s-openapi = { version = "0.21.0", features = ["v1_26"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.90.0", default-features = false, features = ["client", "rustls-tls"] }
-mockito = "1.4.0"
+mockito = "1.5.0"
 num_enum = "0.7.3"
 ohttp = { version = "0.5.1", default-features = false }
 opentelemetry = { version = "0.24", default-features = false, features = ["trace", "metrics"] }
