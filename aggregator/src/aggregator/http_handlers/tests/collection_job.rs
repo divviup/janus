@@ -3,9 +3,7 @@ use crate::aggregator::{
     http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
 };
 use janus_aggregator_core::{
-    datastore::models::{
-        BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
-    },
+    datastore::models::{CollectionJob, CollectionJobState},
     query_type::AccumulableQueryType,
     task::{test_util::TaskBuilder, QueryType},
 };
@@ -15,7 +13,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregateShareAad, BatchSelector, Collection, CollectionJobId,
-    CollectionReq, Duration, Interval, Query, ReportIdChecksum, Role, Time,
+    CollectionReq, Duration, Interval, Query, Role, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -32,6 +30,9 @@ use trillium_testing::{
 #[tokio::test]
 async fn collection_job_put_request_to_helper() {
     let test_case = setup_collection_job_test_case(Role::Helper, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionReq::new(
@@ -64,6 +65,9 @@ async fn collection_job_put_request_to_helper() {
 #[tokio::test]
 async fn collection_job_put_request_invalid_batch_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionReq::new(
@@ -97,6 +101,9 @@ async fn collection_job_put_request_invalid_batch_interval() {
 #[tokio::test]
 async fn collection_job_put_request_invalid_aggregation_parameter() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionReq::new(
@@ -183,6 +190,9 @@ async fn collection_job_put_request_invalid_batch_size() {
 #[tokio::test]
 async fn collection_job_put_request_unauthenticated() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let batch_interval = Interval::new(
         Time::from_seconds_since_epoch(0),
@@ -254,6 +264,9 @@ async fn collection_job_put_request_unauthenticated() {
 #[tokio::test]
 async fn collection_job_post_request_unauthenticated_collection_jobs() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let batch_interval = Interval::new(
         Time::from_seconds_since_epoch(0),
@@ -331,6 +344,9 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
 #[tokio::test]
 async fn collection_job_success_time_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let batch_interval = TimeInterval::to_batch_identifier(
         &test_case.task.leader_view().unwrap(),
@@ -488,6 +504,9 @@ async fn collection_job_success_time_interval() {
 #[tokio::test]
 async fn collection_job_post_request_no_such_collection_job() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let no_such_collection_job_id: CollectionJobId = random();
 
@@ -508,37 +527,9 @@ async fn collection_job_post_request_no_such_collection_job() {
 #[tokio::test]
 async fn collection_job_put_request_batch_queried_too_many_times() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
-    let interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        *test_case.task.time_precision(),
-    )
-    .unwrap();
-
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task = test_case.task.clone();
-            Box::pin(async move {
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
-                        .unwrap(),
-                    dummy::AggregationParam(0),
-                    0,
-                    interval,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 10,
-                        checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-            })
-        })
-        .await
-        .unwrap();
+    let interval = test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     // Sending this request will consume a query for [0, time_precision).
     let request = CollectionReq::new(
@@ -574,36 +565,9 @@ async fn collection_job_put_request_batch_queried_too_many_times() {
 #[tokio::test]
 async fn collection_job_put_request_batch_overlap() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
-    let interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        *test_case.task.time_precision(),
-    )
-    .unwrap();
-
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task = test_case.task.clone();
-            Box::pin(async move {
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    interval,
-                    dummy::AggregationParam(0),
-                    0,
-                    interval,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 10,
-                        checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-            })
-        })
-        .await
-        .unwrap();
+    let interval = test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     // Sending this request will consume a query for [0, 2 * time_precision).
     let request = CollectionReq::new(
@@ -645,11 +609,9 @@ async fn collection_job_put_request_batch_overlap() {
 #[tokio::test]
 async fn delete_collection_job() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        *test_case.task.time_precision(),
-    )
-    .unwrap();
+    let batch_interval = test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
 
     let collection_job_id: CollectionJobId = random();
 

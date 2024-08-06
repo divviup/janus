@@ -54,6 +54,7 @@ use prio::{
 };
 use rand::random;
 use std::{sync::Arc, time::Duration as StdDuration};
+use tokio::time::timeout;
 use trillium_tokio::Stopper;
 
 #[tokio::test]
@@ -255,7 +256,12 @@ async fn aggregation_job_driver() {
 
     tracing::info!("awaiting stepper tasks");
     // Wait for all of the aggregation job stepper tasks to complete.
-    runtime_manager.wait_for_completed_tasks("stepper", 2).await;
+    timeout(
+        StdDuration::from_secs(30),
+        runtime_manager.wait_for_completed_tasks("stepper", 2),
+    )
+    .await
+    .unwrap();
     // Stop the aggregation job driver.
     stopper.stop();
     // Wait for the aggregation job driver task to complete.
