@@ -189,6 +189,13 @@ fn arbitrary_upload_not_rounded_op(g: &mut Gen, context: &Context) -> Op {
     }
 }
 
+/// Generate an operation to upload an invalid report.
+fn arbitrary_upload_invalid_op(g: &mut Gen, context: &Context) -> Op {
+    Op::UploadInvalid {
+        report_time: arbitrary_report_time(g, context),
+    }
+}
+
 /// Generate a random report time for an upload operation. The distribution has extra weight on the
 /// current time, because very new or very old reports should be rejected, and thus don't exercise
 /// much functionality.
@@ -295,6 +302,7 @@ enum OpKind {
     Upload,
     UploadReplay,
     UploadNotRounded,
+    UploadInvalid,
     LeaderGarbageCollector,
     HelperGarbageCollector,
     LeaderKeyRotator,
@@ -328,6 +336,7 @@ mod choices {
         Upload,
         UploadReplay,
         UploadNotRounded,
+        UploadInvalid,
         LeaderGarbageCollector,
         HelperGarbageCollector,
         LeaderKeyRotator,
@@ -352,6 +361,7 @@ mod choices {
         Upload,
         UploadReplay,
         UploadNotRounded,
+        UploadInvalid,
         LeaderGarbageCollector,
         HelperGarbageCollector,
         LeaderKeyRotator,
@@ -378,6 +388,7 @@ fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
         OpKind::UploadNotRounded => arbitrary_upload_not_rounded_op(g, context),
+        OpKind::UploadInvalid => arbitrary_upload_invalid_op(g, context),
         OpKind::LeaderGarbageCollector => Op::LeaderGarbageCollector,
         OpKind::HelperGarbageCollector => Op::HelperGarbageCollector,
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,
@@ -425,6 +436,7 @@ fn arbitrary_op_fixed_size(g: &mut Gen, context: &Context, choices: &[OpKind]) -
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
         OpKind::UploadNotRounded => arbitrary_upload_not_rounded_op(g, context),
+        OpKind::UploadInvalid => arbitrary_upload_invalid_op(g, context),
         OpKind::LeaderGarbageCollector => Op::LeaderGarbageCollector,
         OpKind::HelperGarbageCollector => Op::HelperGarbageCollector,
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,

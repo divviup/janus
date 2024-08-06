@@ -58,6 +58,9 @@ pub(super) enum Op {
     /// timestamp to the time precision.
     UploadNotRounded { report_time: Time },
 
+    /// Have the client upload an invalid (but correctly formatted) report at the given timestamp.
+    UploadInvalid { report_time: Time },
+
     /// Run the garbage collector once in the leader.
     LeaderGarbageCollector,
 

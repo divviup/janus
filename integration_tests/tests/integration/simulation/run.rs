@@ -32,7 +32,9 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 use trillium_tokio::Stopper;
 
 use crate::simulation::{
-    bad_client::{upload_replay_report, upload_report_not_rounded},
+    bad_client::{
+        upload_replay_report, upload_report_invalid_measurement, upload_report_not_rounded,
+    },
     model::{Input, Op, Query},
     setup::Components,
     START_TIME,
@@ -82,6 +84,9 @@ impl Simulation {
                         }
                         Op::UploadNotRounded { report_time } => {
                             simulation.execute_upload_not_rounded(report_time).await
+                        }
+                        Op::UploadInvalid { report_time } => {
+                            simulation.execute_upload_invalid(report_time).await
                         }
                         Op::LeaderGarbageCollector => {
                             simulation
@@ -240,6 +245,22 @@ impl Simulation {
                 // We expect to receive an error if the report timestamp is too far away from the
                 // current time, so we'll allow errors for now.
             }
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn execute_upload_invalid(&mut self, report_time: &Time) -> ControlFlow<TestResult> {
+        if let Err(error) = upload_report_invalid_measurement(
+            &self.task,
+            &self.state.vdaf,
+            report_time,
+            &self.components.http_client,
+        )
+        .await
+        {
+            warn!(?error, "client error");
+            // We expect to receive an error if the report timestamp is too far away from the
+            // current time, so we'll allow errors for now.
         }
         ControlFlow::Continue(())
     }

@@ -1,5 +1,6 @@
 use std::{net::Ipv4Addr, sync::Arc};
 
+use assert_matches::assert_matches;
 use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator::http_handlers::aggregator_handler;
 use janus_aggregator_core::{
@@ -20,14 +21,16 @@ use janus_messages::{
     ReportMetadata, Role, Time,
 };
 use prio::{
-    codec::{Decode, Encode},
-    field::Field128,
+    codec::{Decode, Encode, ParameterizedDecode},
+    field::{Field128, FieldElement},
+    flp::{gadgets::ParallelSum, types::Histogram, Type},
     vdaf::{
         prio3::{optimal_chunk_length, Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare},
-        Client as _,
+        xof::{Seed, Xof, XofTurboShake128},
+        AggregateShare, Aggregator, Client as _, Collector, PrepareTransition, Vdaf,
     },
 };
-use rand::random;
+use rand::{distributions::Standard, random, Rng};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;
 use url::Url;
@@ -84,6 +87,172 @@ pub(super) async fn upload_report_not_rounded(
     )
     .await?;
     upload_report(http_client, task, report).await
+}
+
+/// Shard and upload a report, using a measurement that does not pass the validity circuit.
+pub(super) async fn upload_report_invalid_measurement(
+    task: &Task,
+    vdaf: &Prio3Histogram,
+    report_time: &Time,
+    http_client: &reqwest::Client,
+) -> Result<(), janus_client::Error> {
+    let mut encoded_measurement = Vec::from([Field128::zero(); MAX_REPORTS]);
+    encoded_measurement[0] = Field128::one();
+    encoded_measurement[1] = Field128::one();
+    let report_id: ReportId = random();
+    let (public_share, input_shares) =
+        shard_encoded_measurement(vdaf, encoded_measurement, report_id);
+
+    let report = prepare_report(
+        http_client,
+        task,
+        public_share,
+        input_shares,
+        report_id,
+        *report_time,
+    )
+    .await?;
+    upload_report(http_client, task, report).await
+}
+
+/// Take an already-encoded measurement as a vector of field elements, and run the Prio3 sharding
+/// algorithm on it to produce a public share and a set of input shares.
+fn shard_encoded_measurement(
+    vdaf: &Prio3Histogram,
+    encoded_measurement: Vec<Field128>,
+    report_id: ReportId,
+) -> (Prio3PublicShare<16>, Vec<Prio3InputShare<Field128, 16>>) {
+    const DST_MEASUREMENT_SHARE: u16 = 1;
+    const DST_PROOF_SHARE: u16 = 2;
+    const DST_JOINT_RANDOMNESS: u16 = 3;
+    const DST_JOINT_RAND_SEED: u16 = 6;
+    const DST_JOINT_RAND_PART: u16 = 7;
+
+    const LEADER_AGGREGATOR_ID: u8 = 0;
+    const HELPER_AGGREGATOR_ID: u8 = 1;
+
+    const NUM_PROOFS: u8 = 1;
+
+    assert_eq!(encoded_measurement.len(), MAX_REPORTS);
+    let chunk_length = optimal_chunk_length(MAX_REPORTS);
+    let circuit: Histogram<Field128, ParallelSum<_, _>> =
+        Histogram::new(MAX_REPORTS, chunk_length).unwrap();
+
+    // Share measurement.
+    let helper_measurement_share_seed = Seed::<16>::generate().unwrap();
+    let mut helper_measurement_share_rng = XofTurboShake128::seed_stream(
+        &helper_measurement_share_seed,
+        &vdaf.domain_separation_tag(DST_MEASUREMENT_SHARE),
+        &[HELPER_AGGREGATOR_ID],
+    );
+    let mut expanded_helper_measurement_share: Vec<Field128> =
+        Vec::with_capacity(circuit.input_len());
+    let mut leader_measurement_share = encoded_measurement.clone();
+    for leader_elem in leader_measurement_share.iter_mut() {
+        let helper_elem = helper_measurement_share_rng.sample(Standard);
+        *leader_elem -= helper_elem;
+        expanded_helper_measurement_share.push(helper_elem);
+    }
+
+    // Derive joint randomness.
+    let helper_joint_rand_blind = Seed::<16>::generate().unwrap();
+    let mut helper_joint_rand_part_xof = XofTurboShake128::init(
+        helper_joint_rand_blind.as_ref(),
+        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART),
+    );
+    helper_joint_rand_part_xof.update(&[HELPER_AGGREGATOR_ID]);
+    helper_joint_rand_part_xof.update(report_id.as_ref());
+    for helper_elem in expanded_helper_measurement_share.iter() {
+        helper_joint_rand_part_xof.update(&helper_elem.get_encoded().unwrap());
+    }
+    let helper_joint_rand_seed_part = helper_joint_rand_part_xof.into_seed();
+
+    let leader_joint_rand_blind = Seed::<16>::generate().unwrap();
+    let mut leader_joint_rand_part_xof = XofTurboShake128::init(
+        leader_joint_rand_blind.as_ref(),
+        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART),
+    );
+    leader_joint_rand_part_xof.update(&[LEADER_AGGREGATOR_ID]);
+    leader_joint_rand_part_xof.update(report_id.as_ref());
+    for leader_elem in leader_measurement_share.iter() {
+        leader_joint_rand_part_xof.update(&leader_elem.get_encoded().unwrap());
+    }
+    let leader_joint_rand_seed_part = leader_joint_rand_part_xof.into_seed();
+
+    let mut joint_rand_seed_xof =
+        XofTurboShake128::init(&[0; 16], &vdaf.domain_separation_tag(DST_JOINT_RAND_SEED));
+    joint_rand_seed_xof.update(leader_joint_rand_seed_part.as_ref());
+    joint_rand_seed_xof.update(helper_joint_rand_seed_part.as_ref());
+    let joint_rand_seed = joint_rand_seed_xof.into_seed();
+    let mut joint_rand: Vec<Field128> = Vec::with_capacity(circuit.joint_rand_len());
+    let mut joint_rand_xof = XofTurboShake128::seed_stream(
+        &joint_rand_seed,
+        &vdaf.domain_separation_tag(DST_JOINT_RANDOMNESS),
+        &[NUM_PROOFS],
+    );
+    for _ in 0..circuit.joint_rand_len() {
+        joint_rand.push(joint_rand_xof.sample(Standard));
+    }
+
+    // Construct and share FLP proof.
+    let mut prove_rand: Vec<Field128> = Vec::new();
+    for _ in 0..circuit.prove_rand_len() {
+        prove_rand.push(random());
+    }
+    let mut leader_proof_share = circuit
+        .prove(&encoded_measurement, &prove_rand, &joint_rand)
+        .unwrap();
+    let helper_proof_share_seed = Seed::<16>::generate().unwrap();
+    let mut helper_proof_share_xof = XofTurboShake128::seed_stream(
+        &helper_proof_share_seed,
+        &vdaf.domain_separation_tag(DST_PROOF_SHARE),
+        &[NUM_PROOFS, HELPER_AGGREGATOR_ID],
+    );
+    for leader_elem in leader_proof_share.iter_mut() {
+        let helper_elem = helper_proof_share_xof.sample(Standard);
+        *leader_elem -= helper_elem;
+    }
+
+    // Turn these fields into input shares via encoding and decoding.
+    let mut encoded_public_share = Vec::new();
+    leader_joint_rand_seed_part
+        .encode(&mut encoded_public_share)
+        .unwrap();
+    helper_joint_rand_seed_part
+        .encode(&mut encoded_public_share)
+        .unwrap();
+    let public_share =
+        Prio3PublicShare::get_decoded_with_param(vdaf, &encoded_public_share).unwrap();
+
+    let mut encoded_leader_input_share = Vec::new();
+    for x in leader_measurement_share.iter() {
+        x.encode(&mut encoded_leader_input_share).unwrap();
+    }
+    for x in leader_proof_share.iter() {
+        x.encode(&mut encoded_leader_input_share).unwrap();
+    }
+    leader_joint_rand_blind
+        .encode(&mut encoded_leader_input_share)
+        .unwrap();
+    let leader_input_share =
+        Prio3InputShare::get_decoded_with_param(&(vdaf, 0), &encoded_leader_input_share).unwrap();
+    let mut encoded_helper_input_share = Vec::new();
+    helper_measurement_share_seed
+        .encode(&mut encoded_helper_input_share)
+        .unwrap();
+    helper_proof_share_seed
+        .encode(&mut encoded_helper_input_share)
+        .unwrap();
+    helper_joint_rand_blind
+        .encode(&mut encoded_helper_input_share)
+        .unwrap();
+    let helper_input_share =
+        Prio3InputShare::get_decoded_with_param(&(vdaf, 1), &encoded_helper_input_share).unwrap();
+
+    (
+        public_share,
+        Vec::from([leader_input_share, helper_input_share]),
+    )
 }
 
 async fn prepare_report(
@@ -242,6 +411,9 @@ async fn bad_client_report_validity() {
     upload_report_not_rounded(0, &task, &vdaf, &report_time, &http_client)
         .await
         .unwrap();
+    upload_report_invalid_measurement(&task, &vdaf, &report_time, &http_client)
+        .await
+        .unwrap();
 
     let task_id = *task.id();
     let counters = datastore
@@ -249,8 +421,69 @@ async fn bad_client_report_validity() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(counters.report_success(), 2);
+    assert_eq!(counters.report_success(), 3);
 
     stopper.stop();
     server_handle.await;
+}
+
+/// This checks that [`shard_encoded_measurement`] is correct by sharding a correctly-encoded
+/// measurement, and confirming that it prepares successfully.
+#[test]
+fn shard_encoded_measurement_correct() {
+    let chunk_length = optimal_chunk_length(MAX_REPORTS);
+    let vdaf = Prio3::new_histogram(2, MAX_REPORTS, chunk_length).unwrap();
+
+    let mut encoded_measurement = Vec::from([Field128::zero(); MAX_REPORTS]);
+    encoded_measurement[0] = Field128::one();
+    let report_id: ReportId = random();
+    let (public_share, input_shares) =
+        shard_encoded_measurement(&vdaf, encoded_measurement, report_id);
+
+    let verify_key: [u8; 16] = random();
+    let (leader_prepare_state, leader_prepare_share) = vdaf
+        .prepare_init(
+            &verify_key,
+            0,
+            &(),
+            report_id.as_ref(),
+            &public_share,
+            &input_shares[0],
+        )
+        .unwrap();
+    let (helper_prepare_state, helper_prepare_share) = vdaf
+        .prepare_init(
+            &verify_key,
+            1,
+            &(),
+            report_id.as_ref(),
+            &public_share,
+            &input_shares[1],
+        )
+        .unwrap();
+    let prepare_message = vdaf
+        .prepare_shares_to_prepare_message(&(), [leader_prepare_share, helper_prepare_share])
+        .unwrap();
+    let leader_transition = vdaf
+        .prepare_next(leader_prepare_state, prepare_message.clone())
+        .unwrap();
+    let helper_transition = vdaf
+        .prepare_next(helper_prepare_state, prepare_message)
+        .unwrap();
+    let leader_output_share =
+        assert_matches!(leader_transition, PrepareTransition::Finish(output_share) => output_share);
+    let helper_output_share =
+        assert_matches!(helper_transition, PrepareTransition::Finish(output_share) => output_share);
+    let aggregate_result = vdaf
+        .unshard(
+            &(),
+            [
+                AggregateShare::from(leader_output_share),
+                AggregateShare::from(helper_output_share),
+            ],
+            1,
+        )
+        .unwrap();
+    assert_eq!(aggregate_result[0], 1);
+    assert_eq!(aggregate_result[1..], [0; MAX_REPORTS - 1]);
 }
