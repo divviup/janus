@@ -139,32 +139,74 @@ fn arbitrary_vec_with_context(
 ///
 /// Since `Op` doesn't implement `Arbitrary` itself, we first wrap them in a newtype that does, and
 /// then dispatch to the blanket shrinking implementation for `Vec<impl Arbitrary>`. This will
-/// shrink the input list of operations by removing operations, but not otherwise alter any
-/// individual operations.
+/// shrink the input list of operations by removing operations, and use a helper function to shrink
+/// individual operations themselves.
 fn shrink_ops(ops: &[Op]) -> Box<dyn Iterator<Item = Vec<Op>>> {
     #[derive(Clone)]
-    struct Opaque<T>(T);
+    struct Wrapper(Op);
 
-    impl<T> Arbitrary for Opaque<T>
-    where
-        T: Clone + 'static,
-    {
+    impl Arbitrary for Wrapper {
         fn arbitrary(_g: &mut Gen) -> Self {
             unimplemented!()
         }
 
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            empty_shrinker()
+            Box::new(shrink_op(&self.0).map(Wrapper))
         }
     }
 
     Box::new(
         ops.iter()
-            .map(|op| Opaque(op.clone()))
-            .collect::<Vec<Opaque<Op>>>()
+            .map(|op| Wrapper(op.clone()))
+            .collect::<Vec<Wrapper>>()
             .shrink()
             .map(|ops| ops.iter().map(|wrapped| wrapped.0.clone()).collect()),
     )
+}
+
+fn shrink_op(op: &Op) -> Box<dyn Iterator<Item = Op>> {
+    match op {
+        Op::AdvanceTime { amount: _ }
+        | Op::UploadReplay { report_time: _ }
+        | Op::UploadNotRounded { report_time: _ }
+        | Op::UploadInvalid { report_time: _ }
+        | Op::LeaderGarbageCollector
+        | Op::HelperGarbageCollector
+        | Op::LeaderKeyRotator
+        | Op::HelperKeyRotator
+        | Op::AggregationJobCreator
+        | Op::AggregationJobDriver
+        | Op::AggregationJobDriverRequestError
+        | Op::AggregationJobDriverResponseError
+        | Op::CollectionJobDriver
+        | Op::CollectionJobDriverRequestError
+        | Op::CollectionJobDriverResponseError
+        | Op::CollectorStart {
+            collection_job_id: _,
+            query: _,
+        }
+        | Op::CollectorPoll {
+            collection_job_id: _,
+        } => empty_shrinker(),
+
+        Op::Upload {
+            report_time: _,
+            count: 0 | 1,
+        } => empty_shrinker(),
+        Op::Upload { report_time, count } => Box::new(
+            [
+                Op::Upload {
+                    report_time: *report_time,
+                    count: *count / 2,
+                },
+                Op::Upload {
+                    report_time: *report_time,
+                    count: *count - 1,
+                },
+            ]
+            .into_iter(),
+        ),
+    }
 }
 
 /// Generate an upload operation.
