@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use janus_aggregator_core::datastore::test_util::EphemeralDatabase;
 use janus_core::test_util::install_test_trace_subscriber;
-use quickcheck::{QuickCheck, TestResult};
+use quickcheck::{Gen, QuickCheck, TestResult};
 use tokio::runtime::Runtime;
 
 use crate::simulation::{
@@ -20,7 +20,7 @@ fn simulation_test_time_interval_no_fault_injection() {
 
     let _ephemeral_database = DatabaseHandle::new();
 
-    QuickCheck::new().quickcheck(
+    new_quick_check().quickcheck(
         (|TimeIntervalInput(input)| Simulation::run(input)) as fn(TimeIntervalInput) -> TestResult,
     );
 }
@@ -32,7 +32,7 @@ fn simulation_test_fixed_size_no_fault_injection() {
 
     let _ephemeral_database = DatabaseHandle::new();
 
-    QuickCheck::new().quickcheck(
+    new_quick_check().quickcheck(
         (|FixedSizeInput(input)| Simulation::run(input)) as fn(FixedSizeInput) -> TestResult,
     );
 }
@@ -44,7 +44,7 @@ fn simulation_test_time_interval_with_fault_injection() {
 
     let _ephemeral_database = DatabaseHandle::new();
 
-    QuickCheck::new().quickcheck(
+    new_quick_check().quickcheck(
         (|TimeIntervalFaultInjectionInput(input)| Simulation::run(input))
             as fn(TimeIntervalFaultInjectionInput) -> TestResult,
     );
@@ -57,7 +57,7 @@ fn simulation_test_fixed_size_with_fault_injection() {
 
     let _ephemeral_database = DatabaseHandle::new();
 
-    QuickCheck::new().quickcheck(
+    new_quick_check().quickcheck(
         (|FixedSizeFaultInjectionInput(input)| Simulation::run(input))
             as fn(FixedSizeFaultInjectionInput) -> TestResult,
     );
@@ -70,7 +70,7 @@ fn simulation_test_key_rotator() {
 
     let _ephemeral_database = DatabaseHandle::new();
 
-    QuickCheck::new().quickcheck(
+    new_quick_check().quickcheck(
         (|KeyRotatorInput(input)| Simulation::run(input)) as fn(KeyRotatorInput) -> TestResult,
     );
 }
@@ -107,4 +107,14 @@ impl Drop for DatabaseHandle {
         // The database needs to be dropped in the context of a Tokio runtime.
         self.runtime.block_on(async { drop(self.database.take()) })
     }
+}
+
+/// Construct a new [`QuickCheck`] object, and override the default value for generator size.
+fn new_quick_check() -> QuickCheck {
+    let quick_check = QuickCheck::new();
+    let gen_size = env::var("QUICKCHECK_GENERATOR_SIZE")
+        .ok()
+        .and_then(|arg| arg.parse().ok())
+        .unwrap_or(400);
+    quick_check.gen(Gen::new(gen_size))
 }
