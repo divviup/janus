@@ -60,19 +60,7 @@ fn successful_collection_time_interval() {
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
                 report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
+                count: 4,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -139,19 +127,7 @@ fn successful_collection_fixed_size() {
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
                 report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
-            },
-            Op::Upload {
-                report_time: START_TIME,
-                count: 1,
+                count: 4,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
@@ -217,19 +193,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: Time::from_seconds_since_epoch(1_700_010_800),
-                count: 1,
-            },
-            Op::Upload {
-                report_time: Time::from_seconds_since_epoch(1_700_010_800),
-                count: 1,
-            },
-            Op::Upload {
-                report_time: Time::from_seconds_since_epoch(1_700_010_800),
-                count: 1,
-            },
-            Op::Upload {
-                report_time: Time::from_seconds_since_epoch(1_700_010_800),
-                count: 1,
+                count: 4,
             },
             Op::AggregationJobCreator,
             Op::AggregationJobDriver,
