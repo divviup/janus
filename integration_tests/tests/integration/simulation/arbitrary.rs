@@ -18,7 +18,7 @@ use crate::simulation::{
 
 impl Arbitrary for Config {
     fn arbitrary(g: &mut Gen) -> Self {
-        let mut batch_size_limits = [u8::arbitrary(g), u8::arbitrary(g)];
+        let mut batch_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
         batch_size_limits.sort();
 
         let mut aggregation_job_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
