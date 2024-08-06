@@ -39,7 +39,7 @@ use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
 
-struct EphemeralDatabase {
+pub struct EphemeralDatabase {
     db_thread: Option<JoinHandle<()>>,
     db_thread_shutdown: Option<Sender<()>>,
     port_number: u16,
@@ -47,7 +47,7 @@ struct EphemeralDatabase {
 }
 
 impl EphemeralDatabase {
-    async fn shared() -> Arc<Self> {
+    pub async fn shared() -> Arc<Self> {
         static EPHEMERAL_DATABASE: Mutex<Weak<EphemeralDatabase>> = Mutex::const_new(Weak::new());
 
         let mut g = EPHEMERAL_DATABASE.lock().await;
