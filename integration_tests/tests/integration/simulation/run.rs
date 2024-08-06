@@ -65,6 +65,9 @@ impl Simulation {
     }
 
     pub(super) fn run(input: Input) -> TestResult {
+        if input.ops.is_empty() {
+            return TestResult::discard();
+        }
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
