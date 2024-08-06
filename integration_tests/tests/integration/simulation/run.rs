@@ -3,7 +3,7 @@ use std::{
     ops::ControlFlow,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::Arc,
-    time::Duration as StdDuration,
+    time::{Duration as StdDuration, Instant},
 };
 
 use derivative::Derivative;
@@ -52,7 +52,9 @@ pub(super) struct Simulation {
 impl Simulation {
     async fn new(input: &Input) -> Self {
         let mut state = State::new();
+        let start = Instant::now();
         let (components, task) = Components::setup(input, &mut state).await;
+        info!(elapsed = ?start.elapsed(), "setup done");
         let leader_task = Arc::new(task.leader_view().unwrap());
         Self {
             state,
@@ -73,6 +75,7 @@ impl Simulation {
             for op in input.ops.iter() {
                 let span = info_span!("operation", op = ?op);
                 let timeout_result = timeout(StdDuration::from_secs(15), async {
+                    let start = Instant::now();
                     info!(time = ?simulation.state.clock.now(), "starting operation");
                     let result = match op {
                         Op::AdvanceTime { amount } => simulation.execute_advance_time(amount).await,
@@ -143,7 +146,7 @@ impl Simulation {
                             simulation.execute_collector_poll(collection_job_id).await
                         }
                     };
-                    info!("finished operation");
+                    info!(elapsed = ?start.elapsed(), "finished operation");
                     result
                 })
                 .instrument(span)
