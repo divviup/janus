@@ -1474,7 +1474,7 @@ checksum = "510a2027fc8d7e180a73c26d97e0b46d11ba86813888eebf160f827f0d28824d"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.28 (registry+https://github.com/rust-lang/crates.io-index)",
+ "janus_messages 0.7.28",
  "log",
  "num-bigint",
  "num-rational",
@@ -2739,7 +2739,7 @@ checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2763,7 +2763,7 @@ dependencies = [
  "janus_aggregator_api",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2835,7 +2835,7 @@ dependencies = [
  "git-version",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "opentelemetry",
  "querystring",
  "rand",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2877,7 +2877,7 @@ dependencies = [
  "itertools 0.12.1",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "k8s-openapi",
  "kube",
  "opentelemetry",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "janus_client"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2921,7 +2921,7 @@ dependencies = [
  "http 1.1.0",
  "itertools 0.12.1",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "mockito",
  "ohttp",
  "prio",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2949,7 +2949,7 @@ dependencies = [
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "mockito",
  "prio",
  "rand",
@@ -2965,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2982,7 +2982,7 @@ dependencies = [
  "http 1.1.0",
  "http-api-problem",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3034,7 +3034,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "k8s-openapi",
  "kube",
  "opentelemetry",
@@ -3060,7 +3060,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "backoff",
@@ -3077,7 +3077,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "prio",
  "rand",
  "regex",
@@ -3102,6 +3102,24 @@ dependencies = [
 [[package]]
 name = "janus_messages"
 version = "0.7.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af9500e316ea09e197860e7eb66319a1525e9d3dcd19aee6afa02530de7453ff"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "derivative",
+ "hex",
+ "num_enum",
+ "prio",
+ "rand",
+ "serde",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "janus_messages"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3119,26 +3137,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "janus_messages"
-version = "0.7.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af9500e316ea09e197860e7eb66319a1525e9d3dcd19aee6afa02530de7453ff"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "derivative",
- "hex",
- "num_enum",
- "prio",
- "rand",
- "serde",
- "thiserror",
- "url",
-]
-
-[[package]]
 name = "janus_tools"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3149,7 +3149,7 @@ dependencies = [
  "fixed",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.28",
+ "janus_messages 0.7.29",
  "prio",
  "rand",
  "reqwest",
@@ -7179,7 +7179,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.28"
+version = "0.7.29"
 dependencies = [
  "anyhow",
  "clap",
