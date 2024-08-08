@@ -27,7 +27,7 @@ use std::{
 use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt},
-    join,
+    join, spawn,
     sync::{
         oneshot::{self, Sender},
         Mutex,
@@ -165,6 +165,7 @@ pub struct EphemeralDatastore {
     pool: Pool,
     datastore_key_bytes: Vec<u8>,
     migrator: Migrator,
+    db_name: String,
 }
 
 pub const TEST_DATASTORE_MAX_TRANSACTION_RETRIES: u64 = 1000;
@@ -251,6 +252,21 @@ impl EphemeralDatastore {
                 .await
                 .unwrap_or_else(|e| panic!("failed to downgrade to version {}: {}", v, e));
         }
+    }
+}
+
+impl Drop for EphemeralDatastore {
+    fn drop(&mut self) {
+        // Make a best-effort attempt to delete the database created for this datastore. This may
+        // fail if the container hosting the database server is deleted faster, which would make
+        // this moot.
+        let pool = self.pool.clone();
+        let db_name = self.db_name.clone();
+        spawn(async move {
+            if let Ok(conn) = pool.get().await {
+                let _ = conn.execute("DROP DATABASE $1", &[&db_name]).await;
+            }
+        });
     }
 }
 
@@ -383,6 +399,7 @@ impl EphemeralDatastoreBuilder {
             pool,
             datastore_key_bytes: generate_aead_key_bytes(),
             migrator,
+            db_name,
         }
     }
 }
