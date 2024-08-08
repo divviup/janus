@@ -4,6 +4,7 @@ use std::{
     time::Duration as StdDuration,
 };
 
+use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
@@ -288,6 +289,12 @@ impl Components {
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),
+        )
+        .with_http_request_backoff(http_request_exponential_backoff())
+        .with_collect_poll_backoff(
+            ExponentialBackoffBuilder::new()
+                .with_max_elapsed_time(Some(StdDuration::ZERO))
+                .build(),
         )
         .build()
         .unwrap();
