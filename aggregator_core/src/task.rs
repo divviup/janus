@@ -155,6 +155,10 @@ impl CommonTaskParameters {
         time_precision: Duration,
         tolerable_clock_skew: Duration,
     ) -> Result<Self, Error> {
+        if min_batch_size == 0 {
+            return Err(Error::InvalidParameter("min_batch_size"));
+        }
+
         if let QueryType::FixedSize {
             max_batch_size: Some(max_batch_size),
             ..
@@ -1102,7 +1106,7 @@ pub mod test_util {
                 1,
                 None,
                 None,
-                0,
+                1,
                 Duration::from_hours(8).unwrap(),
                 Duration::from_minutes(10).unwrap(),
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
