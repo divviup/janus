@@ -17,20 +17,30 @@ use sqlx::{
     Connection, PgConnection,
 };
 use std::{
+    env,
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Weak},
+    thread::JoinHandle,
     time::Duration,
 };
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ContainerRequest, ImageExt};
-use tokio::sync::Mutex;
+use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
+use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt},
+    join,
+    sync::{
+        oneshot::{self, Sender},
+        Mutex,
+    },
+};
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
 
 struct EphemeralDatabase {
-    _db_container: ContainerAsync<Postgres>,
+    db_thread: Option<JoinHandle<()>>,
+    db_thread_shutdown: Option<Sender<()>>,
     port_number: u16,
 }
 
@@ -49,24 +59,69 @@ impl EphemeralDatabase {
     }
 
     async fn start() -> Self {
-        // Start an instance of Postgres running in a container.
-        let db_container = ContainerRequest::from(Postgres::default())
-            .with_cmd(Vec::from([
-                "-c".to_string(),
-                "max_connections=200".to_string(),
-            ]))
-            .start()
-            .await
-            .unwrap();
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container
-            .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
-            .await
-            .unwrap();
-        trace!("Postgres container is up with port {port_number}");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (port_tx, port_rx) = oneshot::channel();
 
+        // Hack: run testcontainer logic under its own thread with its own tokio runtime, to avoid
+        // deadlocking the main runtime when waiting for logs to finish in the Drop implementation.
+        let db_thread = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let should_log = env::var_os("JANUS_TEST_DUMP_POSTGRESQL_LOGS").is_some();
+                    let mut configuration = Vec::from(["max_connections=200"]);
+                    if should_log {
+                        configuration.append(&mut Vec::from([
+                            // Enable logging of query plans.
+                            "shared_preload_libraries=auto_explain",
+                            "log_min_messages=LOG",
+                            "auto_explain.log_min_duration=0",
+                            "auto_explain.log_analyze=true",
+                        ]))
+                    }
+
+                    // Start an instance of Postgres running in a container.
+                    let db_container = ContainerRequest::from(Postgres::default())
+                        .with_cmd(Self::postgres_configuration(&configuration))
+                        .start()
+                        .await
+                        .unwrap();
+
+                    let stdout = db_container.stdout(true);
+                    let stderr = db_container.stderr(true);
+                    let log_consumer_handle = should_log.then(|| {
+                        tokio::spawn(async move {
+                            join!(buffer_printer(stdout), buffer_printer(stderr));
+                        })
+                    });
+
+                    const POSTGRES_DEFAULT_PORT: u16 = 5432;
+                    let port_number = db_container
+                        .get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+                        .await
+                        .unwrap();
+                    trace!("Postgres container is up with port {port_number}");
+
+                    // Send port information, which frees this function to continue.
+                    port_tx.send(port_number).unwrap();
+
+                    // Wait for shutdown to be signalled.
+                    shutdown_rx.await.unwrap();
+
+                    // Shutdown container and Wait for log consumers to stop.
+                    db_container.stop().await.unwrap();
+                    if let Some(log_consumer_handle) = log_consumer_handle {
+                        log_consumer_handle.await.unwrap();
+                    }
+                })
+        });
+
+        let port_number = port_rx.await.unwrap();
         Self {
-            _db_container: db_container,
+            db_thread: Some(db_thread),
+            db_thread_shutdown: Some(shutdown_tx),
             port_number,
         }
     }
@@ -76,6 +131,27 @@ impl EphemeralDatabase {
             "postgres://postgres:postgres@127.0.0.1:{}/{db_name}",
             self.port_number
         )
+    }
+
+    fn postgres_configuration<'a>(settings: &[&'a str]) -> Vec<&'a str> {
+        settings
+            .iter()
+            .flat_map(|setting| ["-c", setting])
+            .collect::<Vec<_>>()
+    }
+}
+
+async fn buffer_printer(buffer: std::pin::Pin<Box<dyn AsyncBufRead + Send>>) {
+    let mut lines = buffer.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        println!("{}", line);
+    }
+}
+
+impl Drop for EphemeralDatabase {
+    fn drop(&mut self) {
+        self.db_thread_shutdown.take().map(|tx| tx.send(()));
+        self.db_thread.take().map(|thread| thread.join());
     }
 }
 
