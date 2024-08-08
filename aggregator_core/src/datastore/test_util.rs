@@ -24,7 +24,7 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
-use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
+use testcontainers::{core::Mount, runners::AsyncRunner, ContainerRequest, ImageExt};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt},
     join, spawn,
@@ -85,6 +85,7 @@ impl EphemeralDatabase {
                     // Start an instance of Postgres running in a container.
                     let db_container = ContainerRequest::from(Postgres::default())
                         .with_cmd(Self::postgres_configuration(&configuration))
+                        .with_mount(Mount::tmpfs_mount("/var/lib/postgresql/data"))
                         .start()
                         .await
                         .unwrap();
