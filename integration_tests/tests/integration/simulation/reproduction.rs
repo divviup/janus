@@ -143,7 +143,6 @@ fn successful_collection_fixed_size() {
 }
 
 #[test]
-#[ignore = "failing test"]
 /// Reproduction of https://github.com/divviup/janus/issues/3323.
 fn repro_slow_uploads_with_max_batch_size() {
     install_test_trace_subscriber();
