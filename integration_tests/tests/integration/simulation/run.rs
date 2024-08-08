@@ -157,7 +157,10 @@ impl Simulation {
                 match timeout_result {
                     Ok(ControlFlow::Break(test_result)) => return test_result,
                     Ok(ControlFlow::Continue(())) => {}
-                    Err(error) => return TestResult::error(error.to_string()),
+                    Err(error) => {
+                        error!("operation timed out");
+                        return TestResult::error(error.to_string());
+                    }
                 }
 
                 if simulation.components.leader.inspect_monitor.has_failed()
