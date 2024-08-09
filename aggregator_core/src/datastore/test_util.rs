@@ -27,7 +27,7 @@ use std::{
 use testcontainers::{core::Mount, runners::AsyncRunner, ContainerRequest, ImageExt};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt},
-    join, spawn,
+    join,
     sync::{
         oneshot::{self, Sender},
         Mutex,
@@ -263,17 +263,31 @@ impl Drop for EphemeralDatastore {
         // this moot.
         let db_name = self.db_name.clone();
         let connection_string = self.db.connection_string("postgres");
-        spawn(async move {
-            if let Ok((client, connection)) =
-                tokio_postgres::connect(&connection_string, NoTls).await
-            {
-                spawn(async move {
-                    let _ = connection.await;
-                });
-                let _ = client
-                    .execute(&format!("DROP DATABASE {db_name}"), &[])
-                    .await;
-            }
+
+        // Since each unit test has its own Tokio runtime, we need to run `DROP DATABASE` in a
+        // separate thread and Tokio runtime. If we just spawned a new task to do so in the same
+        // runtime, it would get cancelled when the runtime shuts down.
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on({
+                let handle = runtime.handle();
+                async move {
+                    if let Ok((client, connection)) =
+                        tokio_postgres::connect(&connection_string, NoTls).await
+                    {
+                        handle.spawn(async move {
+                            let _ = connection.await;
+                        });
+                        let _ = client
+                            .execute(&format!("DROP DATABASE {db_name}"), &[])
+                            .await;
+                    }
+                }
+            });
         });
     }
 }
