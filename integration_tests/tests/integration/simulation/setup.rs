@@ -77,7 +77,7 @@ impl SimulationAggregator {
             // Set this to 1 because report uploads will be serialized.
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::from_secs(0),
-            batch_aggregation_shard_count: 32,
+            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             hpke_config_signing_key: None,
