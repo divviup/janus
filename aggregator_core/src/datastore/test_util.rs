@@ -265,7 +265,7 @@ impl Drop for EphemeralDatastore {
         let db_name = self.db_name.clone();
         spawn(async move {
             if let Ok(conn) = pool.get().await {
-                let _ = conn.execute("DROP DATABASE $1", &[&db_name]).await;
+                let _ = conn.execute(&format!("DROP DATABASE {db_name}"), &[]).await;
             }
         });
     }
