@@ -161,7 +161,7 @@ impl Drop for EphemeralDatabase {
 ///
 /// Dropping the EphemeralDatastore will cause it to be shut down & cleaned up.
 pub struct EphemeralDatastore {
-    _db: Arc<EphemeralDatabase>,
+    db: Arc<EphemeralDatabase>,
     connection_string: String,
     pool: Pool,
     datastore_key_bytes: Vec<u8>,
@@ -261,11 +261,18 @@ impl Drop for EphemeralDatastore {
         // Make a best-effort attempt to delete the database created for this datastore. This may
         // fail if the container hosting the database server is deleted faster, which would make
         // this moot.
-        let pool = self.pool.clone();
         let db_name = self.db_name.clone();
+        let connection_string = self.db.connection_string("postgres");
         spawn(async move {
-            if let Ok(conn) = pool.get().await {
-                let _ = conn.execute(&format!("DROP DATABASE {db_name}"), &[]).await;
+            if let Ok((client, connection)) =
+                tokio_postgres::connect(&connection_string, NoTls).await
+            {
+                spawn(async move {
+                    let _ = connection.await;
+                });
+                let _ = client
+                    .execute(&format!("DROP DATABASE {db_name}"), &[])
+                    .await;
             }
         });
     }
@@ -395,7 +402,7 @@ impl EphemeralDatastoreBuilder {
             .unwrap();
 
         EphemeralDatastore {
-            _db: db,
+            db,
             connection_string,
             pool,
             datastore_key_bytes: generate_aead_key_bytes(),
