@@ -73,7 +73,7 @@ impl Simulation {
             .build()
             .unwrap();
 
-        tokio_runtime.block_on(async {
+        let result = tokio_runtime.block_on(async {
             let mut simulation = Self::new(&input).await;
             for op in input.ops.iter() {
                 let span = info_span!("operation", op = ?op);
@@ -192,7 +192,13 @@ impl Simulation {
             }
 
             TestResult::passed()
-        })
+        });
+        if result.is_failure() {
+            error!(?input, "failure");
+        } else {
+            info!(?input, "success");
+        }
+        result
     }
 
     async fn execute_advance_time(&mut self, amount: &Duration) -> ControlFlow<TestResult> {
