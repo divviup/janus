@@ -6,7 +6,7 @@
 
 use std::cmp::max;
 
-use janus_core::time::TimeExt;
+use janus_core::time::{DurationExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{empty_shrinker, Arbitrary, Gen};
 use rand::random;
@@ -575,5 +575,199 @@ where
             })
         }
     });
-    Box::new(with_shrunk_ops.chain(with_shrunk_config))
+    Box::new(
+        with_shrunk_ops
+            .chain(with_shrunk_config)
+            .chain(CoalesceOps::new(input.clone(), constructor)),
+    )
+}
+
+/// Shrinking iterator that coalesces adjacent operations, if possible.
+struct CoalesceOps<T> {
+    original_input: Option<Input>,
+    constructor: fn(Input) -> T,
+}
+
+impl<T> CoalesceOps<T> {
+    fn new(input: Input, constructor: fn(Input) -> T) -> Self {
+        Self {
+            original_input: Some(input),
+            constructor,
+        }
+    }
+}
+
+impl<T> Iterator for CoalesceOps<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        let original_input = self.original_input.take()?;
+        if !original_input
+            .ops
+            .windows(2)
+            .any(|window| window[0].combine(&window[1]).is_some())
+        {
+            return None;
+        }
+
+        let mut last_op = None;
+        let mut ops = Vec::with_capacity(original_input.ops.len());
+        for op in original_input.ops.into_iter() {
+            if last_op.is_none() {
+                last_op = Some(op);
+            } else if let Some(combined_op) = last_op.as_ref().unwrap().combine(&op) {
+                last_op = Some(combined_op);
+            } else {
+                ops.extend(last_op.replace(op));
+            }
+        }
+        ops.extend(last_op);
+        Some((self.constructor)(Input {
+            is_fixed_size: original_input.is_fixed_size,
+            config: original_input.config,
+            ops,
+        }))
+    }
+}
+
+impl Op {
+    /// Combine two operations into one equivalent operation, if possible.
+    fn combine(&self, other: &Op) -> Option<Op> {
+        match (self, other) {
+            (
+                Op::AdvanceTime {
+                    amount: self_amount,
+                },
+                Op::AdvanceTime {
+                    amount: other_amount,
+                },
+            ) => self_amount
+                .add(other_amount)
+                .ok()
+                .map(|amount| Op::AdvanceTime { amount }),
+            (
+                Op::Upload {
+                    report_time: self_report_time,
+                    count: self_count,
+                },
+                Op::Upload {
+                    report_time: other_report_time,
+                    count: other_count,
+                },
+            ) if self_report_time == other_report_time => Some(Op::Upload {
+                report_time: *self_report_time,
+                count: self_count + other_count,
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn coalesce_ops_correct() {
+    let config = Config::arbitrary(&mut Gen::new(0));
+    let cases = [
+        (
+            Vec::from([Op::AdvanceTime {
+                amount: Duration::from_seconds(1),
+            }]),
+            None,
+        ),
+        (
+            Vec::from([
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(1),
+                },
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(2),
+                },
+            ]),
+            Some(Vec::from([Op::AdvanceTime {
+                amount: Duration::from_seconds(3),
+            }])),
+        ),
+        (
+            Vec::from([
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(1),
+                },
+                Op::AggregationJobCreator,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(1),
+                },
+            ]),
+            None,
+        ),
+        (
+            Vec::from([
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(1),
+                },
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(2),
+                },
+                Op::AggregationJobCreator,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(3),
+                },
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(4),
+                },
+                Op::AggregationJobDriver,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(5),
+                },
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(6),
+                },
+            ]),
+            Some(Vec::from([
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(3),
+                },
+                Op::AggregationJobCreator,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(7),
+                },
+                Op::AggregationJobDriver,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(11),
+                },
+            ])),
+        ),
+        (
+            Vec::from([
+                Op::AggregationJobCreator,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(3),
+                },
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(4),
+                },
+                Op::AggregationJobDriver,
+            ]),
+            Some(Vec::from([
+                Op::AggregationJobCreator,
+                Op::AdvanceTime {
+                    amount: Duration::from_seconds(7),
+                },
+                Op::AggregationJobDriver,
+            ])),
+        ),
+    ];
+    for (input_ops, expected_ops) in cases {
+        let opt = CoalesceOps::new(
+            Input {
+                is_fixed_size: false,
+                config: config.clone(),
+                ops: input_ops,
+            },
+            |input| input,
+        )
+        .next();
+        assert_eq!(opt.is_some(), expected_ops.is_some());
+        if opt.is_some() {
+            assert_eq!(opt.unwrap().ops, expected_ops.unwrap());
+        }
+    }
 }

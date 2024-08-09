@@ -38,7 +38,7 @@ pub(super) struct Config {
     pub(super) max_aggregation_job_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Op {
     /// Advance the `MockClock`'s time by `amount`.
     AdvanceTime { amount: Duration },
@@ -113,7 +113,7 @@ pub(super) enum Op {
 }
 
 /// Representation of a DAP query used in a collection job.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Query {
     /// A time interval query, parameterized with a batch interval.
     TimeInterval(Interval),
