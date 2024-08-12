@@ -20,6 +20,7 @@ use std::{
     env,
     path::PathBuf,
     str::FromStr,
+    sync::mpsc,
     sync::{Arc, Weak},
     thread::JoinHandle,
     time::Duration,
@@ -42,6 +43,7 @@ struct EphemeralDatabase {
     db_thread: Option<JoinHandle<()>>,
     db_thread_shutdown: Option<Sender<()>>,
     port_number: u16,
+    cleanup_tx: mpsc::Sender<String>,
 }
 
 impl EphemeralDatabase {
@@ -120,10 +122,47 @@ impl EphemeralDatabase {
         });
 
         let port_number = port_rx.await.unwrap();
+
+        // Make a best-effort attempt to delete databases created for datastores, once they are no
+        // longer needed. This may fail if the container hosting the database server is deleted
+        // faster, which would make this moot.
+        let (cleanup_tx, cleanup_rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            let handle = runtime.handle();
+
+            let connection_string =
+                format!("postgres://postgres:postgres@127.0.0.1:{port_number}/postgres");
+
+            while let Ok(name) = cleanup_rx.recv() {
+                let connection_string = connection_string.clone();
+                handle.spawn({
+                    let handle = handle.clone();
+                    async move {
+                        let Ok((client, connection)) =
+                            tokio_postgres::connect(&connection_string, NoTls).await
+                        else {
+                            return;
+                        };
+                        handle.spawn(async move {
+                            let _ = connection.await;
+                        });
+
+                        let _ = client.execute(&format!("DROP DATABASE {name}"), &[]).await;
+                    }
+                });
+            }
+        });
+
         Self {
             db_thread: Some(db_thread),
             db_thread_shutdown: Some(shutdown_tx),
             port_number,
+            cleanup_tx,
         }
     }
 
@@ -139,6 +178,10 @@ impl EphemeralDatabase {
             .iter()
             .flat_map(|setting| ["-c", setting])
             .collect::<Vec<_>>()
+    }
+
+    fn drop_database(&self, name: String) {
+        let _ = self.cleanup_tx.send(name);
     }
 }
 
@@ -258,37 +301,7 @@ impl EphemeralDatastore {
 
 impl Drop for EphemeralDatastore {
     fn drop(&mut self) {
-        // Make a best-effort attempt to delete the database created for this datastore. This may
-        // fail if the container hosting the database server is deleted faster, which would make
-        // this moot.
-        let db_name = self.db_name.clone();
-        let connection_string = self.db.connection_string("postgres");
-
-        // Since each unit test has its own Tokio runtime, we need to run `DROP DATABASE` in a
-        // separate thread and Tokio runtime. If we just spawned a new task to do so in the same
-        // runtime, it would get cancelled when the runtime shuts down.
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on({
-                let handle = runtime.handle();
-                async move {
-                    if let Ok((client, connection)) =
-                        tokio_postgres::connect(&connection_string, NoTls).await
-                    {
-                        handle.spawn(async move {
-                            let _ = connection.await;
-                        });
-                        let _ = client
-                            .execute(&format!("DROP DATABASE {db_name}"), &[])
-                            .await;
-                    }
-                }
-            });
-        });
+        self.db.drop_database(self.db_name.clone());
     }
 }
 
