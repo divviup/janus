@@ -1,5 +1,6 @@
 use super::{
     error::{ArcError, ReportRejectionReason},
+    queue::{queued_lifo, LIFORequestQueue},
     Aggregator, Config, Error,
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
@@ -154,6 +155,17 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         Error::ClientDisconnected => conn.with_status(Status::BadRequest),
+        Error::TooManyRequests => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#too-many-requests",
+                "The server is currently overloaded.",
+                Status::ServiceUnavailable,
+            )
+            .with_detail(concat!(
+                "The server is currently servicing too many requests, please try the request ",
+                "again later."
+            )),
+        ),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -300,6 +312,7 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
     aggregator: Arc<Aggregator<C>>,
     meter: &Meter,
 ) -> Result<impl Handler, Error> {
+    let queue = Arc::new(LIFORequestQueue::new(2, 8)?);
     Ok((
         State(aggregator),
         metrics(meter)
@@ -327,11 +340,17 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
             )
             .put(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_put::<C>)),
+                instrumented(queued_lifo(
+                    Arc::clone(&queue),
+                    api(aggregation_jobs_put::<C>),
+                )),
             )
             .post(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_post::<C>)),
+                instrumented(queued_lifo(
+                    Arc::clone(&queue),
+                    api(aggregation_jobs_post::<C>),
+                )),
             )
             .delete(
                 AGGREGATION_JOB_ROUTE,
