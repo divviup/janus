@@ -145,6 +145,8 @@ pub enum Error {
     DifferentialPrivacy(VdafError),
     #[error("client disconnected")]
     ClientDisconnected,
+    #[error("too many requests")]
+    TooManyRequests,
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -312,6 +314,7 @@ impl Error {
             Error::InvalidTask(_, _) => "invalid_task",
             Error::DifferentialPrivacy(_) => "differential_privacy",
             Error::ClientDisconnected => "client_disconnected",
+            Error::TooManyRequests => "too_many_requests",
         }
     }
 }

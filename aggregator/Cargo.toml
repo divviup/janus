@@ -100,6 +100,7 @@ trillium.workspace = true
 trillium-api.workspace = true
 trillium-caching-headers.workspace = true
 trillium-head.workspace = true
+trillium-macros = "0.0.6"
 trillium-opentelemetry.workspace = true
 trillium-prometheus = { workspace = true, optional = true }
 trillium-router.workspace = true
