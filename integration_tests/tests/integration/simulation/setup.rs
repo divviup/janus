@@ -4,6 +4,7 @@ use std::{
     time::Duration as StdDuration,
 };
 
+use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
@@ -40,9 +41,10 @@ use prio::vdaf::prio3::Prio3Histogram;
 use tokio::net::TcpListener;
 
 use crate::simulation::{
+    http_request_exponential_backoff,
     model::Input,
     proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
-    run::{http_request_exponential_backoff, State},
+    run::State,
 };
 
 // Labels for TestRuntimeManager.
@@ -75,7 +77,7 @@ impl SimulationAggregator {
             // Set this to 1 because report uploads will be serialized.
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::from_secs(0),
-            batch_aggregation_shard_count: 32,
+            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             hpke_config_signing_key: None,
@@ -287,6 +289,12 @@ impl Components {
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),
+        )
+        .with_http_request_backoff(http_request_exponential_backoff())
+        .with_collect_poll_backoff(
+            ExponentialBackoffBuilder::new()
+                .with_max_elapsed_time(Some(StdDuration::ZERO))
+                .build(),
         )
         .build()
         .unwrap();

@@ -2333,6 +2333,38 @@ impl TaskUploadCounter {
     pub fn increment_task_expired(&mut self) {
         self.task_expired += 1
     }
+
+    pub fn interval_collected(&self) -> u64 {
+        self.interval_collected
+    }
+
+    pub fn report_decode_failure(&self) -> u64 {
+        self.report_decode_failure
+    }
+
+    pub fn report_decrypt_failure(&self) -> u64 {
+        self.report_decrypt_failure
+    }
+
+    pub fn report_expired(&self) -> u64 {
+        self.report_expired
+    }
+
+    pub fn report_outdated_key(&self) -> u64 {
+        self.report_outdated_key
+    }
+
+    pub fn report_success(&self) -> u64 {
+        self.report_success
+    }
+
+    pub fn report_too_early(&self) -> u64 {
+        self.report_too_early
+    }
+
+    pub fn task_expired(&self) -> u64 {
+        self.task_expired
+    }
 }
 
 /// Per-task counts of aggregated reports.

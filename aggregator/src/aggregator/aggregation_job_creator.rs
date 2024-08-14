@@ -102,6 +102,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         aggregation_job_creation_report_window: usize,
     ) -> AggregationJobCreator<C> {
         assert!(
+            min_aggregation_job_size > 0,
+            "invalid configuration: min_aggregation_job_size cannot be zero"
+        );
+        assert!(
             max_aggregation_job_size > 0,
             "invalid configuration: max_aggregation_job_size cannot be zero"
         );

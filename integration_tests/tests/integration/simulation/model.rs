@@ -38,21 +38,28 @@ pub(super) struct Config {
     pub(super) max_aggregation_job_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Op {
     /// Advance the `MockClock`'s time by `amount`.
     AdvanceTime { amount: Duration },
 
-    /// Have the client shard a report at the given timestamp, with the next sequential measurement,
-    /// and send it to the leader aggregator. The leader will handle the request and store the
-    /// report to the database. Note that, as currently implemented, this will wait for the report
-    /// batching timeout to expire, so the client's upload method won't return until the leader's
-    /// database transaction is complete.
-    Upload { report_time: Time },
+    /// Have the client shard some reports at the given timestamp, with the next sequential
+    /// measurements, and send them to the leader aggregator. The leader will handle the requests
+    /// and store the reports to the database. Note that, as currently implemented, this will wait
+    /// for the report batching timeout to expire, so the client's upload method won't return until
+    /// the leader's database transaction is complete.
+    Upload { report_time: Time, count: u8 },
 
-    ///  Have the client shard a report at the given timestamp as with `Upload`, but with a fixed
-    ///  report ID.
+    ///  Have the client shard and upload a report at the given timestamp, but with a fixed report
+    ///  ID.
     UploadReplay { report_time: Time },
+
+    /// Have the client shard and upload a report at the given timestamp, but without rounding its
+    /// timestamp to the time precision.
+    UploadNotRounded { report_time: Time },
+
+    /// Have the client upload an invalid (but correctly formatted) report at the given timestamp.
+    UploadInvalid { report_time: Time },
 
     /// Run the garbage collector once in the leader.
     LeaderGarbageCollector,
@@ -106,7 +113,7 @@ pub(super) enum Op {
 }
 
 /// Representation of a DAP query used in a collection job.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Query {
     /// A time interval query, parameterized with a batch interval.
     TimeInterval(Interval),

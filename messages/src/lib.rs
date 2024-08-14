@@ -1706,7 +1706,7 @@ impl Debug for CollectionJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "CollectionId({})",
+            "CollectionJobId({})",
             Base64Display::new(&self.0, &URL_SAFE_NO_PAD)
         )
     }
