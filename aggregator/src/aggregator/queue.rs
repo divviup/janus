@@ -160,7 +160,6 @@ impl LIFORequestQueue {
             let ticket = Ticket {
                 id,
                 permit_rx: Some(permit_rx),
-                completed: false,
                 cancel_tx: self.cancel_tx.clone(),
             };
 
@@ -203,9 +202,7 @@ struct TicketIdGenerator(AtomicUsize);
 
 impl TicketIdGenerator {
     fn next(&self) -> TicketId {
-        let ret = self.0.load(Ordering::Relaxed);
-        self.0.store(ret.wrapping_add(1), Ordering::Relaxed);
-        TicketId(ret)
+        TicketId(self.0.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -237,25 +234,25 @@ impl Dispatcher {
 struct Ticket {
     id: TicketId,
     permit_rx: Option<oneshot::Receiver<OwnedSemaphorePermit>>,
-    completed: bool,
     cancel_tx: mpsc::UnboundedSender<TicketId>,
 }
 
 impl Ticket {
     /// Waits for the ticket to be called. Returns an [`OwnedSemaphorePermit`] which should be
     /// dropped to signal that the request is done.
-    async fn wait(&mut self) -> OwnedSemaphorePermit {
+    async fn wait(&mut self) -> Result<OwnedSemaphorePermit, Error> {
         // Unwrap safety: wait() should only be called once.
-        // TODO(inahga): fix unwrap
-        let ret = self.permit_rx.take().unwrap().await.unwrap();
-        self.completed = true;
-        ret
+        self.permit_rx
+            .take()
+            .unwrap()
+            .await
+            .map_err(|err| Error::Internal(format!("dispatcher task died: {}", err)))
     }
 }
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        if !self.completed {
+        if self.permit_rx.is_some() {
             let _ = self
                 .cancel_tx
                 .send(self.id)
