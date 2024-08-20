@@ -382,12 +382,14 @@ mod tests {
         runtime_flavor: RuntimeFlavor,
         depth: usize,
         concurrency: usize,
+        requests: usize,
     }
 
     impl Arbitrary for Parameters {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
             let concurrency = u8::arbitrary(g) as usize + 1;
             let depth = concurrency + u8::arbitrary(g) as usize;
+            let requests = (u16::arbitrary(g) / 10) as usize;
             Self {
                 runtime_flavor: if bool::arbitrary(g) {
                     RuntimeFlavor::CurrentThread
@@ -396,6 +398,7 @@ mod tests {
                 },
                 depth,
                 concurrency,
+                requests,
             }
         }
     }
@@ -422,13 +425,14 @@ mod tests {
     // async fn lifo_cancel_on_disconnect() {}
 
     #[quickcheck]
-    fn quickcheck_lifo_concurrency(parameters: Parameters, requests: u16) {
+    fn quickcheck_lifo_concurrency(parameters: Parameters) {
         install_test_trace_subscriber();
         debug!(?parameters, "quickcheck_lifo_concurrency parameters");
         let Parameters {
             runtime_flavor,
             depth,
             concurrency,
+            requests,
         } = parameters;
 
         struct ConcurrencyAssertingHandler {
@@ -440,19 +444,15 @@ mod tests {
         impl Handler for ConcurrencyAssertingHandler {
             async fn run(&self, conn: trillium::Conn) -> trillium::Conn {
                 let concurrency = self.concurrency.fetch_add(1, Ordering::Relaxed);
+                assert!(concurrency < self.max_concurrency);
 
-                // Somewhat arbitrary yield points, to give the dispatcher a chance to signal
+                // Somewhat arbitrary yield point, to give the dispatcher a chance to signal
                 // another concurring future. This is mostly pertinent if we're running the test on
                 // a current_thread runtime. Otherwise, without await points, on a current_thread
                 // runtime, this function won't yield.
                 yield_now().await;
-                assert!(concurrency < self.max_concurrency);
 
                 let conn = conn.ok("hello");
-
-                yield_now().await;
-                assert!(concurrency < self.max_concurrency);
-
                 self.concurrency.fetch_sub(1, Ordering::Relaxed);
                 conn
             }
@@ -486,6 +486,7 @@ mod tests {
             runtime_flavor,
             depth,
             concurrency,
+            ..
         } = parameters;
 
         runtime_flavor.build().block_on(async move {
@@ -529,6 +530,7 @@ mod tests {
             runtime_flavor,
             depth,
             concurrency,
+            ..
         } = parameters;
 
         runtime_flavor.build().block_on(async move {
