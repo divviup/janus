@@ -7,7 +7,7 @@ use tokio::{
     sync::{
         mpsc,
         oneshot::{self},
-        Notify, OwnedSemaphorePermit, Semaphore,
+        Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError,
     },
     task::JoinHandle,
 };
@@ -34,6 +34,10 @@ pub struct LIFORequestQueue {
     /// Maximum size of the queue.
     depth: usize,
 
+    /// Maximum number of concurrent requests.
+    #[cfg(test)]
+    concurrency: usize,
+
     /// LIFO data structure.
     stack: Stack,
 
@@ -41,10 +45,10 @@ pub struct LIFORequestQueue {
     notifier: Arc<Notify>,
 
     /// Controls concurrency of requests.
-    _semaphore: Arc<Semaphore>,
+    semaphore: Arc<Semaphore>,
 
     /// Alerts tickets when they're ready.
-    dispatcher: JoinHandle<()>,
+    dispatcher: Option<JoinHandle<()>>,
 
     /// Generates unique ticket IDs, used to identify tickets in the queue.
     id_generator: TicketIdGenerator,
@@ -54,29 +58,17 @@ pub struct LIFORequestQueue {
 
     /// Services cancel notifications by directly removing cancelled tickets from the queue. This
     /// prevents cancelled tickets from taking up space in the queue and starving new requests.
-    canceller: JoinHandle<()>,
+    canceller: Option<JoinHandle<()>>,
 }
 
 impl LIFORequestQueue {
     /// Creates a new [`Self`].
     ///
-    /// `concurrency` and `depth` must be greater than 0, and `depth` must be greater than or
-    /// equal to `concurrency`.
+    /// `concurrency` must be greater than zero.
     pub fn new(concurrency: usize, depth: usize) -> Result<Self, Error> {
         if concurrency < 1 {
             return Err(Error::InvalidConfiguration(
                 "concurrency must be greater than 0",
-            ));
-        } else if depth < 1 {
-            return Err(Error::InvalidConfiguration(
-                "depth must be greater than zero",
-            ));
-        } else if concurrency > depth {
-            // We enforce this property otherwise it leads to strange intermittent behavior, i.e.
-            // rejecting requests due to the queue being full even though there's sufficient
-            // concurrency slots open.
-            return Err(Error::InvalidConfiguration(
-                "depth must be greater than or equal to concurrency",
             ));
         }
 
@@ -84,18 +76,30 @@ impl LIFORequestQueue {
         let notifier = Arc::new(Notify::new());
         let (cancel_tx, cancel_rx) = mpsc::unbounded_channel();
         let semaphore = Arc::new(Semaphore::new(concurrency));
-        let dispatcher = Self::dispatcher(
-            Arc::clone(&stack),
-            Arc::clone(&notifier),
-            Arc::clone(&semaphore),
-        );
-        let canceller = Self::canceller(Arc::clone(&stack), cancel_rx);
         let id_generator = Default::default();
+
+        let (dispatcher, canceller) = {
+            if depth > 0 {
+                (
+                    Some(Self::dispatcher(
+                        Arc::clone(&stack),
+                        Arc::clone(&notifier),
+                        Arc::clone(&semaphore),
+                    )),
+                    Some(Self::canceller(Arc::clone(&stack), cancel_rx)),
+                )
+            } else {
+                (None, None)
+            }
+        };
+
         Ok(Self {
             depth,
+            #[cfg(test)]
+            concurrency,
             stack,
             notifier,
-            _semaphore: semaphore,
+            semaphore,
             dispatcher,
             id_generator,
             cancel_tx,
@@ -112,7 +116,7 @@ impl LIFORequestQueue {
             loop {
                 let semaphore = Arc::clone(&semaphore);
 
-                // Unwrap safety: the semaphore is never dropped.
+                // Unwrap safety: the semaphore is never closed.
                 let permit = semaphore.acquire_owned().await.unwrap();
                 let dispatcher = {
                     // Unwrap safety: mutex poisoning
@@ -124,8 +128,9 @@ impl LIFORequestQueue {
                         dispatcher.send(permit);
                     }
                     None => {
-                        // The queue is empty. Sleep here until we're notified that there's another
-                        // ticket available to work on.
+                        // The queue is empty. Drop the permit and sleep here until we're notified
+                        // that there's another ticket available to work on.
+                        drop(permit);
                         notifier.notified().await;
                     }
                 }
@@ -148,46 +153,59 @@ impl LIFORequestQueue {
     }
 
     fn acquire(&self) -> Result<Ticket, Error> {
-        // Unwrap safety: mutex poisoning.
-        let mut stack = self.stack.lock().unwrap();
-        if stack.len() < self.depth {
-            let (permit_tx, permit_rx) = oneshot::channel();
-            let id = self.id_generator.next();
-            let dispatcher = Dispatcher {
-                id,
-                permit_tx: Some(permit_tx),
-            };
-            let ticket = Ticket {
-                id,
-                permit_rx: Some(permit_rx),
-                cancel_tx: self.cancel_tx.clone(),
-            };
+        let semaphore = Arc::clone(&self.semaphore);
+        match semaphore.try_acquire_owned() {
+            // A permit is immediately ready, so take it and run!
+            Ok(permit) => Ok(Ticket::Ready {
+                permit: Some(permit),
+            }),
+            Err(err) => match err {
+                TryAcquireError::Closed => panic!("queue semaphore unexpectedly cancelled"),
+                // No permits are available, so enter the queue.
+                TryAcquireError::NoPermits => {
+                    let mut stack = self.stack.lock().unwrap();
+                    if stack.len() < self.depth {
+                        let (permit_tx, permit_rx) = oneshot::channel();
+                        let id = self.id_generator.next();
+                        let dispatcher = Dispatcher {
+                            id,
+                            permit_tx: Some(permit_tx),
+                        };
+                        let ticket = Ticket::Wait {
+                            id,
+                            permit_rx: Some(permit_rx),
+                            cancel_tx: self.cancel_tx.clone(),
+                        };
 
-            stack.push(dispatcher);
-            self.notifier.notify_waiters();
-            Ok(ticket)
-        } else {
-            Err(Error::TooManyRequests)
+                        stack.push(dispatcher);
+                        self.notifier.notify_waiters();
+                        Ok(ticket)
+                    } else {
+                        Err(Error::TooManyRequests)
+                    }
+                }
+            },
         }
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
-        // Unwrap safety: mutex poisoning.
+    pub fn outstanding_requests(&self) -> usize {
         let stack = self.stack.lock().unwrap();
-        stack.len()
+        stack.len() + self.concurrency - self.semaphore.available_permits()
     }
 
     #[cfg(test)]
-    pub fn available_permits(&self) -> usize {
-        self._semaphore.available_permits()
+    pub fn max_outstanding_requests(&self) -> usize {
+        self.concurrency + self.depth
     }
 }
 
 impl Drop for LIFORequestQueue {
     fn drop(&mut self) {
-        self.dispatcher.abort();
-        self.canceller.abort();
+        self.dispatcher
+            .as_ref()
+            .map(|dispatcher| dispatcher.abort());
+        self.canceller.as_ref().map(|canceller| canceller.abort());
     }
 }
 
@@ -231,32 +249,46 @@ impl Dispatcher {
 
 /// Handler-side ticket which is used to get in the queue.
 #[derive(Debug)]
-struct Ticket {
-    id: TicketId,
-    permit_rx: Option<oneshot::Receiver<OwnedSemaphorePermit>>,
-    cancel_tx: mpsc::UnboundedSender<TicketId>,
+enum Ticket {
+    Ready {
+        permit: Option<OwnedSemaphorePermit>,
+    },
+    Wait {
+        id: TicketId,
+        permit_rx: Option<oneshot::Receiver<OwnedSemaphorePermit>>,
+        cancel_tx: mpsc::UnboundedSender<TicketId>,
+    },
 }
 
 impl Ticket {
     /// Waits for the ticket to be called. Returns an [`OwnedSemaphorePermit`] which should be
     /// dropped to signal that the request is done.
     async fn wait(&mut self) -> Result<OwnedSemaphorePermit, Error> {
-        // Unwrap safety: wait() should only be called once.
-        self.permit_rx
-            .take()
-            .unwrap()
-            .await
-            .map_err(|err| Error::Internal(format!("dispatcher task died: {}", err)))
+        // Unwrap safety: this method should only be called once.
+        match self {
+            Ticket::Ready { permit } => Ok(permit.take().unwrap()),
+            Ticket::Wait { permit_rx, .. } => permit_rx
+                .take()
+                .unwrap()
+                .await
+                .map_err(|err| Error::Internal(format!("dispatcher task died: {}", err))),
+        }
     }
 }
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        if self.permit_rx.is_some() {
-            let _ = self
-                .cancel_tx
-                .send(self.id)
-                .map_err(|err| warn!("failed to send cancellation message: {:?}", err));
+        if let Ticket::Wait {
+            id,
+            permit_rx,
+            cancel_tx,
+        } = self
+        {
+            if permit_rx.is_some() {
+                let _ = cancel_tx
+                    .send(*id)
+                    .map_err(|err| warn!("failed to send cancellation message: {:?}", err));
+            }
         }
     }
 }
@@ -366,9 +398,7 @@ mod tests {
             }));
         }
 
-        // Wait until all semaphore permits are exhausted and the queue is full, indicating full
-        // saturation.
-        while queue.len() < depth || queue.available_permits() > 0 {
+        while queue.outstanding_requests() != queue.max_outstanding_requests() {
             yield_now().await;
         }
 
@@ -387,18 +417,15 @@ mod tests {
 
     impl Arbitrary for Parameters {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            let concurrency = u8::arbitrary(g) as usize + 1;
-            let depth = concurrency + u8::arbitrary(g) as usize;
-            let requests = (u16::arbitrary(g) / 10) as usize;
             Self {
                 runtime_flavor: if bool::arbitrary(g) {
                     RuntimeFlavor::CurrentThread
                 } else {
                     RuntimeFlavor::MultiThread
                 },
-                depth,
-                concurrency,
-                requests,
+                depth: u8::arbitrary(g) as usize,
+                concurrency: u8::arbitrary(g) as usize + 1,
+                requests: (u16::arbitrary(g) / 10) as usize,
             }
         }
     }
@@ -504,13 +531,13 @@ mod tests {
 
             // Abort all outstanding requests.
             requests.iter().for_each(|request| request.abort());
+            unhang.close();
 
-            // Wait until the queue is empty.
-            while queue.len() > 0 {
+            // Wait until all requests are fully cancelled.
+            while queue.outstanding_requests() > 0 {
                 yield_now().await;
             }
 
-            unhang.close();
             let request = get("/").run_async(&handler).await;
             assert_ok!(request);
 
@@ -552,7 +579,7 @@ mod tests {
             unhang.close();
 
             // Let the dispatcher get a turn on the scheduler.
-            while queue.len() == depth {
+            while queue.outstanding_requests() == queue.max_outstanding_requests() {
                 yield_now().await;
             }
 
