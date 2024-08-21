@@ -169,7 +169,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
-        warn!(error_code, ?error, "Error handling endpoint");
+        // warn!(error_code, ?error, "Error handling endpoint");
     }
 
     conn
