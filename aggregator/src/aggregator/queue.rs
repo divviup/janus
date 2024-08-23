@@ -1,11 +1,12 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
 
+use opentelemetry::metrics::{Gauge, Meter};
 use tokio::{
     select,
     sync::{
@@ -41,15 +42,13 @@ pub struct LIFORequestQueue {
 
     /// Generates unique ticket IDs, used to identify tickets in the queue.
     id_generator: TicketIdGenerator,
-
-    _outstanding_requests: Arc<AtomicUsize>,
 }
 
 impl LIFORequestQueue {
     /// Creates a new [`Self`].
     ///
     /// `concurrency` must be greater than zero.
-    pub fn new(concurrency: u32, depth: usize) -> Result<Self, Error> {
+    pub fn new(concurrency: u32, depth: usize, meter: &Meter) -> Result<Self, Error> {
         if concurrency < 1 {
             return Err(Error::InvalidConfiguration(
                 "concurrency must be greater than 0",
@@ -58,19 +57,13 @@ impl LIFORequestQueue {
 
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let id_generator = Default::default();
-        let outstanding_requests = Default::default();
-        let dispatcher = Some(Self::dispatcher(
-            message_rx,
-            concurrency,
-            depth,
-            Arc::clone(&outstanding_requests),
-        ));
+        let metrics = Metrics::new(meter);
+        let dispatcher = Some(Self::dispatcher(message_rx, concurrency, depth, metrics));
 
         Ok(Self {
             dispatcher,
             id_generator,
             dispatcher_tx: message_tx,
-            _outstanding_requests: outstanding_requests,
         })
     }
 
@@ -78,7 +71,7 @@ impl LIFORequestQueue {
         mut dispatcher_rx: mpsc::UnboundedReceiver<DispatcherMessage>,
         concurrency: u32,
         depth: usize,
-        outstanding_requests: Arc<AtomicUsize>,
+        metrics: Metrics,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             // Use a BTreeMap to allow for cancellation (i.e. removal) of tickets in sublinear
@@ -133,9 +126,13 @@ impl LIFORequestQueue {
                     }
                 }
 
-                outstanding_requests.store(
-                    stack.len() + concurrency as usize - permits.num_permits(),
-                    Ordering::Relaxed,
+                // Unwrap safety: only fails on architectures where usize is less than 32 bits, or
+                // greater than 64 bits.
+                metrics.outstanding_requests.record(
+                    (stack.len() + usize::try_from(concurrency).unwrap() - permits.num_permits())
+                        .try_into()
+                        .unwrap(),
+                    &[],
                 );
             }
         })
@@ -156,11 +153,6 @@ impl LIFORequestQueue {
             .map_err(|_| Error::Internal("dispatcher task died".to_string()))?;
         Ok(ticket)
     }
-
-    #[cfg(test)]
-    fn outstanding_requests(&self) -> usize {
-        self._outstanding_requests.load(Ordering::Relaxed)
-    }
 }
 
 impl Drop for LIFORequestQueue {
@@ -176,7 +168,7 @@ impl Drop for LIFORequestQueue {
 struct TicketId(u64);
 
 /// Simple generator for unique ticket numbers. Ticket numbers are unique as long as there aren't
-/// more than [`usize`] entries in the queue, at which point you've run out of memory.
+/// more than [`u64`] entries in the queue, at which point you've run out of memory.
 ///
 /// This counter also wraps on overflow. In practical usage, this shouldn't matter since at 1M QPS
 /// civilization will probably have ended by the time overflow occurs.
@@ -279,6 +271,27 @@ pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl
     LIFOQueueHandler::new(queue, handler)
 }
 
+struct Metrics {
+    outstanding_requests: Gauge<u64>,
+}
+
+impl Metrics {
+    const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "janus_aggregator_outstanding_requests";
+
+    fn new(meter: &Meter) -> Self {
+        Self {
+            outstanding_requests: meter
+                .u64_gauge(Self::OUTSTANDING_REQUESTS_METRIC_NAME)
+                .with_description(concat!(
+                    "The approximate number of requests currently being serviced by the ",
+                    "aggregator."
+                ))
+                .with_unit("{request}")
+                .init(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -292,51 +305,79 @@ mod tests {
     use async_trait::async_trait;
     use backoff::{future::retry, ExponentialBackoff};
     use futures::future::join_all;
+    use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
-    use quickcheck::Arbitrary;
+    use opentelemetry_sdk::metrics::data::Gauge;
+    use quickcheck::{Arbitrary, TestResult};
     use quickcheck_macros::quickcheck;
     use tokio::{
         runtime::{Builder as RuntimeBuilder, Runtime},
-        sync::Semaphore,
+        sync::Notify,
         task::{yield_now, JoinHandle},
+        time::timeout,
     };
     use tracing::debug;
-    use trillium::{Handler, Status};
+    use trillium::{Conn, Handler, Status};
     use trillium_testing::{assert_ok, assert_status, methods::get};
 
-    use crate::aggregator::queue::{queued_lifo, LIFORequestQueue};
+    use crate::{
+        aggregator::queue::{queued_lifo, LIFORequestQueue, Metrics},
+        metrics::test_util::InMemoryMetricsInfrastructure,
+    };
+
+    /// Some tests busy loop waiting for a condition to become true. Avoid hanging tests
+    /// indefinitely by wrapping those tests in a timeout.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+    async fn get_outstanding_requests_gauge(
+        metrics: &InMemoryMetricsInfrastructure,
+    ) -> Option<usize> {
+        Some(
+            metrics
+                .collect()
+                .await
+                .get(Metrics::OUTSTANDING_REQUESTS_METRIC_NAME)?
+                .data
+                .as_any()
+                .downcast_ref::<Gauge<u64>>()
+                .unwrap()
+                .data_points[0]
+                .value
+                .try_into()
+                .unwrap(),
+        )
+    }
 
     struct HangingHandler {
-        unhang: Arc<Semaphore>,
+        unhang: Arc<Notify>,
     }
 
     #[async_trait]
     impl Handler for HangingHandler {
         async fn run(&self, conn: trillium::Conn) -> trillium::Conn {
-            let _ = self.unhang.acquire().await;
+            let _ = self.unhang.notified().await;
             conn.ok("hello")
         }
     }
 
     async fn fill_queue(
-        queue: Arc<LIFORequestQueue>,
         handler: Arc<impl Handler>,
         concurrency: u32,
         depth: usize,
+        metrics: &InMemoryMetricsInfrastructure,
     ) -> Vec<JoinHandle<()>> {
+        debug!("filling queue");
+
         let mut requests = Vec::new();
 
         let backoff = ExponentialBackoff {
             initial_interval: Duration::from_nanos(1),
             max_interval: Duration::from_nanos(30),
             multiplier: 2.0,
-
-            // Arbitrary timeout to prevent tests from infinite looping if there's bugs.
-            max_elapsed_time: Some(Duration::from_secs(10)),
-
             ..Default::default()
         };
 
+        debug!("spawning requests");
         for _ in 0..(concurrency as usize + depth) {
             let handler = Arc::clone(&handler);
             let backoff = backoff.clone();
@@ -359,7 +400,8 @@ mod tests {
             }));
         }
 
-        while queue.outstanding_requests() != concurrency as usize + depth {
+        debug!("waiting for queue to be full");
+        while get_outstanding_requests_gauge(metrics).await != Some(concurrency as usize + depth) {
             yield_now().await;
         }
 
@@ -386,7 +428,7 @@ mod tests {
                 },
                 depth: u8::arbitrary(g) as usize,
                 concurrency: u8::arbitrary(g) as u32 + 1,
-                requests: (u16::arbitrary(g) / 10) as usize,
+                requests: (u16::arbitrary(g) / 10) as usize + 1,
             }
         }
     }
@@ -408,9 +450,6 @@ mod tests {
             .unwrap()
         }
     }
-
-    // #[tokio::test]
-    // async fn lifo_cancel_on_disconnect() {}
 
     #[quickcheck]
     fn quickcheck_lifo_concurrency(parameters: Parameters) {
@@ -447,22 +486,27 @@ mod tests {
         }
 
         runtime_flavor.build().block_on(async move {
-            let queue = Arc::new(LIFORequestQueue::new(concurrency, depth).unwrap());
-            let handler = Arc::new(queued_lifo(
-                Arc::clone(&queue),
-                ConcurrencyAssertingHandler {
-                    concurrency: Default::default(),
-                    max_concurrency: concurrency,
-                },
-            ));
+            timeout(TEST_TIMEOUT, async move {
+                let queue =
+                    Arc::new(LIFORequestQueue::new(concurrency, depth, &noop_meter()).unwrap());
+                let handler = Arc::new(queued_lifo(
+                    Arc::clone(&queue),
+                    ConcurrencyAssertingHandler {
+                        concurrency: Default::default(),
+                        max_concurrency: concurrency,
+                    },
+                ));
 
-            join_all((0..requests).map(|_| {
-                let handler = Arc::clone(&handler);
-                async move {
-                    get("/").run_async(&handler).await;
-                }
-            }))
-            .await;
+                join_all((0..requests).map(|_| {
+                    let handler = Arc::clone(&handler);
+                    async move {
+                        get("/").run_async(&handler).await;
+                    }
+                }))
+                .await;
+            })
+            .await
+            .unwrap();
         });
     }
 
@@ -478,35 +522,45 @@ mod tests {
         } = parameters;
 
         runtime_flavor.build().block_on(async move {
-            let unhang = Arc::new(Semaphore::new(0));
-            let queue = Arc::new(LIFORequestQueue::new(concurrency, depth).unwrap());
-            let handler = Arc::new(queued_lifo(
-                Arc::clone(&queue),
-                HangingHandler {
-                    unhang: Arc::clone(&unhang),
-                },
-            ));
+            timeout(TEST_TIMEOUT, async move {
+                let metrics = InMemoryMetricsInfrastructure::new();
+                let unhang = Arc::new(Notify::new());
+                let queue =
+                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let handler = Arc::new(queued_lifo(
+                    Arc::clone(&queue),
+                    HangingHandler {
+                        unhang: Arc::clone(&unhang),
+                    },
+                ));
 
-            let requests =
-                fill_queue(Arc::clone(&queue), Arc::clone(&handler), concurrency, depth).await;
+                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
 
-            // Abort all outstanding requests.
-            requests.iter().for_each(|request| request.abort());
-            unhang.close();
+                debug!("cancelling outstanding requests");
+                requests.iter().for_each(|request| request.abort());
 
-            // Wait until all requests are fully cancelled.
-            while queue.outstanding_requests() > 0 {
-                yield_now().await;
-            }
+                debug!("waiting for requests to be cancelled");
+                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
+                    yield_now().await;
+                }
 
-            let request = get("/").run_async(&handler).await;
-            assert_ok!(request);
+                debug!("sending new request");
+                unhang.notify_one();
+                let request = get("/").run_async(&handler).await;
+                assert_ok!(request);
 
-            for handle in requests {
-                // These handles will return a JoinError, but we're moreso interested to see if
-                // they've all terminated.
-                let _ = handle.await;
-            }
+                debug!("waiting for futures to terminate");
+                for handle in requests {
+                    // These handles will return a JoinError, but we're moreso interested to see if
+                    // they've all terminated.
+                    let _ = handle.await;
+                }
+
+                debug!("shutting down metrics");
+                metrics.shutdown().await;
+            })
+            .await
+            .unwrap();
         });
     }
 
@@ -522,34 +576,125 @@ mod tests {
         } = parameters;
 
         runtime_flavor.build().block_on(async move {
-            let unhang = Arc::new(Semaphore::new(0));
-            let queue = Arc::new(LIFORequestQueue::new(concurrency, depth).unwrap());
-            let handler = Arc::new(queued_lifo(
-                Arc::clone(&queue),
-                HangingHandler {
-                    unhang: Arc::clone(&unhang),
-                },
-            ));
+            timeout(TEST_TIMEOUT, async move {
+                let unhang = Arc::new(Notify::new());
+                let metrics = InMemoryMetricsInfrastructure::new();
+                let queue =
+                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let handler = Arc::new(queued_lifo(
+                    Arc::clone(&queue),
+                    HangingHandler {
+                        unhang: Arc::clone(&unhang),
+                    },
+                ));
 
-            let requests =
-                fill_queue(Arc::clone(&queue), Arc::clone(&handler), concurrency, depth).await;
+                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
 
-            let request = get("/").run_async(&handler).await;
-            assert_status!(request, Status::ServiceUnavailable);
+                debug!("sending request, should fail");
+                let request = get("/").run_async(&handler).await;
+                assert_status!(request, Status::ServiceUnavailable);
 
-            unhang.close();
+                debug!("draining the queue");
+                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
+                    unhang.notify_one();
+                }
+                for handle in requests {
+                    handle.await.unwrap();
+                }
 
-            // Let the dispatcher get a turn on the scheduler.
-            while queue.outstanding_requests() == concurrency as usize + depth {
-                yield_now().await;
-            }
+                debug!("sending request, should succeed");
+                unhang.notify_one();
+                let request = get("/").run_async(&handler).await;
+                assert_ok!(request);
 
-            let request = get("/").run_async(&handler).await;
-            assert_ok!(request);
-
-            for handle in requests {
-                handle.await.unwrap();
-            }
+                debug!("shutting down metrics");
+                metrics.shutdown().await;
+            })
+            .await
+            .unwrap()
         });
+    }
+
+    #[quickcheck]
+    fn quickcheck_lifo(parameters: Parameters) -> TestResult {
+        install_test_trace_subscriber();
+        debug!(?parameters, "quickcheck_lifo parameters");
+        let Parameters {
+            runtime_flavor,
+            depth,
+            concurrency,
+            ..
+        } = parameters;
+
+        if depth == 0 {
+            return TestResult::discard();
+        }
+
+        runtime_flavor.build().block_on(async move {
+            timeout(TEST_TIMEOUT, async move {
+                let unhang = Arc::new(Notify::new());
+                let metrics = InMemoryMetricsInfrastructure::new();
+                let queue =
+                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let handler = Arc::new(queued_lifo(
+                    Arc::clone(&queue),
+                    HangingHandler {
+                        unhang: Arc::clone(&unhang),
+                    },
+                ));
+
+                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
+
+                debug!("freeing up one slot in the queue");
+                unhang.notify_one();
+                while get_outstanding_requests_gauge(&metrics).await
+                    != Some(concurrency as usize + depth - 1)
+                {
+                    yield_now().await;
+                }
+
+                debug!("sending new request, should be queued");
+                let request_queue = Arc::clone(&queue);
+                let request = tokio::spawn(async move {
+                    get("/")
+                        .run_async(&queued_lifo(request_queue, |conn: Conn| async move {
+                            conn.ok("hello")
+                        }))
+                        .await
+                });
+
+                debug!("waiting for new request to be queued");
+                while get_outstanding_requests_gauge(&metrics).await
+                    != Some(concurrency as usize + depth)
+                {
+                    yield_now().await;
+                }
+
+                debug!("allowing one random request to proceed");
+                unhang.notify_one();
+
+                debug!("new request should be immediately processed");
+                let request = request.await.unwrap();
+                assert_ok!(request);
+
+                debug!("draining the queue");
+                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
+                    unhang.notify_one();
+                    yield_now().await;
+                }
+
+                debug!("waiting for futures to terminate");
+                for handle in requests {
+                    handle.await.unwrap();
+                }
+
+                debug!("shutting down metrics");
+                metrics.shutdown().await;
+
+                TestResult::passed()
+            })
+            .await
+            .unwrap()
+        })
     }
 }

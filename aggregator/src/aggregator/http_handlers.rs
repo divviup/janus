@@ -169,7 +169,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
-        warn!(error_code, ?error, "Error handling endpoint");
+        // warn!(error_code, ?error, "Error handling endpoint");
     }
 
     conn
@@ -312,7 +312,7 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
     aggregator: Arc<Aggregator<C>>,
     meter: &Meter,
 ) -> Result<impl Handler, Error> {
-    let queue = Arc::new(LIFORequestQueue::new(2, 8)?);
+    let queue = Arc::new(LIFORequestQueue::new(2, 8, meter)?);
     Ok((
         State(aggregator),
         metrics(meter)
