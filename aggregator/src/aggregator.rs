@@ -134,7 +134,6 @@ pub mod http_handlers;
 pub mod key_rotator;
 pub mod problem_details;
 pub mod query_type;
-mod queue;
 pub mod report_writer;
 #[cfg(test)]
 mod taskprov_tests;
@@ -143,6 +142,10 @@ mod taskprov_tests;
 pub mod test_util;
 #[cfg(test)]
 mod upload_tests;
+
+// TODO(#3181): reallow dead code once there's a production code path that uses this code.
+#[allow(dead_code)]
+mod queue;
 
 /// Aggregator implements a DAP aggregator.
 pub struct Aggregator<C: Clock> {

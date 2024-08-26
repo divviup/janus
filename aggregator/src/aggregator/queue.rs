@@ -67,6 +67,15 @@ impl LIFORequestQueue {
         })
     }
 
+    /// Spawns a task that dispatches permits to waiting [`Ticket`]s. Once a permit is dispatched,
+    /// the ticket holder may proceed.
+    ///
+    /// Tickets are dispatched in LIFO-order. An incoming ticket will either immediately receive
+    /// a ticket, be placed at the head of the queue, or will be rejected if there's no space in
+    /// the queue.
+    ///
+    /// Permits are returned to the dispatcher automatically when the [`OwnedSemaphorePermit`] is
+    /// dropped, allowing other Tickets to be dispatched.
     fn dispatcher(
         mut dispatcher_rx: mpsc::UnboundedReceiver<DispatcherMessage>,
         concurrency: u32,
@@ -82,6 +91,7 @@ impl LIFORequestQueue {
             // 32-bits.
             let semaphore = Arc::new(Semaphore::new(concurrency.try_into().unwrap()));
 
+            // Create a collection of permits which we'll dispatch to tickets.
             // Unwrap safety: the semaphore is never closed.
             let mut permits = Arc::clone(&semaphore)
                 .acquire_many_owned(concurrency)
@@ -94,18 +104,13 @@ impl LIFORequestQueue {
                     Some(message) = dispatcher_rx.recv() => {
                         match message {
                             DispatcherMessage::Enqueue(id, permit_tx) => {
-                                match permits.split(1) {
-                                    Some(permit) => {
-                                        permit_tx.send(Ok(permit));
-                                    },
-                                    None => {
-                                        if stack.len() < depth {
-                                            let result = stack.insert(id, permit_tx);
-                                            assert!(result.is_none(), "ticket IDs must be unique");
-                                        } else {
-                                            permit_tx.send(Err(Error::TooManyRequests));
-                                        }
-                                    },
+                                if let Some(permit) = permits.split(1) {
+                                    permit_tx.send(Ok(permit))
+                                } else if stack.len() < depth {
+                                    let result = stack.insert(id, permit_tx);
+                                    assert!(result.is_none(), "ticket IDs must be unique");
+                                } else {
+                                    permit_tx.send(Err(Error::TooManyRequests));
                                 }
                             },
                             DispatcherMessage::Dequeue(id) => {
@@ -115,13 +120,15 @@ impl LIFORequestQueue {
                     }
 
                     Ok(permit) = semaphore.acquire_owned() => {
+                        // pop_last() pops the element maximum valued element. The ticket ID
+                        // generator is _mostly_ monotonically incrementing, so the highest ID will
+                        // be the most recent request, giving us LIFO semantics.
+                        //
+                        // This property isn't preserved when the ID generator overflows, but that
+                        // is not a practical concern. See [`TicketIdGenerator`].
                         match stack.pop_last() {
-                            Some((_, permit_tx)) => {
-                                permit_tx.send(Ok(permit));
-                            },
-                            None => {
-                                permits.merge(permit);
-                            },
+                            Some((_, permit_tx)) => permit_tx.send(Ok(permit)),
+                            None => permits.merge(permit),
                         }
                     }
                 }
@@ -181,12 +188,18 @@ impl TicketIdGenerator {
     }
 }
 
+/// Messages for communicating with the dispatcher task.
 #[derive(Debug)]
 enum DispatcherMessage {
+    /// A new ticket has arrived.
     Enqueue(TicketId, PermitTx),
+
+    /// A ticket-holder has reneged, likely because the connection has timed out, so remove the
+    /// ticket from the queue.
     Dequeue(TicketId),
 }
 
+/// Dispatcher-side permit sender channel. May receive failure if the queue is full.
 #[derive(Debug)]
 struct PermitTx(oneshot::Sender<Result<OwnedSemaphorePermit, Error>>);
 
@@ -199,6 +212,7 @@ impl PermitTx {
     }
 }
 
+/// Handler-side permit receiver channel.
 type PermitRx = oneshot::Receiver<Result<OwnedSemaphorePermit, Error>>;
 
 /// Handler-side ticket which is used to get in the queue.
@@ -272,6 +286,10 @@ pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl
 }
 
 struct Metrics {
+    /// The approximate number of requests currently being serviced by the queue. It's approximate
+    /// since the queue length may have changed before the measurement is taken. In practice, the
+    /// error should only be +/- 1. It is also more or less suitable for synchronization during
+    /// tests.
     outstanding_requests: Gauge<u64>,
 }
 
@@ -279,6 +297,8 @@ impl Metrics {
     const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "janus_aggregator_outstanding_requests";
 
     fn new(meter: &Meter) -> Self {
+        // Note: this instrument's name is constant for the entire process. If we end up having a
+        // need for multiple queues in the same process, we'll want to parameterize the name.
         Self {
             outstanding_requests: meter
                 .u64_gauge(Self::OUTSTANDING_REQUESTS_METRIC_NAME)
@@ -304,14 +324,13 @@ mod tests {
 
     use async_trait::async_trait;
     use backoff::{future::retry, ExponentialBackoff};
-    use futures::future::join_all;
+    use futures::{future::join_all, Future};
     use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
     use opentelemetry_sdk::metrics::data::Gauge;
-    use quickcheck::{Arbitrary, TestResult};
-    use quickcheck_macros::quickcheck;
+    use quickcheck::{quickcheck, Arbitrary, TestResult};
     use tokio::{
-        runtime::{Builder as RuntimeBuilder, Runtime},
+        runtime::Builder as RuntimeBuilder,
         sync::Notify,
         task::{yield_now, JoinHandle},
         time::timeout,
@@ -325,7 +344,7 @@ mod tests {
         metrics::test_util::InMemoryMetricsInfrastructure,
     };
 
-    /// Some tests busy loop waiting for a condition to become true. Avoid hanging tests
+    /// Some tests busy loop waiting for a condition to become true. Avoid hanging broken tests
     /// indefinitely by wrapping those tests in a timeout.
     const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -336,6 +355,8 @@ mod tests {
             metrics
                 .collect()
                 .await
+                // The metric may not be immediately available when we need it, so return an Option
+                // instead of unwrapping.
                 .get(Metrics::OUTSTANDING_REQUESTS_METRIC_NAME)?
                 .data
                 .as_any()
@@ -401,17 +422,14 @@ mod tests {
         }
 
         debug!("waiting for queue to be full");
-        while get_outstanding_requests_gauge(metrics).await != Some(concurrency as usize + depth) {
-            yield_now().await;
-        }
+        while get_outstanding_requests_gauge(metrics).await != Some(concurrency as usize + depth) {}
 
         requests
     }
 
     #[derive(Debug, Clone, Copy)]
     struct Parameters {
-        /// In the making of this code, some bugs were uncovered by running on a different runtime
-        /// flavor. Test both runtime flavors.
+        /// Some deadlock behavior depends on whether we're multi or single threaded.
         runtime_flavor: RuntimeFlavor,
         depth: usize,
         concurrency: u32,
@@ -440,7 +458,7 @@ mod tests {
     }
 
     impl RuntimeFlavor {
-        fn build(&self) -> Runtime {
+        fn run<F: Future>(&self, future: F) -> F::Output {
             match self {
                 RuntimeFlavor::CurrentThread => RuntimeBuilder::new_current_thread(),
                 RuntimeFlavor::MultiThread => RuntimeBuilder::new_multi_thread(),
@@ -448,20 +466,12 @@ mod tests {
             .enable_all()
             .build()
             .unwrap()
+            .block_on(async move { timeout(TEST_TIMEOUT, future).await.unwrap() })
         }
     }
 
-    #[quickcheck]
-    fn quickcheck_lifo_concurrency(parameters: Parameters) {
-        install_test_trace_subscriber();
-        debug!(?parameters, "quickcheck_lifo_concurrency parameters");
-        let Parameters {
-            runtime_flavor,
-            depth,
-            concurrency,
-            requests,
-        } = parameters;
-
+    #[test]
+    fn quickcheck_lifo_concurrency() {
         struct ConcurrencyAssertingHandler {
             max_concurrency: u32,
             concurrency: AtomicU32,
@@ -485,8 +495,16 @@ mod tests {
             }
         }
 
-        runtime_flavor.build().block_on(async move {
-            timeout(TEST_TIMEOUT, async move {
+        fn qc(parameters: Parameters) {
+            debug!(?parameters, "quickcheck_lifo_concurrency parameters");
+            let Parameters {
+                runtime_flavor,
+                depth,
+                concurrency,
+                requests,
+            } = parameters;
+
+            runtime_flavor.run(async move {
                 let queue =
                     Arc::new(LIFORequestQueue::new(concurrency, depth, &noop_meter()).unwrap());
                 let handler = Arc::new(queued_lifo(
@@ -504,25 +522,25 @@ mod tests {
                     }
                 }))
                 .await;
-            })
-            .await
-            .unwrap();
-        });
+            });
+        }
+
+        install_test_trace_subscriber();
+        quickcheck(qc as fn(Parameters));
     }
 
-    #[quickcheck]
-    fn quickcheck_lifo_cancel(parameters: Parameters) {
-        install_test_trace_subscriber();
-        debug!(?parameters, "quickcheck_lifo_cancel parameters");
-        let Parameters {
-            runtime_flavor,
-            depth,
-            concurrency,
-            ..
-        } = parameters;
+    #[test]
+    fn quickcheck_lifo_cancel() {
+        fn qc(parameters: Parameters) {
+            debug!(?parameters, "quickcheck_lifo_cancel parameters");
+            let Parameters {
+                runtime_flavor,
+                depth,
+                concurrency,
+                ..
+            } = parameters;
 
-        runtime_flavor.build().block_on(async move {
-            timeout(TEST_TIMEOUT, async move {
+            runtime_flavor.run(async move {
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let unhang = Arc::new(Notify::new());
                 let queue =
@@ -540,9 +558,7 @@ mod tests {
                 requests.iter().for_each(|request| request.abort());
 
                 debug!("waiting for requests to be cancelled");
-                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
-                    yield_now().await;
-                }
+                while get_outstanding_requests_gauge(&metrics).await > Some(0) {}
 
                 debug!("sending new request");
                 unhang.notify_one();
@@ -558,25 +574,25 @@ mod tests {
 
                 debug!("shutting down metrics");
                 metrics.shutdown().await;
-            })
-            .await
-            .unwrap();
-        });
+            });
+        }
+
+        install_test_trace_subscriber();
+        quickcheck(qc as fn(Parameters));
     }
 
-    #[quickcheck]
-    fn quickcheck_lifo_full(parameters: Parameters) {
-        install_test_trace_subscriber();
-        debug!(?parameters, "quickcheck_lifo_full parameters");
-        let Parameters {
-            runtime_flavor,
-            depth,
-            concurrency,
-            ..
-        } = parameters;
+    #[test]
+    fn quickcheck_lifo_full() {
+        fn qc(parameters: Parameters) {
+            debug!(?parameters, "quickcheck_lifo_full parameters");
+            let Parameters {
+                runtime_flavor,
+                depth,
+                concurrency,
+                ..
+            } = parameters;
 
-        runtime_flavor.build().block_on(async move {
-            timeout(TEST_TIMEOUT, async move {
+            runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let queue =
@@ -609,29 +625,29 @@ mod tests {
 
                 debug!("shutting down metrics");
                 metrics.shutdown().await;
-            })
-            .await
-            .unwrap()
-        });
-    }
-
-    #[quickcheck]
-    fn quickcheck_lifo(parameters: Parameters) -> TestResult {
-        install_test_trace_subscriber();
-        debug!(?parameters, "quickcheck_lifo parameters");
-        let Parameters {
-            runtime_flavor,
-            depth,
-            concurrency,
-            ..
-        } = parameters;
-
-        if depth == 0 {
-            return TestResult::discard();
+            });
         }
 
-        runtime_flavor.build().block_on(async move {
-            timeout(TEST_TIMEOUT, async move {
+        install_test_trace_subscriber();
+        quickcheck(qc as fn(Parameters));
+    }
+
+    #[test]
+    fn quickcheck_lifo() {
+        fn qc(parameters: Parameters) -> TestResult {
+            debug!(?parameters, "quickcheck_lifo parameters");
+            let Parameters {
+                runtime_flavor,
+                depth,
+                concurrency,
+                ..
+            } = parameters;
+
+            if depth == 0 {
+                return TestResult::discard();
+            }
+
+            runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let queue =
@@ -649,9 +665,7 @@ mod tests {
                 unhang.notify_one();
                 while get_outstanding_requests_gauge(&metrics).await
                     != Some(concurrency as usize + depth - 1)
-                {
-                    yield_now().await;
-                }
+                {}
 
                 debug!("sending new request, should be queued");
                 let request_queue = Arc::clone(&queue);
@@ -666,9 +680,7 @@ mod tests {
                 debug!("waiting for new request to be queued");
                 while get_outstanding_requests_gauge(&metrics).await
                     != Some(concurrency as usize + depth)
-                {
-                    yield_now().await;
-                }
+                {}
 
                 debug!("allowing one random request to proceed");
                 unhang.notify_one();
@@ -680,7 +692,6 @@ mod tests {
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics).await > Some(0) {
                     unhang.notify_one();
-                    yield_now().await;
                 }
 
                 debug!("waiting for futures to terminate");
@@ -693,8 +704,9 @@ mod tests {
 
                 TestResult::passed()
             })
-            .await
-            .unwrap()
-        })
+        }
+
+        install_test_trace_subscriber();
+        quickcheck(qc as fn(Parameters) -> TestResult);
     }
 }
