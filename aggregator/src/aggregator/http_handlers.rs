@@ -1,6 +1,5 @@
 use super::{
     error::{ArcError, ReportRejectionReason},
-    queue::{queued_lifo, LIFORequestQueue},
     Aggregator, Config, Error,
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
@@ -169,7 +168,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
-        // warn!(error_code, ?error, "Error handling endpoint");
+        warn!(error_code, ?error, "Error handling endpoint");
     }
 
     conn
@@ -312,7 +311,6 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
     aggregator: Arc<Aggregator<C>>,
     meter: &Meter,
 ) -> Result<impl Handler, Error> {
-    let queue = Arc::new(LIFORequestQueue::new(2, 8, meter)?);
     Ok((
         State(aggregator),
         metrics(meter)
@@ -340,17 +338,11 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
             )
             .put(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(queued_lifo(
-                    Arc::clone(&queue),
-                    api(aggregation_jobs_put::<C>),
-                )),
+                instrumented(api(aggregation_jobs_put::<C>)),
             )
             .post(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(queued_lifo(
-                    Arc::clone(&queue),
-                    api(aggregation_jobs_post::<C>),
-                )),
+                instrumented(api(aggregation_jobs_post::<C>)),
             )
             .delete(
                 AGGREGATION_JOB_ROUTE,
