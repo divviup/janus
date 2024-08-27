@@ -1,8 +1,5 @@
 use crate::aggregator::{
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, take_problem_details},
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details},
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
     Config,
 };
@@ -47,6 +44,8 @@ use trillium_testing::{
     prelude::{post, put},
     TestConn,
 };
+
+use super::http_handlers::AggregatorHandlerBuilder;
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
@@ -268,7 +267,7 @@ pub(crate) async fn setup_collection_job_test_case(
     datastore.put_aggregator_task(&role_task).await.unwrap();
     datastore.put_global_hpke_key().await.unwrap();
 
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
         clock.clone(),
         TestRuntime::default(),
@@ -279,6 +278,8 @@ pub(crate) async fn setup_collection_job_test_case(
         },
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     CollectionJobTestCase {

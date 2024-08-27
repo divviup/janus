@@ -1,10 +1,7 @@
 use crate::{
     aggregator::{
         aggregate_init_tests::PrepareInitGenerator,
-        http_handlers::{
-            aggregator_handler,
-            test_util::{decode_response_body, take_problem_details},
-        },
+        http_handlers::test_util::{decode_response_body, take_problem_details},
         Config,
     },
     config::TaskprovConfig,
@@ -67,6 +64,8 @@ use trillium_testing::{
     prelude::{post, put},
 };
 use url::Url;
+
+use super::http_handlers::AggregatorHandlerBuilder;
 
 type TestVdaf = Poplar1<XofTurboShake128, 16>;
 
@@ -150,7 +149,7 @@ where
             .await
             .unwrap();
 
-        let handler = aggregator_handler(
+        let handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
             clock.clone(),
             TestRuntime::default(),
@@ -164,6 +163,8 @@ where
             },
         )
         .await
+        .unwrap()
+        .build()
         .unwrap();
 
         let time_precision = Duration::from_seconds(1);

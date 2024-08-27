@@ -2,8 +2,8 @@ use crate::{
     aggregator::{
         error::ReportRejectionReason,
         http_handlers::{
-            aggregator_handler,
             test_util::{take_problem_details, HttpHandlerTest},
+            AggregatorHandlerBuilder,
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
     },
@@ -416,7 +416,7 @@ async fn upload_handler_error_fanout() {
         .await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -424,6 +424,8 @@ async fn upload_handler_error_fanout() {
         default_aggregator_config(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
@@ -527,7 +529,7 @@ async fn upload_client_early_disconnect() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -535,6 +537,8 @@ async fn upload_client_early_disconnect() {
         default_aggregator_config(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();

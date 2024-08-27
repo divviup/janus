@@ -1,8 +1,5 @@
 use crate::aggregator::{
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, take_problem_details},
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details},
     test_util::generate_helper_report_share,
     Config,
 };
@@ -42,6 +39,8 @@ use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{prelude::put, TestConn};
+
+use super::http_handlers::AggregatorHandlerBuilder;
 
 #[derive(Clone)]
 pub(super) struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
@@ -257,7 +256,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     datastore.put_aggregator_task(&helper_task).await.unwrap();
     let keypair = datastore.put_global_hpke_key().await.unwrap();
 
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
         clock.clone(),
         TestRuntime::default(),
@@ -265,6 +264,8 @@ async fn setup_aggregate_init_test_without_sending_request<
         Config::default(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     let prepare_init_generator = PrepareInitGenerator::new(
