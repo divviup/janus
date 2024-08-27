@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use itertools::Itertools;
 use opentelemetry::metrics::{Gauge, Meter};
 use tokio::{
     select,
@@ -16,7 +17,7 @@ use tokio::{
     },
     task::JoinHandle,
 };
-use tracing::warn;
+use tracing::{debug, error, warn};
 use trillium::{Conn, Handler};
 use trillium_macros::Handler;
 
@@ -40,15 +41,26 @@ pub struct LIFORequestQueue {
     /// Sends messages to the dispatcher task.
     dispatcher_tx: mpsc::UnboundedSender<DispatcherMessage>,
 
-    /// Generates unique ticket IDs, used to identify tickets in the queue.
-    id_generator: TicketIdGenerator,
+    /// Used to generate unique request IDs for identifying requests in the queue. Request numbers
+    /// are unique as long as this counter doesn't overflow, which shouldn't happen under practical
+    /// usage. For instance, it takes approximately 584,000 years at 1M QPS to overflow a 64-bit
+    /// counter.
+    id_counter: AtomicU64,
 }
 
 impl LIFORequestQueue {
     /// Creates a new [`Self`].
     ///
     /// `concurrency` must be greater than zero.
-    pub fn new(concurrency: u32, depth: usize, meter: &Meter) -> Result<Self, Error> {
+    ///
+    /// `meter_prefix` is a string to disambiguate one queue from another in the metrics, while
+    /// using the same meter. All metric names will be prefixed with this string.
+    pub fn new(
+        concurrency: u32,
+        depth: usize,
+        meter: &Meter,
+        meter_prefix: &str,
+    ) -> Result<Self, Error> {
         if concurrency < 1 {
             return Err(Error::InvalidConfiguration(
                 "concurrency must be greater than 0",
@@ -56,26 +68,26 @@ impl LIFORequestQueue {
         }
 
         let (message_tx, message_rx) = mpsc::unbounded_channel();
-        let id_generator = Default::default();
-        let metrics = Metrics::new(meter);
+        let id_counter = Default::default();
+        let metrics = Metrics::new(meter, meter_prefix);
         let dispatcher = Some(Self::dispatcher(message_rx, concurrency, depth, metrics));
 
         Ok(Self {
             dispatcher,
-            id_generator,
+            id_counter,
             dispatcher_tx: message_tx,
         })
     }
 
-    /// Spawns a task that dispatches permits to waiting [`Ticket`]s. Once a permit is dispatched,
-    /// the ticket holder may proceed.
+    /// Spawns a task that dispatches permits to waiting requests. Once a permit is dispatched, the
+    /// request may proceed.
     ///
-    /// Tickets are dispatched in LIFO-order. An incoming ticket will either immediately receive
-    /// a ticket, be placed at the head of the queue, or will be rejected if there's no space in
-    /// the queue.
+    /// Requests are dispatched in LIFO-order. An incoming request will either immediately receive
+    /// an [`OwnedSemaphorePermit`], be placed at the head of the queue, or be rejected if there's
+    /// no space in the queue.
     ///
     /// Permits are returned to the dispatcher automatically when the [`OwnedSemaphorePermit`] is
-    /// dropped, allowing other Tickets to be dispatched.
+    /// dropped, allowing other requests to be dispatched.
     fn dispatcher(
         mut dispatcher_rx: mpsc::UnboundedReceiver<DispatcherMessage>,
         concurrency: u32,
@@ -83,15 +95,15 @@ impl LIFORequestQueue {
         metrics: Metrics,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            // Use a BTreeMap to allow for cancellation (i.e. removal) of tickets in sublinear
-            // time.
-            let mut stack: BTreeMap<TicketId, PermitTx> = BTreeMap::new();
+            // Use a BTreeMap to allow for cancellation (i.e. removal) of waiting requests in
+            // sublinear time.
+            let mut stack: BTreeMap<u64, PermitTx> = BTreeMap::new();
 
             // Unwrap safety: conversion only fails on architectures where usize is less than
             // 32-bits.
             let semaphore = Arc::new(Semaphore::new(concurrency.try_into().unwrap()));
 
-            // Create a collection of permits which we'll dispatch to tickets.
+            // Create a collection of permits which we'll dispatch to requests.
             // Unwrap safety: the semaphore is never closed.
             let mut permits = Arc::clone(&semaphore)
                 .acquire_many_owned(concurrency)
@@ -108,24 +120,29 @@ impl LIFORequestQueue {
                                     permit_tx.send(Ok(permit))
                                 } else if stack.len() < depth {
                                     let result = stack.insert(id, permit_tx);
-                                    assert!(result.is_none(), "ticket IDs must be unique");
+                                    if result.is_some() {
+                                        // Avoid panicking on this bug, since if this process dies,
+                                        // request processing stops.
+                                        error!(?id, "bug: overwrote existing request in the queue");
+                                    }
                                 } else {
                                     permit_tx.send(Err(Error::TooManyRequests));
                                 }
                             },
-                            DispatcherMessage::Dequeue(id) => {
+                            DispatcherMessage::Cancel(id) => {
+                                debug!(?id, "removing from the queue");
                                 stack.remove(&id);
                             },
                         }
                     }
 
                     Ok(permit) = semaphore.acquire_owned() => {
-                        // pop_last() pops the element maximum valued element. The ticket ID
-                        // generator is _mostly_ monotonically incrementing, so the highest ID will
+                        // pop_last() pops the element maximum valued element. The request ID
+                        // counter is _mostly_ monotonically incrementing, so the highest ID will
                         // be the most recent request, giving us LIFO semantics.
                         //
                         // This property isn't preserved when the ID generator overflows, but that
-                        // is not a practical concern. See [`TicketIdGenerator`].
+                        // is not a practical concern. See [`Self::id_counter`].
                         match stack.pop_last() {
                             Some((_, permit_tx)) => permit_tx.send(Ok(permit)),
                             None => permits.merge(permit),
@@ -145,20 +162,29 @@ impl LIFORequestQueue {
         })
     }
 
-    fn acquire(&self) -> Result<Ticket, Error> {
-        let id = self.id_generator.next();
+    async fn acquire(&self) -> Result<OwnedSemaphorePermit, Error> {
+        let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
         let (permit_tx, permit_rx) = oneshot::channel();
-        let ticket = Ticket {
-            id,
-            permit_rx: Some(permit_rx),
-            cancel_tx: self.dispatcher_tx.clone(),
-        };
+
         self.dispatcher_tx
             .send(DispatcherMessage::Enqueue(id, PermitTx(permit_tx)))
             // We don't necessarily panic because the dispatcher task could be shutdown as part of
             // process shutdown, while a request is in flight.
             .map_err(|_| Error::Internal("dispatcher task died".to_string()))?;
-        Ok(ticket)
+
+        let mut drop_guard = CancelDropGuard {
+            id,
+            cancel_tx: self.dispatcher_tx.clone(),
+            done: false,
+        };
+        let permit = permit_rx.await;
+        drop_guard.done = true;
+
+        // If the rx channel is prematurely dropped, we'll reach this error, indicating that
+        // something has gone wrong with the dispatcher task. If the drop guard causes the rx
+        // channel to be dropped, we shouldn't reach this error because the overall future would
+        // have been dropped.
+        permit.map_err(|_| Error::Internal("rx channel unexpectedly dropped".to_string()))?
     }
 }
 
@@ -170,33 +196,15 @@ impl Drop for LIFORequestQueue {
     }
 }
 
-/// Identifies a ticket in the queue.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-struct TicketId(u64);
-
-/// Simple generator for unique ticket numbers. Ticket numbers are unique as long as there aren't
-/// more than [`u64`] entries in the queue, at which point you've run out of memory.
-///
-/// This counter also wraps on overflow. In practical usage, this shouldn't matter since at 1M QPS
-/// civilization will probably have ended by the time overflow occurs.
-#[derive(Debug, Default)]
-struct TicketIdGenerator(AtomicU64);
-
-impl TicketIdGenerator {
-    fn next(&self) -> TicketId {
-        TicketId(self.0.fetch_add(1, Ordering::Relaxed))
-    }
-}
-
 /// Messages for communicating with the dispatcher task.
 #[derive(Debug)]
 enum DispatcherMessage {
-    /// A new ticket has arrived.
-    Enqueue(TicketId, PermitTx),
+    /// A new request has arrived.
+    Enqueue(u64, PermitTx),
 
-    /// A ticket-holder has reneged, likely because the connection has timed out, so remove the
-    /// ticket from the queue.
-    Dequeue(TicketId),
+    /// A request has reneged, likely because the connection has timed out, so remove the request
+    /// from the queue.
+    Cancel(u64),
 }
 
 /// Dispatcher-side permit sender channel. May receive failure if the queue is full.
@@ -212,39 +220,22 @@ impl PermitTx {
     }
 }
 
-/// Handler-side permit receiver channel.
 type PermitRx = oneshot::Receiver<Result<OwnedSemaphorePermit, Error>>;
 
-/// Handler-side ticket which is used to get in the queue.
-#[derive(Debug)]
-struct Ticket {
-    id: TicketId,
-    permit_rx: Option<PermitRx>,
+/// Sends a cancellation message over the `cancel_rx` channel if the guard is dropped without being
+/// marked done.
+struct CancelDropGuard {
+    id: u64,
     cancel_tx: mpsc::UnboundedSender<DispatcherMessage>,
+    done: bool,
 }
 
-impl Ticket {
-    /// Waits for the ticket to be called. Returns an [`OwnedSemaphorePermit`] which should be
-    /// dropped to signal that the request is done.
-    ///
-    /// # Panics
-    ///
-    /// Panics if it is called more than once.
-    async fn wait(&mut self) -> Result<OwnedSemaphorePermit, Error> {
-        self.permit_rx
-            .take()
-            .unwrap()
-            .await
-            .map_err(|err| Error::Internal(format!("dispatcher task died: {}", err)))?
-    }
-}
-
-impl Drop for Ticket {
+impl Drop for CancelDropGuard {
     fn drop(&mut self) {
-        if self.permit_rx.is_some() {
+        if !self.done {
             let _ = self
                 .cancel_tx
-                .send(DispatcherMessage::Dequeue(self.id))
+                .send(DispatcherMessage::Cancel(self.id))
                 .map_err(|err| warn!("failed to send cancellation message: {:?}", err));
         }
     }
@@ -267,15 +258,12 @@ impl<H: Handler> LIFOQueueHandler<H> {
     }
 
     async fn run(&self, mut conn: Conn) -> Conn {
-        match self.queue.acquire() {
-            Ok(mut ticket) => match conn.cancel_on_disconnect(ticket.wait()).await {
-                Some(permit) => match permit {
-                    Ok(_permit) => self.handler.run(conn).await,
-                    Err(err) => err.run(conn).await,
-                },
-                None => Error::ClientDisconnected.run(conn).await,
+        match conn.cancel_on_disconnect(self.queue.acquire()).await {
+            Some(permit) => match permit {
+                Ok(_permit) => self.handler.run(conn).await,
+                Err(err) => err.run(conn).await,
             },
-            Err(err) => err.run(conn).await,
+            None => Error::ClientDisconnected.run(conn).await,
         }
     }
 }
@@ -294,14 +282,12 @@ struct Metrics {
 }
 
 impl Metrics {
-    const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "janus_aggregator_outstanding_requests";
+    const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "outstanding_requests";
 
-    fn new(meter: &Meter) -> Self {
-        // Note: this instrument's name is constant for the entire process. If we end up having a
-        // need for multiple queues in the same process, we'll want to parameterize the name.
+    fn new(meter: &Meter, prefix: &str) -> Self {
         Self {
             outstanding_requests: meter
-                .u64_gauge(Self::OUTSTANDING_REQUESTS_METRIC_NAME)
+                .u64_gauge(Self::get_outstanding_requests_name(prefix))
                 .with_description(concat!(
                     "The approximate number of requests currently being serviced by the ",
                     "aggregator."
@@ -309,6 +295,12 @@ impl Metrics {
                 .with_unit("{request}")
                 .init(),
         }
+    }
+
+    fn get_outstanding_requests_name(prefix: &str) -> String {
+        [prefix, Self::OUTSTANDING_REQUESTS_METRIC_NAME]
+            .into_iter()
+            .join("_")
     }
 }
 
@@ -350,6 +342,7 @@ mod tests {
 
     async fn get_outstanding_requests_gauge(
         metrics: &InMemoryMetricsInfrastructure,
+        meter_prefix: &str,
     ) -> Option<usize> {
         Some(
             metrics
@@ -357,7 +350,7 @@ mod tests {
                 .await
                 // The metric may not be immediately available when we need it, so return an Option
                 // instead of unwrapping.
-                .get(Metrics::OUTSTANDING_REQUESTS_METRIC_NAME)?
+                .get(&Metrics::get_outstanding_requests_name(meter_prefix))?
                 .data
                 .as_any()
                 .downcast_ref::<Gauge<u64>>()
@@ -386,6 +379,7 @@ mod tests {
         concurrency: u32,
         depth: usize,
         metrics: &InMemoryMetricsInfrastructure,
+        meter_prefix: &str,
     ) -> Vec<JoinHandle<()>> {
         debug!("filling queue");
 
@@ -422,7 +416,9 @@ mod tests {
         }
 
         debug!("waiting for queue to be full");
-        while get_outstanding_requests_gauge(metrics).await != Some(concurrency as usize + depth) {}
+        while get_outstanding_requests_gauge(metrics, meter_prefix).await
+            != Some(concurrency as usize + depth)
+        {}
 
         requests
     }
@@ -505,8 +501,10 @@ mod tests {
             } = parameters;
 
             runtime_flavor.run(async move {
-                let queue =
-                    Arc::new(LIFORequestQueue::new(concurrency, depth, &noop_meter()).unwrap());
+                let meter_prefix = "test";
+                let queue = Arc::new(
+                    LIFORequestQueue::new(concurrency, depth, &noop_meter(), meter_prefix).unwrap(),
+                );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
                     ConcurrencyAssertingHandler {
@@ -541,10 +539,13 @@ mod tests {
             } = parameters;
 
             runtime_flavor.run(async move {
+                let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let unhang = Arc::new(Notify::new());
-                let queue =
-                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let queue = Arc::new(
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
+                        .unwrap(),
+                );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
                     HangingHandler {
@@ -552,13 +553,44 @@ mod tests {
                     },
                 ));
 
-                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
+                let requests = fill_queue(
+                    Arc::clone(&handler),
+                    concurrency,
+                    depth,
+                    &metrics,
+                    meter_prefix,
+                )
+                .await;
+
+                debug!("freeing up one slot in the queue");
+                unhang.notify_one();
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await
+                    != Some(concurrency as usize + depth - 1)
+                {}
+
+                debug!("sending new request, should be queued");
+                let request_handler = Arc::clone(&handler);
+                let request =
+                    tokio::spawn(async move { get("/").run_async(&request_handler).await });
+
+                debug!("waiting for new request to be queued");
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await
+                    != Some(concurrency as usize + depth)
+                {}
+
+                debug!("cancelling request");
+                request.abort();
+
+                debug!("waiting for new request to be cancelled");
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await
+                    != Some(concurrency as usize + depth - 1)
+                {}
 
                 debug!("cancelling outstanding requests");
                 requests.iter().for_each(|request| request.abort());
 
                 debug!("waiting for requests to be cancelled");
-                while get_outstanding_requests_gauge(&metrics).await > Some(0) {}
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {}
 
                 debug!("sending new request");
                 unhang.notify_one();
@@ -594,9 +626,12 @@ mod tests {
 
             runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
+                let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
-                let queue =
-                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let queue = Arc::new(
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
+                        .unwrap(),
+                );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
                     HangingHandler {
@@ -604,14 +639,21 @@ mod tests {
                     },
                 ));
 
-                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
+                let requests = fill_queue(
+                    Arc::clone(&handler),
+                    concurrency,
+                    depth,
+                    &metrics,
+                    meter_prefix,
+                )
+                .await;
 
                 debug!("sending request, should fail");
                 let request = get("/").run_async(&handler).await;
                 assert_status!(request, Status::ServiceUnavailable);
 
                 debug!("draining the queue");
-                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
                     unhang.notify_one();
                 }
                 for handle in requests {
@@ -649,9 +691,12 @@ mod tests {
 
             runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
+                let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
-                let queue =
-                    Arc::new(LIFORequestQueue::new(concurrency, depth, &metrics.meter).unwrap());
+                let queue = Arc::new(
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
+                        .unwrap(),
+                );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
                     HangingHandler {
@@ -659,11 +704,18 @@ mod tests {
                     },
                 ));
 
-                let requests = fill_queue(Arc::clone(&handler), concurrency, depth, &metrics).await;
+                let requests = fill_queue(
+                    Arc::clone(&handler),
+                    concurrency,
+                    depth,
+                    &metrics,
+                    meter_prefix,
+                )
+                .await;
 
                 debug!("freeing up one slot in the queue");
                 unhang.notify_one();
-                while get_outstanding_requests_gauge(&metrics).await
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await
                     != Some(concurrency as usize + depth - 1)
                 {}
 
@@ -678,7 +730,7 @@ mod tests {
                 });
 
                 debug!("waiting for new request to be queued");
-                while get_outstanding_requests_gauge(&metrics).await
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await
                     != Some(concurrency as usize + depth)
                 {}
 
@@ -690,7 +742,7 @@ mod tests {
                 assert_ok!(request);
 
                 debug!("draining the queue");
-                while get_outstanding_requests_gauge(&metrics).await > Some(0) {
+                while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
                     unhang.notify_one();
                 }
 
