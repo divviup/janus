@@ -1,9 +1,8 @@
 use crate::{
     aggregator::{
         http_handlers::{
-            aggregator_handler, aggregator_handler_with_aggregator,
             test_util::{take_problem_details, take_response_body, HttpHandlerTest},
-            HPKE_CONFIG_SIGNATURE_HEADER,
+            AggregatorHandlerBuilder, HPKE_CONFIG_SIGNATURE_HEADER,
         },
         test_util::{
             default_aggregator_config, hpke_config_signing_key, hpke_config_verification_key,
@@ -40,7 +39,7 @@ async fn task_specific_hpke_config() {
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let mut config = default_aggregator_config();
     config.require_global_hpke_keys = false;
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -48,6 +47,8 @@ async fn task_specific_hpke_config() {
         config,
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
@@ -131,8 +132,8 @@ async fn global_hpke_config() {
         .await
         .unwrap(),
     );
-    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
-        .await
+    let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
+        .build()
         .unwrap();
 
     // No task ID provided
@@ -286,8 +287,8 @@ async fn global_hpke_config_with_taskprov() {
         .await
         .unwrap(),
     );
-    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
-        .await
+    let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
+        .build()
         .unwrap();
 
     let mut test_conn = get(format!("/hpke_config?task_id={}", task.id()))
@@ -425,8 +426,8 @@ async fn require_global_hpke_keys() {
         .unwrap(),
     );
 
-    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
-        .await
+    let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
+        .build()
         .unwrap();
 
     let mut test_conn = get(format!("/hpke_config?task_id={}", &random::<TaskId>()))

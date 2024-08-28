@@ -13,7 +13,7 @@ use janus_aggregator::{
         aggregation_job_driver::AggregationJobDriver,
         collection_job_driver::{CollectionJobDriver, RetryStrategy},
         garbage_collector::GarbageCollector,
-        http_handlers::aggregator_handler,
+        http_handlers::AggregatorHandlerBuilder,
         key_rotator::KeyRotator,
         Config as AggregatorConfig,
     },
@@ -89,7 +89,7 @@ impl SimulationAggregator {
             require_global_hpke_keys: false,
         };
 
-        let aggregator_handler = aggregator_handler(
+        let aggregator_handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
             state.clock.clone(),
             report_writer_runtime,
@@ -97,6 +97,8 @@ impl SimulationAggregator {
             aggregator_config,
         )
         .await
+        .unwrap()
+        .build()
         .unwrap();
 
         let inspect_handler = InspectHandler::new(aggregator_handler);

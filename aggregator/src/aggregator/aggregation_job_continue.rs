@@ -400,8 +400,8 @@ mod tests {
             post_aggregation_job_expecting_status,
         },
         http_handlers::{
-            aggregator_handler,
             test_util::{take_problem_details, HttpHandlerTest},
+            AggregatorHandlerBuilder,
         },
         test_util::default_aggregator_config,
     };
@@ -555,7 +555,7 @@ mod tests {
         );
 
         // Create aggregator handler.
-        let handler = aggregator_handler(
+        let handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
             clock,
             TestRuntime::default(),
@@ -563,6 +563,8 @@ mod tests {
             default_aggregator_config(),
         )
         .await
+        .unwrap()
+        .build()
         .unwrap();
 
         AggregationJobContinueTestCase {
