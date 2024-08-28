@@ -1,5 +1,8 @@
 use crate::aggregator::{
-    http_handlers::test_util::{decode_response_body, take_problem_details},
+    http_handlers::{
+        test_util::{decode_response_body, take_problem_details},
+        AggregatorHandlerBuilder,
+    },
     test_util::generate_helper_report_share,
     Config,
 };
@@ -39,8 +42,6 @@ use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{prelude::put, TestConn};
-
-use super::http_handlers::AggregatorHandlerBuilder;
 
 #[derive(Clone)]
 pub(super) struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>

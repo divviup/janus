@@ -175,7 +175,7 @@ impl JanusInProcess {
             task_cache_capacity: None,
             log_forbidden_mutations: None,
             require_global_hpke_keys: true,
-            helper_request_queue: None,
+            helper_aggregation_request_queue: None,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {
             common: common_binary_options.clone(),

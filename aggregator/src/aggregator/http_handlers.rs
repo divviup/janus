@@ -294,7 +294,7 @@ pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_share
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HelperRequestQueue {
+pub struct HelperAggregationRequestQueue {
     pub depth: usize,
     pub concurrency: u32,
 }
@@ -305,7 +305,7 @@ where
 {
     aggregator: Arc<Aggregator<C>>,
     meter: &'a Meter,
-    helper_request_queue: Option<HelperRequestQueue>,
+    helper_aggregation_request_queue: Option<HelperAggregationRequestQueue>,
 }
 
 impl<'a, C> AggregatorHandlerBuilder<'a, C>
@@ -330,21 +330,24 @@ where
         Self {
             aggregator,
             meter,
-            helper_request_queue: None,
+            helper_aggregation_request_queue: None,
         }
     }
 
-    pub fn with_helper_request_queue(self, hrq: HelperRequestQueue) -> Self {
+    pub fn with_helper_aggregation_request_queue(
+        self,
+        harq: HelperAggregationRequestQueue,
+    ) -> Self {
         Self {
-            helper_request_queue: Some(hrq),
+            helper_aggregation_request_queue: Some(harq),
             ..self
         }
     }
 
     pub fn build(self) -> Result<impl Handler, Error> {
         let helper_queue = self
-            .helper_request_queue
-            .map(|HelperRequestQueue { depth, concurrency }| {
+            .helper_aggregation_request_queue
+            .map(|HelperAggregationRequestQueue { depth, concurrency }| {
                 LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper")
             })
             .transpose()?
@@ -906,7 +909,7 @@ pub mod test_util {
             .await
             .unwrap()
             // Shake out any bugs with helper request queuing.
-            .with_helper_request_queue(super::HelperRequestQueue {
+            .with_helper_aggregation_request_queue(super::HelperAggregationRequestQueue {
                 depth: 16,
                 concurrency: 2,
             })
