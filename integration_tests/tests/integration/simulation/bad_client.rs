@@ -2,7 +2,7 @@ use std::{net::Ipv4Addr, sync::Arc};
 
 use assert_matches::assert_matches;
 use http::header::CONTENT_TYPE;
-use janus_aggregator::aggregator::http_handlers::aggregator_handler;
+use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
     task::test_util::{Task, TaskBuilder},
@@ -389,14 +389,17 @@ async fn bad_client_report_validity() {
         .await
         .unwrap();
 
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
         clock,
         TestRuntime::default(),
         &noop_meter(),
         Default::default(),
     )
-    .await;
+    .await
+    .unwrap()
+    .build()
+    .unwrap();
     let stopper = Stopper::new();
     let server_handle = trillium_tokio::config()
         .with_stopper(stopper.clone())
