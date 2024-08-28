@@ -125,4 +125,9 @@ To create a new migration:
         },
     ```
 
+* When using an `Arc`, prefer to write `Arc::clone(&arc)` instead of `arc.clone()`.
+  This makes it clear that the `Arc` is being cloned (cheap) and not the underlying
+  data type (possibly expensive). This will also catch any mistakes where you
+  intended to clone the Arc and not the underlying data.
+
 [hide_env_values]: https://docs.rs/clap/latest/clap/struct.Arg.html#method.hide_env_values
