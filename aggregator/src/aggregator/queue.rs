@@ -358,13 +358,11 @@ mod tests {
         meter_prefix: &str,
         condition: impl Fn(usize) -> bool,
     ) {
-        loop {
-            let metric = get_outstanding_requests_gauge(&metrics, meter_prefix).await;
-            if let Some(metric) = metric {
-                if condition(metric) {
-                    return;
-                }
-            }
+        while get_outstanding_requests_gauge(metrics, meter_prefix)
+            .await
+            .map(|metric| !condition(metric))
+            .unwrap_or(true)
+        {
             // Nominal sleep to prevent this loop from being too tight.
             sleep(Duration::from_millis(3)).await;
         }
