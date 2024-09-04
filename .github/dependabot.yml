@@ -5,7 +5,9 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "16:10"
+      timezone: "America/Los_Angeles"
     target-branch: "main"
     open-pull-requests-limit: 20
     ignore:
