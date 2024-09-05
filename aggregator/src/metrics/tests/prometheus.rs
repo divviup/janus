@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::{http_handlers::aggregator_handler, test_util::default_aggregator_config},
+    aggregator::{http_handlers::AggregatorHandlerBuilder, test_util::default_aggregator_config},
     metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
 };
 use http::StatusCode;
@@ -83,7 +83,7 @@ async fn http_metrics() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -91,6 +91,8 @@ async fn http_metrics() {
         default_aggregator_config(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     get("/hpke_config").run_async(&handler).await;

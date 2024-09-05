@@ -1,5 +1,6 @@
 use super::{
     error::{ArcError, ReportRejectionReason},
+    queue::{queued_lifo, LIFORequestQueue},
     Aggregator, Config, Error,
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
@@ -25,7 +26,7 @@ use opentelemetry::{
 };
 use prio::codec::Encode;
 use ring::digest::{digest, SHA256};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, time::Duration as StdDuration};
 use std::{io::Cursor, sync::Arc};
 use tracing::warn;
@@ -154,6 +155,17 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         Error::ClientDisconnected => conn.with_status(Status::BadRequest),
+        Error::TooManyRequests => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#too-many-requests",
+                "The server is currently overloaded.",
+                Status::TooManyRequests,
+            )
+            .with_detail(concat!(
+                "The server is currently servicing too many requests, please try the request ",
+                "again later."
+            )),
+        ),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -280,38 +292,68 @@ pub(crate) static AGGREGATION_JOB_ROUTE: &str =
 pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
-/// Constructs a Trillium handler for the aggregator.
-pub async fn aggregator_handler<C, R>(
-    datastore: Arc<Datastore<C>>,
-    clock: C,
-    runtime: R,
-    meter: &Meter,
-    cfg: Config,
-) -> Result<impl Handler, Error>
-where
-    C: Clock,
-    R: Runtime + Send + Sync + 'static,
-{
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
-    aggregator_handler_with_aggregator(aggregator, meter).await
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HelperAggregationRequestQueue {
+    pub depth: usize,
+    pub concurrency: u32,
 }
 
-async fn aggregator_handler_with_aggregator<C: Clock>(
+pub struct AggregatorHandlerBuilder<'a, C>
+where
+    C: Clock,
+{
     aggregator: Arc<Aggregator<C>>,
-    meter: &Meter,
-) -> Result<impl Handler, Error> {
-    Ok((
-        State(aggregator),
-        metrics(meter)
-            .with_route(|conn| {
-                conn.route()
-                    .map(|route_spec| Cow::Owned(route_spec.to_string()))
+    meter: &'a Meter,
+    helper_aggregation_request_queue: Option<HelperAggregationRequestQueue>,
+}
+
+impl<'a, C> AggregatorHandlerBuilder<'a, C>
+where
+    C: Clock,
+{
+    pub async fn new<R>(
+        datastore: Arc<Datastore<C>>,
+        clock: C,
+        runtime: R,
+        meter: &'a Meter,
+        cfg: Config,
+    ) -> Result<Self, Error>
+    where
+        R: Runtime + Send + Sync + 'static,
+    {
+        let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
+        Ok(Self::from_aggregator(aggregator, meter))
+    }
+
+    pub fn from_aggregator(aggregator: Arc<Aggregator<C>>, meter: &'a Meter) -> Self {
+        Self {
+            aggregator,
+            meter,
+            helper_aggregation_request_queue: None,
+        }
+    }
+
+    pub fn with_helper_aggregation_request_queue(
+        self,
+        harq: HelperAggregationRequestQueue,
+    ) -> Self {
+        Self {
+            helper_aggregation_request_queue: Some(harq),
+            ..self
+        }
+    }
+
+    pub fn build(self) -> Result<impl Handler, Error> {
+        let helper_queue = self
+            .helper_aggregation_request_queue
+            .map(|HelperAggregationRequestQueue { depth, concurrency }| {
+                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper")
             })
-            .with_error_type(|conn| {
-                conn.state::<ErrorCode>()
-                    .map(|error_code| Cow::Borrowed(error_code.0))
-            }),
-        Router::new()
+            .transpose()?
+            .map(Arc::new);
+
+        let router = Router::new()
             .without_options_handling()
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
             .with_route(
@@ -327,11 +369,25 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
             )
             .put(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_put::<C>)),
+                instrumented(if let Some(ref queue) = helper_queue {
+                    Box::new(queued_lifo(
+                        Arc::clone(queue),
+                        api(aggregation_jobs_put::<C>),
+                    )) as Box<dyn Handler>
+                } else {
+                    Box::new(api(aggregation_jobs_put::<C>)) as Box<dyn Handler>
+                }),
             )
             .post(
                 AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_post::<C>)),
+                instrumented(if let Some(ref queue) = helper_queue {
+                    Box::new(queued_lifo(
+                        Arc::clone(queue),
+                        api(aggregation_jobs_post::<C>),
+                    )) as Box<dyn Handler>
+                } else {
+                    Box::new(api(aggregation_jobs_post::<C>)) as Box<dyn Handler>
+                }),
             )
             .delete(
                 AGGREGATION_JOB_ROUTE,
@@ -352,9 +408,23 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
             .post(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares::<C>)),
-            ),
-        StatusCounter::new(meter),
-    ))
+            );
+
+        Ok((
+            State(self.aggregator),
+            metrics(self.meter)
+                .with_route(|conn| {
+                    conn.route()
+                        .map(|route_spec| Cow::Owned(route_spec.to_string()))
+                })
+                .with_error_type(|conn| {
+                    conn.state::<ErrorCode>()
+                        .map(|error_code| Cow::Borrowed(error_code.0))
+                }),
+            router,
+            StatusCounter::new(self.meter),
+        ))
+    }
 }
 
 /// Deserialization helper struct to extract a "task_id" parameter from a query string.
@@ -755,7 +825,6 @@ impl TryFromConn for BodyBytes {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::aggregator_handler;
     use crate::aggregator::test_util::default_aggregator_config;
     use janus_aggregator_core::{
         datastore::{
@@ -774,6 +843,8 @@ pub mod test_util {
     use std::sync::Arc;
     use trillium::Handler;
     use trillium_testing::{assert_headers, TestConn};
+
+    use super::AggregatorHandlerBuilder;
 
     pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn
@@ -828,7 +899,7 @@ pub mod test_util {
                 .await
                 .unwrap();
 
-            let handler = aggregator_handler(
+            let handler = AggregatorHandlerBuilder::new(
                 datastore.clone(),
                 clock.clone(),
                 TestRuntime::default(),
@@ -836,6 +907,13 @@ pub mod test_util {
                 default_aggregator_config(),
             )
             .await
+            .unwrap()
+            // Shake out any bugs with helper request queuing.
+            .with_helper_aggregation_request_queue(super::HelperAggregationRequestQueue {
+                depth: 16,
+                concurrency: 2,
+            })
+            .build()
             .unwrap();
 
             Self {

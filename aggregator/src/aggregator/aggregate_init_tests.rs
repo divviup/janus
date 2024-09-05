@@ -1,7 +1,7 @@
 use crate::aggregator::{
     http_handlers::{
-        aggregator_handler,
         test_util::{decode_response_body, take_problem_details},
+        AggregatorHandlerBuilder,
     },
     test_util::generate_helper_report_share,
     Config,
@@ -257,7 +257,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     datastore.put_aggregator_task(&helper_task).await.unwrap();
     let keypair = datastore.put_global_hpke_key().await.unwrap();
 
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         Arc::clone(&datastore),
         clock.clone(),
         TestRuntime::default(),
@@ -265,6 +265,8 @@ async fn setup_aggregate_init_test_without_sending_request<
         Config::default(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     let prepare_init_generator = PrepareInitGenerator::new(

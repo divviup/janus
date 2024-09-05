@@ -2811,6 +2811,7 @@ dependencies = [
  "trillium-api",
  "trillium-caching-headers",
  "trillium-head",
+ "trillium-macros 0.0.6",
  "trillium-opentelemetry",
  "trillium-prometheus",
  "trillium-router",

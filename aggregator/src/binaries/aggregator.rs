@@ -1,7 +1,7 @@
 use crate::{
     aggregator::{
         self,
-        http_handlers::aggregator_handler,
+        http_handlers::{AggregatorHandlerBuilder, HelperAggregationRequestQueue},
         key_rotator::{deserialize_hpke_key_rotator_config, HpkeKeyRotatorConfig, KeyRotator},
     },
     binaries::garbage_collector::run_garbage_collector,
@@ -90,17 +90,19 @@ async fn run_aggregator(
         })
     };
 
-    let mut handlers = (
-        aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            TokioRuntime,
-            &meter,
-            config.aggregator_config(&options)?,
-        )
-        .await?,
-        None,
-    );
+    let mut aggregator_handler = AggregatorHandlerBuilder::new(
+        Arc::clone(&datastore),
+        clock,
+        TokioRuntime,
+        &meter,
+        config.aggregator_config(&options)?,
+    )
+    .await?;
+    if let Some(harq) = config.helper_aggregation_request_queue {
+        aggregator_handler = aggregator_handler.with_helper_aggregation_request_queue(harq);
+    }
+
+    let mut handlers = (aggregator_handler.build()?, None);
 
     let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
@@ -401,6 +403,10 @@ pub struct Config {
     /// become on by default in a future version of Janus.
     #[serde(default)]
     pub require_global_hpke_keys: bool,
+
+    /// Experimental. Queue aggregate init and continue requests with a LIFO strategy.
+    #[serde(default)]
+    pub helper_aggregation_request_queue: Option<HelperAggregationRequestQueue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -609,6 +615,7 @@ mod tests {
             task_cache_capacity: None,
             log_forbidden_mutations: Some(PathBuf::from("/tmp/events")),
             require_global_hpke_keys: true,
+            helper_aggregation_request_queue: None,
         })
     }
 

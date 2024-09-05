@@ -211,3 +211,13 @@ task_cache_ttl_s: 600
 # Defines how many tasks can be cached. This affects how much memory the
 # aggregator might use to store cached tasks. (optional)
 task_cache_capacity: 10000
+
+# Queue aggregate init and continue requests with a LIFO strategy. (optional;
+# experimental, not stable between Janus releases)
+helper_aggregation_request_queue:
+  # The number of requests that can be processed concurrently.
+  concurrency: 1
+  # The maximum number of requests that can be left waiting in the queue for
+  # a concurrency slot to become available. Excess requests are rejected with
+  # HTTP status 429 Too Many Requests.
+  depth: 24

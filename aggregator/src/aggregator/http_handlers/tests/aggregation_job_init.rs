@@ -2,8 +2,8 @@ use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
     http_handlers::{
-        aggregator_handler,
         test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
+        AggregatorHandlerBuilder,
     },
     test_util::{
         assert_task_aggregation_counter, default_aggregator_config, generate_helper_report_share,
@@ -768,7 +768,7 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
     }
 
     // Create new handler _after_ the keys have been inserted so that they come pre-cached.
-    let handler = aggregator_handler(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -776,6 +776,8 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
         default_aggregator_config(),
     )
     .await
+    .unwrap()
+    .build()
     .unwrap();
 
     let (prepare_init, transcript) = prep_init_generator.next(&0);
