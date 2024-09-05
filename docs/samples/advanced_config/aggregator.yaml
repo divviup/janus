@@ -219,5 +219,5 @@ helper_aggregation_request_queue:
   concurrency: 1
   # The maximum number of requests that can be left waiting in the queue for
   # a concurrency slot to become available. Excess requests are rejected with
-  # HTTP status 503 Unavailable.
+  # HTTP status 429 Too Many Requests.
   depth: 24

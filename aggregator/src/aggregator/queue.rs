@@ -230,8 +230,6 @@ impl PermitTx {
     }
 }
 
-type PermitRx = oneshot::Receiver<Result<OwnedSemaphorePermit, Error>>;
-
 /// A handler that queues requests in a LIFO manner, according to the parameters set in a
 /// [`LIFORequestQueue`].
 ///
@@ -649,7 +647,7 @@ mod tests {
 
                 debug!("sending request, should fail");
                 let request = get("/").run_async(&handler).await;
-                assert_status!(request, Status::ServiceUnavailable);
+                assert_status!(request, Status::TooManyRequests);
 
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {

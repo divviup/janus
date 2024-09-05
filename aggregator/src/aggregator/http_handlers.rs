@@ -159,7 +159,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#too-many-requests",
                 "The server is currently overloaded.",
-                Status::ServiceUnavailable,
+                Status::TooManyRequests,
             )
             .with_detail(concat!(
                 "The server is currently servicing too many requests, please try the request ",
