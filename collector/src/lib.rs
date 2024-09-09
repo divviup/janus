@@ -760,8 +760,7 @@ mod tests {
     use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use fixed_macro::fixed;
+    use fixed::types::I1F31;
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
@@ -1154,15 +1153,15 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_fixedpoint_boundedl2_vec_sum(2, 3).unwrap();
-        let fp32_4_inv = fixed!(0.25: I1F31);
-        let fp32_8_inv = fixed!(0.125: I1F31);
-        let fp32_16_inv = fixed!(0.0625: I1F31);
+        const FP32_4_INV: I1F31 = I1F31::lit("0.25");
+        const FP32_8_INV: I1F31 = I1F31::lit("0.125");
+        const FP32_16_INV: I1F31 = I1F31::lit("0.0625");
         let transcript = run_vdaf(
             &vdaf,
             &random(),
             &(),
             &random(),
-            &vec![fp32_16_inv, fp32_8_inv, fp32_4_inv],
+            &vec![FP32_16_INV, FP32_8_INV, FP32_4_INV],
         );
         let collector = setup_collector(&mut server, vdaf);
 
