@@ -2,6 +2,7 @@
 
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use fixed::types::{I1F15, I1F31};
 use futures::future::join_all;
 use janus_core::{
     test_util::install_test_trace_subscriber,
@@ -25,9 +26,6 @@ use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
 use tokio::time::sleep;
-
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed_macro::fixed;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;
@@ -702,9 +700,9 @@ async fn e2e_prio3_histogram() {
 
 #[tokio::test]
 async fn e2e_prio3_fixed16vec() {
-    let fp16_4_inv = fixed!(0.25: I1F15);
-    let fp16_8_inv = fixed!(0.125: I1F15);
-    let fp16_16_inv = fixed!(0.0625: I1F15);
+    const FP16_4_INV: I1F15 = I1F15::lit("0.25");
+    const FP16_8_INV: I1F15 = I1F15::lit("0.125");
+    const FP16_16_INV: I1F15 = I1F15::lit("0.0625");
     let result = run(
         "e2e_prio3_fixed16vec",
         QueryKind::TimeInterval,
@@ -713,24 +711,24 @@ async fn e2e_prio3_fixed16vec() {
                "length": "3"}),
         &[
             json!([
-                fp16_4_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_8_inv.to_string()
+                FP16_4_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_8_INV.to_string()
             ]),
             json!([
-                fp16_16_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_16_inv.to_string()
+                FP16_16_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_16_INV.to_string()
             ]),
             json!([
-                fp16_8_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_4_inv.to_string()
+                FP16_8_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_4_INV.to_string()
             ]),
             json!([
-                fp16_16_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_4_inv.to_string()
+                FP16_16_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_4_INV.to_string()
             ]),
         ],
         b"",
@@ -741,9 +739,9 @@ async fn e2e_prio3_fixed16vec() {
 
 #[tokio::test]
 async fn e2e_prio3_fixed32vec() {
-    let fp32_4_inv = fixed!(0.25: I1F31);
-    let fp32_8_inv = fixed!(0.125: I1F31);
-    let fp32_16_inv = fixed!(0.0625: I1F31);
+    const FP32_4_INV: I1F31 = I1F31::lit("0.25");
+    const FP32_8_INV: I1F31 = I1F31::lit("0.125");
+    const FP32_16_INV: I1F31 = I1F31::lit("0.0625");
     let result = run(
         "e2e_prio3_fixed32vec",
         QueryKind::TimeInterval,
@@ -752,24 +750,24 @@ async fn e2e_prio3_fixed32vec() {
                "length": "3"}),
         &[
             json!([
-                fp32_4_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_8_inv.to_string()
+                FP32_4_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_8_INV.to_string()
             ]),
             json!([
-                fp32_16_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_16_inv.to_string()
+                FP32_16_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_16_INV.to_string()
             ]),
             json!([
-                fp32_8_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_4_inv.to_string()
+                FP32_8_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_4_INV.to_string()
             ]),
             json!([
-                fp32_16_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_4_inv.to_string()
+                FP32_16_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_4_INV.to_string()
             ]),
         ],
         b"",
@@ -780,9 +778,9 @@ async fn e2e_prio3_fixed32vec() {
 
 #[tokio::test]
 async fn e2e_prio3_fixed16vec_fixed_size() {
-    let fp16_4_inv = fixed!(0.25: I1F15);
-    let fp16_8_inv = fixed!(0.125: I1F15);
-    let fp16_16_inv = fixed!(0.0625: I1F15);
+    const FP16_4_INV: I1F15 = I1F15::lit("0.25");
+    const FP16_8_INV: I1F15 = I1F15::lit("0.125");
+    const FP16_16_INV: I1F15 = I1F15::lit("0.0625");
     let result = run(
         "e2e_prio3_fixed16vec_fixed_size",
         QueryKind::FixedSize,
@@ -791,24 +789,24 @@ async fn e2e_prio3_fixed16vec_fixed_size() {
                "length": "3"}),
         &[
             json!([
-                fp16_4_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_8_inv.to_string()
+                FP16_4_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_8_INV.to_string()
             ]),
             json!([
-                fp16_16_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_16_inv.to_string()
+                FP16_16_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_16_INV.to_string()
             ]),
             json!([
-                fp16_8_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_4_inv.to_string()
+                FP16_8_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_4_INV.to_string()
             ]),
             json!([
-                fp16_16_inv.to_string(),
-                fp16_8_inv.to_string(),
-                fp16_4_inv.to_string()
+                FP16_16_INV.to_string(),
+                FP16_8_INV.to_string(),
+                FP16_4_INV.to_string()
             ]),
         ],
         b"",
@@ -819,9 +817,9 @@ async fn e2e_prio3_fixed16vec_fixed_size() {
 
 #[tokio::test]
 async fn e2e_prio3_fixed32vec_fixed_size() {
-    let fp32_4_inv = fixed!(0.25: I1F31);
-    let fp32_8_inv = fixed!(0.125: I1F31);
-    let fp32_16_inv = fixed!(0.0625: I1F31);
+    const FP32_4_INV: I1F31 = I1F31::lit("0.25");
+    const FP32_8_INV: I1F31 = I1F31::lit("0.125");
+    const FP32_16_INV: I1F31 = I1F31::lit("0.0625");
     let result = run(
         "e2e_prio3_fixed32vec_fixed_size",
         QueryKind::FixedSize,
@@ -830,24 +828,24 @@ async fn e2e_prio3_fixed32vec_fixed_size() {
                "length": "3"}),
         &[
             json!([
-                fp32_4_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_8_inv.to_string()
+                FP32_4_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_8_INV.to_string()
             ]),
             json!([
-                fp32_16_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_16_inv.to_string()
+                FP32_16_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_16_INV.to_string()
             ]),
             json!([
-                fp32_8_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_4_inv.to_string()
+                FP32_8_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_4_INV.to_string()
             ]),
             json!([
-                fp32_16_inv.to_string(),
-                fp32_8_inv.to_string(),
-                fp32_4_inv.to_string()
+                FP32_16_INV.to_string(),
+                FP32_8_INV.to_string(),
+                FP32_4_INV.to_string()
             ]),
         ],
         b"",
