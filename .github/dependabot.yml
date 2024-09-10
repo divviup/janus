@@ -12,6 +12,17 @@ updates:
       - dependency-name: prio
         update-types:
           - version-update:semver-minor
+      # opentelemetry-rust has removed support for pull exporters, including
+      # opentelemetry-prometheus, and will add it back after the 1.0 release.
+      - dependency-name: opentelemetry
+        versions:
+        - "0.25"
+      - dependency-name: opentelemetry_sdk
+        versions:
+        - "0.25"
+      - dependency-name: opentelemetry-otlp
+        versions:
+        - "0.25"
     groups:
       serde:
         patterns:
