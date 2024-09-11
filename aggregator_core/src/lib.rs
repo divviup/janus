@@ -11,11 +11,6 @@ use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
 use trillium_router::RouterConnExt;
 
-// We must import `rstest_reuse` at the top of the crate
-// https://docs.rs/rstest_reuse/0.5.0/rstest_reuse/#use-rstest_reuse-at-the-top-of-your-crate
-#[cfg(test)]
-use rstest_reuse;
-
 pub mod datastore;
 pub mod query_type;
 pub mod task;
