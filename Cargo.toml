@@ -49,7 +49,7 @@ hex-literal = "0.4.1"
 hpke-dispatch = "0.6.0"
 http = "1.1"
 http-api-problem = "0.58.0"
-itertools = "0.12"
+itertools = "0.13"
 janus_aggregator = { version = "0.7.33", path = "aggregator" }
 janus_aggregator_api = { version = "0.7.33", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.7.33", path = "aggregator_core" }
