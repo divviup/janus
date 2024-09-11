@@ -2168,7 +2168,29 @@ dependencies = [
  "generic-array",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "rand_core",
+ "sha2 0.10.8",
+ "subtle",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "hpke"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4917627a14198c3603282c5158b815ad5534795451d3c074b53cf3cee0960b11"
+dependencies = [
+ "aead 0.5.2",
+ "aes-gcm 0.10.3",
+ "chacha20poly1305 0.10.1",
+ "digest 0.10.7",
+ "generic-array",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
  "p256",
+ "p384",
+ "p521",
  "rand_core",
  "sha2 0.10.8",
  "subtle",
@@ -2178,13 +2200,13 @@ dependencies = [
 
 [[package]]
 name = "hpke-dispatch"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b76f2793e425663fbe5e56da951cf4649d4b3d545d9667ea7f9edc53aa08cba"
+checksum = "fab97941666d81e06e29cc426612b03adfa5a6717284a7081ad96cf109c4cfc1"
 dependencies = [
  "cfg-if",
  "getrandom",
- "hpke",
+ "hpke 0.12.0",
  "num_enum",
  "rand",
  "serde",
@@ -3454,7 +3476,7 @@ dependencies = [
  "chacha20poly1305 0.8.0",
  "hex",
  "hkdf 0.11.0",
- "hpke",
+ "hpke 0.11.0",
  "lazy_static",
  "log",
  "rand",
@@ -3605,6 +3627,27 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
 dependencies = [
+ "elliptic-curve",
+ "primeorder",
+]
+
+[[package]]
+name = "p384"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70786f51bcc69f6a4c0360e063a4cac5419ef7c5cd5b3c99ad70f3be5ba79209"
+dependencies = [
+ "elliptic-curve",
+ "primeorder",
+]
+
+[[package]]
+name = "p521"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fc9e2161f1f215afdfce23677034ae137bbd45016a880c2eb3ba8eb95f085b2"
+dependencies = [
+ "base16ct",
  "elliptic-curve",
  "primeorder",
 ]
