@@ -599,7 +599,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
                         // point.
-                        let reports_by_batch = reports.into_iter().group_by(|report_metadata| {
+                        let reports_by_batch = reports.into_iter().chunk_by(|report_metadata| {
                             // Unwrap safety: task.time_precision() is nonzero, so
                             // `to_batch_interval_start` will never return an error.
                             report_metadata

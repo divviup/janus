@@ -1621,7 +1621,7 @@ where
     });
     batch_aggregations
         .into_iter()
-        .group_by(|ba| {
+        .chunk_by(|ba| {
             (
                 *ba.task_id(),
                 ba.batch_identifier().clone(),
