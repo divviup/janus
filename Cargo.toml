@@ -120,9 +120,9 @@ trillium-macros = "0.0.6"
 trillium-opentelemetry = "0.9.0"
 trillium-prometheus = "0.1.0"
 trillium-proxy = { version = "0.5.5", default-features = false }
-trillium-router = "0.3.6"
-trillium-rustls = "0.7.0"
-trillium-testing = "0.6.1"
+trillium-router = "0.4.1"
+trillium-rustls = "0.8.1"
+trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
 trycmd = "0.15.7"
 url = { version = "2.5.2", features = ["serde"] }
