@@ -38,7 +38,7 @@ chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.5.16", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.2.0"
 deadpool = "0.12.1"
-deadpool-postgres = "0.13.2"
+deadpool-postgres = "0.14.0"
 derivative = "2.2.0"
 divviup-client = "0.4"
 fixed = "1.27"
