@@ -57,6 +57,10 @@ updates:
         patterns:
           - thiserror
           - anyhow
+      rstest:
+        patterns:
+          - rstest
+          - rstest_reuse
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
