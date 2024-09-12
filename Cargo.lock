@@ -2614,7 +2614,7 @@ dependencies = [
  "trillium-macros 0.0.6",
  "trillium-opentelemetry",
  "trillium-prometheus",
- "trillium-router 0.4.1",
+ "trillium-router",
  "trillium-testing",
  "trillium-tokio",
  "trycmd",
@@ -2651,7 +2651,7 @@ dependencies = [
  "trillium",
  "trillium-api",
  "trillium-opentelemetry",
- "trillium-router 0.4.1",
+ "trillium-router",
  "trillium-testing",
  "url",
 ]
@@ -2706,7 +2706,7 @@ dependencies = [
  "tracing-log",
  "trillium",
  "trillium-macros 0.0.6",
- "trillium-router 0.4.1",
+ "trillium-router",
  "url",
 ]
 
@@ -2892,7 +2892,7 @@ dependencies = [
  "trillium",
  "trillium-api",
  "trillium-proxy",
- "trillium-router 0.4.1",
+ "trillium-router",
  "trillium-tokio",
  "url",
  "zstd",
@@ -6101,14 +6101,14 @@ dependencies = [
 
 [[package]]
 name = "trillium-prometheus"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a50568433817ef994081242d1c62e672fec0c32165f431f47dc8bb58d2665c1a"
+checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
 dependencies = [
  "prometheus",
  "tracing",
  "trillium",
- "trillium-router 0.3.6",
+ "trillium-router",
 ]
 
 [[package]]
@@ -6128,17 +6128,6 @@ dependencies = [
  "trillium-forwarding",
  "trillium-http",
  "url",
-]
-
-[[package]]
-name = "trillium-router"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71daa9c919d4b4a7afae1a846fa2e60aad712e5b924936751630a880a84e9659"
-dependencies = [
- "log",
- "routefinder",
- "trillium",
 ]
 
 [[package]]
