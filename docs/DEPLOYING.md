@@ -30,6 +30,9 @@ the rest of the components are responsible for advancing the aggregation flow
 and collect flow, including making requests to the helper. All communication
 between components happens implicitly through the database.
 
+Janus is horizontally scalable. It is safe to run any number of Janus components
+in parallel.
+
 A related binary, `janus_cli`, can be used to perform various one-off tasks, and
 interacts with the database as well.
 
