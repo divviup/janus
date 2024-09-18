@@ -130,4 +130,9 @@ To create a new migration:
   data type (possibly expensive). This will also catch any mistakes where you
   intended to clone the Arc and not the underlying data.
 
+* Prefer to use `janus_messages::{Time, Duration}` _only_ for serialization and
+  deserialization of DAP messages. It's tempting to use them for representing
+  time for other use cases, but for any other use case we should prefer to use
+  `chrono`, or `std::time` where appropriate.
+
 [hide_env_values]: https://docs.rs/clap/latest/clap/struct.Arg.html#method.hide_env_values
