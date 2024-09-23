@@ -2604,7 +2604,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $24",
+           WHERE id = report_aggregations.aggregation_job_id) < $24",
             )
             .await?;
         check_insert(
@@ -2706,7 +2706,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
         FROM aggregation_jobs
-        WHERE id = report_aggregations.aggregation_job_id) >= $9",
+        WHERE id = report_aggregations.aggregation_job_id) < $9",
                     )
                     .await?;
                 check_insert(
