@@ -609,6 +609,11 @@ fn check_aggregate_results_valid<Q: janus_messages::query_type::QueryType>(
             );
             return false;
         }
+        let sum = collection.aggregate_result().iter().sum::<u128>();
+        if sum != u128::from(collection.report_count()) {
+            error!(?collection, "bad report count");
+            return false;
+        }
     }
     true
 }
