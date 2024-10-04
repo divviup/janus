@@ -1426,13 +1426,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "075e2b54e1dc8e1fe10ad1b36eb938508a21f77913c7d1a0e7c4ca7254a86ca6"
+checksum = "91f80d32b7d98a75895b6bea7fccfffa03b6ebf8e79e1876953ec4846018cfbd"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.34",
+ "janus_messages 0.7.36 (registry+https://github.com/rust-lang/crates.io-index)",
  "log",
  "num-bigint",
  "num-rational",
@@ -2894,24 +2894,6 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "108728af014d595e134449a58beb35185c97c684e8c13ae8b33e8f247b4e86e0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "derivative",
- "hex",
- "num_enum",
- "prio",
- "rand",
- "serde",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "janus_messages"
 version = "0.7.36"
 dependencies = [
  "anyhow",
@@ -2925,6 +2907,24 @@ dependencies = [
  "rand",
  "serde",
  "serde_test",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "janus_messages"
+version = "0.7.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9aa9d543aa063cb2d78c24699696c4c10ca67a2b643c4d99cb6912c01193391"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "derivative",
+ "hex",
+ "num_enum",
+ "prio",
+ "rand",
+ "serde",
  "thiserror",
  "url",
 ]
