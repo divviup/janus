@@ -16,13 +16,13 @@ updates:
       # opentelemetry-prometheus, and will add it back after the 1.0 release.
       - dependency-name: opentelemetry
         versions:
-        - "0.25"
+        - ">= 0.25, < 1.0"
       - dependency-name: opentelemetry_sdk
         versions:
-        - "0.25"
+        - ">= 0.25, < 1.0"
       - dependency-name: opentelemetry-otlp
         versions:
-        - "0.25"
+        - ">= 0.25, < 1.0"
     groups:
       serde:
         patterns:
