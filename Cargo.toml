@@ -87,7 +87,7 @@ ring = "0.17.8"
 rstest = "0.22.0"
 rstest_reuse = "0.7.0"
 rustc_version = "0.4.1"
-rustls = "0.23.13"
+rustls = "0.23.14"
 rustls-pemfile = "2.2.0"
 sec1 = "0.7"
 serde = { version = "1.0.210", features = ["derive"] }
