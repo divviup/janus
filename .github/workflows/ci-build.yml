@@ -30,6 +30,8 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: "-D warnings"
     steps:
+    - name: 'Workaround for issue #3178'
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
     - name: Set default input values
       id: default-input-values
       run: |
