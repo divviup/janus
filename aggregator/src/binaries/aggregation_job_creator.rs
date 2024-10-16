@@ -136,6 +136,7 @@ mod tests {
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
+                thread_pool_stack_size: None,
             },
             batch_aggregation_shard_count: 32,
             tasks_update_frequency_s: 3600,

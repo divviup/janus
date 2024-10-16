@@ -335,7 +335,7 @@ where
         register_database_pool_status_metrics(pool, &meter)?;
 
         if uses_rayon {
-            initialize_rayon()?;
+            initialize_rayon(config.common_config().thread_pool_stack_size)?;
         }
 
         let health_check_listen_address = config.common_config().health_check_listen_address;
@@ -540,10 +540,12 @@ pub async fn setup_server(
 }
 
 /// Configure the global rayon threadpool, and provide thread names.
-fn initialize_rayon() -> Result<(), ThreadPoolBuildError> {
-    ThreadPoolBuilder::new()
-        .thread_name(|i| format!("rayon-{i}"))
-        .build_global()
+fn initialize_rayon(stack_size: Option<usize>) -> Result<(), ThreadPoolBuildError> {
+    let mut builder = ThreadPoolBuilder::new().thread_name(|i| format!("rayon-{i}"));
+    if let Some(stack_size) = stack_size {
+        builder = builder.stack_size(stack_size);
+    }
+    builder.build_global()
 }
 
 pub(crate) fn initialize_rustls() {
