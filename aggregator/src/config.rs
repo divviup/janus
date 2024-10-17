@@ -50,6 +50,13 @@ pub struct CommonConfig {
     /// work from being cancelled.
     #[serde(default = "default_max_transaction_retries")]
     pub max_transaction_retries: u64,
+
+    /// Stack size, in bytes, for threads used for VDAF preparation.
+    ///
+    /// Optional. If not set, the default stack size will be used. This is currently 2 MiB on most
+    /// platforms. See <https://doc.rust-lang.org/std/thread/index.html#stack-size>.
+    #[serde(default)]
+    pub thread_pool_stack_size: Option<usize>,
 }
 
 fn default_health_check_listen_address() -> SocketAddr {
@@ -369,6 +376,7 @@ connection_pool_max_size: 42",
             metrics_config: generate_metrics_config(),
             health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         })
     }
 

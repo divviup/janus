@@ -153,6 +153,7 @@ impl JanusInProcess {
             },
             health_check_listen_address: (Ipv4Addr::LOCALHOST, 0).into(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         };
         let aggregator_options = AggregatorOptions {
             common: common_binary_options.clone(),

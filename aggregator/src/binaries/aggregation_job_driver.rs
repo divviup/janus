@@ -174,6 +174,7 @@ mod tests {
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
+                thread_pool_stack_size: None,
             },
             job_driver_config: JobDriverConfig {
                 job_discovery_interval_s: 10,

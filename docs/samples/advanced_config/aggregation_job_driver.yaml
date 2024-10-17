@@ -89,6 +89,9 @@ metrics_config:
     # (optional)
     poll_time_histogram_buckets: 10
 
+# Stack size, in bytes, for threads used for VDAF preparation. (optional)
+thread_pool_stack_size: 2097152
+
 # Aggregation job driver-related parameters:
 
 # Maximum interval on which to acquire incomplete aggregation jobs. (required)

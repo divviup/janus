@@ -604,6 +604,7 @@ mod tests {
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
                 max_transaction_retries: default_max_transaction_retries(),
+                thread_pool_stack_size: Some(2 * 1024 * 1024),
             },
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
