@@ -15,11 +15,11 @@ use tokio::{
     task::JoinHandle,
 };
 
-/// Tracks multiple instrumented [`Runtime`] objects, for use in tests. Each
-/// [`TestRuntime`] keeps track of how many of its tasks have been completed,
-/// and tests can wait until a given number of tasks finish. If any task
-/// panics, this manager object will panic on drop, to ensure that the
-/// relevant test fails and the task panics do not go unnoticed.
+/// Tracks multiple instrumented [`Runtime`] objects, for use in tests.
+///
+/// Each [`TestRuntime`] keeps track of how many of its tasks have been completed, and tests can
+/// wait until a given number of tasks finish. If any task panics, this manager object will panic
+/// on drop, to ensure that the relevant test fails and the task panics do not go unnoticed.
 pub struct TestRuntimeManager<L> {
     map: HashMap<L, TestRuntime>,
 }

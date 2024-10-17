@@ -42,8 +42,9 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
 }
 
 /// This produces a future that runs the aggregator and provides a [`tokio::sync::watch::Receiver`]
-/// that returns the socket address that the aggregator server listens on. This is useful when
-/// specifying ephemeral socket addresses.
+/// that returns the socket address that the aggregator server listens on.
+///
+/// This is useful when specifying ephemeral socket addresses.
 pub fn make_callback_ephemeral_address(
     ctx: BinaryContext<RealClock, Options, Config>,
 ) -> (

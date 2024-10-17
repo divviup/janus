@@ -302,9 +302,11 @@ async fn prometheus_metrics_server(
     Ok((handle, port))
 }
 
-/// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
-/// API can be used to create and update meters, and they will be sent through this exporter. The
-/// returned handle should not be dropped until the application shuts down.
+/// Install a metrics provider and exporter, per the given configuration.
+///
+/// The OpenTelemetry global API can be used to create and update meters, and they will be sent
+/// through this exporter. The returned handle should not be dropped until the application shuts
+/// down.
 pub async fn install_metrics_exporter(
     config: &MetricsConfiguration,
     _runtime: &Runtime,

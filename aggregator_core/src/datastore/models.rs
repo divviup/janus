@@ -567,8 +567,9 @@ impl Distribution<LeaseToken> for Standard {
     }
 }
 
-/// Lease represents a time-constrained lease for exclusive access to some entity in Janus. It
-/// has an expiry after which it is no longer valid; another process can take a lease on the
+/// A time-constrained lease for exclusive access to some entity in Janus.
+///
+/// It has an expiry after which it is no longer valid; another process can take a lease on the
 /// same entity after the expiration time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lease<T> {
@@ -1183,12 +1184,13 @@ impl ReportAggregationMetadata {
     }
 }
 
-/// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
-/// possibly-ongoing aggregation of the set of input shares that fall within the batch identified by
-/// `batch_identifier` with the aggregation parameter `aggregation_parameter`. This is the
-/// finest-grained possible aggregate share we can emit for this task. The aggregate share
-/// constructed to service a collect or aggregate share request consists of one or more
-/// `BatchAggregation`s merged together.
+/// Corresponds to a row in the `batch_aggregations` table.
+///
+/// This represents the possibly-ongoing aggregation of the set of input shares that fall within
+/// the batch identified by `batch_identifier` with the aggregation parameter
+/// `aggregation_parameter`.  This is the finest-grained possible aggregate share we can emit for
+/// this task. The aggregate share constructed to service a collect or aggregate share request
+/// consists of one or more `BatchAggregation`s merged together.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct BatchAggregation<
@@ -1594,9 +1596,10 @@ pub(super) enum BatchAggregationStateCode {
 }
 
 /// Merges batch aggregations for the same batch (by task ID, batch identifier, and aggregation
-/// parameter), returning a single merged batch aggregation per batch with ord 0. Batch aggregations
-/// for different batches are returned sorted by task ID, batch identifier, and aggregation
-/// parameter.
+/// parameter), returning a single merged batch aggregation per batch with ord 0.
+///
+/// Batch aggregations for different batches are returned sorted by task ID, batch identifier, and
+/// aggregation parameter.
 #[cfg(feature = "test-util")]
 pub fn merge_batch_aggregations_by_batch<
     const SEED_SIZE: usize,

@@ -164,9 +164,10 @@ impl<'de> Deserialize<'de> for HpkePrivateKey {
     }
 }
 
-/// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext. The
-/// provided `application_info` and `associated_data` are cryptographically bound to the ciphertext
-/// and are required to successfully decrypt it.
+/// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext.
+///
+/// The provided `application_info` and `associated_data` are cryptographically bound to the
+/// ciphertext and are required to successfully decrypt it.
 pub fn seal(
     recipient_config: &HpkeConfig,
     application_info: &HpkeApplicationInfo,
