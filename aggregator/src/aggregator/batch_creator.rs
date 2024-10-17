@@ -26,9 +26,10 @@ use tokio::try_join;
 use tracing::debug;
 
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
-/// outstanding batches and aggregation jobs, and provides unused reports at the end. If time
-/// bucketing is enabled, reports will be separated by timestamp into different sets of outstanding
-/// reports.
+/// outstanding batches and aggregation jobs, and provides unused reports at the end.
+///
+/// If time bucketing is enabled, reports will be separated by timestamp into different sets of
+/// outstanding reports.
 pub struct BatchCreator<'a, const SEED_SIZE: usize, A>
 where
     A: Aggregator<SEED_SIZE, 16>,

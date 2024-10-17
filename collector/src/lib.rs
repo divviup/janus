@@ -401,9 +401,9 @@ pub struct Collector<V: vdaf::Collector> {
     hpke_keypair: HpkeKeypair,
     /// An implementation of the task's VDAF.
     vdaf: V,
-    #[derivative(Debug = "ignore")]
 
     /// HTTPS client.
+    #[derivative(Debug = "ignore")]
     http_client: reqwest::Client,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,

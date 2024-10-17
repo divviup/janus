@@ -119,7 +119,9 @@ fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
 pub type TraceReloadHandle = reload::Handle<EnvFilter, Registry>;
 
 /// Configures and installs a tracing subscriber, to capture events logged with [`tracing::info`]
-/// and the like. Captured events are written to stdout, with formatting affected by the provided
+/// and the like.
+///
+/// Captured events are written to stdout, with formatting affected by the provided
 /// [`TraceConfiguration`]. A handle to the stdout [`EnvFilter`] is provided, so that the filter
 /// configuration can be altered later on at runtime.
 pub fn install_trace_subscriber(

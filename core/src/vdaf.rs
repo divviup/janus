@@ -32,8 +32,10 @@ pub enum Prio3FixedPointBoundedL2VecSumBitSize {
 }
 
 /// Contains dedicated enums which describe the differential privacy strategies
-/// of a given VDAF. If a VDAF only supports a single strategy, such as for example
-/// `NoDifferentialPrivacy`, then no enum is required.
+/// of a given VDAF.
+///
+/// If a VDAF only supports a single strategy, such as for example `NoDifferentialPrivacy`, then no
+/// enum is required.
 pub mod vdaf_dp_strategies {
     use prio::dp::distributions::PureDpDiscreteLaplace;
     #[cfg(feature = "fpvec_bounded_l2")]
@@ -568,12 +570,14 @@ macro_rules! vdaf_dispatch_impl {
     };
 }
 
-/// Emits a match block dispatching on a [`VdafInstance`]. This must be called inside a method that
-/// returns a result, with an error type that [`prio::vdaf::VdafError`] can be converted into. Takes
-/// a `&VdafInstance` as the first argument, followed by a pseudo-pattern and body. The
-/// pseudo-pattern takes a variable name for the constructed VDAF, a type alias name that the block
-/// can use to explicitly specify the VDAF's type, and the name of a const that will be set to the
-/// VDAF's verify key length, also for explicitly specifying type parameters.
+/// Emits a match block dispatching on a [`VdafInstance`].
+///
+/// This must be called inside a method that returns a result, with an error type that
+/// [`prio::vdaf::VdafError`] can be converted into. Takes a `&VdafInstance` as the first argument,
+/// followed by a pseudo-pattern and body. The pseudo-pattern takes a variable name for the
+/// constructed VDAF, a type alias name that the block can use to explicitly specify the VDAF's
+/// type, and the name of a const that will be set to the VDAF's verify key length, also for
+/// explicitly specifying type parameters.
 ///
 /// # Example:
 ///

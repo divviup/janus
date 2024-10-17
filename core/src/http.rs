@@ -102,6 +102,8 @@ impl Display for HttpErrorResponse {
     }
 }
 
+/// Extracts a bearer authentication token from the connection.
+///
 /// If the request in `conn` has an `authorization` header, returns the bearer token in the header
 /// value. Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.

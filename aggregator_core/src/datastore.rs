@@ -5782,9 +5782,10 @@ impl RowExt for Row {
     }
 }
 
-/// A Crypter allows a Datastore to encrypt/decrypt sensitive values stored to the datastore. Values
-/// are cryptographically bound to the specific location in the datastore in which they are stored.
-/// Rollback protection is not provided.
+/// Allows a Datastore to encrypt/decrypt sensitive values stored to the datastore.
+///
+/// Values are cryptographically bound to the specific location in the datastore in which they are
+/// stored.  Rollback protection is not provided.
 pub struct Crypter {
     keys: Vec<LessSafeKey>,
 }

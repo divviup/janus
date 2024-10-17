@@ -48,7 +48,7 @@ impl Serialize for VerifyKeyInit {
 
 struct VerifyKeyInitVisitor;
 
-impl<'de> Visitor<'de> for VerifyKeyInitVisitor {
+impl Visitor<'_> for VerifyKeyInitVisitor {
     type Value = VerifyKeyInit;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

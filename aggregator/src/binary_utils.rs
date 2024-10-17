@@ -128,9 +128,10 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
     Ok(pool)
 }
 
-/// Connects to a datastore, given a connection pool to the underlying database. `datastore_keys`
-/// is a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
-/// stored in the datastore; it must not be empty.
+/// Connects to a datastore, given a connection pool to the underlying database.
+///
+/// `datastore_keys` is a list of AES-128-GCM keys, encoded in base64 with no padding, used to
+/// protect secret values stored in the datastore; it must not be empty.
 pub async fn datastore<C: Clock>(
     pool: Pool,
     clock: C,
@@ -500,9 +501,11 @@ pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
 }
 
 /// Construct a server that listens on the provided [`SocketAddr`] and services requests with
-/// `handler`. If the `SocketAddr`'s port is 0, an ephemeral port is used. Returns a `SocketAddr`
-/// representing the address and port the server are listening on and a future that can be `await`ed
-/// to wait until the server shuts down.
+/// `handler`.
+///
+/// If the `SocketAddr`'s port is 0, an ephemeral port is used. Returns a `SocketAddr` representing
+/// the address and port the server are listening on and a future that can be `await`ed to wait
+/// until the server shuts down.
 pub async fn setup_server(
     listen_address: SocketAddr,
     stopper: Stopper,

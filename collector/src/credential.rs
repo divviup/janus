@@ -7,9 +7,10 @@ use janus_messages::{HpkeConfig, HpkeConfigId, HpkePublicKey};
 use serde::{Deserialize, Serialize};
 
 /// Serializable representation of a private collector credential, which contains all secrets a
-/// collector uses to interact with an aggregator. It contains the [`BearerToken`] for
-/// authorization to an aggregator, and the private HPKE configuration for decrypting aggregate
-/// shares.
+/// collector uses to interact with an aggregator.
+///
+/// It contains the [`BearerToken`] for authorization to an aggregator, and the private HPKE
+/// configuration for decrypting aggregate shares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrivateCollectorCredential {
     id: HpkeConfigId,

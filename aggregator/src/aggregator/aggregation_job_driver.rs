@@ -645,7 +645,7 @@ where
                             }
                         };
 
-                        return pc_and_sa_sender
+                        pc_and_sa_sender
                             .send((
                                 report_aggregation.ord(),
                                 PrepareContinue::new(*report_aggregation.report_id(), message),
@@ -654,7 +654,7 @@ where
                                     leader_state: prep_state,
                                 },
                             ))
-                            .map_err(|_| ());
+                            .map_err(|_| ())
                     },
                 )
             }
