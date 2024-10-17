@@ -135,7 +135,7 @@ impl Serialize for HpkePrivateKey {
 
 struct HpkePrivateKeyVisitor;
 
-impl<'de> Visitor<'de> for HpkePrivateKeyVisitor {
+impl Visitor<'_> for HpkePrivateKeyVisitor {
     type Value = HpkePrivateKey;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

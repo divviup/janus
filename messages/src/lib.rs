@@ -296,7 +296,7 @@ impl From<[u8; Self::LEN]> for BatchId {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for BatchId {
+impl TryFrom<&[u8]> for BatchId {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -376,7 +376,7 @@ impl From<[u8; Self::LEN]> for ReportId {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for ReportId {
+impl TryFrom<&[u8]> for ReportId {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -456,7 +456,7 @@ impl From<[u8; Self::LEN]> for ReportIdChecksum {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for ReportIdChecksum {
+impl TryFrom<&[u8]> for ReportIdChecksum {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -685,7 +685,7 @@ impl From<[u8; Self::LEN]> for TaskId {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for TaskId {
+impl TryFrom<&[u8]> for TaskId {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -730,7 +730,7 @@ impl Serialize for TaskId {
 
 struct TaskIdVisitor;
 
-impl<'de> Visitor<'de> for TaskIdVisitor {
+impl Visitor<'_> for TaskIdVisitor {
     type Value = TaskId;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -1093,7 +1093,7 @@ impl Serialize for HpkePublicKey {
 
 struct HpkePublicKeyVisitor;
 
-impl<'de> Visitor<'de> for HpkePublicKeyVisitor {
+impl Visitor<'_> for HpkePublicKeyVisitor {
     type Value = HpkePublicKey;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -2276,7 +2276,7 @@ impl From<[u8; Self::LEN]> for AggregationJobId {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for AggregationJobId {
+impl TryFrom<&[u8]> for AggregationJobId {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {

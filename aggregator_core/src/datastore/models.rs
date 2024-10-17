@@ -545,7 +545,7 @@ impl Display for LeaseToken {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for LeaseToken {
+impl TryFrom<&[u8]> for LeaseToken {
     type Error = &'static str;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {

@@ -84,7 +84,7 @@ impl<T> NumberAsStringVisitor<T> {
     }
 }
 
-impl<'de, T> Visitor<'de> for NumberAsStringVisitor<T>
+impl<T> Visitor<'_> for NumberAsStringVisitor<T>
 where
     T: FromStr,
     <T as FromStr>::Err: Display,
