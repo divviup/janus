@@ -13,7 +13,6 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "janus_aggregato
 test-util = [
     "dep:hex",
     "dep:regex",
-    "dep:zstd",
 ]
 testcontainer = ["test-util"]
 
@@ -50,7 +49,6 @@ trillium-proxy = { workspace = true }
 trillium-router.workspace = true
 trillium-tokio.workspace = true
 url.workspace = true
-zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }

@@ -3486,7 +3486,7 @@ impl<'a> RequestTimer<'a> {
     }
 }
 
-impl<'a, E> Notify<E> for &RequestTimer<'a> {
+impl<E> Notify<E> for &RequestTimer<'_> {
     fn notify(&mut self, _: E, _: std::time::Duration) {
         self.finish_attempt("error")
     }
