@@ -271,6 +271,7 @@ async fn aggregator_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         },
         taskprov_config: TaskprovConfig::default(),
         garbage_collection: Some(GarbageCollectorConfig {
@@ -338,6 +339,7 @@ async fn garbage_collector_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         },
         garbage_collection: GarbageCollectorConfig {
             gc_frequency_s: 60,
@@ -368,6 +370,7 @@ async fn aggregation_job_creator_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         },
         batch_aggregation_shard_count: 32,
         tasks_update_frequency_s: 3600,
@@ -396,6 +399,7 @@ async fn aggregation_job_driver_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         },
         job_driver_config: JobDriverConfig {
             job_discovery_interval_s: 10,
@@ -433,6 +437,7 @@ async fn collection_job_driver_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
             max_transaction_retries: default_max_transaction_retries(),
+            thread_pool_stack_size: None,
         },
         job_driver_config: JobDriverConfig {
             job_discovery_interval_s: 10,
