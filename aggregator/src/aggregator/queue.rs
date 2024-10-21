@@ -67,6 +67,10 @@ impl LIFORequestQueue {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
         let id_counter = Default::default();
         let metrics = Metrics::new(meter, meter_prefix);
+        metrics.max_outstanding_requests.record(
+            u64::try_from(usize::try_from(concurrency).unwrap() + depth).unwrap(),
+            &[],
+        );
         Self::dispatcher(message_rx, concurrency, depth, metrics);
 
         Ok(Self {
@@ -287,10 +291,15 @@ struct Metrics {
     /// error should only be +/- 1. It is also more or less suitable for synchronization during
     /// tests.
     outstanding_requests: Gauge<u64>,
+
+    /// The maximum number of requests the queue will service at a time. This is always set to
+    /// `depth + concurrency`.
+    max_outstanding_requests: Gauge<u64>,
 }
 
 impl Metrics {
     const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "outstanding_requests";
+    const MAX_OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "max_outstanding_requests";
 
     fn new(meter: &Meter, prefix: &str) -> Self {
         Self {
@@ -299,6 +308,17 @@ impl Metrics {
                 .with_description(concat!(
                     "The approximate number of requests currently being serviced by the ",
                     "aggregator."
+                ))
+                .with_unit("{request}")
+                .init(),
+            max_outstanding_requests: meter
+                .u64_gauge(
+                    [prefix, Self::MAX_OUTSTANDING_REQUESTS_METRIC_NAME]
+                        .into_iter()
+                        .join("_"),
+                )
+                .with_description(concat!(
+                    "The maximum number of requests that the aggregator can service at a time."
                 ))
                 .with_unit("{request}")
                 .init(),
