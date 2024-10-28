@@ -74,7 +74,7 @@ pub(super) struct TokioRuntimeMetrics {
     attributes_remote: Vec<KeyValue>,
     #[derivative(Debug = "ignore")]
     attributes_local_queue_worker: Vec<Vec<KeyValue>>,
-    attributes_injection_queue: Vec<KeyValue>,
+    attributes_global_queue: Vec<KeyValue>,
     attributes_blocking_queue: Vec<KeyValue>,
 }
 
@@ -116,8 +116,7 @@ impl TokioRuntimeMetrics {
                 )
             })
             .collect();
-        let attributes_injection_queue =
-            Vec::from([KeyValue::new("queue", "injection")].as_slice());
+        let attributes_global_queue = Vec::from([KeyValue::new("queue", "global")].as_slice());
         let attributes_blocking_queue = Vec::from([KeyValue::new("queue", "blocking")].as_slice());
 
         Self {
@@ -131,7 +130,7 @@ impl TokioRuntimeMetrics {
             attributes_local_overflow,
             attributes_remote,
             attributes_local_queue_worker,
-            attributes_injection_queue,
+            attributes_global_queue,
             attributes_blocking_queue,
         }
     }
@@ -147,7 +146,7 @@ impl MetricProducer for TokioRuntimeMetrics {
         let spawned_task_count = self.runtime_metrics.spawned_tasks_count();
         let remote_schedule_count = self.runtime_metrics.remote_schedule_count();
         let budget_forced_yield_count = self.runtime_metrics.budget_forced_yield_count();
-        let injection_queue_depth = self.runtime_metrics.injection_queue_depth();
+        let global_queue_depth = self.runtime_metrics.global_queue_depth();
         let blocking_queue_depth = self.runtime_metrics.blocking_queue_depth();
         let io_driver_fd_registered_count = self.runtime_metrics.io_driver_fd_registered_count();
         let io_driver_fd_deregistered_count =
@@ -266,8 +265,8 @@ impl MetricProducer for TokioRuntimeMetrics {
             Metric {
                 name: "tokio.task.scheduled".into(),
                 description: "Number of tasks scheduled, either to the thread's own local queue, \
-                              from a worker thread to the injection queue due to overflow, or \
-                              from a remote thread to the injection queue"
+                              from a worker thread to the global queue due to overflow, or \
+                              from a remote thread to the global queue"
                     .into(),
                 unit: "{task}".into(),
                 data: Box::new(Sum::<u64> {
@@ -401,7 +400,7 @@ impl MetricProducer for TokioRuntimeMetrics {
             },
             Metric {
                 name: "tokio.queue.depth".into(),
-                description: "Number of tasks currently in the runtime's injection queue, \
+                description: "Number of tasks currently in the runtime's global queue, \
                               blocking thread pool queue, or a worker's local queue"
                     .into(),
                 unit: "{task}".into(),
@@ -422,10 +421,10 @@ impl MetricProducer for TokioRuntimeMetrics {
                                 }),
                         );
                         data_points.push(DataPoint {
-                            attributes: self.attributes_injection_queue.clone(),
+                            attributes: self.attributes_global_queue.clone(),
                             start_time: Some(self.start_time),
                             time: Some(now),
-                            value: u64::try_from(injection_queue_depth).unwrap_or(u64::MAX),
+                            value: u64::try_from(global_queue_depth).unwrap_or(u64::MAX),
                             exemplars: Vec::new(),
                         });
                         data_points.push(DataPoint {
