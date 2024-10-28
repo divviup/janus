@@ -81,7 +81,7 @@ quickcheck_macros = "1.0.0"
 rand = "0.8"
 rayon = "1.10.0"
 reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
-regex = "1.11.0"
+regex = "1.11.1"
 retry-after = "0.4.0"
 ring = "0.17.8"
 rstest = "0.22.0"
