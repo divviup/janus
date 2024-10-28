@@ -8,32 +8,49 @@ use opentelemetry_sdk::metrics::{
     },
     reader::MetricProducer,
 };
-use tokio::runtime::{self, HistogramScale, RuntimeMetrics};
+use tokio::runtime::{self, HistogramConfiguration, LogHistogram, RuntimeMetrics};
 
-use crate::metrics::{HistogramScale as ConfigHistogramScale, TokioMetricsConfiguration};
-
-impl From<ConfigHistogramScale> for HistogramScale {
-    fn from(value: ConfigHistogramScale) -> Self {
-        match value {
-            ConfigHistogramScale::Linear => HistogramScale::Linear,
-            ConfigHistogramScale::Log => HistogramScale::Log,
-        }
-    }
-}
+use crate::metrics::{PollTimeHistogramConfiguration, TokioMetricsConfiguration};
 
 pub(crate) fn configure_runtime(
     runtime_builder: &mut runtime::Builder,
     config: &TokioMetricsConfiguration,
 ) {
     if config.enable_poll_time_histogram {
-        runtime_builder.enable_metrics_poll_count_histogram();
-        runtime_builder.metrics_poll_count_histogram_scale(config.poll_time_histogram_scale.into());
-        if let Some(resolution) = config.poll_time_histogram_resolution_us {
-            let resolution = Duration::from_micros(resolution);
-            runtime_builder.metrics_poll_count_histogram_resolution(resolution);
-        }
-        if let Some(buckets) = config.poll_time_histogram_buckets {
-            runtime_builder.metrics_poll_count_histogram_buckets(buckets);
+        runtime_builder.enable_metrics_poll_time_histogram();
+        match config.poll_time_histogram {
+            PollTimeHistogramConfiguration::Linear {
+                resolution_us,
+                num_buckets,
+            } => {
+                runtime_builder.metrics_poll_time_histogram_configuration(
+                    HistogramConfiguration::linear(
+                        Duration::from_micros(resolution_us),
+                        num_buckets,
+                    ),
+                );
+            }
+            PollTimeHistogramConfiguration::Log {
+                min_value_us,
+                max_value_us,
+                max_relative_error,
+            } => {
+                let mut histogram_builder = LogHistogram::builder();
+                if let Some(min_value_us) = min_value_us {
+                    let min_value = Duration::from_micros(min_value_us);
+                    histogram_builder = histogram_builder.min_value(min_value);
+                }
+                if let Some(max_value_us) = max_value_us {
+                    let max_value = Duration::from_micros(max_value_us);
+                    histogram_builder = histogram_builder.max_value(max_value);
+                }
+                if let Some(max_relative_error) = max_relative_error {
+                    histogram_builder = histogram_builder.max_error(max_relative_error);
+                }
+                runtime_builder.metrics_poll_time_histogram_configuration(
+                    HistogramConfiguration::log(histogram_builder.build()),
+                );
+            }
         }
     }
 }
@@ -47,8 +64,8 @@ pub(super) struct TokioRuntimeMetrics {
     #[derivative(Debug = "ignore")]
     start_time: SystemTime,
     num_workers: usize,
-    poll_count_histogram_num_buckets: usize,
-    poll_count_histogram_bucket_bounds: Vec<f64>,
+    poll_time_histogram_num_buckets: usize,
+    poll_time_histogram_bucket_bounds: Vec<f64>,
     #[derivative(Debug = "ignore")]
     attributes_local: Vec<KeyValue>,
     #[derivative(Debug = "ignore")]
@@ -68,17 +85,17 @@ impl TokioRuntimeMetrics {
         let start_time = SystemTime::now();
 
         let num_workers = runtime_metrics.num_workers();
-        let poll_count_histogram_enabled = runtime_metrics.poll_count_histogram_enabled();
-        let poll_count_histogram_num_buckets = runtime_metrics.poll_count_histogram_num_buckets();
-        let all_but_last_bucket = if poll_count_histogram_enabled {
-            0..poll_count_histogram_num_buckets - 1
+        let poll_time_histogram_enabled = runtime_metrics.poll_time_histogram_enabled();
+        let poll_time_histogram_num_buckets = runtime_metrics.poll_time_histogram_num_buckets();
+        let all_but_last_bucket = if poll_time_histogram_enabled {
+            0..poll_time_histogram_num_buckets - 1
         } else {
             0..0
         };
-        let poll_count_histogram_bucket_bounds = all_but_last_bucket
+        let poll_time_histogram_bucket_bounds = all_but_last_bucket
             .map(|bucket| {
                 runtime_metrics
-                    .poll_count_histogram_bucket_range(bucket)
+                    .poll_time_histogram_bucket_range(bucket)
                     .end
                     .as_secs_f64()
             })
@@ -108,8 +125,8 @@ impl TokioRuntimeMetrics {
             scope,
             start_time,
             num_workers,
-            poll_count_histogram_num_buckets,
-            poll_count_histogram_bucket_bounds,
+            poll_time_histogram_num_buckets,
+            poll_time_histogram_bucket_bounds,
             attributes_local,
             attributes_local_overflow,
             attributes_remote,
@@ -146,7 +163,7 @@ impl MetricProducer for TokioRuntimeMetrics {
         let mut local_schedule_count = 0;
         let mut overflow_count = 0;
         let mut local_queue_depth = vec![0; self.num_workers];
-        let mut poll_count_histogram_bucket_count = vec![0; self.poll_count_histogram_num_buckets];
+        let mut poll_time_histogram_bucket_count = vec![0; self.poll_time_histogram_num_buckets];
         let mut worker_mean_poll_time_sum = Duration::from_secs(0);
         for (worker, worker_local_queue_depth) in local_queue_depth.iter_mut().enumerate() {
             park_count += self.runtime_metrics.worker_park_count(worker);
@@ -160,10 +177,10 @@ impl MetricProducer for TokioRuntimeMetrics {
 
             *worker_local_queue_depth = self.runtime_metrics.worker_local_queue_depth(worker);
 
-            for (bucket, out) in poll_count_histogram_bucket_count.iter_mut().enumerate() {
+            for (bucket, out) in poll_time_histogram_bucket_count.iter_mut().enumerate() {
                 *out += self
                     .runtime_metrics
-                    .poll_count_histogram_bucket_count(worker, bucket);
+                    .poll_time_histogram_bucket_count(worker, bucket);
             }
 
             worker_mean_poll_time_sum += self.runtime_metrics.worker_mean_poll_time(worker);
@@ -432,8 +449,8 @@ impl MetricProducer for TokioRuntimeMetrics {
                         start_time: self.start_time,
                         time: now,
                         count: poll_count,
-                        bounds: self.poll_count_histogram_bucket_bounds.clone(),
-                        bucket_counts: poll_count_histogram_bucket_count,
+                        bounds: self.poll_time_histogram_bucket_bounds.clone(),
+                        bucket_counts: poll_time_histogram_bucket_count,
                         min: Some(f64::NAN),
                         max: Some(f64::NAN),
                         sum: f64::NAN,

@@ -681,7 +681,7 @@ impl KubernetesSecretOptions {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
     #[serde(flatten)]

@@ -220,7 +220,7 @@ fn default_dap_serving_prefix() -> String {
     "/".to_string()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Config {
     #[serde(flatten)]
     common_config: CommonConfig,

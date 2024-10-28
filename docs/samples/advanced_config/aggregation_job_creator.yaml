@@ -79,15 +79,14 @@ metrics_config:
     # Enable a histogram of task poll times. This introduces some additional
     # overhead. (optional)
     enable_poll_time_histogram: false
-    # Selects whether to use a `"linear"` scale or a logarithmic (`"log"`) scale
-    # for the poll time histogram. Defaults to `"linear"`. (optional)
-    poll_time_histogram_scale: linear
-    # Sets the poll time histogram's resolution. Defaults to 100 microseconds.
-    # (optional)
-    poll_time_histogram_resolution_us: 100
-    # Sets the number of buckets in the poll time histogram. Defaults to 10.
-    # (optional)
-    poll_time_histogram_buckets: 10
+    # Configure the scale and parameters of the poll time histogram. Defaults
+    # to a linear scale. (optional)
+    poll_time_histogram:
+      linear:
+        # Sets the poll time histogram's resolution. (optional)
+        resolution_us: 100
+        # Sets the number of buckets in the poll time histogram. (optional)
+        num_buckets: 10
 
 # Aggregation job creator-specific parameters:
 

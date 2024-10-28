@@ -69,7 +69,7 @@ impl BinaryOptions for Options {
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
 // TODO(#3293): remove aliases during next breaking changes window.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
