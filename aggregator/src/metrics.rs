@@ -46,7 +46,7 @@ use {
     },
 };
 
-#[cfg(all(tokio_unstable, feature = "prometheus"))]
+#[cfg(feature = "prometheus")]
 pub(crate) mod tokio_runtime;
 
 #[cfg(test)]
@@ -270,12 +270,11 @@ impl View for CustomView {
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
-    _runtime_opt: Option<&Runtime>,
+    runtime_opt: Option<&Runtime>,
 ) -> Result<SdkMeterProvider, MetricsError> {
     let mut reader_builder = opentelemetry_prometheus::exporter();
     reader_builder = reader_builder.with_registry(registry);
-    #[cfg(tokio_unstable)]
-    if let Some(runtime) = _runtime_opt {
+    if let Some(runtime) = runtime_opt {
         reader_builder = reader_builder
             .with_producer(tokio_runtime::TokioRuntimeMetrics::new(runtime.metrics()));
     }

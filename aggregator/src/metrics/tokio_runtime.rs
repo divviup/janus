@@ -1,29 +1,36 @@
-use std::time::{Duration, SystemTime};
+#[cfg(tokio_unstable)]
+use std::time::Duration;
+use std::time::SystemTime;
 
 use derivative::Derivative;
 use opentelemetry::{metrics::MetricsError, InstrumentationLibrary, KeyValue};
+#[cfg(tokio_unstable)]
+use opentelemetry_sdk::metrics::data::{Histogram, HistogramDataPoint, Sum, Temporality};
 use opentelemetry_sdk::metrics::{
-    data::{
-        DataPoint, Gauge, Histogram, HistogramDataPoint, Metric, ScopeMetrics, Sum, Temporality,
-    },
+    data::{DataPoint, Gauge, Metric, ScopeMetrics},
     reader::MetricProducer,
 };
-use tokio::runtime::{self, HistogramConfiguration, LogHistogram, RuntimeMetrics};
+use tokio::runtime::{self, RuntimeMetrics};
+#[cfg(tokio_unstable)]
+use tokio::runtime::{HistogramConfiguration, LogHistogram};
 
-use crate::metrics::{PollTimeHistogramConfiguration, TokioMetricsConfiguration};
+#[cfg(tokio_unstable)]
+use crate::metrics::PollTimeHistogramConfiguration;
+use crate::metrics::TokioMetricsConfiguration;
 
 pub(crate) fn configure_runtime(
-    runtime_builder: &mut runtime::Builder,
-    config: &TokioMetricsConfiguration,
+    _runtime_builder: &mut runtime::Builder,
+    _config: &TokioMetricsConfiguration,
 ) {
-    if config.enable_poll_time_histogram {
-        runtime_builder.enable_metrics_poll_time_histogram();
-        match config.poll_time_histogram {
+    #[cfg(tokio_unstable)]
+    if _config.enable_poll_time_histogram {
+        _runtime_builder.enable_metrics_poll_time_histogram();
+        match _config.poll_time_histogram {
             PollTimeHistogramConfiguration::Linear {
                 resolution_us,
                 num_buckets,
             } => {
-                runtime_builder.metrics_poll_time_histogram_configuration(
+                _runtime_builder.metrics_poll_time_histogram_configuration(
                     HistogramConfiguration::linear(
                         Duration::from_micros(resolution_us),
                         num_buckets,
@@ -47,7 +54,7 @@ pub(crate) fn configure_runtime(
                 if let Some(max_relative_error) = max_relative_error {
                     histogram_builder = histogram_builder.max_error(max_relative_error);
                 }
-                runtime_builder.metrics_poll_time_histogram_configuration(
+                _runtime_builder.metrics_poll_time_histogram_configuration(
                     HistogramConfiguration::log(histogram_builder.build()),
                 );
             }
@@ -59,22 +66,43 @@ pub(crate) fn configure_runtime(
 #[derivative(Debug)]
 pub(super) struct TokioRuntimeMetrics {
     runtime_metrics: RuntimeMetrics,
+
     #[derivative(Debug = "ignore")]
     scope: InstrumentationLibrary,
+
     #[derivative(Debug = "ignore")]
     start_time: SystemTime,
+
     num_workers: usize,
+
+    #[derivative(Debug = "ignore")]
+    attributes_global_queue: Vec<KeyValue>,
+
+    #[cfg(tokio_unstable)]
+    unstable: UnstableTokioRuntimeMetrics,
+}
+
+#[cfg(tokio_unstable)]
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct UnstableTokioRuntimeMetrics {
     poll_time_histogram_num_buckets: usize,
+
     poll_time_histogram_bucket_bounds: Vec<f64>,
+
     #[derivative(Debug = "ignore")]
     attributes_local: Vec<KeyValue>,
+
     #[derivative(Debug = "ignore")]
     attributes_local_overflow: Vec<KeyValue>,
+
     #[derivative(Debug = "ignore")]
     attributes_remote: Vec<KeyValue>,
+
     #[derivative(Debug = "ignore")]
     attributes_local_queue_worker: Vec<Vec<KeyValue>>,
-    attributes_global_queue: Vec<KeyValue>,
+
+    #[derivative(Debug = "ignore")]
     attributes_blocking_queue: Vec<KeyValue>,
 }
 
@@ -85,53 +113,63 @@ impl TokioRuntimeMetrics {
         let start_time = SystemTime::now();
 
         let num_workers = runtime_metrics.num_workers();
-        let poll_time_histogram_enabled = runtime_metrics.poll_time_histogram_enabled();
-        let poll_time_histogram_num_buckets = runtime_metrics.poll_time_histogram_num_buckets();
-        let all_but_last_bucket = if poll_time_histogram_enabled {
-            0..poll_time_histogram_num_buckets - 1
-        } else {
-            0..0
-        };
-        let poll_time_histogram_bucket_bounds = all_but_last_bucket
-            .map(|bucket| {
-                runtime_metrics
-                    .poll_time_histogram_bucket_range(bucket)
-                    .end
-                    .as_secs_f64()
-            })
-            .collect();
-
-        let attributes_local = Vec::from([KeyValue::new("queue", "local")].as_slice());
-        let attributes_local_overflow =
-            Vec::from([KeyValue::new("queue", "local_overflow")].as_slice());
-        let attributes_remote = Vec::from([KeyValue::new("queue", "remote")].as_slice());
-        let attributes_local_queue_worker = (0..num_workers)
-            .map(|i| {
-                Vec::from(
-                    [
-                        KeyValue::new("queue", "local"),
-                        KeyValue::new("worker", i64::try_from(i).unwrap()),
-                    ]
-                    .as_slice(),
-                )
-            })
-            .collect();
         let attributes_global_queue = Vec::from([KeyValue::new("queue", "global")].as_slice());
-        let attributes_blocking_queue = Vec::from([KeyValue::new("queue", "blocking")].as_slice());
+
+        #[cfg(tokio_unstable)]
+        let unstable = {
+            let poll_time_histogram_enabled = runtime_metrics.poll_time_histogram_enabled();
+            let poll_time_histogram_num_buckets = runtime_metrics.poll_time_histogram_num_buckets();
+            let all_but_last_bucket = if poll_time_histogram_enabled {
+                0..poll_time_histogram_num_buckets - 1
+            } else {
+                0..0
+            };
+            let poll_time_histogram_bucket_bounds = all_but_last_bucket
+                .map(|bucket| {
+                    runtime_metrics
+                        .poll_time_histogram_bucket_range(bucket)
+                        .end
+                        .as_secs_f64()
+                })
+                .collect();
+
+            let attributes_local = Vec::from([KeyValue::new("queue", "local")].as_slice());
+            let attributes_local_overflow =
+                Vec::from([KeyValue::new("queue", "local_overflow")].as_slice());
+            let attributes_remote = Vec::from([KeyValue::new("queue", "remote")].as_slice());
+            let attributes_local_queue_worker = (0..num_workers)
+                .map(|i| {
+                    Vec::from(
+                        [
+                            KeyValue::new("queue", "local"),
+                            KeyValue::new("worker", i64::try_from(i).unwrap()),
+                        ]
+                        .as_slice(),
+                    )
+                })
+                .collect();
+            let attributes_blocking_queue =
+                Vec::from([KeyValue::new("queue", "blocking")].as_slice());
+
+            UnstableTokioRuntimeMetrics {
+                poll_time_histogram_num_buckets,
+                poll_time_histogram_bucket_bounds,
+                attributes_local,
+                attributes_local_overflow,
+                attributes_remote,
+                attributes_local_queue_worker,
+                attributes_blocking_queue,
+            }
+        };
 
         Self {
             runtime_metrics,
             scope,
             start_time,
             num_workers,
-            poll_time_histogram_num_buckets,
-            poll_time_histogram_bucket_bounds,
-            attributes_local,
-            attributes_local_overflow,
-            attributes_remote,
-            attributes_local_queue_worker,
             attributes_global_queue,
-            attributes_blocking_queue,
+            #[cfg(tokio_unstable)]
+            unstable,
         }
     }
 }
@@ -140,6 +178,58 @@ impl MetricProducer for TokioRuntimeMetrics {
     fn produce(&self) -> Result<ScopeMetrics, MetricsError> {
         let now = SystemTime::now();
 
+        let mut metrics = Vec::with_capacity(19);
+        metrics.push(Metric {
+            name: "tokio.thread.worker.count".into(),
+            description: "Number of runtime worker threads".into(),
+            unit: "{thread}".into(),
+            data: Box::new(Gauge::<u64> {
+                data_points: Vec::from([DataPoint {
+                    attributes: Vec::default(),
+                    start_time: Some(self.start_time),
+                    time: Some(now),
+                    value: u64::try_from(self.num_workers).unwrap_or(u64::MAX),
+                    exemplars: Vec::new(),
+                }]),
+            }),
+        });
+
+        #[cfg(not(tokio_unstable))]
+        {
+            let global_queue_depth = self.runtime_metrics.global_queue_depth();
+            metrics.push(Metric {
+                name: "tokio.queue.depth".into(),
+                description: "Number of tasks currently in the runtime's global queue".into(),
+                unit: "{task}".into(),
+                data: Box::new(Gauge::<u64> {
+                    data_points: {
+                        let mut data_points = Vec::with_capacity(self.num_workers + 2);
+                        data_points.push(DataPoint {
+                            attributes: self.attributes_global_queue.clone(),
+                            start_time: Some(self.start_time),
+                            time: Some(now),
+                            value: u64::try_from(global_queue_depth).unwrap_or(u64::MAX),
+                            exemplars: Vec::new(),
+                        });
+                        data_points
+                    },
+                }),
+            });
+        }
+
+        #[cfg(tokio_unstable)]
+        self.produce_unstable_metrics(&mut metrics, now);
+
+        Ok(ScopeMetrics {
+            scope: self.scope.clone(),
+            metrics,
+        })
+    }
+}
+
+#[cfg(tokio_unstable)]
+impl TokioRuntimeMetrics {
+    fn produce_unstable_metrics(&self, metrics: &mut Vec<Metric>, now: SystemTime) {
         let num_blocking_threads = self.runtime_metrics.num_blocking_threads();
         let num_alive_tasks = self.runtime_metrics.num_alive_tasks();
         let num_idle_blocking_threads = self.runtime_metrics.num_idle_blocking_threads();
@@ -162,7 +252,8 @@ impl MetricProducer for TokioRuntimeMetrics {
         let mut local_schedule_count = 0;
         let mut overflow_count = 0;
         let mut local_queue_depth = vec![0; self.num_workers];
-        let mut poll_time_histogram_bucket_count = vec![0; self.poll_time_histogram_num_buckets];
+        let mut poll_time_histogram_bucket_count =
+            vec![0; self.unstable.poll_time_histogram_num_buckets];
         let mut worker_mean_poll_time_sum = Duration::from_secs(0);
         for (worker, worker_local_queue_depth) in local_queue_depth.iter_mut().enumerate() {
             park_count += self.runtime_metrics.worker_park_count(worker);
@@ -186,21 +277,7 @@ impl MetricProducer for TokioRuntimeMetrics {
         }
         let mean_poll_time = worker_mean_poll_time_sum / u32::try_from(self.num_workers).unwrap();
 
-        let metrics = Vec::from([
-            Metric {
-                name: "tokio.thread.worker.count".into(),
-                description: "Number of runtime worker threads".into(),
-                unit: "{thread}".into(),
-                data: Box::new(Gauge::<u64> {
-                    data_points: Vec::from([DataPoint {
-                        attributes: Vec::default(),
-                        start_time: Some(self.start_time),
-                        time: Some(now),
-                        value: u64::try_from(self.num_workers).unwrap_or(u64::MAX),
-                        exemplars: Vec::new(),
-                    }]),
-                }),
-            },
+        metrics.extend([
             Metric {
                 name: "tokio.thread.blocking.count".into(),
                 description: "Number of additional threads spawned by the runtime for blocking \
@@ -272,21 +349,21 @@ impl MetricProducer for TokioRuntimeMetrics {
                 data: Box::new(Sum::<u64> {
                     data_points: Vec::from([
                         DataPoint {
-                            attributes: self.attributes_local.clone(),
+                            attributes: self.unstable.attributes_local.clone(),
                             start_time: Some(self.start_time),
                             time: Some(now),
                             value: local_schedule_count,
                             exemplars: Vec::new(),
                         },
                         DataPoint {
-                            attributes: self.attributes_local_overflow.clone(),
+                            attributes: self.unstable.attributes_local_overflow.clone(),
                             start_time: Some(self.start_time),
                             time: Some(now),
                             value: overflow_count,
                             exemplars: Vec::new(),
                         },
                         DataPoint {
-                            attributes: self.attributes_remote.clone(),
+                            attributes: self.unstable.attributes_remote.clone(),
                             start_time: Some(self.start_time),
                             time: Some(now),
                             value: remote_schedule_count,
@@ -410,7 +487,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                         data_points.extend(
                             local_queue_depth
                                 .into_iter()
-                                .zip(self.attributes_local_queue_worker.iter())
+                                .zip(self.unstable.attributes_local_queue_worker.iter())
                                 .map(|(worker_local_queue_depth, attributes)| DataPoint {
                                     attributes: attributes.clone(),
                                     start_time: Some(self.start_time),
@@ -428,7 +505,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                             exemplars: Vec::new(),
                         });
                         data_points.push(DataPoint {
-                            attributes: self.attributes_blocking_queue.clone(),
+                            attributes: self.unstable.attributes_blocking_queue.clone(),
                             start_time: Some(self.start_time),
                             time: Some(now),
                             value: u64::try_from(blocking_queue_depth).unwrap_or(u64::MAX),
@@ -448,7 +525,7 @@ impl MetricProducer for TokioRuntimeMetrics {
                         start_time: self.start_time,
                         time: now,
                         count: poll_count,
-                        bounds: self.poll_time_histogram_bucket_bounds.clone(),
+                        bounds: self.unstable.poll_time_histogram_bucket_bounds.clone(),
                         bucket_counts: poll_time_histogram_bucket_count,
                         min: Some(f64::NAN),
                         max: Some(f64::NAN),
@@ -538,9 +615,5 @@ impl MetricProducer for TokioRuntimeMetrics {
                 }),
             },
         ]);
-        Ok(ScopeMetrics {
-            scope: self.scope.clone(),
-            metrics,
-        })
     }
 }

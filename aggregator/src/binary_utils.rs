@@ -270,20 +270,12 @@ where
     runtime_builder.enable_all();
     if let Some(tokio_metrics_config) = config.common_config().metrics_config.tokio.as_ref() {
         if tokio_metrics_config.enabled {
-            #[cfg(all(tokio_unstable, feature = "prometheus"))]
+            #[cfg(feature = "prometheus")]
             {
                 crate::metrics::tokio_runtime::configure_runtime(
                     &mut runtime_builder,
                     tokio_metrics_config,
                 );
-            }
-            #[cfg(not(all(tokio_unstable, feature = "prometheus")))]
-            {
-                return Err(anyhow!(
-                    "Tokio runtime metrics were enabled in the configuration file, but support \
-                     was not enabled at compile time. Rebuild with \
-                     `RUSTFLAGS=\"--cfg tokio_unstable\"`."
-                ));
             }
         }
     }
