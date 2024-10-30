@@ -46,7 +46,7 @@ use {
     },
 };
 
-#[cfg(all(tokio_unstable, feature = "prometheus"))]
+#[cfg(feature = "prometheus")]
 pub(crate) mod tokio_runtime;
 
 #[cfg(test)]
@@ -66,7 +66,7 @@ pub enum Error {
 }
 
 /// Configuration for collection/exporting of application-level metrics.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
@@ -98,7 +98,7 @@ pub struct OtlpExporterConfiguration {
 }
 
 /// Configuration options for Tokio's (unstable) metrics feature.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokioMetricsConfiguration {
     /// Enable collecting metrics from Tokio. The flag `--cfg tokio_unstable` must be passsed
@@ -111,37 +111,53 @@ pub struct TokioMetricsConfiguration {
     #[serde(default)]
     pub enable_poll_time_histogram: bool,
 
-    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale.
-    /// If a linear scale is chosen, each histogram bucket will have an equal range. If a
-    /// logarithmic scale is chosen, an exponential histogram will be used, where each bucket
-    /// has double the width of the previous bucket.
+    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale, and
+    /// set the parameters for the histogram.
     #[serde(default)]
-    pub poll_time_histogram_scale: HistogramScale,
-
-    /// Resolution of the histogram tracking poll times, in microseconds. When using a linear
-    /// scale, every bucket will have this width. When using a logarithmic scale, the smallest
-    /// bucket will have this width.
-    // TODO(#3293): remove this alias during next breaking changes window.
-    #[serde(default, alias = "poll_time_histogram_resolution_microseconds")]
-    pub poll_time_histogram_resolution_us: Option<u64>,
-
-    /// Chooses the number of buckets in the histogram used to track poll times. This number of
-    /// buckets includes the bucket with a range extending to positive infinity.
-    #[serde(default)]
-    pub poll_time_histogram_buckets: Option<usize>,
+    pub poll_time_histogram: PollTimeHistogramConfiguration,
 }
 
-/// Selects whether to use a linear scale or a logarithmic scale for a histogram.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HistogramScale {
-    /// Linear histogram scale. Each bucket will cover a range of the same width.
-    #[default]
-    Linear,
+/// Configuration for the poll time histogram.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "lowercase")]
+pub enum PollTimeHistogramConfiguration {
+    /// Linear histogram scale.
+    Linear {
+        /// Width of each histogram bucket, in microseconds.
+        #[serde(default = "default_linear_histogram_resolution_us")]
+        resolution_us: u64,
+        /// Number of histogram buckets.
+        #[serde(default = "default_linear_histogram_num_buckets")]
+        num_buckets: usize,
+    },
+    /// Logarithmic histogram scale.
+    Log {
+        /// Sets the minimum duration that can be accurately recorded, in microseconds.
+        min_value_us: Option<u64>,
+        /// Sets the maximum value that can be accurately recorded, in microseconds.
+        max_value_us: Option<u64>,
+        /// Sets the maximum relative error. This should be between 0.0 and 1.0.
+        max_relative_error: Option<f64>,
+    },
+}
 
-    /// Logarithmic histogram scale. Each successive bucket will cover a range twice as wide as its
-    /// predecessor.
-    Log,
+impl Default for PollTimeHistogramConfiguration {
+    /// This uses the default configuration values of
+    /// [`tokio::runtime::Builder`].
+    fn default() -> Self {
+        Self::Linear {
+            resolution_us: default_linear_histogram_resolution_us(),
+            num_buckets: default_linear_histogram_num_buckets(),
+        }
+    }
+}
+
+fn default_linear_histogram_resolution_us() -> u64 {
+    100
+}
+
+fn default_linear_histogram_num_buckets() -> usize {
+    10
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.
@@ -254,12 +270,11 @@ impl View for CustomView {
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
-    _runtime_opt: Option<&Runtime>,
+    runtime_opt: Option<&Runtime>,
 ) -> Result<SdkMeterProvider, MetricsError> {
     let mut reader_builder = opentelemetry_prometheus::exporter();
     reader_builder = reader_builder.with_registry(registry);
-    #[cfg(tokio_unstable)]
-    if let Some(runtime) = _runtime_opt {
+    if let Some(runtime) = runtime_opt {
         reader_builder = reader_builder
             .with_producer(tokio_runtime::TokioRuntimeMetrics::new(runtime.metrics()));
     }

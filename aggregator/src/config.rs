@@ -27,7 +27,7 @@ use url::Url;
 ///
 /// let _decoded: CommonConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommonConfig {
     /// The database configuration.
@@ -333,7 +333,7 @@ mod tests {
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             CommonConfig, DbConfig, JobDriverConfig,
         },
-        metrics::{HistogramScale, MetricsExporterConfiguration},
+        metrics::{MetricsExporterConfiguration, PollTimeHistogramConfiguration},
         trace::OpenTelemetryTraceConfiguration,
     };
     use assert_matches::assert_matches;
@@ -438,16 +438,22 @@ metrics_config:
   tokio:
     enabled: true
     enable_poll_time_histogram: true
-    poll_time_histogram_scale: log
-    poll_time_histogram_resolution_microseconds: 100
-    poll_time_histogram_buckets: 15
+    poll_time_histogram: !log
+      min_value_us: 100
+      max_value_us: 3000000
+      max_relative_error: 0.25
 ";
         let config: CommonConfig = serde_yaml::from_str(input).unwrap();
         let tokio_config = config.metrics_config.tokio.unwrap();
         assert!(tokio_config.enabled);
         assert!(tokio_config.enable_poll_time_histogram);
-        assert_eq!(tokio_config.poll_time_histogram_scale, HistogramScale::Log);
-        assert_eq!(tokio_config.poll_time_histogram_resolution_us, Some(100));
-        assert_eq!(tokio_config.poll_time_histogram_buckets, Some(15));
+        assert_eq!(
+            tokio_config.poll_time_histogram,
+            PollTimeHistogramConfiguration::Log {
+                min_value_us: Some(100),
+                max_value_us: Some(3_000_000),
+                max_relative_error: Some(0.25),
+            }
+        );
     }
 }
