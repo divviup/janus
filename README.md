@@ -4,11 +4,10 @@
 [Build Status]: https://github.com/divviup/janus/workflows/ci-build/badge.svg
 [actions]: https://github.com/divviup/janus/actions?query=branch%3Amain
 
-Janus is an experimental implementation of the [Distributed Aggregation Protocol
-(DAP) specification](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/).
-Currently it supports VDAFs with trivial aggregation parameters only, e.g.
-Prio3. VDAFs with nontrivial aggregation parameters (e.g. Poplar1) are not yet
-supported.
+Janus is an implementation of the [Distributed Aggregation Protocol (DAP)
+specification](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/). Currently
+it supports VDAFs with trivial aggregation parameters only, e.g. Prio3. VDAFs
+with nontrivial aggregation parameters (e.g. Mastic) are not yet supported.
 
 Janus is currently in active development.
 
@@ -42,18 +41,10 @@ branch.
 | `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Unmaintained as of November 1, 2023 |
 | `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of June 24, 2024 |
 | `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Unmaintained as of June 24, 2024 |
-| `main` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes | Supported |
+| `release/0.7` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes | Supported |
+| `main` | [`draft-ietf-ppm-dap-13`][dap-13] | Not yet (under development) | Supported |
 
-Note that no version of Janus supports `draft-ietf-ppm-dap-05` or `-06`. Draft
-05 was skipped because there were flaws in its usage of the new ping-pong
-topology introduced in `draft-irtf-cfrg-vdaf-06`. Draft 6 fixed those issues,
-but was skipped because it was published from the wrong commit of
-[`draft-ietf-ppm-dap`][dap-gh] and so contains a couple of bugs.
-`draft-ietf-ppm-dap-07` is effectively identical to draft 6, but with those bugs
-fixed.
-
-`draft-ietf-ppm-dap-08` was also skipped, since it contained only minor
-mechanical protocol changes and was not implemented or deployed by anyone else.
+Note that not every DAP draft has been implemented.
 
 [dap-01]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/
 [dap-02]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/
@@ -61,6 +52,7 @@ mechanical protocol changes and was not implemented or deployed by anyone else.
 [dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
 [dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
 [dap-09]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/09/
+[dap-13]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/13/
 [dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
 
 ### `draft-ietf-ppm-dap-07` errata
@@ -68,12 +60,13 @@ mechanical protocol changes and was not implemented or deployed by anyone else.
 There is a bug in Janus' `release/0.6` branch wherein `PrepareResp` messages are
 incorrectly encoded, making Janus incompatible with other DAP Aggregator
 implementations.
+
 See [issue #2466](https://github.com/divviup/janus/issues/2466) for details.
 
 ## Versioning and Stability
 
-Janus follows [semantic versioning](https://semver.org/). Because we are at major
-version 0, we increment the minor version number for breaking changes, and
+Janus follows [semantic versioning](https://semver.org/). Because we are at
+major version 0, we increment the minor version number for breaking changes, and
 increment the patch version for new features and backwards-compatible bug fixes.
 
 What is considered a breaking change depends on the crate. The following crates

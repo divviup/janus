@@ -9,9 +9,7 @@ on:
           be marked as the latest release.
         required: false
         type: string
-        # This action may be run against the main branch so long as we are not
-        # in a prerelease window.
-        default: '["main"]'
+        default: '["release/0.7"]'
 
 jobs:
   bump-version:
