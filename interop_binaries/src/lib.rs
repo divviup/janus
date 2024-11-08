@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use janus_aggregator_core::task::{test_util::Task, QueryType};
+use janus_aggregator_core::task::{test_util::Task, BatchMode};
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
@@ -8,7 +8,7 @@ use janus_core::{
     vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType as _, TimeInterval},
+    batch_mode::{BatchMode as _, FixedSize, TimeInterval},
     HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use prio::codec::Encode;
@@ -296,7 +296,7 @@ pub struct AggregatorAddTaskRequest {
     pub role: AggregatorRole,
     pub vdaf_verify_key: String, // in unpadded base64url
     pub max_batch_query_count: u64,
-    pub query_type: u8,
+    pub batch_mode: u8,
     pub min_batch_size: u64,
     pub max_batch_size: Option<u64>,
     pub time_precision: u64,           // in seconds
@@ -306,9 +306,9 @@ pub struct AggregatorAddTaskRequest {
 
 impl AggregatorAddTaskRequest {
     pub fn from_task(task: Task, role: Role) -> Self {
-        let (query_type, max_batch_size) = match task.query_type() {
-            QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
-            QueryType::FixedSize { max_batch_size, .. } => (FixedSize::CODE as u8, *max_batch_size),
+        let (batch_mode, max_batch_size) = match task.batch_mode() {
+            BatchMode::TimeInterval => (TimeInterval::CODE as u8, None),
+            BatchMode::FixedSize { max_batch_size, .. } => (FixedSize::CODE as u8, *max_batch_size),
         };
         Self {
             task_id: *task.id(),
@@ -327,7 +327,7 @@ impl AggregatorAddTaskRequest {
             role: role.try_into().unwrap(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
-            query_type,
+            batch_mode,
             min_batch_size: task.min_batch_size(),
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),

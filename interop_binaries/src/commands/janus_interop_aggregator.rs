@@ -87,16 +87,16 @@ async fn handle_add_task(
 
     let hpke_keypair = keyring.lock().await.get_random_keypair();
 
-    let query_type = match request.query_type {
-        1 => task::QueryType::TimeInterval,
-        2 => task::QueryType::FixedSize {
+    let batch_mode = match request.batch_mode {
+        1 => task::BatchMode::TimeInterval,
+        2 => task::BatchMode::FixedSize {
             max_batch_size: request.max_batch_size,
             batch_time_window_size: None,
         },
         _ => {
             return Err(anyhow::anyhow!(
-                "invalid query type: {}",
-                request.query_type
+                "invalid batch mode: {}",
+                request.batch_mode
             ))
         }
     };
@@ -104,7 +104,7 @@ async fn handle_add_task(
     let task = AggregatorTask::new(
         request.task_id,
         peer_aggregator_endpoint,
-        query_type,
+        batch_mode,
         vdaf,
         vdaf_verify_key,
         request.max_batch_query_count,

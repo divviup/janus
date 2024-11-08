@@ -1,8 +1,8 @@
 use assert_matches::assert_matches;
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
-    query_type::FixedSize, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
+    batch_mode::FixedSize, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
     BatchSelector, PartialBatchSelector, PrepareError, PrepareStepResult, ReportIdChecksum,
 };
 use prio::{
@@ -34,7 +34,7 @@ async fn helper_aggregation_report_share_replay() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: None,
             batch_time_window_size: None,
         },

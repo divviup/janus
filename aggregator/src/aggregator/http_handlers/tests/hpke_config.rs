@@ -14,7 +14,7 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
-    task::{test_util::TaskBuilder, QueryType},
+    task::{test_util::TaskBuilder, BatchMode},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -51,7 +51,7 @@ async fn task_specific_hpke_config() {
     .build()
     .unwrap();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .build()
         .leader_view()
         .unwrap();
@@ -260,7 +260,7 @@ async fn global_hpke_config_with_taskprov() {
         .unwrap();
 
     // Insert a taskprov task. This task won't have its task-specific HPKE key.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
     let taskprov_helper_task = task.taskprov_helper_view().unwrap();
     datastore
         .put_aggregator_task(&taskprov_helper_task)
@@ -335,7 +335,7 @@ async fn hpke_config_cors_headers() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .build()
         .leader_view()
         .unwrap();

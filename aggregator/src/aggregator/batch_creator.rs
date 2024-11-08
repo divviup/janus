@@ -11,7 +11,7 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId,
+    batch_mode::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId,
     ReportMetadata, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};

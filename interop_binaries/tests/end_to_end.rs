@@ -16,7 +16,7 @@ use janus_interop_binaries::{
     ContainerLogsDropGuard,
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, FixedSize, TimeInterval},
     Duration, TaskId,
 };
 use prio::codec::Encode;
@@ -47,14 +47,14 @@ async fn run(
 ) -> serde_json::Value {
     install_test_trace_subscriber();
 
-    let (query_type_json, max_batch_size) = match query_kind {
+    let (batch_mode_json, max_batch_size) = match query_kind {
         QueryKind::TimeInterval => {
-            let query_type = json!(TimeInterval::CODE as u8);
-            (query_type, None)
+            let batch_mode = json!(TimeInterval::CODE as u8);
+            (batch_mode, None)
         }
         QueryKind::FixedSize => {
-            let query_type = json!(FixedSize::CODE as u8);
-            (query_type, Some(json!(measurements.len())))
+            let batch_mode = json!(FixedSize::CODE as u8);
+            (batch_mode, Some(json!(measurements.len())))
         }
     };
 
@@ -249,7 +249,7 @@ async fn run(
             "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
             "collector_authentication_token": collector_auth_token,
-            "query_type": query_type_json,
+            "batch_mode": batch_mode_json,
         }))
         .send()
         .await
@@ -292,7 +292,7 @@ async fn run(
         "role": "leader",
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
-        "query_type": query_type_json,
+        "batch_mode": batch_mode_json,
         "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
@@ -344,7 +344,7 @@ async fn run(
         "role": "helper",
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
-        "query_type": query_type_json,
+        "batch_mode": batch_mode_json,
         "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
@@ -433,14 +433,14 @@ async fn run(
             // batch boundary.
             let batch_interval_duration = TIME_PRECISION * 2;
             json!({
-                "type": query_type_json,
+                "type": batch_mode_json,
                 "batch_interval_start": batch_interval_start,
                 "batch_interval_duration": batch_interval_duration,
             })
         }
         QueryKind::FixedSize => {
             json!({
-                "type": query_type_json,
+                "type": batch_mode_json,
                 "subtype": 1, // current_batch
             })
         }

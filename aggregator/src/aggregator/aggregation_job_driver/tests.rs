@@ -11,6 +11,7 @@ use assert_matches::assert_matches;
 use futures::future::join_all;
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_aggregator_core::{
+    batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     datastore::{
         models::{
             merge_batch_aggregations_by_batch, AcquiredAggregationJob, AggregationJob,
@@ -20,8 +21,7 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    query_type::{AccumulableQueryType, CollectableQueryType},
-    task::{test_util::TaskBuilder, AggregatorTask, QueryType, VerifyKey},
+    task::{test_util::TaskBuilder, AggregatorTask, BatchMode, VerifyKey},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -34,8 +34,8 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
+    batch_mode::{FixedSize, TimeInterval},
     problem_type::DapProblemType,
-    query_type::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
     PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata,
@@ -73,7 +73,7 @@ async fn aggregation_job_driver() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -364,7 +364,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -693,7 +693,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -959,7 +959,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .with_time_precision(TIME_PRECISION)
@@ -1320,7 +1320,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1603,7 +1603,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1871,7 +1871,7 @@ async fn step_time_interval_aggregation_job_continue() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
     let leader_task = task.leader_view().unwrap();
@@ -2212,7 +2212,7 @@ async fn step_fixed_size_aggregation_job_continue() {
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -2520,7 +2520,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
     let mock_helper = mockito::Server::new_async().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_helper_aggregator_endpoint(mock_helper.url().parse().unwrap())
         .build()
         .leader_view()
@@ -2783,7 +2783,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let stopper = Stopper::new();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -3025,7 +3025,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let stopper = Stopper::new();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 

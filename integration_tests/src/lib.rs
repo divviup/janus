@@ -1,6 +1,6 @@
 //! This crate contains functionality useful for Janus integration tests.
 
-use janus_aggregator_core::task::QueryType;
+use janus_aggregator_core::task::BatchMode;
 use janus_client::OhttpConfig;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
@@ -18,7 +18,7 @@ pub mod janus;
 pub struct TaskParameters {
     pub task_id: TaskId,
     pub endpoint_fragments: EndpointFragments,
-    pub query_type: QueryType,
+    pub batch_mode: BatchMode,
     pub vdaf: VdafInstance,
     pub min_batch_size: u64,
     pub time_precision: Duration,

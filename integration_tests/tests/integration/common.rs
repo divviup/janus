@@ -1,6 +1,6 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
@@ -12,8 +12,8 @@ use janus_integration_tests::{
     AggregatorEndpointFragments, EndpointFragments, TaskParameters,
 };
 use janus_messages::{
+    batch_mode::{self, FixedSize},
     problem_type::DapProblemType,
-    query_type::{self, FixedSize},
     Duration, FixedSizeQuery, Interval, Query, Time,
 };
 use prio::{
@@ -107,7 +107,7 @@ pub fn build_test_task(
     let task_parameters = TaskParameters {
         task_id: *task_builder.task_id(),
         endpoint_fragments,
-        query_type: *task_builder.query_type(),
+        batch_mode: *task_builder.batch_mode(),
         vdaf: task_builder.vdaf().clone(),
         min_batch_size: task_builder.min_batch_size(),
         time_precision: *task_builder.time_precision(),
@@ -129,14 +129,14 @@ where
     aggregate_result: V::AggregateResult,
 }
 
-pub async fn collect_generic<'a, V, Q>(
+pub async fn collect_generic<'a, V, B>(
     collector: &Collector<V>,
-    query: Query<Q>,
+    query: Query<B>,
     aggregation_parameter: &V::AggregationParam,
-) -> Result<Collection<V::AggregateResult, Q>, janus_collector::Error>
+) -> Result<Collection<V::AggregateResult, B>, janus_collector::Error>
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
-    Q: query_type::QueryType,
+    B: batch_mode::BatchMode,
 {
     // An extra retry loop is needed here because our collect request may race against the
     // aggregation job creator, which is responsible for assigning reports to batches in fixed-
@@ -274,8 +274,8 @@ where
     .unwrap();
 
     // Send a collect request and verify that we got the correct result.
-    let (report_count, aggregate_result) = match &task_parameters.query_type {
-        QueryType::TimeInterval => {
+    let (report_count, aggregate_result) = match &task_parameters.batch_mode {
+        BatchMode::TimeInterval => {
             let batch_interval = Interval::new(
                 before_timestamp
                     .to_batch_interval_start(&task_parameters.time_precision)
@@ -314,7 +314,7 @@ where
                 collection_2.aggregate_result().clone(),
             )
         }
-        QueryType::FixedSize { .. } => {
+        BatchMode::FixedSize { .. } => {
             let mut requests = 0;
             let collection_1 = loop {
                 requests += 1;

@@ -191,7 +191,7 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        query_type::{FixedSize, TimeInterval},
+        batch_mode::{FixedSize, TimeInterval},
         AggregationJobStep, Duration, FixedSizeQuery, HpkeCiphertext, HpkeConfigId, Interval,
         Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
@@ -217,7 +217,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
+                        task::BatchMode::TimeInterval,
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -368,7 +368,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
+                        task::BatchMode::TimeInterval,
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -540,7 +540,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize {
+                        task::BatchMode::FixedSize {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
@@ -701,7 +701,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize {
+                        task::BatchMode::FixedSize {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },

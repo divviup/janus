@@ -24,7 +24,7 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // query_body
                         "000000000000D431", // start
@@ -52,7 +52,7 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000BF11", // start
@@ -81,10 +81,10 @@ fn roundtrip_collection_req() {
             },
             concat!(
                 concat!(
-                    "02", // query_type
+                    "02", // batch_mode
                     concat!(
                         // query_body
-                        "00", // query_type
+                        "00", // batch_mode
                         "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                     ),
                 ),
@@ -104,10 +104,10 @@ fn roundtrip_collection_req() {
             },
             concat!(
                 concat!(
-                    "02", // query_type
+                    "02", // batch_mode
                     concat!(
                         // query_body
-                        "01", // query_type
+                        "01", // batch_mode
                     ),
                 ),
                 concat!(
@@ -126,7 +126,7 @@ fn roundtrip_partial_batch_selector() {
     roundtrip_encoding(&[(
         PartialBatchSelector::new_time_interval(),
         concat!(
-            "01", // query_type
+            "01", // batch_mode
         ),
     )]);
 
@@ -135,14 +135,14 @@ fn roundtrip_partial_batch_selector() {
         (
             PartialBatchSelector::new_fixed_size(BatchId::from([3u8; 32])),
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
             ),
         ),
         (
             PartialBatchSelector::new_fixed_size(BatchId::from([4u8; 32])),
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
             ),
         ),
@@ -176,7 +176,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
                 "0000000000000000", // report_count
                 concat!(
@@ -233,7 +233,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
                 "0000000000000017", // report_count
                 concat!(
@@ -296,7 +296,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
                 ),
                 "0000000000000000", // report_count
@@ -356,7 +356,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
                 ),
                 "0000000000000017", // report_count
@@ -411,7 +411,7 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000D431", // start
@@ -428,7 +428,7 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000C685", // start
@@ -446,7 +446,7 @@ fn roundtrip_batch_selector() {
             },
             concat!(
                 // batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
             ),
         ),
@@ -455,7 +455,7 @@ fn roundtrip_batch_selector() {
                 batch_identifier: BatchId::from([7u8; 32]),
             },
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
             ),
         ),
@@ -482,7 +482,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000D431", // start
@@ -514,7 +514,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000C685", // start
@@ -546,7 +546,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
                 ),
                 concat!(
@@ -570,7 +570,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
                 ),
                 concat!(
@@ -660,7 +660,7 @@ fn roundtrip_aggregate_share_aad() {
             ),
             concat!(
                 // batch_selector
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000D431", // start
@@ -688,7 +688,7 @@ fn roundtrip_aggregate_share_aad() {
             ),
             concat!(
                 // batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
             ),
         ),

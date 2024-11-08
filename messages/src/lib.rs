@@ -3,7 +3,7 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::query_type::{FixedSize, QueryType, TimeInterval};
+use self::batch_mode::{BatchMode, FixedSize, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
@@ -31,8 +31,8 @@ use std::{
 
 pub use prio::codec;
 
+pub mod batch_mode;
 pub mod problem_type;
-pub mod query_type;
 pub mod taskprov;
 #[cfg(test)]
 mod tests;
@@ -1480,26 +1480,26 @@ impl Decode for FixedSizeQuery {
 /// Represents a query for a specific batch identifier, received from a Collector as part of the
 /// collection flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Query<Q: QueryType> {
-    query_body: Q::QueryBody,
+pub struct Query<B: BatchMode> {
+    query_body: B::QueryBody,
 }
 
-impl<Q: QueryType> Query<Q> {
+impl<B: BatchMode> Query<B> {
     /// Constructs a new query from its components.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::new_time_interval`] or
     /// [`Self::new_fixed_size`].
-    pub fn new(query_body: Q::QueryBody) -> Self {
+    pub fn new(query_body: B::QueryBody) -> Self {
         Self { query_body }
     }
 
     /// Gets the query body included in this query.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::batch_interval`] or
     /// [`Self::fixed_size_query`].
-    pub fn query_body(&self) -> &Q::QueryBody {
+    pub fn query_body(&self) -> &B::QueryBody {
         &self.query_body
     }
 }
@@ -1528,9 +1528,9 @@ impl Query<FixedSize> {
     }
 }
 
-impl<Q: QueryType> Encode for Query<Q> {
+impl<B: BatchMode> Encode for Query<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        Q::CODE.encode(bytes)?;
+        B::CODE.encode(bytes)?;
         self.query_body.encode(bytes)
     }
 
@@ -1539,10 +1539,10 @@ impl<Q: QueryType> Encode for Query<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for Query<Q> {
+impl<B: BatchMode> Decode for Query<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let query_body = Q::QueryBody::decode(bytes)?;
+        batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
+        let query_body = B::QueryBody::decode(bytes)?;
 
         Ok(Self { query_body })
     }
@@ -1552,18 +1552,18 @@ impl<Q: QueryType> Decode for Query<Q> {
 /// aggregate shares for a given batch.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
-pub struct CollectionReq<Q: QueryType> {
-    query: Query<Q>,
+pub struct CollectionReq<B: BatchMode> {
+    query: Query<B>,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
 }
 
-impl<Q: QueryType> CollectionReq<Q> {
+impl<B: BatchMode> CollectionReq<B> {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-collect-req";
 
     /// Constructs a new collect request from its components.
-    pub fn new(query: Query<Q>, aggregation_parameter: Vec<u8>) -> Self {
+    pub fn new(query: Query<B>, aggregation_parameter: Vec<u8>) -> Self {
         Self {
             query,
             aggregation_parameter,
@@ -1571,7 +1571,7 @@ impl<Q: QueryType> CollectionReq<Q> {
     }
 
     /// Gets the query associated with this collect request.
-    pub fn query(&self) -> &Query<Q> {
+    pub fn query(&self) -> &Query<B> {
         &self.query
     }
 
@@ -1581,7 +1581,7 @@ impl<Q: QueryType> CollectionReq<Q> {
     }
 }
 
-impl<Q: QueryType> Encode for CollectionReq<Q> {
+impl<B: BatchMode> Encode for CollectionReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.query.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)
@@ -1592,7 +1592,7 @@ impl<Q: QueryType> Encode for CollectionReq<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for CollectionReq<Q> {
+impl<B: BatchMode> Decode for CollectionReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let query = Query::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
@@ -1605,27 +1605,27 @@ impl<Q: QueryType> Decode for CollectionReq<Q> {
 }
 
 /// DAP protocol message representing a partial batch selector, identifying a batch of interest in
-/// cases where some query types can infer the selector.
+/// cases where some batch modes can infer the selector.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PartialBatchSelector<Q: QueryType> {
-    batch_identifier: Q::PartialBatchIdentifier,
+pub struct PartialBatchSelector<B: BatchMode> {
+    batch_identifier: B::PartialBatchIdentifier,
 }
 
-impl<Q: QueryType> PartialBatchSelector<Q> {
+impl<B: BatchMode> PartialBatchSelector<B> {
     /// Constructs a new partial batch selector.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::new_time_interval`] or
     /// [`Self::new_fixed_size`].
-    pub fn new(batch_identifier: Q::PartialBatchIdentifier) -> Self {
+    pub fn new(batch_identifier: B::PartialBatchIdentifier) -> Self {
         Self { batch_identifier }
     }
 
     /// Gets the batch identifier associated with this collect response.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call [`Self::batch_id`].
+    pub fn batch_identifier(&self) -> &B::PartialBatchIdentifier {
         &self.batch_identifier
     }
 }
@@ -1649,9 +1649,9 @@ impl PartialBatchSelector<FixedSize> {
     }
 }
 
-impl<Q: QueryType> Encode for PartialBatchSelector<Q> {
+impl<B: BatchMode> Encode for PartialBatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        Q::CODE.encode(bytes)?;
+        B::CODE.encode(bytes)?;
         self.batch_identifier.encode(bytes)
     }
 
@@ -1660,10 +1660,10 @@ impl<Q: QueryType> Encode for PartialBatchSelector<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for PartialBatchSelector<Q> {
+impl<B: BatchMode> Decode for PartialBatchSelector<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::PartialBatchIdentifier::decode(bytes)?;
+        batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
+        let batch_identifier = B::PartialBatchIdentifier::decode(bytes)?;
 
         Ok(Self { batch_identifier })
     }
@@ -1727,21 +1727,21 @@ impl Distribution<CollectionJobId> for Standard {
 /// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given query.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Collection<Q: QueryType> {
-    partial_batch_selector: PartialBatchSelector<Q>,
+pub struct Collection<B: BatchMode> {
+    partial_batch_selector: PartialBatchSelector<B>,
     report_count: u64,
     interval: Interval,
     leader_encrypted_agg_share: HpkeCiphertext,
     helper_encrypted_agg_share: HpkeCiphertext,
 }
 
-impl<Q: QueryType> Collection<Q> {
+impl<B: BatchMode> Collection<B> {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-collection";
 
     /// Constructs a new collection.
     pub fn new(
-        partial_batch_selector: PartialBatchSelector<Q>,
+        partial_batch_selector: PartialBatchSelector<B>,
         report_count: u64,
         interval: Interval,
         leader_encrypted_agg_share: HpkeCiphertext,
@@ -1757,7 +1757,7 @@ impl<Q: QueryType> Collection<Q> {
     }
 
     /// Retrieves the batch selector associated with this collection.
-    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
+    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<B> {
         &self.partial_batch_selector
     }
 
@@ -1782,7 +1782,7 @@ impl<Q: QueryType> Collection<Q> {
     }
 }
 
-impl<Q: QueryType> Encode for Collection<Q> {
+impl<B: BatchMode> Encode for Collection<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.partial_batch_selector.encode(bytes)?;
         self.report_count.encode(bytes)?;
@@ -1802,7 +1802,7 @@ impl<Q: QueryType> Encode for Collection<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for Collection<Q> {
+impl<B: BatchMode> Decode for Collection<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
@@ -1888,18 +1888,18 @@ impl Decode for InputShareAad {
 /// DAP message representing the additional associated data for an aggregate share encryption
 /// operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateShareAad<Q: QueryType> {
+pub struct AggregateShareAad<B: BatchMode> {
     task_id: TaskId,
     aggregation_parameter: Vec<u8>,
-    batch_selector: BatchSelector<Q>,
+    batch_selector: BatchSelector<B>,
 }
 
-impl<Q: QueryType> AggregateShareAad<Q> {
+impl<B: BatchMode> AggregateShareAad<B> {
     /// Constructs a new aggregate share AAD.
     pub fn new(
         task_id: TaskId,
         aggregation_parameter: Vec<u8>,
-        batch_selector: BatchSelector<Q>,
+        batch_selector: BatchSelector<B>,
     ) -> Self {
         Self {
             task_id,
@@ -1919,12 +1919,12 @@ impl<Q: QueryType> AggregateShareAad<Q> {
     }
 
     /// Retrieves the batch selector associated with this aggregate share AAD.
-    pub fn batch_selector(&self) -> &BatchSelector<Q> {
+    pub fn batch_selector(&self) -> &BatchSelector<B> {
         &self.batch_selector
     }
 }
 
-impl<Q: QueryType> Encode for AggregateShareAad<Q> {
+impl<B: BatchMode> Encode for AggregateShareAad<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.task_id.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
@@ -1941,7 +1941,7 @@ impl<Q: QueryType> Encode for AggregateShareAad<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for AggregateShareAad<Q> {
+impl<B: BatchMode> Decode for AggregateShareAad<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
@@ -2326,21 +2326,21 @@ impl Distribution<AggregationJobId> for Standard {
 /// helper.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
-pub struct AggregationJobInitializeReq<Q: QueryType> {
+pub struct AggregationJobInitializeReq<B: BatchMode> {
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
-    partial_batch_selector: PartialBatchSelector<Q>,
+    partial_batch_selector: PartialBatchSelector<B>,
     prepare_inits: Vec<PrepareInit>,
 }
 
-impl<Q: QueryType> AggregationJobInitializeReq<Q> {
+impl<B: BatchMode> AggregationJobInitializeReq<B> {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-init-req";
 
     /// Constructs an aggregate initialization request from its components.
     pub fn new(
         aggregation_parameter: Vec<u8>,
-        partial_batch_selector: PartialBatchSelector<Q>,
+        partial_batch_selector: PartialBatchSelector<B>,
         prepare_inits: Vec<PrepareInit>,
     ) -> Self {
         Self {
@@ -2356,7 +2356,7 @@ impl<Q: QueryType> AggregationJobInitializeReq<Q> {
     }
 
     /// Gets the partial batch selector associated with this aggregate initialization request.
-    pub fn batch_selector(&self) -> &PartialBatchSelector<Q> {
+    pub fn batch_selector(&self) -> &PartialBatchSelector<B> {
         &self.partial_batch_selector
     }
 
@@ -2367,7 +2367,7 @@ impl<Q: QueryType> AggregationJobInitializeReq<Q> {
     }
 }
 
-impl<Q: QueryType> Encode for AggregationJobInitializeReq<Q> {
+impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
         self.partial_batch_selector.encode(bytes)?;
@@ -2385,7 +2385,7 @@ impl<Q: QueryType> Encode for AggregationJobInitializeReq<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
+impl<B: BatchMode> Decode for AggregationJobInitializeReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
@@ -2555,26 +2555,26 @@ impl Decode for AggregationJobResp {
 
 /// DAP protocol message identifying a batch of interest.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BatchSelector<Q: QueryType> {
-    batch_identifier: Q::BatchIdentifier,
+pub struct BatchSelector<B: BatchMode> {
+    batch_identifier: B::BatchIdentifier,
 }
 
-impl<Q: QueryType> BatchSelector<Q> {
+impl<B: BatchMode> BatchSelector<B> {
     /// Constructs a new batch selector from its components.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::new_time_interval`] or
     /// [`Self::new_fixed_size`].
-    pub fn new(batch_identifier: Q::BatchIdentifier) -> Self {
+    pub fn new(batch_identifier: B::BatchIdentifier) -> Self {
         Self { batch_identifier }
     }
 
     /// Gets the batch identifier associated with this batch selector.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::batch_interval`] or
     /// [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+    pub fn batch_identifier(&self) -> &B::BatchIdentifier {
         &self.batch_identifier
     }
 }
@@ -2603,9 +2603,9 @@ impl BatchSelector<FixedSize> {
     }
 }
 
-impl<Q: QueryType> Encode for BatchSelector<Q> {
+impl<B: BatchMode> Encode for BatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        Q::CODE.encode(bytes)?;
+        B::CODE.encode(bytes)?;
         self.batch_identifier.encode(bytes)
     }
 
@@ -2614,10 +2614,10 @@ impl<Q: QueryType> Encode for BatchSelector<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for BatchSelector<Q> {
+impl<B: BatchMode> Decode for BatchSelector<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::BatchIdentifier::decode(bytes)?;
+        batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
+        let batch_identifier = B::BatchIdentifier::decode(bytes)?;
 
         Ok(Self { batch_identifier })
     }
@@ -2627,21 +2627,21 @@ impl<Q: QueryType> Decode for BatchSelector<Q> {
 /// encrypted aggregate of its share of data for a given batch interval.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
-pub struct AggregateShareReq<Q: QueryType> {
-    batch_selector: BatchSelector<Q>,
+pub struct AggregateShareReq<B: BatchMode> {
+    batch_selector: BatchSelector<B>,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
     report_count: u64,
     checksum: ReportIdChecksum,
 }
 
-impl<Q: QueryType> AggregateShareReq<Q> {
+impl<B: BatchMode> AggregateShareReq<B> {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-req";
 
     /// Constructs a new aggregate share request from its components.
     pub fn new(
-        batch_selector: BatchSelector<Q>,
+        batch_selector: BatchSelector<B>,
         aggregation_parameter: Vec<u8>,
         report_count: u64,
         checksum: ReportIdChecksum,
@@ -2655,7 +2655,7 @@ impl<Q: QueryType> AggregateShareReq<Q> {
     }
 
     /// Gets the batch selector associated with this aggregate share request.
-    pub fn batch_selector(&self) -> &BatchSelector<Q> {
+    pub fn batch_selector(&self) -> &BatchSelector<B> {
         &self.batch_selector
     }
 
@@ -2675,7 +2675,7 @@ impl<Q: QueryType> AggregateShareReq<Q> {
     }
 }
 
-impl<Q: QueryType> Encode for AggregateShareReq<Q> {
+impl<B: BatchMode> Encode for AggregateShareReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.batch_selector.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)?;
@@ -2694,7 +2694,7 @@ impl<Q: QueryType> Encode for AggregateShareReq<Q> {
     }
 }
 
-impl<Q: QueryType> Decode for AggregateShareReq<Q> {
+impl<B: BatchMode> Decode for AggregateShareReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let batch_selector = BatchSelector::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;

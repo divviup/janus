@@ -5,9 +5,9 @@ use crate::{
             AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
             WritableReportAggregation,
         },
+        batch_mode::CollectableBatchMode,
         error::handle_ping_pong_error,
         http_handlers::AGGREGATION_JOB_ROUTE,
-        query_type::CollectableQueryType,
         report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
         Error, RequestBody,
     },
@@ -35,7 +35,7 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareStepResult,
     ReportShare, Role,
@@ -83,13 +83,13 @@ pub struct AggregationJobDriver<B> {
     http_request_duration_histogram: Histogram<f64>,
 }
 
-impl<B> AggregationJobDriver<B>
+impl<R> AggregationJobDriver<R>
 where
-    B: Backoff + Clone + Send + Sync + 'static,
+    R: Backoff + Clone + Send + Sync + 'static,
 {
     pub fn new(
         http_client: reqwest::Client,
-        backoff: B,
+        backoff: R,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
@@ -140,13 +140,13 @@ where
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
-        match lease.leased().query_type() {
-            task::QueryType::TimeInterval => {
+        match lease.leased().batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(datastore, Arc::new(vdaf), lease).await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(datastore, Arc::new(vdaf), lease).await
                 })
@@ -157,7 +157,7 @@ where
     async fn step_aggregation_job_generic<
         const SEED_SIZE: usize,
         C: Clock,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A,
     >(
         &self,
@@ -196,7 +196,7 @@ where
                         )
                     })?;
 
-                    let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, Q, A>(
+                    let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
                         lease.leased().task_id(),
                         lease.leased().aggregation_job_id(),
                     );
@@ -286,7 +286,7 @@ where
     async fn step_aggregation_job_aggregate_init<
         const SEED_SIZE: usize,
         C: Clock,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
@@ -294,7 +294,7 @@ where
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<(), Error>
@@ -498,7 +498,7 @@ where
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
-            let request = AggregationJobInitializeReq::<Q>::new(
+            let request = AggregationJobInitializeReq::<B>::new(
                 aggregation_job
                     .aggregation_parameter()
                     .get_encoded()
@@ -517,7 +517,7 @@ where
                     })?,
                 AGGREGATION_JOB_ROUTE,
                 Some(RequestBody {
-                    content_type: AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
+                    content_type: AggregationJobInitializeReq::<B>::MEDIA_TYPE,
                     body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
                 }),
                 // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
@@ -553,7 +553,7 @@ where
     async fn step_aggregation_job_aggregate_continue<
         const SEED_SIZE: usize,
         C: Clock,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
@@ -561,7 +561,7 @@ where
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error>
     where
@@ -737,7 +737,7 @@ where
     async fn process_response_from_helper<
         const SEED_SIZE: usize,
         C: Clock,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
@@ -745,7 +745,7 @@ where
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<AggregatorTask>,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         helper_resp: AggregationJobResp,
@@ -968,8 +968,8 @@ where
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
-        match lease.leased().query_type() {
-            task::QueryType::TimeInterval => {
+        match lease.leased().batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.cancel_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -980,7 +980,7 @@ where
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.cancel_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -997,7 +997,7 @@ where
     async fn cancel_aggregation_job_generic<
         const SEED_SIZE: usize,
         C: Clock,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A,
     >(
         &self,
@@ -1028,7 +1028,7 @@ where
                     // ease debugging.
                     let (task, aggregation_job, report_aggregations) = try_join!(
                         tx.get_aggregator_task(lease.leased().task_id()),
-                        tx.get_aggregation_job::<SEED_SIZE, Q, A>(
+                        tx.get_aggregation_job::<SEED_SIZE, B, A>(
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id()
                         ),

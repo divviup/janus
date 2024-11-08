@@ -5,6 +5,7 @@ use crate::Operation;
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    batch_mode::AccumulableBatchMode,
     datastore::{
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
@@ -13,7 +14,6 @@ use janus_aggregator_core::{
         },
         Error, Transaction,
     },
-    query_type::AccumulableQueryType,
     task::AggregatorTask,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -38,16 +38,16 @@ use tokio::try_join;
 use tracing::{warn, Level};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
-pub struct AggregationJobWriter<const SEED_SIZE: usize, Q, A, WT, RA>
+pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
     task: Arc<AggregatorTask>,
     batch_aggregation_shard_count: u64,
     aggregation_parameter: Option<A::AggregationParam>,
-    aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A, RA>>,
-    by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
+    aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, B, A, RA>>,
+    by_batch_identifier_index: HashMap<B::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
 
     _phantom_wt: PhantomData<WT>,
@@ -62,9 +62,9 @@ pub struct AggregationJobWriterMetrics {
 }
 
 #[allow(private_bounds)]
-impl<const SEED_SIZE: usize, A, Q, WT, RA> AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>
+impl<const SEED_SIZE: usize, A, B, WT, RA> AggregationJobWriter<SEED_SIZE, B, A, WT, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
     A::AggregationParam: PartialEq + Eq,
     WT: WriteType,
@@ -126,7 +126,7 @@ where
     /// aggregation jobs.
     pub fn put(
         &mut self,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         mut report_aggregations: Vec<RA>,
     ) -> Result<(), Error> {
         self.update_aggregation_parameter(aggregation_job.aggregation_parameter());
@@ -138,7 +138,7 @@ where
         let batch_identifiers = report_aggregations
             .iter()
             .map(|ra| {
-                Q::to_batch_identifier(
+                B::to_batch_identifier(
                     &self.task,
                     aggregation_job.partial_batch_identifier(),
                     ra.time(),
@@ -282,23 +282,23 @@ where
 #[async_trait]
 trait WriteType {
     /// Writes an aggregation job back to the datastore.
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
         tx: &Transaction<'_, C>,
-        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
         C: Clock,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
         A::AggregationParam: Send + Sync,
         RA: ReportAggregationUpdate<SEED_SIZE, A>;
 
-    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
-        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, B, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>;
 }
 
@@ -307,13 +307,13 @@ pub struct InitialWrite;
 
 #[async_trait]
 impl WriteType for InitialWrite {
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
         tx: &Transaction<'_, C>,
-        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
         C: Clock,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
         A::AggregationParam: Send + Sync,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
@@ -334,12 +334,12 @@ impl WriteType for InitialWrite {
         Ok(())
     }
 
-    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
-        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, B, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     {
         // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
@@ -370,13 +370,13 @@ pub struct UpdateWrite;
 
 #[async_trait]
 impl WriteType for UpdateWrite {
-    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, B, A, RA>(
         tx: &Transaction<'_, C>,
-        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>,
     ) -> Result<(), Error>
     where
         C: Clock,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
         A::AggregationParam: Send + Sync,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
@@ -393,12 +393,12 @@ impl WriteType for UpdateWrite {
         Ok(())
     }
 
-    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
-        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
-        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, B, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, B, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     {
         // For updates of aggregation jobs into a terminal state, increment
@@ -430,45 +430,45 @@ impl WriteType for UpdateWrite {
 /// This tracks in-memory adjustments to aggregation jobs and report aggregations behind
 /// copy-on-write smart pointers, and maintains indices to efficiently look up aggregation jobs,
 /// report aggregations, and batch aggregations.
-struct WriteState<'a, const SEED_SIZE: usize, Q, A, WT, RA>
+struct WriteState<'a, const SEED_SIZE: usize, B, A, WT, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
     A::AggregationParam: Send + Sync,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    writer: &'a AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>,
+    writer: &'a AggregationJobWriter<SEED_SIZE, B, A, WT, RA>,
     batch_aggregation_ord: u64,
-    by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>>,
-    batch_aggregations: HashMap<Q::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, Q, A>)>,
+    by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>>,
+    batch_aggregations: HashMap<B::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, B, A>)>,
     counters: TaskAggregationCounter,
 }
 
 /// An aggregation job and its accompanying report aggregations.
-struct AggregationJobInfo<const SEED_SIZE: usize, Q, A, RA>
+struct AggregationJobInfo<const SEED_SIZE: usize, B, A, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
-    aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+    aggregation_job: AggregationJob<SEED_SIZE, B, A>,
     report_aggregations: Vec<RA>,
 }
 
 /// Copy-on-write version of [`AggregationJobInfo`].
-struct CowAggregationJobInfo<'a, const SEED_SIZE: usize, Q, A, RA>
+struct CowAggregationJobInfo<'a, const SEED_SIZE: usize, B, A, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
     A::AggregationParam: Send + Sync,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, Q, A>>,
+    aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, B, A>>,
     report_aggregations: Vec<Cow<'a, RA::Borrowed>>,
 }
 
-impl<'a, const SEED_SIZE: usize, Q, A, WT, RA> WriteState<'a, SEED_SIZE, Q, A, WT, RA>
+impl<'a, const SEED_SIZE: usize, B, A, WT, RA> WriteState<'a, SEED_SIZE, B, A, WT, RA>
 where
-    Q: AccumulableQueryType,
+    B: AccumulableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
     A::AggregationParam: PartialEq + Eq + Send + Sync,
     WT: WriteType,
@@ -479,7 +479,7 @@ where
     pub async fn new<C>(
         tx: &Transaction<'_, C>,
         vdaf: &A,
-        writer: &'a AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>,
+        writer: &'a AggregationJobWriter<SEED_SIZE, B, A, WT, RA>,
     ) -> Result<Self, Error>
     where
         C: Clock,
@@ -531,7 +531,7 @@ where
         let batch_aggregation_ord = thread_rng().gen_range(0..writer.batch_aggregation_shard_count);
         let batch_aggregations = try_join_all(writer.by_batch_identifier_index.keys().map(
             |batch_identifier| {
-                tx.get_batch_aggregation::<SEED_SIZE, Q, A>(
+                tx.get_batch_aggregation::<SEED_SIZE, B, A>(
                     vdaf,
                     writer.task.id(),
                     batch_identifier,

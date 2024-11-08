@@ -19,7 +19,7 @@
 //! position would indicate that a report was replayed or counted twice, while very large numbers
 //! would suggest an undetected batch mismatch between the leader and helper, or incorrect
 //! aggregation by one of the aggregators. There will only be one DAP task in use at a time. Both
-//! TimeInterval and FixedSize query types should be supported, as their implementations are very
+//! TimeInterval and FixedSize batch modes should be supported, as their implementations are very
 //! different.
 //!
 //! The simulation consists of multiple components making up a client, two aggregators, and a

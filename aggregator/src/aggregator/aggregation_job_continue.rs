@@ -6,6 +6,7 @@ use crate::aggregator::{
     AggregatorMetrics, Error, VdafOps,
 };
 use janus_aggregator_core::{
+    batch_mode::AccumulableBatchMode,
     datastore::{
         self,
         models::{
@@ -13,7 +14,6 @@ use janus_aggregator_core::{
         },
         Transaction,
     },
-    query_type::AccumulableQueryType,
     task::AggregatorTask,
 };
 use janus_core::time::Clock;
@@ -34,12 +34,12 @@ use tracing::{info_span, trace_span, Span};
 impl VdafOps {
     /// Step the helper's aggregation job to the next step using the step `n` ping pong state in
     /// `report_aggregations` with the step `n+1` ping pong messages in `leader_aggregation_job`.
-    pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
+    pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, B, A>(
         tx: &Transaction<'_, C>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
@@ -47,7 +47,7 @@ impl VdafOps {
     ) -> Result<(AggregationJobResp, TaskAggregationCounter), datastore::Error>
     where
         C: Clock,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::InputShare: Send + Sync,
@@ -415,7 +415,7 @@ mod tests {
         },
         task::{
             test_util::{Task, TaskBuilder},
-            QueryType,
+            BatchMode,
         },
         test_util::noop_meter,
     };
@@ -425,7 +425,7 @@ mod tests {
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId,
+        batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobId,
         AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, Interval,
         PartialBatchSelector, PrepareContinue, PrepareResp, PrepareStepResult, Role,
     };
@@ -468,7 +468,7 @@ mod tests {
 
         let aggregation_job_id = random();
         let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -620,7 +620,7 @@ mod tests {
             ..
         } = HttpHandlerTest::new().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
         datastore
             .put_aggregator_task(&task.leader_view().unwrap())
             .await
@@ -651,7 +651,7 @@ mod tests {
             ..
         } = HttpHandlerTest::new().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
         datastore
             .put_aggregator_task(&task.leader_view().unwrap())
             .await

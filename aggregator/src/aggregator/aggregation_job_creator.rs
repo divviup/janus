@@ -35,7 +35,7 @@ use janus_core::{
 #[cfg(feature = "test-util")]
 use janus_messages::ReportMetadata;
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
+    batch_mode::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter},
@@ -306,21 +306,21 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
     ) -> anyhow::Result<bool> {
-        match (task.query_type(), task.vdaf()) {
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
+        match (task.batch_mode(), task.vdaf()) {
+            (task::BatchMode::TimeInterval, VdafInstance::Prio3Count) => {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
+            (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVec {
                     bits,
                     length,
@@ -334,7 +334,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     proofs,
                     bits,
@@ -353,7 +353,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
@@ -367,7 +367,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3FixedPointBoundedL2VecSum {
                     bitsize,
                     dp_strategy: _,
@@ -389,7 +389,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             },
 
             #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafInstance::Fake { rounds }) => {
+            (task::BatchMode::TimeInterval, VdafInstance::Fake { rounds }) => {
                 let vdaf = Arc::new(prio::vdaf::dummy::Vdaf::new(*rounds));
                 self.create_aggregation_jobs_for_time_interval_task_with_param::<
                     0,
@@ -398,7 +398,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -414,7 +414,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -430,7 +430,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -451,7 +451,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -475,7 +475,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -496,7 +496,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -531,7 +531,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "test-util")]
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::FixedSize {
                     max_batch_size: _max_batch_size,
                     batch_time_window_size: _batch_time_window_size,
                 },
@@ -919,6 +919,7 @@ mod tests {
     use super::AggregationJobCreator;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
+        batch_mode::AccumulableBatchMode,
         datastore::{
             models::{
                 merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState,
@@ -928,8 +929,7 @@ mod tests {
             test_util::ephemeral_datastore,
             Transaction,
         },
-        query_type::AccumulableQueryType,
-        task::{test_util::TaskBuilder, QueryType as TaskQueryType},
+        task::{test_util::TaskBuilder, BatchMode as TaskBatchMode},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -939,8 +939,8 @@ mod tests {
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
+        batch_mode::{FixedSize, TimeInterval},
         codec::ParameterizedDecode,
-        query_type::{FixedSize, TimeInterval},
         AggregationJobStep, Interval, PrepareError, Query, ReportId, ReportIdChecksum,
         ReportMetadata, Role, TaskId, Time,
     };
@@ -980,7 +980,7 @@ mod tests {
 
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1006,7 +1006,7 @@ mod tests {
         ));
 
         let helper_task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .helper_view()
                 .unwrap(),
@@ -1158,7 +1158,7 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1346,7 +1346,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1556,7 +1556,7 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1736,7 +1736,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -1958,7 +1958,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2122,7 +2122,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2386,7 +2386,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2659,7 +2659,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: Some(batch_time_window_size),
                 },
@@ -2973,7 +2973,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::FixedSize {
                     max_batch_size: None,
                     batch_time_window_size: None,
                 },
@@ -3160,7 +3160,7 @@ mod tests {
         let vdaf = Arc::new(dummy::Vdaf::new(1));
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::TimeInterval,
+                TaskBatchMode::TimeInterval,
                 VdafInstance::Fake { rounds: 1 },
             )
             .build()
@@ -3439,7 +3439,7 @@ mod tests {
     /// aggregation parameter) are merged together, with the resulting batch aggregation having
     /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
     /// identifier, and aggregation parameter.
-    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, Q, A, C>(
+    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, B, A, C>(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task_id: &TaskId,
@@ -3449,13 +3449,13 @@ mod tests {
         >,
     ) -> (
         Vec<(
-            AggregationJob<SEED_SIZE, Q, A>,
+            AggregationJob<SEED_SIZE, B, A>,
             Vec<ReportAggregation<SEED_SIZE, A>>,
         )>,
-        Vec<BatchAggregation<SEED_SIZE, Q, A>>,
+        Vec<BatchAggregation<SEED_SIZE, B, A>>,
     )
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
         C: Clock,
         A::AggregationParam: Ord,
@@ -3503,7 +3503,7 @@ mod tests {
                         Ok((agg_job, report_aggs))
                     }),
             ),
-            tx.get_batch_aggregations_for_task::<SEED_SIZE, Q, A>(vdaf, task_id),
+            tx.get_batch_aggregations_for_task::<SEED_SIZE, B, A>(vdaf, task_id),
         )
         .unwrap();
 

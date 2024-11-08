@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{FixedSize, TimeInterval},
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
     AggregationJobResp, Collection, CollectionReq, HpkeConfig, HpkeConfigList, Report,
 };

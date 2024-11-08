@@ -8,11 +8,11 @@ use crate::{
             AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
             ReportAggregationUpdate as _, WritableReportAggregation,
         },
+        batch_mode::{CollectableBatchMode, UploadableBatchMode},
         error::{
             handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
             ReportRejectionReason,
         },
-        query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
     cache::{
@@ -38,6 +38,7 @@ use futures::future::try_join_all;
 use http::{header::CONTENT_TYPE, Method};
 use itertools::iproduct;
 use janus_aggregator_core::{
+    batch_mode::AccumulableBatchMode,
     datastore::{
         self,
         models::{
@@ -47,7 +48,6 @@ use janus_aggregator_core::{
         },
         Datastore, Error as DatastoreError, Transaction,
     },
-    query_type::AccumulableQueryType,
     task::{self, AggregatorTask, VerifyKey},
     taskprov::PeerAggregator,
 };
@@ -65,7 +65,7 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{FixedSize, TimeInterval},
     taskprov::{DpMechanism, TaskConfig},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
@@ -125,6 +125,7 @@ pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod aggregation_job_writer;
 pub mod batch_creator;
+pub mod batch_mode;
 pub mod collection_job_driver;
 #[cfg(test)]
 mod collection_job_tests;
@@ -133,7 +134,6 @@ pub mod garbage_collector;
 pub mod http_handlers;
 pub mod key_rotator;
 pub mod problem_details;
-pub mod query_type;
 mod queue;
 pub mod report_writer;
 #[cfg(test)]
@@ -1499,8 +1499,8 @@ impl VdafOps {
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
     ) -> Result<(), Arc<Error>> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         Arc::clone(vdaf),
@@ -1514,7 +1514,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         Arc::clone(vdaf),
@@ -1553,8 +1553,8 @@ impl VdafOps {
         log_forbidden_mutations: Option<PathBuf>,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
@@ -1574,7 +1574,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
@@ -1613,8 +1613,8 @@ impl VdafOps {
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
@@ -1630,7 +1630,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
@@ -1656,8 +1656,8 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
     ) -> Result<(), Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
@@ -1666,7 +1666,7 @@ impl VdafOps {
                     ).await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
@@ -1678,7 +1678,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_upload_generic<const SEED_SIZE: usize, Q, A, C>(
+    async fn handle_upload_generic<const SEED_SIZE: usize, B, A, C>(
         vdaf: Arc<A>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
@@ -1694,7 +1694,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         C: Clock,
-        Q: UploadableQueryType,
+        B: UploadableBatchMode,
     {
         // Shorthand function for generating an Error::ReportRejected with proper parameters and
         // recording it in the report_writer.
@@ -1854,7 +1854,7 @@ impl VdafOps {
         );
 
         report_writer
-            .write_report(Box::new(WritableReport::<SEED_SIZE, Q, A>::new(
+            .write_report(Box::new(WritableReport::<SEED_SIZE, B, A>::new(
                 vdaf, report,
             )))
             .await
@@ -1873,23 +1873,23 @@ where
 }
 
 impl VdafOps {
-    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, Q, A, C>(
+    async fn check_aggregate_init_idempotency<const SEED_SIZE: usize, B, A, C>(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
-        req: &AggregationJobInitializeReq<Q>,
+        req: &AggregationJobInitializeReq<B>,
         request_hash: [u8; 32],
         log_forbidden_mutations: Option<PathBuf>,
     ) -> Result<Option<AggregationJobResp>, datastore::Error>
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         C: Clock,
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
     {
         if let Some(existing_aggregation_job) = tx
-            .get_aggregation_job::<SEED_SIZE, Q, A>(task_id, aggregation_job_id)
+            .get_aggregation_job::<SEED_SIZE, B, A>(task_id, aggregation_job_id)
             .await?
         {
             if existing_aggregation_job.state() == &AggregationJobState::Deleted {
@@ -1991,7 +1991,7 @@ impl VdafOps {
     /// Implements [helper aggregate initialization][1].
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
-    async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
+    async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A, C>(
         datastore: Arc<Datastore<C>>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
@@ -2007,7 +2007,7 @@ impl VdafOps {
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error>
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         C: Clock,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
@@ -2023,7 +2023,7 @@ impl VdafOps {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req = Arc::new(
-            AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)
+            AggregationJobInitializeReq::<B>::get_decoded(req_bytes)
                 .map_err(Error::MessageDecode)?,
         );
 
@@ -2449,7 +2449,7 @@ impl VdafOps {
                 .add(&Duration::from_seconds(1))?,
         )?;
         let aggregation_job = Arc::new(
-            AggregationJob::<SEED_SIZE, Q, A>::new(
+            AggregationJob::<SEED_SIZE, B, A>::new(
                 *task.id(),
                 *aggregation_job_id,
                 Arc::unwrap_or_clone(agg_param),
@@ -2543,7 +2543,7 @@ impl VdafOps {
 
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A,
         C: Clock,
     >(
@@ -2588,7 +2588,7 @@ impl VdafOps {
                 Box::pin(async move {
                     // Read existing state.
                     let (aggregation_job, report_aggregations) = try_join!(
-                        tx.get_aggregation_job::<SEED_SIZE, Q, A>(task.id(), &aggregation_job_id),
+                        tx.get_aggregation_job::<SEED_SIZE, B, A>(task.id(), &aggregation_job_id),
                         tx.get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
                             &Role::Helper,
@@ -2689,7 +2689,7 @@ impl VdafOps {
     /// Handle requests to the helper to delete an aggregation job.
     async fn handle_aggregate_delete_generic<
         const SEED_SIZE: usize,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A,
         C: Clock,
     >(
@@ -2711,7 +2711,7 @@ impl VdafOps {
                 let (task_id, aggregation_job_id) = (*task.id(), *aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<SEED_SIZE, Q, A>(&task_id, &aggregation_job_id)
+                        .get_aggregation_job::<SEED_SIZE, B, A>(&task_id, &aggregation_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2742,8 +2742,8 @@ impl VdafOps {
         collection_job_id: &CollectionJobId,
         collection_req_bytes: &[u8],
     ) -> Result<(), Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -2754,7 +2754,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -2770,7 +2770,7 @@ impl VdafOps {
 
     async fn handle_create_collection_job_generic<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         C: Clock,
     >(
@@ -2785,7 +2785,7 @@ impl VdafOps {
         A::AggregateShare: Send + Sync,
     {
         let req =
-            Arc::new(CollectionReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+            Arc::new(CollectionReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
         let aggregation_param = Arc::new(
             A::AggregationParam::get_decoded(req.aggregation_parameter())
                 .map_err(Error::MessageDecode)?,
@@ -2803,7 +2803,7 @@ impl VdafOps {
                 Box::pin(async move {
                     // Check if this collection job already exists, ensuring that all parameters match.
                     if let Some(collection_job) = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, B, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
                     {
                         if collection_job.query() == req.query()
@@ -2827,7 +2827,7 @@ impl VdafOps {
                     }
 
                     let collection_identifier =
-                        Q::collection_identifier_for_query(tx, &task, req.query())
+                        B::collection_identifier_for_query(tx, &task, req.query())
                             .await?
                             .ok_or_else(|| {
                                 datastore::Error::User(
@@ -2841,7 +2841,7 @@ impl VdafOps {
 
                     // Check that the batch interval is valid for the task
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-                    if !Q::validate_collection_identifier(&task, &collection_identifier) {
+                    if !B::validate_collection_identifier(&task, &collection_identifier) {
                         return Err(datastore::Error::User(
                             Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
                                 .into(),
@@ -2850,14 +2850,14 @@ impl VdafOps {
 
                     debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let (_, report_count) = try_join!(
-                        Q::validate_query_count::<SEED_SIZE, C, A>(
+                        B::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
                             &vdaf,
                             &task,
                             &collection_identifier,
                             &aggregation_param,
                         ),
-                        Q::count_client_reports(tx, &task, &collection_identifier),
+                        B::count_client_reports(tx, &task, &collection_identifier),
                     )?;
 
                     // Batch size must be validated while handling CollectReq and hence before
@@ -2869,7 +2869,7 @@ impl VdafOps {
                         ));
                     }
 
-                    tx.put_collection_job(&CollectionJob::<SEED_SIZE, Q, A>::new(
+                    tx.put_collection_job(&CollectionJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
                         collection_job_id,
                         req.query().clone(),
@@ -2895,8 +2895,8 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -2907,7 +2907,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -2924,7 +2924,7 @@ impl VdafOps {
     // return value is an encoded CollectResp<Q>
     async fn handle_get_collection_job_generic<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         C: Clock,
     >(
@@ -2942,7 +2942,7 @@ impl VdafOps {
                 let (task, vdaf, collection_job_id) =
                     (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
                 Box::pin(async move {
-                    tx.get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
+                    tx.get_collection_job::<SEED_SIZE, B, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -3000,16 +3000,16 @@ impl VdafOps {
                             .aggregation_parameter()
                             .get_encoded()
                             .map_err(Error::MessageEncode)?,
-                        BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
+                        BatchSelector::<B>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded()
                     .map_err(Error::MessageEncode)?,
                 )?;
 
                 Ok(Some(
-                    Collection::<Q>::new(
+                    Collection::<B>::new(
                         PartialBatchSelector::new(
-                            Q::partial_batch_identifier(collection_job.batch_identifier()).clone(),
+                            B::partial_batch_identifier(collection_job.batch_identifier()).clone(),
                         ),
                         *report_count,
                         *client_timestamp_interval,
@@ -3039,8 +3039,8 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -3051,7 +3051,7 @@ impl VdafOps {
                     .await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
@@ -3067,7 +3067,7 @@ impl VdafOps {
 
     async fn handle_delete_collection_job_generic<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
         C: Clock,
     >(
@@ -3086,7 +3086,7 @@ impl VdafOps {
                     (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(
+                        .get_collection_job::<SEED_SIZE, B, A>(
                             vdaf.as_ref(),
                             task.id(),
                             &collection_job_id,
@@ -3099,7 +3099,7 @@ impl VdafOps {
                             )
                         })?;
                     if collection_job.state() != &CollectionJobState::Deleted {
-                        tx.update_collection_job::<SEED_SIZE, Q, A>(
+                        tx.update_collection_job::<SEED_SIZE, B, A>(
                             &collection_job.with_state(CollectionJobState::Deleted),
                         )
                         .await?;
@@ -3126,8 +3126,8 @@ impl VdafOps {
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
     ) -> Result<AggregateShare, Error> {
-        match task.query_type() {
-            task::QueryType::TimeInterval => {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
                     Self::handle_aggregate_share_generic::<
                         VERIFY_KEY_LENGTH,
@@ -3138,7 +3138,7 @@ impl VdafOps {
                     >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count, collector_hpke_config, Arc::clone(dp_strategy)).await
                 })
             }
-            task::QueryType::FixedSize { .. } => {
+            task::BatchMode::FixedSize { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
                     Self::handle_aggregate_share_generic::<
                         VERIFY_KEY_LENGTH,
@@ -3154,7 +3154,7 @@ impl VdafOps {
 
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
         A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
         C: Clock,
@@ -3175,10 +3175,10 @@ impl VdafOps {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
         let aggregate_share_req =
-            Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
+            Arc::new(AggregateShareReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
-        if !Q::validate_collection_identifier(
+        if !B::validate_collection_identifier(
             &task,
             aggregate_share_req.batch_selector().batch_identifier(),
         ) {
@@ -3195,7 +3195,7 @@ impl VdafOps {
         // attacks.
         if let Some(report_expiry_age) = task.report_expiry_age() {
             if let Some(batch_interval) =
-                Q::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
+                B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
             {
                 let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
                 if clock.now().is_after(&aggregate_share_expiry_time) {
@@ -3246,7 +3246,7 @@ impl VdafOps {
                         aggregate_share_req.aggregation_parameter(),
                     )?;
                     let (batch_aggregations, _) = try_join!(
-                        Q::get_batch_aggregations_for_collection_identifier(
+                        B::get_batch_aggregations_for_collection_identifier(
                             tx,
                             task.id(),
                             task.time_precision(),
@@ -3254,7 +3254,7 @@ impl VdafOps {
                             aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param
                         ),
-                        Q::validate_query_count::<SEED_SIZE, C, A>(
+                        B::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
                             vdaf.as_ref(),
                             &task,
@@ -3275,7 +3275,7 @@ impl VdafOps {
                     );
 
                     let (mut helper_aggregate_share, report_count, _, checksum) =
-                        compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
+                        compute_aggregate_share::<SEED_SIZE, B, A>(&task, &batch_aggregations)
                             .await
                             .map_err(|e| datastore::Error::User(e.into()))?;
 
@@ -3290,7 +3290,7 @@ impl VdafOps {
                     // Now that we are satisfied that the request is serviceable, we consume
                     // a query by recording the aggregate share request parameters and the
                     // result.
-                    let aggregate_share_job = AggregateShareJob::<SEED_SIZE, Q, A>::new(
+                    let aggregate_share_job = AggregateShareJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
                         aggregate_share_req
                             .batch_selector()
@@ -3390,26 +3390,26 @@ fn write_task_aggregation_counter<C: Clock>(
 
 fn empty_batch_aggregations<
     const SEED_SIZE: usize,
-    Q: CollectableQueryType,
+    B: CollectableBatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
 >(
     task: &AggregatorTask,
     batch_aggregation_shard_count: u64,
-    batch_identifier: &Q::BatchIdentifier,
+    batch_identifier: &B::BatchIdentifier,
     aggregation_param: &A::AggregationParam,
-    batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
-) -> Vec<BatchAggregation<SEED_SIZE, Q, A>> {
+    batch_aggregations: &[BatchAggregation<SEED_SIZE, B, A>],
+) -> Vec<BatchAggregation<SEED_SIZE, B, A>> {
     let existing_batch_aggregations: HashSet<_> = batch_aggregations
         .iter()
         .map(|ba| (ba.batch_identifier(), ba.ord()))
         .collect();
     iproduct!(
-        Q::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
+        B::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
         0..batch_aggregation_shard_count
     )
     .filter_map(|(batch_identifier, ord)| {
         if !existing_batch_aggregations.contains(&(&batch_identifier, ord)) {
-            Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
+            Some(BatchAggregation::<SEED_SIZE, B, A>::new(
                 *task.id(),
                 batch_identifier,
                 aggregation_param.clone(),

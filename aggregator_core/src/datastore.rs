@@ -12,7 +12,7 @@ use self::models::{
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
 use crate::{
-    query_type::{AccumulableQueryType, CollectableQueryType},
+    batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
     SecretBytes,
@@ -26,7 +26,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, FixedSize, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
     HpkeConfigId, Interval, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, TaskId, Time,
@@ -646,7 +646,7 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
             .prepare_cached(
                 "-- put_aggregator_task()
 INSERT INTO tasks (
-    task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
+    task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
@@ -667,7 +667,7 @@ ON CONFLICT DO NOTHING",
                     /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
                     /* peer_aggregator_endpoint */
                     &task.peer_aggregator_endpoint().as_str(),
-                    /* query_type */ &Json(task.query_type()),
+                    /* batch_mode */ &Json(task.batch_mode()),
                     /* vdaf */ &Json(task.vdaf()),
                     /* max_batch_query_count */
                     &i64::try_from(task.max_batch_query_count())?,
@@ -844,7 +844,7 @@ UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_task()
-SELECT aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
+SELECT aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
@@ -875,7 +875,7 @@ WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_tasks()
-SELECT task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
+SELECT task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
@@ -936,7 +936,7 @@ config_id, config, private_key FROM task_hpke_keys",
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
-        let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+        let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
         let task_expiration = row
@@ -1056,7 +1056,7 @@ config_id, config, private_key FROM task_hpke_keys",
         let mut task = AggregatorTask::new(
             *task_id,
             peer_aggregator_endpoint,
-            query_type,
+            batch_mode,
             vdaf,
             vdaf_verify_key,
             max_batch_query_count,
@@ -1839,13 +1839,13 @@ WHERE client_reports.client_timestamp < $7",
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregation_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
-    ) -> Result<Option<AggregationJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Option<AggregationJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -1881,12 +1881,12 @@ WHERE aggregation_jobs.task_id = $1
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregation_jobs_for_task<const SEED_SIZE: usize, Q, A>(
+    pub async fn get_aggregation_jobs_for_task<const SEED_SIZE: usize, B, A>(
         &self,
         task_id: &TaskId,
-    ) -> Result<Vec<AggregationJob<SEED_SIZE, Q, A>>, Error>
+    ) -> Result<Vec<AggregationJob<SEED_SIZE, B, A>>, Error>
     where
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     {
         let task_info = match self.task_info_for(task_id).await? {
@@ -1927,18 +1927,18 @@ WHERE aggregation_jobs.task_id = $1
 
     fn aggregation_job_from_row<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         row: &Row,
-    ) -> Result<AggregationJob<SEED_SIZE, Q, A>, Error> {
+    ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error> {
         let mut job = AggregationJob::new(
             *task_id,
             *aggregation_job_id,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
-            Q::PartialBatchIdentifier::get_decoded(row.get::<_, &[u8]>("batch_id"))?,
+            B::PartialBatchIdentifier::get_decoded(row.get::<_, &[u8]>("batch_id"))?,
             row.get::<_, SqlInterval>("client_timestamp_interval")
                 .as_interval(),
             row.get("state"),
@@ -1999,7 +1999,7 @@ UPDATE aggregation_jobs SET
 FROM tasks
 WHERE tasks.id = aggregation_jobs.task_id
 AND aggregation_jobs.id IN (SELECT id FROM incomplete_jobs)
-RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
+RETURNING tasks.task_id, tasks.batch_mode, tasks.vdaf,
           aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
           aggregation_jobs.lease_attempts",
             )
@@ -2020,12 +2020,12 @@ RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
             let aggregation_job_id =
                 row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+            let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
             let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
             Ok(Lease::new(
-                AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
+                AcquiredAggregationJob::new(task_id, aggregation_job_id, batch_mode, vdaf),
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -2084,11 +2084,11 @@ WHERE aggregation_jobs.task_id = $3
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_aggregation_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(aggregation_job.task_id()).await? {
             Some(task_info) => task_info,
@@ -2146,11 +2146,11 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_aggregation_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(aggregation_job.task_id()).await? {
             Some(task_info) => task_info,
@@ -2827,14 +2827,14 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Option<CollectionJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -2870,7 +2870,7 @@ WHERE collection_jobs.task_id = $1
         )
         .await?
         .map(|row| {
-            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
             Self::collection_job_from_row(
                 vdaf,
                 *task_id,
@@ -2886,15 +2886,15 @@ WHERE collection_jobs.task_id = $1
     /// collection job exists.
     pub async fn get_finished_collection_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
+        batch_identifier: &B::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Option<CollectionJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -3113,13 +3113,13 @@ WHERE task_id = $1
     #[cfg(feature = "test-util")]
     pub async fn get_collection_jobs_for_task<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3157,7 +3157,7 @@ WHERE task_id = $1
         .map(|row| {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
             Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
         .collect()
@@ -3165,16 +3165,16 @@ WHERE task_id = $1
 
     fn collection_job_from_row<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         vdaf: &A,
         task_id: TaskId,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         collection_job_id: CollectionJobId,
         row: &Row,
-    ) -> Result<CollectionJob<SEED_SIZE, Q, A>, Error> {
-        let query = Query::<Q>::get_decoded(row.get("query"))?;
+    ) -> Result<CollectionJob<SEED_SIZE, B, A>, Error> {
+        let query = Query::<B>::get_decoded(row.get("query"))?;
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
@@ -3240,11 +3240,11 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_collection_job<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        collection_job: &CollectionJob<SEED_SIZE, Q, A>,
+        collection_job: &CollectionJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Debug,
@@ -3256,7 +3256,7 @@ WHERE task_id = $1
         let now = self.clock.now().as_naive_date_time()?;
 
         let batch_interval =
-            Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
+            B::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
             .prepare_cached(
@@ -3327,7 +3327,7 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
 WITH incomplete_jobs AS (
     SELECT
         collection_jobs.id, collection_jobs.batch_identifier, tasks.task_id,
-        tasks.query_type, tasks.vdaf, tasks.time_precision
+        tasks.batch_mode, tasks.vdaf, tasks.time_precision
     FROM collection_jobs
     JOIN tasks ON tasks.id = collection_jobs.task_id
     WHERE tasks.aggregator_role = 'LEADER'
@@ -3356,7 +3356,7 @@ UPDATE collection_jobs SET
 FROM incomplete_jobs
 WHERE collection_jobs.id = incomplete_jobs.id
 RETURNING
-    incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
+    incomplete_jobs.task_id, incomplete_jobs.batch_mode, incomplete_jobs.vdaf,
     incomplete_jobs.time_precision, collection_jobs.collection_job_id,
     collection_jobs.batch_identifier, collection_jobs.aggregation_param,
     collection_jobs.lease_token, collection_jobs.lease_attempts,
@@ -3380,7 +3380,7 @@ RETURNING
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+            let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
             let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
             let time_precision =
                 Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
@@ -3394,7 +3394,7 @@ RETURNING
                 AcquiredCollectionJob::new(
                     task_id,
                     collection_job_id,
-                    query_type,
+                    batch_mode,
                     vdaf,
                     time_precision,
                     encoded_batch_identifier,
@@ -3481,11 +3481,11 @@ WHERE task_id = $4
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_collection_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        collection_job: &CollectionJob<SEED_SIZE, Q, A>,
+        collection_job: &CollectionJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(collection_job.task_id()).await? {
             Some(task_info) => task_info,
@@ -3575,16 +3575,16 @@ WHERE task_id = $8
     #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
     pub async fn get_batch_aggregation<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
+        batch_identifier: &B::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
         ord: u64,
-    ) -> Result<Option<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Option<BatchAggregation<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -3649,15 +3649,15 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
     pub async fn get_batch_aggregations_for_batch<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
+        batch_identifier: &B::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Vec<BatchAggregation<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3721,12 +3721,12 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
     pub async fn get_batch_aggregation_job_count_for_batch<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
+        batch_identifier: &B::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<(u64, u64), Error> {
         let task_info = match self.task_info_for(task_id).await? {
@@ -3787,13 +3787,13 @@ WHERE task_id = $1
     #[cfg(feature = "test-util")]
     pub async fn get_batch_aggregations_for_task<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Vec<BatchAggregation<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3836,7 +3836,7 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
             let ord = row.get_bigint_and_convert("ord")?;
 
@@ -3854,16 +3854,16 @@ WHERE task_id = $1
 
     fn batch_aggregation_from_row<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         vdaf: &A,
         task_id: TaskId,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         aggregation_param: A::AggregationParam,
         ord: u64,
         row: Row,
-    ) -> Result<BatchAggregation<SEED_SIZE, Q, A>, Error> {
+    ) -> Result<BatchAggregation<SEED_SIZE, B, A>, Error> {
         #[allow(clippy::type_complexity)]
         fn parse_values_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
             vdaf: &A,
@@ -3947,11 +3947,11 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_batch_aggregation<
         const SEED_SIZE: usize,
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        batch_aggregation: &BatchAggregation<SEED_SIZE, Q, A>,
+        batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Debug,
@@ -3964,7 +3964,7 @@ WHERE task_id = $1
         let now = self.clock.now().as_naive_date_time()?;
 
         let batch_interval =
-            Q::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
+            B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
         let stmt = self
@@ -4035,11 +4035,11 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_batch_aggregation<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        batch_aggregation: &BatchAggregation<SEED_SIZE, Q, A>,
+        batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Debug,
@@ -4114,15 +4114,15 @@ WHERE task_id = $10
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_job<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
+        batch_identifier: &B::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Option<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Option<AggregateShareJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -4279,13 +4279,13 @@ WHERE task_id = $1
     #[cfg(feature = "test-util")]
     pub async fn get_aggregate_share_jobs_for_task<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, B, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -4320,7 +4320,7 @@ WHERE task_id = $1
         .await?
         .into_iter()
         .map(|row| {
-            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
             Self::aggregate_share_job_from_row(
                 vdaf,
@@ -4335,15 +4335,15 @@ WHERE task_id = $1
 
     fn aggregate_share_job_from_row<
         const SEED_SIZE: usize,
-        Q: QueryType,
+        B: BatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         aggregation_param: A::AggregationParam,
         row: &Row,
-    ) -> Result<AggregateShareJob<SEED_SIZE, Q, A>, Error> {
+    ) -> Result<AggregateShareJob<SEED_SIZE, B, A>, Error> {
         let helper_aggregate_share =
             row.get_bytea_and_decode("helper_aggregate_share", &(vdaf, &aggregation_param))?;
         Ok(AggregateShareJob::new(
@@ -4360,11 +4360,11 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_aggregate_share_job<
         const SEED_SIZE: usize,
-        Q: CollectableQueryType,
+        B: CollectableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        aggregate_share_job: &AggregateShareJob<SEED_SIZE, Q, A>,
+        aggregate_share_job: &AggregateShareJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
         let task_info = match self.task_info_for(aggregate_share_job.task_id()).await? {
             Some(task_info) => task_info,
@@ -4372,7 +4372,7 @@ WHERE task_id = $1
         };
         let now = self.clock.now().as_naive_date_time()?;
         let batch_interval =
-            Q::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
+            B::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
             .prepare_cached(
@@ -4823,7 +4823,7 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
     ///   purposes of GC, and will be considered eligible for GC once the maximum of the
     ///   batch_interval (for time-interval) or merged client_timestamp_interval (for fixed-size) of
     ///   the batch_aggregations rows is older than report_expiry_age.
-    /// * collection_jobs and aggregate_share_jobs use a query-type-specific rule to determine
+    /// * collection_jobs and aggregate_share_jobs use a batch mode-specific rule to determine
     ///   GC-eligiblity.
     ///   * For time-interval tasks, collection_jobs and aggregate_share_jobs are considered
     ///     eligible for GC if the minimum of the collection interval is older than

@@ -9,8 +9,8 @@
   # HTTPS endpoint of the peer aggregator.
   peer_aggregator_endpoint: "https://example.com/"
 
-  # The DAP query type. See below for an example of a fixed-size task
-  query_type: TimeInterval
+  # The DAP batch mode. See below for an example of a fixed-size task.
+  batch_mode: TimeInterval
 
   # The task's VDAF. Each VDAF requires its own set of parameters.
   vdaf: !Prio3Sum
@@ -97,9 +97,9 @@
 
 - task_id: "D-hCKPuqL2oTf7ZVRVyMP5VGt43EAEA8q34mDf6p1JE"
   peer_aggregator_endpoint: "https://example.org/"
-  # For tasks using the fixed size query type, an additional `max_batch_size`
+  # For tasks using the fixed size batch mode, an additional `max_batch_size`
   # parameter must be provided.
-  query_type: !FixedSize
+  batch_mode: !FixedSize
     max_batch_size: 100
     batch_time_window_size: null
   vdaf: Prio3Count

@@ -15,7 +15,7 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
-    codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
+    batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
     AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
     HpkeConfigList, Report, TaskId,

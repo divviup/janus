@@ -335,7 +335,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // partial_batch_selector
-                "01", // query_type
+                "01", // batch_mode
             ),
             concat!(
                 // prepare_inits
@@ -469,7 +469,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // partial_batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
             ),
             concat!(

@@ -4,20 +4,20 @@ use super::{
 };
 use async_trait::async_trait;
 use janus_aggregator_core::{
+    batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
     datastore::{self, models::LeaderStoredReport, Transaction},
-    query_type::{AccumulableQueryType, CollectableQueryType as CoreCollectableQueryType},
     task::AggregatorTask,
 };
 use janus_core::time::Clock;
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, FixedSize, TimeInterval},
     Role,
 };
 use prio::vdaf;
 use std::{collections::HashSet, hash::Hash};
 
 #[async_trait]
-pub trait UploadableQueryType: QueryType {
+pub trait UploadableBatchMode: BatchMode {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
@@ -33,7 +33,7 @@ pub trait UploadableQueryType: QueryType {
 }
 
 #[async_trait]
-impl UploadableQueryType for TimeInterval {
+impl UploadableBatchMode for TimeInterval {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
@@ -70,7 +70,7 @@ impl UploadableQueryType for TimeInterval {
 }
 
 #[async_trait]
-impl UploadableQueryType for FixedSize {
+impl UploadableBatchMode for FixedSize {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
@@ -87,10 +87,10 @@ impl UploadableQueryType for FixedSize {
     }
 }
 
-/// CollectableQueryType represents a query type that can be collected by Janus. This trait extends
-/// [`AccumulableQueryType`] with additional functionality required for collection.
+/// CollectableBatchMode represents a batch mode that can be collected by Janus. This trait extends
+/// [`AccumulableBatchMode`] with additional functionality required for collection.
 #[async_trait]
-pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType {
+pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode {
     /// Validates query count for a given batch, per the size checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
     async fn validate_query_count<
@@ -109,7 +109,7 @@ pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType 
 }
 
 #[async_trait]
-impl CollectableQueryType for TimeInterval {
+impl CollectableBatchMode for TimeInterval {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
@@ -191,7 +191,7 @@ impl CollectableQueryType for TimeInterval {
 }
 
 #[async_trait]
-impl CollectableQueryType for FixedSize {
+impl CollectableBatchMode for FixedSize {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,

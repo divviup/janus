@@ -17,7 +17,7 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType},
+    task::{test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, BatchMode},
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
     SecretBytes,
@@ -77,7 +77,7 @@ async fn get_config() {
         concat!(
             r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
-            r#""query_types":["TimeInterval","FixedSize"],"#,
+            r#""batch_modes":["TimeInterval","FixedSize"],"#,
             r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"],"#,
             r#""software_name":"Janus","software_version":""#,
         )
@@ -93,7 +93,7 @@ async fn get_task_ids() {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let tasks: Vec<_> = iter::repeat_with(|| {
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                    TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
                         .build()
                         .leader_view()
                         .unwrap()
@@ -189,7 +189,7 @@ async fn post_task_bad_role() {
 
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Collector,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -223,7 +223,7 @@ async fn post_task_unauthorized() {
 
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -258,7 +258,7 @@ async fn post_task_helper_no_optional_fields() {
     // Verify: posting a task creates a new task which matches the request.
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -309,7 +309,7 @@ async fn post_task_helper_no_optional_fields() {
         &req.peer_aggregator_endpoint,
         got_task.peer_aggregator_endpoint()
     );
-    assert_eq!(&req.query_type, got_task.query_type());
+    assert_eq!(&req.batch_mode, got_task.batch_mode());
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
     assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
@@ -340,7 +340,7 @@ async fn post_task_helper_with_aggregator_auth_token() {
     // Verify: posting a task with role = helper and an aggregator auth token fails
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -376,7 +376,7 @@ async fn post_task_idempotence() {
     // Verify: posting a task creates a new task which matches the request.
     let mut req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -451,7 +451,7 @@ async fn post_task_leader_all_optional_fields() {
     // Verify: posting a task creates a new task which matches the request.
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -495,7 +495,7 @@ async fn post_task_leader_all_optional_fields() {
         &req.peer_aggregator_endpoint,
         got_task.peer_aggregator_endpoint()
     );
-    assert_eq!(&req.query_type, got_task.query_type());
+    assert_eq!(&req.batch_mode, got_task.batch_mode());
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
     assert_eq!(&vdaf_verify_key, got_task.opaque_vdaf_verify_key());
@@ -531,7 +531,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
     // Verify: posting a task with role = Leader and no aggregator auth token fails
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
-        query_type: QueryType::TimeInterval,
+        batch_mode: BatchMode::TimeInterval,
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
@@ -564,7 +564,7 @@ async fn get_task(#[case] role: Role) {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .build()
         .view_for_role(role)
         .unwrap();
@@ -621,7 +621,7 @@ async fn delete_task() {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                    TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
                         .build()
                         .leader_view()
                         .unwrap();
@@ -695,7 +695,7 @@ async fn patch_task(#[case] role: Role) {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
         .build()
         .view_for_role(role)
@@ -812,7 +812,7 @@ async fn get_task_upload_metrics() {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                    TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
                         .build()
                         .leader_view()
                         .unwrap();
@@ -891,7 +891,7 @@ async fn get_task_aggregation_metrics() {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                    TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
                         .build()
                         .leader_view()
                         .unwrap();
@@ -1655,7 +1655,7 @@ fn post_task_req_serialization() {
     assert_tokens(
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
-            query_type: QueryType::FixedSize {
+            batch_mode: BatchMode::FixedSize {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
@@ -1688,9 +1688,9 @@ fn post_task_req_serialization() {
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
-            Token::Str("query_type"),
+            Token::Str("batch_mode"),
             Token::StructVariant {
-                name: "QueryType",
+                name: "BatchMode",
                 variant: "FixedSize",
                 len: 2,
             },
@@ -1777,7 +1777,7 @@ fn post_task_req_serialization() {
     assert_tokens(
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
-            query_type: QueryType::FixedSize {
+            batch_mode: BatchMode::FixedSize {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
@@ -1814,9 +1814,9 @@ fn post_task_req_serialization() {
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
-            Token::Str("query_type"),
+            Token::Str("batch_mode"),
             Token::StructVariant {
-                name: "QueryType",
+                name: "BatchMode",
                 variant: "FixedSize",
                 len: 2,
             },
@@ -1931,7 +1931,7 @@ fn task_resp_serialization() {
     let task = AggregatorTask::new(
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(999),
             batch_time_window_size: None,
         },
@@ -1988,9 +1988,9 @@ fn task_resp_serialization() {
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://helper.com/"),
-            Token::Str("query_type"),
+            Token::Str("batch_mode"),
             Token::StructVariant {
-                name: "QueryType",
+                name: "BatchMode",
                 variant: "FixedSize",
                 len: 2,
             },

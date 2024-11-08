@@ -2,7 +2,7 @@ use janus_messages::{CollectionJobId, Duration, Interval, Time};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {
-    /// Task query type selector. This is fixed by the test harness, and not randomly generated.
+    /// Task batch mode selector. This is fixed by the test harness, and not randomly generated.
     pub(super) is_fixed_size: bool,
 
     /// Combination of Janus configuration and task parameters.

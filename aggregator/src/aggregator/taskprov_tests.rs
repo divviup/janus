@@ -19,7 +19,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
     taskprov::{test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
@@ -33,8 +33,8 @@ use janus_core::{
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
+    batch_mode::FixedSize,
     codec::{Decode, Encode},
-    query_type::FixedSize,
     taskprov::{
         DpConfig, DpMechanism, Query as TaskprovQuery, QueryConfig, TaskConfig, VdafConfig,
         VdafType,
@@ -194,7 +194,7 @@ where
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize {
+            BatchMode::FixedSize {
                 max_batch_size: Some(max_batch_size as u64),
                 batch_time_window_size: None,
             },

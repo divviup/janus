@@ -322,7 +322,7 @@ mod tests {
 
     use janus_aggregator_core::{
         datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
-        task::{test_util::TaskBuilder, QueryType},
+        task::{test_util::TaskBuilder, BatchMode},
     };
     use janus_core::{
         hpke::HpkeKeypair,
@@ -403,7 +403,7 @@ mod tests {
             ttl,
         );
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
             .build()
             .leader_view()
             .unwrap();
@@ -473,7 +473,7 @@ mod tests {
             ttl,
         );
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
             .build()
             .leader_view()
             .unwrap();

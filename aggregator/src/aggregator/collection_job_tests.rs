@@ -15,7 +15,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
     test_util::noop_meter,
 };
@@ -27,7 +27,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType as QueryTypeTrait, TimeInterval},
+    batch_mode::{BatchMode as BatchModeTrait, FixedSize, TimeInterval},
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, Collection, CollectionJobId,
     CollectionReq, FixedSizeQuery, Interval, Query, Role, Time,
 };
@@ -56,10 +56,10 @@ pub(crate) struct CollectionJobTestCase {
 }
 
 impl CollectionJobTestCase {
-    pub(super) async fn put_collection_job_with_auth_token<Q: QueryTypeTrait>(
+    pub(super) async fn put_collection_job_with_auth_token<B: BatchModeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
-        request: &CollectionReq<Q>,
+        request: &CollectionReq<B>,
         auth_token: Option<&AuthenticationToken>,
     ) -> TestConn {
         let mut test_conn = put(self
@@ -82,10 +82,10 @@ impl CollectionJobTestCase {
             .await
     }
 
-    pub(super) async fn put_collection_job<Q: QueryTypeTrait>(
+    pub(super) async fn put_collection_job<B: BatchModeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
-        request: &CollectionReq<Q>,
+        request: &CollectionReq<B>,
     ) -> TestConn {
         self.put_collection_job_with_auth_token(
             collection_job_id,
@@ -250,11 +250,11 @@ impl CollectionJobTestCase {
 
 pub(crate) async fn setup_collection_job_test_case(
     role: Role,
-    query_type: QueryType,
+    batch_mode: BatchMode,
 ) -> CollectionJobTestCase {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(query_type, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(batch_mode, VdafInstance::Fake { rounds: 1 }).build();
     let role_task = task.view_for_role(role).unwrap();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -291,7 +291,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
 ) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -474,7 +474,7 @@ async fn collection_job_success_fixed_size() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_time_interval() {
-    let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
         .await;
@@ -526,7 +526,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
     // count for max_batch_query_count testing is based on the number of distinct aggregation
     // parameters that the batch has been collected against.
 
-    let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
         .await;
@@ -637,7 +637,7 @@ async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
-    let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
         .await;
@@ -678,7 +678,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param() {
-    let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
         .await;
@@ -842,7 +842,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_report
 async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -872,7 +872,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id() {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -918,7 +918,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregation_param() {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },

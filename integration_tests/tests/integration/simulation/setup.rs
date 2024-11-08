@@ -31,7 +31,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
 };
 use janus_client::{default_http_client, Client};
@@ -168,15 +168,15 @@ impl Components {
         )
         .await;
 
-        let query_type = if input.is_fixed_size {
-            QueryType::FixedSize {
+        let batch_mode = if input.is_fixed_size {
+            BatchMode::FixedSize {
                 max_batch_size: input.config.max_batch_size,
                 batch_time_window_size: input.config.batch_time_window_size,
             }
         } else {
-            QueryType::TimeInterval
+            BatchMode::TimeInterval
         };
-        let task = TaskBuilder::new(query_type, state.vdaf_instance.clone())
+        let task = TaskBuilder::new(batch_mode, state.vdaf_instance.clone())
             .with_leader_aggregator_endpoint(
                 format!("http://{}/", leader.socket_address)
                     .parse()

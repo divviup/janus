@@ -17,7 +17,7 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
         ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
-    task::{test_util::TaskBuilder, QueryType, VerifyKey},
+    task::{test_util::TaskBuilder, BatchMode, VerifyKey},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -29,7 +29,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{FixedSize, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
     PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult, ReportIdChecksum,
@@ -50,7 +50,7 @@ async fn aggregate_leader() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
     datastore
         .put_aggregator_task(&task.leader_view().unwrap())
         .await
@@ -120,7 +120,7 @@ async fn aggregate_wrong_agg_auth_token() {
 
     let dap_auth_token = AuthenticationToken::DapAuth(random());
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_aggregator_auth_token(dap_auth_token.clone())
         .build();
 
@@ -194,7 +194,7 @@ async fn aggregate_init() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
 
@@ -623,7 +623,7 @@ async fn aggregate_init_batch_already_collected() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::FixedSize {
             max_batch_size: Some(100),
             batch_time_window_size: None,
         },
@@ -735,7 +735,7 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -824,7 +824,7 @@ async fn aggregate_init_prep_init_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -885,7 +885,7 @@ async fn aggregate_init_prep_step_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -945,7 +945,7 @@ async fn aggregate_init_duplicated_report_id() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(

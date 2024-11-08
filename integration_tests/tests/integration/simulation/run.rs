@@ -21,7 +21,7 @@ use janus_core::{
     vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{FixedSize, TimeInterval},
     CollectionJobId, Duration, FixedSizeQuery, Time,
 };
 use opentelemetry::metrics::Meter;
@@ -588,8 +588,8 @@ impl State {
     }
 }
 
-fn check_aggregate_results_valid<Q: janus_messages::query_type::QueryType>(
-    map: &HashMap<CollectionJobId, Collection<Vec<u128>, Q>>,
+fn check_aggregate_results_valid<B: janus_messages::batch_mode::BatchMode>(
+    map: &HashMap<CollectionJobId, Collection<Vec<u128>, B>>,
     state: &State,
 ) -> bool {
     for collection in map.values() {

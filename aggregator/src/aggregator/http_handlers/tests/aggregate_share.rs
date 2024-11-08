@@ -5,11 +5,11 @@ use crate::aggregator::{
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    batch_mode::CollectableBatchMode,
     datastore::models::{BatchAggregation, BatchAggregationState},
-    query_type::CollectableQueryType,
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
 };
 use janus_core::{
@@ -19,7 +19,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{self, TimeInterval},
+    batch_mode::{self, TimeInterval},
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq, BatchSelector,
     Duration, Interval, ReportIdChecksum, Role, Time,
 };
@@ -31,9 +31,9 @@ use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{assert_headers, prelude::post, TestConn};
 
-pub(crate) async fn post_aggregate_share_request<Q: query_type::QueryType>(
+pub(crate) async fn post_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,
-    request: &AggregateShareReq<Q>,
+    request: &AggregateShareReq<B>,
     handler: &impl Handler,
 ) -> TestConn {
     let (header, value) = task.aggregator_auth_token().request_authentication();
@@ -41,7 +41,7 @@ pub(crate) async fn post_aggregate_share_request<Q: query_type::QueryType>(
         .with_request_header(header, value)
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregateShareReq::<Q>::MEDIA_TYPE,
+            AggregateShareReq::<B>::MEDIA_TYPE,
         )
         .with_request_body(request.get_encoded().unwrap())
         .run_async(handler)
@@ -58,7 +58,7 @@ async fn aggregate_share_request_to_leader() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
@@ -97,7 +97,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
     // Prepare parameters.
     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
     let helper_task = task.helper_view().unwrap();
@@ -159,7 +159,7 @@ async fn aggregate_share_request() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .with_max_batch_query_count(1)
         .with_time_precision(Duration::from_seconds(500))
         .with_min_batch_size(10)
@@ -325,9 +325,9 @@ async fn aggregate_share_request() {
     );
 
     // Make requests that will fail because the checksum or report counts don't match.
-    struct MisalignedRequestTestCase<Q: janus_messages::query_type::QueryType> {
+    struct MisalignedRequestTestCase<B: janus_messages::batch_mode::BatchMode> {
         name: &'static str,
-        request: AggregateShareReq<Q>,
+        request: AggregateShareReq<B>,
         expected_checksum: ReportIdChecksum,
         expected_report_count: u64,
     }

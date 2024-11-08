@@ -96,7 +96,7 @@ CREATE TABLE tasks(
     task_id                     BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the DAP specification
     aggregator_role             AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     peer_aggregator_endpoint    TEXT NOT NULL,             -- peer aggregator's API endpoint
-    query_type                  JSONB NOT NULL,            -- the query type in use for this task, along with its parameters
+    batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     max_batch_query_count       BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     task_expiration             TIMESTAMP,                 -- the time after which client reports are no longer accepted
@@ -316,7 +316,7 @@ CREATE TYPE BATCH_AGGREGATION_STATE AS ENUM(
 CREATE TABLE batch_aggregations(
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                     BIGINT NOT NULL,                   -- the task ID
-    batch_identifier            BYTEA NOT NULL,                    -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_identifier            BYTEA NOT NULL,                    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
     batch_interval              TSRANGE,                           -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param           BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
     ord                         BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
@@ -352,9 +352,9 @@ CREATE TABLE collection_jobs(
     id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                    BIGINT NOT NULL,                -- the task ID being collected
     collection_job_id          BYTEA NOT NULL,                 -- 16 byte identifier used by collector to refer to this job
-    query                      BYTEA NOT NULL,                 -- encoded query-type-specific query (corresponds to Query)
+    query                      BYTEA NOT NULL,                 -- encoded batch mode-specific query (corresponds to Query)
     aggregation_param          BYTEA NOT NULL,                 -- the aggregation parameter (opaque VDAF message)
-    batch_identifier           BYTEA NOT NULL,                 -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_identifier           BYTEA NOT NULL,                 -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
     batch_interval             TSRANGE,                        -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     state                      COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
     report_count               BIGINT,                         -- the number of reports included in this collection job (only if in state FINISHED)
@@ -385,7 +385,7 @@ CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING
 CREATE TABLE aggregate_share_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                 BIGINT NOT NULL,    -- the task ID being collected
-    batch_identifier        BYTEA NOT NULL,     -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_identifier        BYTEA NOT NULL,     -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
     batch_interval          TSRANGE,            -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
     helper_aggregate_share  BYTEA NOT NULL,     -- the helper's unencrypted aggregate share

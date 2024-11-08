@@ -18,7 +18,7 @@ use janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128;
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
+    batch_mode::BatchMode, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
     PartialBatchSelector, Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -50,8 +50,8 @@ struct AddTaskRequest {
     leader: Url,
     vdaf: VdafObject,
     collector_authentication_token: String,
-    #[serde(rename = "query_type")]
-    _query_type: u8,
+    #[serde(rename = "batch_mode")]
+    _batch_mode: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,7 +65,7 @@ struct AddTaskResponse {
 #[derive(Debug, Deserialize)]
 struct RequestQuery {
     #[serde(rename = "type")]
-    query_type: u8,
+    batch_mode: u8,
     batch_interval_start: Option<u64>,
     batch_interval_duration: Option<u64>,
     subtype: Option<u8>,
@@ -186,19 +186,19 @@ async fn handle_add_task(
     Ok(hpke_config)
 }
 
-async fn handle_collect_generic<V, Q>(
+async fn handle_collect_generic<V, B>(
     http_client: &reqwest::Client,
     task_state: &TaskState,
-    query: Query<Q>,
+    query: Query<B>,
     vdaf: V,
     agg_param_encoded: &[u8],
-    batch_convert_fn: impl Fn(&PartialBatchSelector<Q>) -> Option<BatchId> + Send + 'static,
+    batch_convert_fn: impl Fn(&PartialBatchSelector<B>) -> Option<BatchId> + Send + 'static,
     result_convert_fn: impl Fn(&V::AggregateResult) -> AggregationResult + Send + 'static,
 ) -> anyhow::Result<JoinHandle<anyhow::Result<CollectResult>>>
 where
     V: vdaf::Collector + Send + Sync + 'static,
     V::AggregationParam: Send + Sync + 'static,
-    Q: QueryType,
+    B: BatchMode,
 {
     let collector = Collector::builder(
         task_state.task_id,
@@ -263,7 +263,7 @@ async fn handle_collection_start(
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
 
-    let query = match request.query.query_type {
+    let query = match request.query.batch_mode {
         1 => {
             let start = Time::from_seconds_since_epoch(
                 request
@@ -295,8 +295,8 @@ async fn handle_collection_start(
         },
         _ => {
             return Err(anyhow::anyhow!(
-                "unsupported query type: {}",
-                request.query.query_type
+                "unsupported batch mode: {}",
+                request.query.batch_mode
             ))
         }
     };

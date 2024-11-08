@@ -19,7 +19,7 @@ use janus_aggregator_core::{
 use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::Clock};
 use janus_messages::HpkeConfigId;
 use janus_messages::{
-    query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
+    batch_mode::Code as SupportedBatchMode, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
     TaskId,
 };
 use querystring::querify;
@@ -45,16 +45,16 @@ pub(super) async fn get_config(
         protocol: "DAP-09",
         dap_url: config.public_dap_url.clone(),
         role: AggregatorRole::Either,
-        vdafs: vec![
+        vdafs: Vec::from([
             SupportedVdaf::Prio3Count,
             SupportedVdaf::Prio3Sum,
             SupportedVdaf::Prio3Histogram,
             SupportedVdaf::Prio3SumVec,
-        ],
-        query_types: vec![
-            SupportedQueryType::TimeInterval,
-            SupportedQueryType::FixedSize,
-        ],
+        ]),
+        batch_modes: Vec::from([
+            SupportedBatchMode::TimeInterval,
+            SupportedBatchMode::FixedSize,
+        ]),
         features: &[
             "TokenHash",
             "UploadMetrics",
@@ -170,7 +170,7 @@ pub(super) async fn post_task<C: Clock>(
         AggregatorTask::new(
             task_id,
             /* peer_aggregator_endpoint */ req.peer_aggregator_endpoint,
-            /* query_type */ req.query_type,
+            /* batch_mode */ req.batch_mode,
             /* vdaf */ req.vdaf,
             vdaf_verify_key,
             /* max_batch_query_count */ req.max_batch_query_count,
@@ -202,7 +202,7 @@ pub(super) async fn post_task<C: Clock>(
             // Check whether the existing task in the DB corresponds to the incoming task, ignoring
             // those fields that are randomly generated.
             if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
-                && existing_task.query_type() == task.query_type()
+                && existing_task.batch_mode() == task.batch_mode()
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
                 && existing_task.role() == task.role()

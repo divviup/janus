@@ -1,5 +1,5 @@
 use crate::{
-    query_type, roundtrip_encoding, BatchId, Duration, FixedSize, FixedSizeQuery, Interval, Query,
+    batch_mode, roundtrip_encoding, BatchId, Duration, FixedSize, FixedSizeQuery, Interval, Query,
     TaskId, Time, TimeInterval,
 };
 
@@ -32,14 +32,14 @@ fn roundtrip_fixed_size_query() {
                 batch_id: BatchId::from([10u8; 32]),
             },
             concat!(
-                "00",                                                               // query_type
+                "00",                                                               // batch_mode
                 "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
             ),
         ),
         (
             FixedSizeQuery::CurrentBatch,
             concat!(
-                "01", // query_type
+                "01", // batch_mode
             ),
         ),
     ])
@@ -58,7 +58,7 @@ fn roundtrip_query() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // query_body
                     "000000000000D431", // start
@@ -75,7 +75,7 @@ fn roundtrip_query() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // query_body
                     "000000000000BF11", // start
@@ -94,10 +94,10 @@ fn roundtrip_query() {
                 },
             },
             concat!(
-                "02", // query_type
+                "02", // batch_mode
                 concat!(
                     // query_body
-                    "00", // query_type
+                    "00", // batch_mode
                     "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                 ),
             ),
@@ -107,10 +107,10 @@ fn roundtrip_query() {
                 query_body: FixedSizeQuery::CurrentBatch,
             },
             concat!(
-                "02", // query_type
+                "02", // batch_mode
                 concat!(
                     // query_body
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
             ),
         ),
@@ -120,8 +120,8 @@ fn roundtrip_query() {
 #[test]
 fn roundtrip_code() {
     roundtrip_encoding(&[
-        (query_type::Code::Reserved, "00"),
-        (query_type::Code::TimeInterval, "01"),
-        (query_type::Code::FixedSize, "02"),
+        (batch_mode::Code::Reserved, "00"),
+        (batch_mode::Code::TimeInterval, "01"),
+        (batch_mode::Code::FixedSize, "02"),
     ])
 }

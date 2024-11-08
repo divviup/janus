@@ -15,7 +15,7 @@ use janus_collector::{
 };
 use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, FixedSize, TimeInterval},
     BatchId, CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector,
     Query, TaskId, Time,
 };
@@ -562,11 +562,11 @@ async fn run(options: Options) -> Result<(), Error> {
     })
 }
 
-async fn run_collection<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_collection<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
 ) -> Result<(), Error>
 where
@@ -576,15 +576,15 @@ where
         .collect(query, agg_param)
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
-    print_collection::<V, Q>(collection)?;
+    print_collection::<V, B>(collection)?;
     Ok(())
 }
 
-async fn run_new_job<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_new_job<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
     collection_job_id: CollectionJobId,
 ) -> Result<(), Error>
@@ -599,11 +599,11 @@ where
     Ok(())
 }
 
-async fn run_poll_job<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_poll_job<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
     collection_job_id: CollectionJobId,
 ) -> Result<(), Error>
@@ -618,7 +618,7 @@ where
     match poll_result {
         PollResult::CollectionResult(collection) => {
             println!("State: Ready");
-            print_collection::<V, Q>(collection)?;
+            print_collection::<V, B>(collection)?;
             Ok(())
         }
         PollResult::NotReady(retry_after) => {
@@ -656,13 +656,13 @@ fn new_collector<V: vdaf::Collector>(
     Ok(collector)
 }
 
-fn print_collection<V: vdaf::Collector, Q: QueryTypeExt>(
-    collection: Collection<<V as Vdaf>::AggregateResult, Q>,
+fn print_collection<V: vdaf::Collector, B: BatchModeExt>(
+    collection: Collection<<V as Vdaf>::AggregateResult, B>,
 ) -> Result<(), Error> {
-    if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
+    if !B::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
         println!(
             "Batch: {}",
-            Q::format_partial_batch_selector(collection.partial_batch_selector())
+            B::format_partial_batch_selector(collection.partial_batch_selector())
         );
     }
     let (start, duration) = collection.interval();
@@ -693,14 +693,14 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
     Ok(())
 }
 
-trait QueryTypeExt: QueryType {
+trait BatchModeExt: BatchMode {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
 
     fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
         -> String;
 }
 
-impl QueryTypeExt for TimeInterval {
+impl BatchModeExt for TimeInterval {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = true;
 
     fn format_partial_batch_selector(_: &PartialBatchSelector<Self>) -> String {
@@ -708,7 +708,7 @@ impl QueryTypeExt for TimeInterval {
     }
 }
 
-impl QueryTypeExt for FixedSize {
+impl BatchModeExt for FixedSize {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
 
     fn format_partial_batch_selector(

@@ -13,7 +13,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, FixedSize, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
@@ -355,7 +355,7 @@ impl AggregatorRole {
 /// AggregationJob represents an aggregation job from the DAP specification.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+pub struct AggregationJob<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     /// The ID of the task this aggregation job belongs to.
     task_id: TaskId,
@@ -366,7 +366,7 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     aggregation_parameter: A::AggregationParam,
     /// The partial identifier for the batch this aggregation job contributes to (fixed size
     /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).
-    batch_id: Q::PartialBatchIdentifier,
+    batch_id: B::PartialBatchIdentifier,
     /// The minimal interval of time spanned by the reports included in this aggregation job.
     client_timestamp_interval: Interval,
     /// The overall state of this aggregation job.
@@ -379,15 +379,15 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     last_request_hash: Option<[u8; 32]>,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    AggregationJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    AggregationJob<SEED_SIZE, B, A>
 {
     /// Creates a new [`AggregationJob`].
     pub fn new(
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
         aggregation_parameter: A::AggregationParam,
-        batch_id: Q::PartialBatchIdentifier,
+        batch_id: B::PartialBatchIdentifier,
         client_timestamp_interval: Interval,
         state: AggregationJobState,
         step: AggregationJobStep,
@@ -421,9 +421,9 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
 
     /// Gets the partial batch identifier associated with this aggregation job.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call [`Self::batch_id`].
-    pub fn partial_batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call [`Self::batch_id`].
+    pub fn partial_batch_identifier(&self) -> &B::PartialBatchIdentifier {
         &self.batch_id
     }
 
@@ -481,8 +481,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for AggregationJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+    for AggregationJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: PartialEq,
 {
@@ -498,8 +498,8 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for AggregationJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+    for AggregationJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: Eq,
 {
@@ -635,7 +635,7 @@ impl<T> Lease<T> {
 pub struct AcquiredAggregationJob {
     task_id: TaskId,
     aggregation_job_id: AggregationJobId,
-    query_type: task::QueryType,
+    batch_mode: task::BatchMode,
     vdaf: VdafInstance,
 }
 
@@ -644,13 +644,13 @@ impl AcquiredAggregationJob {
     pub fn new(
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        query_type: task::QueryType,
+        batch_mode: task::BatchMode,
         vdaf: VdafInstance,
     ) -> Self {
         Self {
             task_id,
             aggregation_job_id,
-            query_type,
+            batch_mode,
             vdaf,
         }
     }
@@ -665,9 +665,9 @@ impl AcquiredAggregationJob {
         &self.aggregation_job_id
     }
 
-    /// Returns the query type associated with this acquired aggregation job.
-    pub fn query_type(&self) -> &task::QueryType {
-        &self.query_type
+    /// Returns the batch mode associated with this acquired aggregation job.
+    pub fn batch_mode(&self) -> &task::BatchMode {
+        &self.batch_mode
     }
 
     /// Returns the VDAF associated with this acquired aggregation job.
@@ -681,7 +681,7 @@ impl AcquiredAggregationJob {
 pub struct AcquiredCollectionJob {
     task_id: TaskId,
     collection_job_id: CollectionJobId,
-    query_type: task::QueryType,
+    batch_mode: task::BatchMode,
     vdaf: VdafInstance,
     time_precision: Duration,
     encoded_batch_identifier: Vec<u8>,
@@ -695,7 +695,7 @@ impl AcquiredCollectionJob {
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
-        query_type: task::QueryType,
+        batch_mode: task::BatchMode,
         vdaf: VdafInstance,
         time_precision: Duration,
         encoded_batch_identifier: Vec<u8>,
@@ -705,7 +705,7 @@ impl AcquiredCollectionJob {
         Self {
             task_id,
             collection_job_id,
-            query_type,
+            batch_mode,
             vdaf,
             time_precision,
             encoded_batch_identifier,
@@ -724,9 +724,9 @@ impl AcquiredCollectionJob {
         &self.collection_job_id
     }
 
-    /// Returns the query type associated with this acquired collection job.
-    pub fn query_type(&self) -> &task::QueryType {
-        &self.query_type
+    /// Returns the batch mode associated with this acquired collection job.
+    pub fn batch_mode(&self) -> &task::BatchMode {
+        &self.batch_mode
     }
 
     /// Returns the VDAF associated with this acquired collection job.
@@ -1195,13 +1195,13 @@ impl ReportAggregationMetadata {
 #[derivative(Debug)]
 pub struct BatchAggregation<
     const SEED_SIZE: usize,
-    Q: QueryType,
+    B: BatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
     /// The task ID for this aggregation result.
     task_id: TaskId,
     /// The identifier of the batch being aggregated over.
-    batch_identifier: Q::BatchIdentifier,
+    batch_identifier: B::BatchIdentifier,
     /// The VDAF aggregation parameter used to prepare and accumulate input shares.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
@@ -1216,14 +1216,14 @@ pub struct BatchAggregation<
     state: BatchAggregationState<SEED_SIZE, A>,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    BatchAggregation<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    BatchAggregation<SEED_SIZE, B, A>
 {
     /// Creates a new [`BatchAggregation`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         ord: u64,
         client_timestamp_interval: Interval,
@@ -1246,10 +1246,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
 
     /// Gets the batch identifier included in this batch aggregation.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::batch_interval`] or
     /// [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+    pub fn batch_identifier(&self) -> &B::BatchIdentifier {
         &self.batch_identifier
     }
 
@@ -1392,8 +1392,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 }
 
 #[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for BatchAggregation<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+    for BatchAggregation<SEED_SIZE, B, A>
 where
     A::AggregationParam: PartialEq,
     A::AggregateShare: PartialEq,
@@ -1408,8 +1408,8 @@ where
 }
 
 #[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for BatchAggregation<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+    for BatchAggregation<SEED_SIZE, B, A>
 where
     A::AggregationParam: Eq,
     A::AggregateShare: Eq,
@@ -1603,11 +1603,11 @@ pub(super) enum BatchAggregationStateCode {
 #[cfg(feature = "test-util")]
 pub fn merge_batch_aggregations_by_batch<
     const SEED_SIZE: usize,
-    Q: QueryType,
+    B: BatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 >(
-    mut batch_aggregations: Vec<BatchAggregation<SEED_SIZE, Q, A>>,
-) -> Vec<BatchAggregation<SEED_SIZE, Q, A>>
+    mut batch_aggregations: Vec<BatchAggregation<SEED_SIZE, B, A>>,
+) -> Vec<BatchAggregation<SEED_SIZE, B, A>>
 where
     A::AggregationParam: PartialEq,
 {
@@ -1650,32 +1650,32 @@ where
 /// running collection jobs and store the results of completed ones.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub struct CollectionJob<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     /// The task ID for this collection job.
     task_id: TaskId,
     /// The unique identifier for the collection job.
     collection_job_id: CollectionJobId,
     /// The Query that was sent to create this collection job.
-    query: Query<Q>,
+    query: Query<B>,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
     /// The batch interval covered by the collection job.
-    batch_identifier: Q::BatchIdentifier,
+    batch_identifier: B::BatchIdentifier,
     /// The current state of the collection job.
     state: CollectionJobState<SEED_SIZE, A>,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    CollectionJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    CollectionJob<SEED_SIZE, B, A>
 {
     /// Creates a new [`CollectionJob`].
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
-        query: Query<Q>,
+        query: Query<B>,
         aggregation_parameter: A::AggregationParam,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         state: CollectionJobState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -1699,7 +1699,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 
     /// Returns the query that was sent to create this collection job.
-    pub fn query(&self) -> &Query<Q> {
+    pub fn query(&self) -> &Query<B> {
         &self.query
     }
 
@@ -1715,10 +1715,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
 
     /// Gets the batch identifier associated with this collection job.
     ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+    /// This method would typically be used for code which is generic over the batch mode. Batch
+    /// mode-specific code will typically call one of [`Self::batch_interval`] or
     /// [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+    pub fn batch_identifier(&self) -> &B::BatchIdentifier {
         &self.batch_identifier
     }
 
@@ -1752,8 +1752,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for CollectionJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+    for CollectionJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: PartialEq,
     CollectionJobState<SEED_SIZE, A>: PartialEq,
@@ -1767,8 +1767,8 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for CollectionJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+    for CollectionJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: Eq,
     CollectionJobState<SEED_SIZE, A>: Eq,
@@ -1884,13 +1884,13 @@ pub enum CollectionJobStateCode {
 #[derivative(Debug)]
 pub struct AggregateShareJob<
     const SEED_SIZE: usize,
-    Q: QueryType,
+    B: BatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
     /// The task ID for this aggregate share.
     task_id: TaskId,
     /// The batch identifier for the batch covered by the aggregate share.
-    batch_identifier: Q::BatchIdentifier,
+    batch_identifier: B::BatchIdentifier,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
@@ -1904,13 +1904,13 @@ pub struct AggregateShareJob<
     checksum: ReportIdChecksum,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    AggregateShareJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    AggregateShareJob<SEED_SIZE, B, A>
 {
     /// Creates a new [`AggregateShareJob`].
     pub fn new(
         task_id: TaskId,
-        batch_identifier: Q::BatchIdentifier,
+        batch_identifier: B::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         helper_aggregate_share: A::AggregateShare,
         report_count: u64,
@@ -1932,7 +1932,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 
     /// Gets the batch identifier associated with this aggregate share job.
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+    pub fn batch_identifier(&self) -> &B::BatchIdentifier {
         &self.batch_identifier
     }
 
@@ -1980,8 +1980,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for AggregateShareJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+    for AggregateShareJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: PartialEq,
     A::AggregateShare: PartialEq,
@@ -1996,8 +1996,8 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for AggregateShareJob<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+    for AggregateShareJob<SEED_SIZE, B, A>
 where
     A::AggregationParam: Eq,
     A::AggregateShare: Eq,

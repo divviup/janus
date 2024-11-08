@@ -77,7 +77,7 @@ use janus_core::{
     url_ensure_trailing_slash,
 };
 use janus_messages::{
-    query_type::{QueryType, TimeInterval},
+    batch_mode::{BatchMode, TimeInterval},
     AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionJobId,
     CollectionReq, PartialBatchSelector, Query, Role, TaskId,
 };
@@ -161,26 +161,26 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collection job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct CollectionJob<P, Q>
+pub struct CollectionJob<P, B>
 where
-    Q: QueryType,
+    B: BatchMode,
 {
     /// The collection job ID.
     collection_job_id: CollectionJobId,
     /// The collection request's query.
-    query: Query<Q>,
+    query: Query<B>,
     /// The aggregation parameter used in this collection request.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: P,
 }
 
-impl<P, Q: QueryType> CollectionJob<P, Q> {
+impl<P, B: BatchMode> CollectionJob<P, B> {
     /// Construct an in-progress collection job from its components.
     pub fn new(
         collection_job_id: CollectionJobId,
-        query: Query<Q>,
+        query: Query<B>,
         aggregation_parameter: P,
-    ) -> CollectionJob<P, Q> {
+    ) -> CollectionJob<P, B> {
         CollectionJob {
             collection_job_id,
             query,
@@ -194,7 +194,7 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
     }
 
     /// Gets the query used to create this collection job.
-    pub fn query(&self) -> &Query<Q> {
+    pub fn query(&self) -> &Query<B> {
         &self.query
     }
 
@@ -208,12 +208,12 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
 #[derivative(Debug)]
 /// The result of a collection request poll operation. This will either provide the collection
 /// result or indicate that the collection is still being processed.
-pub enum PollResult<T, Q>
+pub enum PollResult<T, B>
 where
-    Q: QueryType,
+    B: BatchMode,
 {
     /// The collection result from a completed collection request.
-    CollectionResult(#[derivative(Debug = "ignore")] Collection<T, Q>),
+    CollectionResult(#[derivative(Debug = "ignore")] Collection<T, B>),
     /// The collection request is not yet ready. If present, the [`RetryAfter`] object is the time
     /// at which the leader recommends retrying the request.
     NotReady(Option<RetryAfter>),
@@ -221,22 +221,22 @@ where
 
 /// The result of a collection operation.
 #[derive(Debug)]
-pub struct Collection<T, Q>
+pub struct Collection<T, B>
 where
-    Q: QueryType,
+    B: BatchMode,
 {
-    partial_batch_selector: PartialBatchSelector<Q>,
+    partial_batch_selector: PartialBatchSelector<B>,
     report_count: u64,
     interval: (DateTime<Utc>, Duration),
     aggregate_result: T,
 }
 
-impl<T, Q> Collection<T, Q>
+impl<T, B> Collection<T, B>
 where
-    Q: QueryType,
+    B: BatchMode,
 {
     /// Retrieves the partial batch selector of this collection.
-    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
+    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<B> {
         &self.partial_batch_selector
     }
 
@@ -258,13 +258,13 @@ where
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-impl<T, Q> Collection<T, Q>
+impl<T, B> Collection<T, B>
 where
-    Q: QueryType,
+    B: BatchMode,
 {
     /// Creates a new [`Collection`].
     pub fn new(
-        partial_batch_selector: PartialBatchSelector<Q>,
+        partial_batch_selector: PartialBatchSelector<B>,
         report_count: u64,
         interval: (DateTime<Utc>, Duration),
         aggregate_result: T,
@@ -278,10 +278,10 @@ where
     }
 }
 
-impl<T, Q> PartialEq for Collection<T, Q>
+impl<T, B> PartialEq for Collection<T, B>
 where
     T: PartialEq,
-    Q: QueryType,
+    B: BatchMode,
 {
     fn eq(&self, other: &Self) -> bool {
         self.partial_batch_selector == other.partial_batch_selector
@@ -291,10 +291,10 @@ where
     }
 }
 
-impl<T, Q> Eq for Collection<T, Q>
+impl<T, B> Eq for Collection<T, B>
 where
     T: Eq,
-    Q: QueryType,
+    B: BatchMode,
 {
 }
 
@@ -446,11 +446,11 @@ impl<V: vdaf::Collector> Collector<V> {
 
     /// Send a collection request to the leader aggregator, wait for it to complete, and return the
     /// result of the aggregation.
-    pub async fn collect<Q: QueryType>(
+    pub async fn collect<B: BatchMode>(
         &self,
-        query: Query<Q>,
+        query: Query<B>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
+    ) -> Result<Collection<V::AggregateResult, B>, Error> {
         let job = self.start_collection(query, aggregation_parameter).await?;
         self.poll_until_complete(&job).await
     }
@@ -466,11 +466,11 @@ impl<V: vdaf::Collector> Collector<V> {
     /// recommended that collectors instead generate an ID themselves, store it to non-volatile
     /// storage, then invoke [`Self::start_collection_with_id`].
     #[tracing::instrument(skip(aggregation_parameter), err)]
-    pub async fn start_collection<Q: QueryType>(
+    pub async fn start_collection<B: BatchMode>(
         &self,
-        query: Query<Q>,
+        query: Query<B>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
+    ) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
         self.start_collection_with_id(random(), query, aggregation_parameter)
             .await
     }
@@ -479,12 +479,12 @@ impl<V: vdaf::Collector> Collector<V> {
     ///
     /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
     /// [`Self::poll_until_complete`].
-    pub async fn start_collection_with_id<Q: QueryType>(
+    pub async fn start_collection_with_id<B: BatchMode>(
         &self,
         collection_job_id: CollectionJobId,
-        query: Query<Q>,
+        query: Query<B>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
+    ) -> Result<CollectionJob<V::AggregationParam, B>, Error> {
         let collect_request =
             CollectionReq::new(query.clone(), aggregation_parameter.get_encoded()?)
                 .get_encoded()?;
@@ -529,10 +529,10 @@ impl<V: vdaf::Collector> Collector<V> {
 
     /// Request the results of an in-progress collection from the leader aggregator.
     #[tracing::instrument(err)]
-    pub async fn poll_once<Q: QueryType>(
+    pub async fn poll_once<B: BatchMode>(
         &self,
-        job: &CollectionJob<V::AggregationParam, Q>,
-    ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
+        job: &CollectionJob<V::AggregationParam, B>,
+    ) -> Result<PollResult<V::AggregateResult, B>, Error> {
         let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
         let response_res =
             retry_http_request(self.http_request_retry_parameters.clone(), || async {
@@ -583,7 +583,7 @@ impl<V: vdaf::Collector> Collector<V> {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
-        let collect_response = CollectionMessage::<Q>::get_decoded(response.body())?;
+        let collect_response = CollectionMessage::<B>::get_decoded(response.body())?;
 
         let aggregate_shares = [
             (
@@ -604,7 +604,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 &AggregateShareAad::new(
                     self.task_id,
                     job.aggregation_parameter.get_encoded()?,
-                    BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
+                    BatchSelector::<B>::new(B::batch_identifier_for_collection(
                         &job.query,
                         &collect_response,
                     )),
@@ -646,10 +646,10 @@ impl<V: vdaf::Collector> Collector<V> {
     ///
     /// This uses the parameters provided via [`CollectorBuilder.with_collect_poll_wait_parameters`]
     /// to control how frequently to poll for completion.
-    pub async fn poll_until_complete<Q: QueryType>(
+    pub async fn poll_until_complete<B: BatchMode>(
         &self,
-        job: &CollectionJob<V::AggregationParam, Q>,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
+        job: &CollectionJob<V::AggregationParam, B>,
+    ) -> Result<Collection<V::AggregateResult, B>, Error> {
         let mut backoff = self.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
@@ -718,9 +718,9 @@ impl<V: vdaf::Collector> Collector<V> {
 
     /// Tell the leader aggregator to abandon an in-progress collection job, and delete all related
     /// state.
-    pub async fn delete_collection_job<Q: QueryType>(
+    pub async fn delete_collection_job<B: BatchMode>(
         &self,
-        collection_job: &CollectionJob<V::AggregationParam, Q>,
+        collection_job: &CollectionJob<V::AggregationParam, B>,
     ) -> Result<(), Error> {
         let collection_job_url = self.collection_job_uri(collection_job.collection_job_id)?;
         let response_res =
@@ -768,8 +768,8 @@ mod tests {
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
+        batch_mode::{FixedSize, TimeInterval},
         problem_type::DapProblemType,
-        query_type::{FixedSize, TimeInterval},
         AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage,
         CollectionJobId, CollectionReq, Duration, FixedSizeQuery, HpkeCiphertext, Interval,
         PartialBatchSelector, Query, Role, TaskId, Time,
