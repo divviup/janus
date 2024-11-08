@@ -312,7 +312,7 @@ async fn upload_report(
         .unwrap();
     retry_http_request(http_request_exponential_backoff(), || async {
         http_client
-            .put(url.clone())
+            .post(url.clone())
             .header(CONTENT_TYPE, Report::MEDIA_TYPE)
             .body(report.get_encoded().unwrap())
             .send()

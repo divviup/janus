@@ -24,7 +24,7 @@ use serde_json::json;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
-    prelude::{delete, post, put},
+    prelude::{delete, get, put},
 };
 
 #[tokio::test]
@@ -288,7 +288,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
 
     // Incorrect authentication token.
     let mut test_conn = test_case
-        .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
+        .get_collection_job_with_auth_token(&collection_job_id, Some(&random()))
         .await;
 
     let want_status = u16::from(Status::Forbidden);
@@ -305,7 +305,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
 
     // Aggregator authentication token.
     let mut test_conn = test_case
-        .post_collection_job_with_auth_token(
+        .get_collection_job_with_auth_token(
             &collection_job_id,
             Some(test_case.task.aggregator_auth_token()),
         )
@@ -325,7 +325,7 @@ async fn collection_job_post_request_unauthenticated_collection_jobs() {
 
     // Missing authentication token.
     let mut test_conn = test_case
-        .post_collection_job_with_auth_token(&collection_job_id, None)
+        .get_collection_job_with_auth_token(&collection_job_id, None)
         .await;
 
     let want_status = u16::from(Status::Forbidden);
@@ -398,7 +398,7 @@ async fn collection_job_success_time_interval() {
 
     assert_eq!(test_conn.status(), Some(Status::Created));
 
-    let test_conn = test_case.post_collection_job(&collection_job_id).await;
+    let test_conn = test_case.get_collection_job(&collection_job_id).await;
     assert_eq!(test_conn.status(), Some(Status::Accepted));
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
@@ -452,7 +452,7 @@ async fn collection_job_success_time_interval() {
         .await
         .unwrap();
 
-    let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
+    let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(
@@ -502,7 +502,7 @@ async fn collection_job_success_time_interval() {
 }
 
 #[tokio::test]
-async fn collection_job_post_request_no_such_collection_job() {
+async fn collection_job_get_request_no_such_collection_job() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
@@ -514,7 +514,7 @@ async fn collection_job_post_request_no_such_collection_job() {
         .task
         .collector_auth_token()
         .request_authentication();
-    let test_conn = post(format!(
+    let test_conn = get(format!(
         "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
         test_case.task.id()
     ))
@@ -659,6 +659,6 @@ async fn delete_collection_job() {
     assert_eq!(test_conn.status(), Some(Status::NoContent));
 
     // Get the job again
-    let test_conn = test_case.post_collection_job(&collection_job_id).await;
+    let test_conn = test_case.get_collection_job(&collection_job_id).await;
     assert_eq!(test_conn.status(), Some(Status::NoContent));
 }

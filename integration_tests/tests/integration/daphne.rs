@@ -102,7 +102,7 @@ async fn janus_daphne() {
 /// This test places Janus in the leader role and Daphne in the helper role. Janus is run
 /// in-process, while Daphne is run in Docker.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Daphne does not currently support DAP-07 (issue #1669)"]
+#[ignore = "Daphne does not currently support DAP-13"]
 async fn janus_in_process_daphne() {
     static TEST_NAME: &str = "janus_in_process_daphne";
     install_test_trace_subscriber();

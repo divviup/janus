@@ -61,7 +61,7 @@ async fn upload_prio3_count() {
 
     let mocked_upload = server
         .mock(
-            "PUT",
+            "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
         .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
@@ -96,7 +96,7 @@ async fn upload_prio3_http_status_code() {
 
     let mocked_upload = server
         .mock(
-            "PUT",
+            "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
         .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
@@ -123,7 +123,7 @@ async fn upload_problem_details() {
 
     let mocked_upload = server
         .mock(
-            "PUT",
+            "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
         .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)

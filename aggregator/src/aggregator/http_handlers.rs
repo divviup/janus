@@ -361,7 +361,7 @@ where
                 "hpke_config",
                 hpke_config_cors_preflight,
             )
-            .put("tasks/:task_id/reports", instrumented(api(upload::<C>)))
+            .post("tasks/:task_id/reports", instrumented(api(upload::<C>)))
             .with_route(
                 trillium::Method::Options,
                 "tasks/:task_id/reports",
@@ -397,9 +397,9 @@ where
                 COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_put::<C>)),
             )
-            .post(
+            .get(
                 COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_post::<C>)),
+                instrumented(api(collection_jobs_get::<C>)),
             )
             .delete(
                 COLLECTION_JOB_ROUTE,
@@ -491,7 +491,7 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
     conn
 }
 
-/// API handler for the "/tasks/.../reports" PUT endpoint.
+/// API handler for the "/tasks/.../reports" POST endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
@@ -517,12 +517,12 @@ async fn upload<C: Clock>(
 /// Handler for CORS preflight requests to "/tasks/.../reports".
 async fn upload_cors_preflight(mut conn: Conn) -> Conn {
     conn.response_headers_mut()
-        .insert(KnownHeaderName::Allow, "PUT");
+        .insert(KnownHeaderName::Allow, "POST");
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         let origin = origin.clone();
         let request_headers = conn.response_headers_mut();
         request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "PUT");
+        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "POST");
         request_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
         request_headers.insert(
             KnownHeaderName::AccessControlMaxAge,
@@ -629,8 +629,8 @@ async fn collection_jobs_put<C: Clock>(
     Ok(Status::Created)
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." POST endpoint.
-async fn collection_jobs_post<C: Clock>(
+/// API handler for the "/tasks/.../collection_jobs/..." GET endpoint.
+async fn collection_jobs_get<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(), Error> {

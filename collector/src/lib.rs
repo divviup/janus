@@ -538,7 +538,7 @@ impl<V: vdaf::Collector> Collector<V> {
             retry_http_request(self.http_request_retry_parameters.clone(), || async {
                 let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
-                    .post(collection_job_url.clone())
+                    .get(collection_job_url.clone())
                     // reqwest does not send Content-Length for requests with empty bodies. Some
                     // HTTP servers require this anyway, so explicitly set it.
                     .header(CONTENT_LENGTH, 0)
@@ -965,19 +965,19 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_error = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(500)
             .expect(1)
             .create_async()
             .await;
         let mocked_collect_accepted = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .expect(2)
             .create_async()
             .await;
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .match_header(auth_header, auth_value.as_str())
             .with_status(200)
             .with_header(
@@ -1051,7 +1051,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1120,7 +1120,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1198,7 +1198,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1268,7 +1268,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1350,7 +1350,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(200)
             .with_header(
@@ -1489,7 +1489,7 @@ mod tests {
             .create_async()
             .await;
         let mock_collection_job_server_error = server
-            .mock("POST", matcher)
+            .mock("GET", matcher)
             .with_status(500)
             .expect_at_least(1)
             .create_async()
@@ -1518,7 +1518,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mock_collection_job_server_error_details = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
@@ -1538,7 +1538,7 @@ mod tests {
             .await;
 
         let mock_collection_job_bad_request = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
@@ -1561,7 +1561,7 @@ mod tests {
         mock_collection_job_bad_request.assert_async().await;
 
         let mock_collection_job_bad_message_bytes = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1578,7 +1578,7 @@ mod tests {
         mock_collection_job_bad_message_bytes.assert_async().await;
 
         let mock_collection_job_bad_ciphertext = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1637,7 +1637,7 @@ mod tests {
             .unwrap(),
         );
         let mock_collection_job_bad_shares = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1680,7 +1680,7 @@ mod tests {
             .unwrap(),
         );
         let mock_collection_job_wrong_length = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1697,7 +1697,7 @@ mod tests {
         mock_collection_job_wrong_length.assert_async().await;
 
         let mock_collection_job_always_fail = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(500)
             .expect_at_least(3)
             .create_async()
@@ -1744,7 +1744,7 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mock_collect_poll_no_retry_after = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .expect(1)
             .create_async()
@@ -1756,7 +1756,7 @@ mod tests {
         mock_collect_poll_no_retry_after.assert_async().await;
 
         let mock_collect_poll_retry_after_60s = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "60")
             .expect(1)
@@ -1769,7 +1769,7 @@ mod tests {
         mock_collect_poll_retry_after_60s.assert_async().await;
 
         let mock_collect_poll_retry_after_date_time = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
             .expect(1)
@@ -1813,14 +1813,14 @@ mod tests {
         );
 
         let mock_collect_poll_retry_after_1s = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "1")
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_10s = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "10")
             .expect(1)
@@ -1837,21 +1837,21 @@ mod tests {
             Utc::now() + chrono::Duration::from_std(std::time::Duration::from_secs(1)).unwrap();
         let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         let mock_collect_poll_retry_after_near_future = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", &near_future_formatted)
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_past = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_far_future = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
             .expect(1)
@@ -1875,7 +1875,7 @@ mod tests {
         collector.collect_poll_wait_parameters.initial_interval =
             std::time::Duration::from_millis(10);
         let mock_collect_poll_no_retry_after = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .expect_at_least(1)
             .create_async()
@@ -1985,20 +1985,20 @@ mod tests {
             collector.task_id, job.collection_job_id
         );
         let mocked_collect_error = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(500)
             .expect(1)
             .create_async()
             .await;
         let mocked_collect_accepted = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .match_header(CONTENT_LENGTH.as_str(), "0")
             .with_status(202)
             .expect(2)
             .create_async()
             .await;
         let mocked_collect_complete = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .match_header(auth_header, auth_value.as_str())
             .match_header(CONTENT_LENGTH.as_str(), "0")
             .with_status(200)
