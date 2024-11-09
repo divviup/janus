@@ -3,7 +3,7 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::batch_mode::{BatchMode, FixedSize, TimeInterval};
+use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
@@ -281,7 +281,7 @@ impl Display for Interval {
     }
 }
 
-/// DAP protocol message representing an ID uniquely identifying a batch, for fixed-size tasks.
+/// DAP protocol message representing an ID uniquely identifying a batch, for leader-selected tasks.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BatchId([u8; Self::LEN]);
 
@@ -1435,43 +1435,43 @@ impl Decode for Report {
     }
 }
 
-/// DAP protocol message representing a fixed-size query.
+/// DAP protocol message representing a leader-selected query.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FixedSizeQuery {
+pub enum LeaderSelectedQuery {
     ByBatchId { batch_id: BatchId },
     CurrentBatch,
 }
 
-impl Encode for FixedSizeQuery {
+impl Encode for LeaderSelectedQuery {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
-            FixedSizeQuery::ByBatchId { batch_id } => {
+            LeaderSelectedQuery::ByBatchId { batch_id } => {
                 0u8.encode(bytes)?;
                 batch_id.encode(bytes)
             }
-            FixedSizeQuery::CurrentBatch => 1u8.encode(bytes),
+            LeaderSelectedQuery::CurrentBatch => 1u8.encode(bytes),
         }
     }
 
     fn encoded_len(&self) -> Option<usize> {
         match self {
-            FixedSizeQuery::ByBatchId { batch_id } => Some(1 + batch_id.encoded_len()?),
-            FixedSizeQuery::CurrentBatch => Some(1),
+            LeaderSelectedQuery::ByBatchId { batch_id } => Some(1 + batch_id.encoded_len()?),
+            LeaderSelectedQuery::CurrentBatch => Some(1),
         }
     }
 }
 
-impl Decode for FixedSizeQuery {
+impl Decode for LeaderSelectedQuery {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let query_type = u8::decode(bytes)?;
         match query_type {
             0 => {
                 let batch_id = BatchId::decode(bytes)?;
-                Ok(FixedSizeQuery::ByBatchId { batch_id })
+                Ok(LeaderSelectedQuery::ByBatchId { batch_id })
             }
-            1 => Ok(FixedSizeQuery::CurrentBatch),
+            1 => Ok(LeaderSelectedQuery::CurrentBatch),
             _ => Err(CodecError::Other(
-                anyhow!("unexpected FixedSizeQueryType value {}", query_type).into(),
+                anyhow!("unexpected LeaderSelectedQuery type value {}", query_type).into(),
             )),
         }
     }
@@ -1489,7 +1489,7 @@ impl<B: BatchMode> Query<B> {
     ///
     /// This method would typically be used for code which is generic over the batch mode. Batch
     /// mode-specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
+    /// [`Self::new_leader_selected`].
     pub fn new(query_body: B::QueryBody) -> Self {
         Self { query_body }
     }
@@ -1498,7 +1498,7 @@ impl<B: BatchMode> Query<B> {
     ///
     /// This method would typically be used for code which is generic over the batch mode. Batch
     /// mode-specific code will typically call one of [`Self::batch_interval`] or
-    /// [`Self::fixed_size_query`].
+    /// [`Self::leader_selected_query`].
     pub fn query_body(&self) -> &B::QueryBody {
         &self.query_body
     }
@@ -1516,14 +1516,14 @@ impl Query<TimeInterval> {
     }
 }
 
-impl Query<FixedSize> {
-    /// Constructs a new query for a fixed-size task.
-    pub fn new_fixed_size(fixed_size_query: FixedSizeQuery) -> Self {
-        Self::new(fixed_size_query)
+impl Query<LeaderSelected> {
+    /// Constructs a new query for a leader-selected task.
+    pub fn new_leader_selected(leader_selected_query: LeaderSelectedQuery) -> Self {
+        Self::new(leader_selected_query)
     }
 
-    /// Gets the fixed size query associated with this query.
-    pub fn fixed_size_query(&self) -> &FixedSizeQuery {
+    /// Gets the leader-selected query associated with this query.
+    pub fn leader_selected_query(&self) -> &LeaderSelectedQuery {
         self.query_body()
     }
 }
@@ -1616,7 +1616,7 @@ impl<B: BatchMode> PartialBatchSelector<B> {
     ///
     /// This method would typically be used for code which is generic over the batch mode. Batch
     /// mode-specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
+    /// [`Self::new_leader_selected`].
     pub fn new(batch_identifier: B::PartialBatchIdentifier) -> Self {
         Self { batch_identifier }
     }
@@ -1637,9 +1637,9 @@ impl PartialBatchSelector<TimeInterval> {
     }
 }
 
-impl PartialBatchSelector<FixedSize> {
-    /// Constructs a new partial batch selector for a fixed-size task.
-    pub fn new_fixed_size(batch_id: BatchId) -> Self {
+impl PartialBatchSelector<LeaderSelected> {
+    /// Constructs a new partial batch selector for a leader-selected task.
+    pub fn new_leader_selected(batch_id: BatchId) -> Self {
         Self::new(batch_id)
     }
 
@@ -2564,7 +2564,7 @@ impl<B: BatchMode> BatchSelector<B> {
     ///
     /// This method would typically be used for code which is generic over the batch mode. Batch
     /// mode-specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
+    /// [`Self::new_leader_selected`].
     pub fn new(batch_identifier: B::BatchIdentifier) -> Self {
         Self { batch_identifier }
     }
@@ -2591,9 +2591,9 @@ impl BatchSelector<TimeInterval> {
     }
 }
 
-impl BatchSelector<FixedSize> {
-    /// Constructs a new batch selector for fixed-size tasks.
-    pub fn new_fixed_size(batch_id: BatchId) -> Self {
+impl BatchSelector<LeaderSelected> {
+    /// Constructs a new batch selector for leader-selected tasks.
+    pub fn new_leader_selected(batch_id: BatchId) -> Self {
         Self::new(batch_id)
     }
 

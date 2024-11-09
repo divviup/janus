@@ -1,4 +1,4 @@
-use crate::{Collection, FixedSizeQuery, Query};
+use crate::{Collection, LeaderSelectedQuery, Query};
 
 use super::{BatchId, Interval};
 use anyhow::anyhow;
@@ -61,7 +61,7 @@ pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
     ) -> Self::BatchIdentifier;
 }
 
-/// Represents a `time-interval` DAP batch mode.
+/// Represents the `time-interval` DAP batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TimeInterval;
 
@@ -84,16 +84,16 @@ impl BatchMode for TimeInterval {
     }
 }
 
-/// Represents a `fixed-size` DAP batch mode.
+/// Represents the `leader-selected` DAP batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct FixedSize;
+pub struct LeaderSelected;
 
-impl BatchMode for FixedSize {
-    const CODE: Code = Code::FixedSize;
+impl BatchMode for LeaderSelected {
+    const CODE: Code = Code::LeaderSelected;
 
     type BatchIdentifier = BatchId;
     type PartialBatchIdentifier = BatchId;
-    type QueryBody = FixedSizeQuery;
+    type QueryBody = LeaderSelectedQuery;
 
     fn partial_batch_identifier(
         batch_identifier: &Self::BatchIdentifier,
@@ -116,7 +116,7 @@ impl BatchMode for FixedSize {
 pub enum Code {
     Reserved = 0,
     TimeInterval = 1,
-    FixedSize = 2,
+    LeaderSelected = 2,
 }
 
 impl Code {

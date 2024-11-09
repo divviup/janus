@@ -219,13 +219,13 @@ impl Decode for QueryConfig {
 pub enum Query {
     Reserved,
     TimeInterval,
-    FixedSize { max_batch_size: u32 },
+    LeaderSelected { max_batch_size: u32 },
 }
 
 impl Query {
     const RESERVED: u8 = 0;
     const TIME_INTERVAL: u8 = 1;
-    const FIXED_SIZE: u8 = 2;
+    const LEADER_SELECTED: u8 = 2;
 }
 
 impl Encode for Query {
@@ -233,8 +233,8 @@ impl Encode for Query {
         match self {
             Query::Reserved => Query::RESERVED.encode(bytes)?,
             Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
-            Query::FixedSize { max_batch_size } => {
-                Query::FIXED_SIZE.encode(bytes)?;
+            Query::LeaderSelected { max_batch_size } => {
+                Query::LEADER_SELECTED.encode(bytes)?;
                 max_batch_size.encode(bytes)?;
             }
         };
@@ -244,7 +244,7 @@ impl Encode for Query {
     fn encoded_len(&self) -> Option<usize> {
         Some(match self {
             Query::Reserved | Query::TimeInterval => 1,
-            Query::FixedSize { .. } => 5,
+            Query::LeaderSelected { .. } => 5,
         })
     }
 }
@@ -255,7 +255,7 @@ impl Decode for Query {
         Ok(match batch_mode {
             Query::RESERVED => Query::Reserved,
             Query::TIME_INTERVAL => Query::TimeInterval,
-            Query::FIXED_SIZE => Query::FixedSize {
+            Query::LEADER_SELECTED => Query::LeaderSelected {
                 max_batch_size: u32::decode(bytes)?,
             },
             val => {
@@ -854,7 +854,7 @@ mod tests {
                     Duration::from_seconds(u64::MIN),
                     u16::MIN,
                     u32::MIN,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: u32::MIN,
                     },
                 ),
@@ -871,7 +871,7 @@ mod tests {
                     Duration::from_seconds(0x3C),
                     0x40,
                     0x24,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: 0xFAFA,
                     },
                 ),
@@ -888,7 +888,7 @@ mod tests {
                     Duration::from_seconds(u64::MAX),
                     u16::MAX,
                     u32::MAX,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: u32::MAX,
                     },
                 ),
@@ -913,7 +913,7 @@ mod tests {
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: u32::MIN,
                 },
                 concat!(
@@ -922,7 +922,7 @@ mod tests {
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: 0xFAFA,
                 },
                 concat!(
@@ -931,7 +931,7 @@ mod tests {
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: u32::MAX,
                 },
                 concat!(
@@ -954,7 +954,7 @@ mod tests {
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
                         0xCCCC,
-                        Query::FixedSize {
+                        Query::LeaderSelected {
                             max_batch_size: 0xDDDD,
                         },
                     ),

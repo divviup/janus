@@ -1,8 +1,8 @@
 //! A [DAP-PPM](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/) collector
 //!
-//! This library implements the collector role of the DAP-PPM protocol. It works in concert with
-//! two DAP-PPM aggregator servers to compute a statistical aggregate over data from many clients,
-//! while preserving the privacy of each client's data.
+//! This library implements the collector role of the DAP-PPM protocol. It works in concert with two
+//! DAP-PPM aggregator servers to compute a statistical aggregate over data from many clients, while
+//! preserving the privacy of each client's data.
 //!
 //! # Examples
 //!
@@ -12,7 +12,7 @@
 //! use std::{fs::File, str::FromStr};
 //!
 //! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_messages::{Duration, FixedSizeQuery, Interval, Query, TaskId, Time};
+//! use janus_messages::{Duration, LeaderSelectedQuery, Interval, Query, TaskId, Time};
 //! use prio::vdaf::prio3::Prio3;
 //! use url::Url;
 //!
@@ -53,8 +53,8 @@
 //!     .await
 //!     .unwrap();
 //!
-//! // Or if this is a fixed size task, make a fixed size query.
-//! let query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+//! // Or if this is a leader-selected task, make a leader-selected query.
+//! let query = Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
 //! let aggregation_result = collector.collect(query, &()).await.unwrap();
 //! # }
 //! ```
@@ -768,10 +768,10 @@ mod tests {
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
-        batch_mode::{FixedSize, TimeInterval},
+        batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
         AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage,
-        CollectionJobId, CollectionReq, Duration, FixedSizeQuery, HpkeCiphertext, Interval,
+        CollectionJobId, CollectionReq, Duration, HpkeCiphertext, Interval, LeaderSelectedQuery,
         PartialBatchSelector, Query, Role, TaskId, Time,
     };
     use mockito::Matcher;
@@ -854,14 +854,14 @@ mod tests {
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_id: BatchId,
-    ) -> CollectionMessage<FixedSize> {
+    ) -> CollectionMessage<LeaderSelected> {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
             aggregation_parameter.get_encoded().unwrap(),
-            BatchSelector::new_fixed_size(batch_id),
+            BatchSelector::new_leader_selected(batch_id),
         );
         CollectionMessage::new(
-            PartialBatchSelector::new_fixed_size(batch_id),
+            PartialBatchSelector::new_leader_selected(batch_id),
             1,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             hpke::seal(
@@ -1227,7 +1227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_collect_fixed_size() {
+    async fn successful_collect_leader_selected() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
@@ -1242,7 +1242,7 @@ mod tests {
             .mock("PUT", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<FixedSize>::MEDIA_TYPE,
+                CollectionReq::<LeaderSelected>::MEDIA_TYPE,
             )
             .with_status(201)
             .expect(1)
@@ -1251,14 +1251,14 @@ mod tests {
 
         let job = collector
             .start_collection(
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
                 &(),
             )
             .await
             .unwrap();
         assert_eq!(
-            job.query.fixed_size_query(),
-            &FixedSizeQuery::ByBatchId { batch_id }
+            job.query.leader_selected_query(),
+            &LeaderSelectedQuery::ByBatchId { batch_id }
         );
 
         mocked_collect_start_success.assert_async().await;
@@ -1272,7 +1272,7 @@ mod tests {
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<FixedSize>::MEDIA_TYPE,
+                CollectionMessage::<LeaderSelected>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
@@ -1283,7 +1283,7 @@ mod tests {
         assert_eq!(
             collection,
             Collection::new(
-                PartialBatchSelector::new_fixed_size(batch_id),
+                PartialBatchSelector::new_leader_selected(batch_id),
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
@@ -1897,7 +1897,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id: random() }),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -1934,7 +1934,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id: random() }),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);

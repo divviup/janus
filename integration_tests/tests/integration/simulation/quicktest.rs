@@ -7,7 +7,7 @@ use tokio::runtime::Runtime;
 
 use crate::simulation::{
     arbitrary::{
-        FixedSizeFaultInjectionInput, FixedSizeInput, KeyRotatorInput,
+        KeyRotatorInput, LeaderSelectedFaultInjectionInput, LeaderSelectedInput,
         TimeIntervalFaultInjectionInput, TimeIntervalInput,
     },
     run::Simulation,
@@ -27,13 +27,14 @@ fn simulation_test_time_interval_no_fault_injection() {
 
 #[test]
 #[ignore = "slow quickcheck test"]
-fn simulation_test_fixed_size_no_fault_injection() {
+fn simulation_test_leader_selected_no_fault_injection() {
     install_test_trace_subscriber();
 
     let _ephemeral_database = DatabaseHandle::new();
 
     new_quick_check().quickcheck(
-        (|FixedSizeInput(input)| Simulation::run(input)) as fn(FixedSizeInput) -> TestResult,
+        (|LeaderSelectedInput(input)| Simulation::run(input))
+            as fn(LeaderSelectedInput) -> TestResult,
     );
 }
 
@@ -52,14 +53,14 @@ fn simulation_test_time_interval_with_fault_injection() {
 
 #[test]
 #[ignore = "slow quickcheck test"]
-fn simulation_test_fixed_size_with_fault_injection() {
+fn simulation_test_leader_selected_with_fault_injection() {
     install_test_trace_subscriber();
 
     let _ephemeral_database = DatabaseHandle::new();
 
     new_quick_check().quickcheck(
-        (|FixedSizeFaultInjectionInput(input)| Simulation::run(input))
-            as fn(FixedSizeFaultInjectionInput) -> TestResult,
+        (|LeaderSelectedFaultInjectionInput(input)| Simulation::run(input))
+            as fn(LeaderSelectedFaultInjectionInput) -> TestResult,
     );
 }
 

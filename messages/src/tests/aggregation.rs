@@ -1,8 +1,8 @@
 use crate::{
     roundtrip_encoding, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchId, FixedSize, HpkeCiphertext, HpkeConfigId, PartialBatchSelector,
-    PrepareContinue, PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportId,
-    ReportMetadata, ReportShare, Time,
+    AggregationJobStep, BatchId, HpkeCiphertext, HpkeConfigId, LeaderSelected,
+    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportId, ReportMetadata, ReportShare, Time,
 };
 use prio::topology::ping_pong::PingPongMessage;
 
@@ -419,11 +419,13 @@ fn roundtrip_aggregation_job_initialize_req() {
         ),
     )]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[(
-        AggregationJobInitializeReq::<FixedSize> {
+        AggregationJobInitializeReq::<LeaderSelected> {
             aggregation_parameter: Vec::from("012345"),
-            partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from([2u8; 32])),
+            partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
+                [2u8; 32],
+            )),
             prepare_inits: Vec::from([
                 PrepareInit {
                     report_share: ReportShare {

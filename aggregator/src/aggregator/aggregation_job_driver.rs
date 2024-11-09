@@ -35,7 +35,7 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareStepResult,
     ReportShare, Role,
@@ -146,9 +146,9 @@ where
                     self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(datastore, Arc::new(vdaf), lease).await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(datastore, Arc::new(vdaf), lease).await
+                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(datastore, Arc::new(vdaf), lease).await
                 })
             }
         }
@@ -980,12 +980,12 @@ where
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.cancel_aggregation_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
-                        FixedSize,
+                        LeaderSelected,
                         VdafType,
                     >(vdaf, datastore, lease)
                     .await

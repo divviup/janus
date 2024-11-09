@@ -13,7 +13,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
@@ -364,7 +364,7 @@ pub struct AggregationJob<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggrega
     /// The aggregation parameter this job is run with.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
-    /// The partial identifier for the batch this aggregation job contributes to (fixed size
+    /// The partial identifier for the batch this aggregation job contributes to (leader-selected
     /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).
     batch_id: B::PartialBatchIdentifier,
     /// The minimal interval of time spanned by the reports included in this aggregation job.
@@ -473,7 +473,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    AggregationJob<SEED_SIZE, FixedSize, A>
+    AggregationJob<SEED_SIZE, LeaderSelected, A>
 {
     /// Gets the batch ID associated with this aggregation job.
     pub fn batch_id(&self) -> &BatchId {
@@ -1383,7 +1383,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    BatchAggregation<SEED_SIZE, FixedSize, A>
+    BatchAggregation<SEED_SIZE, LeaderSelected, A>
 {
     /// Gets the batch ID associated with this batch aggregation.
     pub fn batch_id(&self) -> &BatchId {
@@ -1744,7 +1744,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    CollectionJob<SEED_SIZE, FixedSize, A>
+    CollectionJob<SEED_SIZE, LeaderSelected, A>
 {
     /// Gets the batch ID associated with this collection job.
     pub fn batch_id(&self) -> &BatchId {
@@ -1972,7 +1972,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    AggregateShareJob<SEED_SIZE, FixedSize, A>
+    AggregateShareJob<SEED_SIZE, LeaderSelected, A>
 {
     /// Gets the batch ID associated with this aggregate share job.
     pub fn batch_id(&self) -> &BatchId {
@@ -2004,8 +2004,8 @@ where
 {
 }
 
-/// An outstanding batch, which is a batch which has not yet started collection. Such a batch
-/// may have additional reports allocated to it. Only applies to fixed-size batches.
+/// An outstanding batch, which is a batch which has not yet started collection. Such a batch may
+/// have additional reports allocated to it. Only applies to leader-selected batches.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutstandingBatch {
     /// The task ID for this outstanding batch.

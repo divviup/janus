@@ -21,8 +21,8 @@ use janus_core::{
     vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
-    CollectionJobId, Duration, FixedSizeQuery, Time,
+    batch_mode::{LeaderSelected, TimeInterval},
+    CollectionJobId, Duration, LeaderSelectedQuery, Time,
 };
 use opentelemetry::metrics::Meter;
 use prio::vdaf::prio3::{optimal_chunk_length, Prio3, Prio3Histogram};
@@ -178,7 +178,7 @@ impl Simulation {
             }
 
             if !check_aggregate_results_valid(
-                &simulation.state.aggregate_results_fixed_size,
+                &simulation.state.aggregate_results_leader_selected,
                 &simulation.state,
             ) {
                 return TestResult::failed();
@@ -411,8 +411,9 @@ impl Simulation {
                     Err(error) => info!(?error, "collector error"),
                 }
             }
-            Query::FixedSizeCurrentBatch => {
-                let query = janus_messages::Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+            Query::LeaderSelectedCurrentBatch => {
+                let query =
+                    janus_messages::Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
                 match self
                     .components
                     .collector
@@ -421,21 +422,23 @@ impl Simulation {
                 {
                     Ok(collection_job) => {
                         self.state
-                            .collection_jobs_fixed_size
+                            .collection_jobs_leader_selected
                             .insert(*collection_job_id, collection_job);
                     }
                     Err(error) => info!(?error, "collector error"),
                 }
             }
-            Query::FixedSizeByBatchId(previous_collection_job_id) => {
+            Query::LeaderSelectedByBatchId(previous_collection_job_id) => {
                 if let Some(collection) = self
                     .state
-                    .aggregate_results_fixed_size
+                    .aggregate_results_leader_selected
                     .get(previous_collection_job_id)
                 {
-                    let query = janus_messages::Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-                        batch_id: *collection.partial_batch_selector().batch_id(),
-                    });
+                    let query = janus_messages::Query::new_leader_selected(
+                        LeaderSelectedQuery::ByBatchId {
+                            batch_id: *collection.partial_batch_selector().batch_id(),
+                        },
+                    );
                     match self
                         .components
                         .collector
@@ -444,14 +447,14 @@ impl Simulation {
                     {
                         Ok(collection_job) => {
                             self.state
-                                .collection_jobs_fixed_size
+                                .collection_jobs_leader_selected
                                 .insert(*collection_job_id, collection_job);
 
                             // Store a copy of the collection results from the previous collection
                             // job under this new collection job as well. When we get results from
                             // pollng the "by batch ID" job, we will then compare results from the
                             // two jobs to ensure they are the same.
-                            self.state.aggregate_results_fixed_size.insert(
+                            self.state.aggregate_results_leader_selected.insert(
                                 *collection_job_id,
                                 Collection::new(
                                     collection.partial_batch_selector().clone(),
@@ -501,8 +504,10 @@ impl Simulation {
                 Ok(PollResult::NotReady(_)) => {}
                 Err(error) => info!(?error, "collector error"),
             }
-        } else if let Some(collection_job) =
-            self.state.collection_jobs_fixed_size.get(collection_job_id)
+        } else if let Some(collection_job) = self
+            .state
+            .collection_jobs_leader_selected
+            .get(collection_job_id)
         {
             let result = self.components.collector.poll_once(collection_job).await;
             match result {
@@ -513,7 +518,7 @@ impl Simulation {
                     let aggregate_result = collection.aggregate_result().clone();
                     let old_opt = self
                         .state
-                        .aggregate_results_fixed_size
+                        .aggregate_results_leader_selected
                         .insert(*collection_job_id, collection);
                     if let Some(old_collection) = old_opt {
                         if &partial_batch_selector != old_collection.partial_batch_selector()
@@ -546,11 +551,12 @@ pub(super) struct State {
     pub(super) vdaf: Prio3Histogram,
     pub(super) collection_jobs_time_interval:
         HashMap<CollectionJobId, CollectionJob<(), TimeInterval>>,
-    pub(super) collection_jobs_fixed_size: HashMap<CollectionJobId, CollectionJob<(), FixedSize>>,
+    pub(super) collection_jobs_leader_selected:
+        HashMap<CollectionJobId, CollectionJob<(), LeaderSelected>>,
     pub(super) aggregate_results_time_interval:
         HashMap<CollectionJobId, Collection<Vec<u128>, TimeInterval>>,
-    pub(super) aggregate_results_fixed_size:
-        HashMap<CollectionJobId, Collection<Vec<u128>, FixedSize>>,
+    pub(super) aggregate_results_leader_selected:
+        HashMap<CollectionJobId, Collection<Vec<u128>, LeaderSelected>>,
     pub(super) next_measurement: usize,
 }
 
@@ -569,9 +575,9 @@ impl State {
             },
             vdaf: Prio3::new_histogram(2, MAX_REPORTS, chunk_length).unwrap(),
             collection_jobs_time_interval: HashMap::new(),
-            collection_jobs_fixed_size: HashMap::new(),
+            collection_jobs_leader_selected: HashMap::new(),
             aggregate_results_time_interval: HashMap::new(),
-            aggregate_results_fixed_size: HashMap::new(),
+            aggregate_results_leader_selected: HashMap::new(),
             next_measurement: 0,
         }
     }

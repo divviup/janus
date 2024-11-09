@@ -15,9 +15,9 @@ use janus_collector::{
 };
 use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
-    BatchId, CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector,
-    Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    BatchId, CollectionJobId, Duration, HpkeConfig, Interval, LeaderSelectedQuery,
+    PartialBatchSelector, Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -198,7 +198,7 @@ struct QueryOptions {
     #[clap(
         long,
         conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
+        help_heading = "Collect Request Parameters (Leader Selected)",
     )]
     batch_id: Option<BatchId>,
     /// Have the aggregator select a batch that has not yet been collected
@@ -206,7 +206,7 @@ struct QueryOptions {
         long,
         action = ArgAction::SetTrue,
         conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
+        help_heading = "Collect Request Parameters (Leader Selected)",
     )]
     current_batch: bool,
 }
@@ -459,13 +459,13 @@ macro_rules! options_query_dispatch {
                 $body
             }
             (None, None, Some(batch_id), false) => {
-                let $query = Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                let $query = Query::new_leader_selected(LeaderSelectedQuery::ByBatchId {
                     batch_id: *batch_id,
                 });
                 $body
             }
             (None, None, None, true) => {
-                let $query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+                let $query = Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
                 $body
             }
             _ => unreachable!("clap argument parsing shouldn't allow this to be possible"),
@@ -708,7 +708,7 @@ impl BatchModeExt for TimeInterval {
     }
 }
 
-impl BatchModeExt for FixedSize {
+impl BatchModeExt for LeaderSelected {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
 
     fn format_partial_batch_selector(

@@ -1,6 +1,6 @@
 use crate::{
-    batch_mode, roundtrip_encoding, BatchId, Duration, FixedSize, FixedSizeQuery, Interval, Query,
-    TaskId, Time, TimeInterval,
+    batch_mode, roundtrip_encoding, BatchId, Duration, Interval, LeaderSelected,
+    LeaderSelectedQuery, Query, TaskId, Time, TimeInterval,
 };
 
 #[test]
@@ -25,10 +25,10 @@ fn roundtrip_batch_id() {
 }
 
 #[test]
-fn roundtrip_fixed_size_query() {
+fn roundtrip_leader_selected_query() {
     roundtrip_encoding(&[
         (
-            FixedSizeQuery::ByBatchId {
+            LeaderSelectedQuery::ByBatchId {
                 batch_id: BatchId::from([10u8; 32]),
             },
             concat!(
@@ -37,7 +37,7 @@ fn roundtrip_fixed_size_query() {
             ),
         ),
         (
-            FixedSizeQuery::CurrentBatch,
+            LeaderSelectedQuery::CurrentBatch,
             concat!(
                 "01", // batch_mode
             ),
@@ -85,11 +85,11 @@ fn roundtrip_query() {
         ),
     ]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
-            Query::<FixedSize> {
-                query_body: FixedSizeQuery::ByBatchId {
+            Query::<LeaderSelected> {
+                query_body: LeaderSelectedQuery::ByBatchId {
                     batch_id: BatchId::from([10u8; 32]),
                 },
             },
@@ -103,8 +103,8 @@ fn roundtrip_query() {
             ),
         ),
         (
-            Query::<FixedSize> {
-                query_body: FixedSizeQuery::CurrentBatch,
+            Query::<LeaderSelected> {
+                query_body: LeaderSelectedQuery::CurrentBatch,
             },
             concat!(
                 "02", // batch_mode
@@ -122,6 +122,6 @@ fn roundtrip_code() {
     roundtrip_encoding(&[
         (batch_mode::Code::Reserved, "00"),
         (batch_mode::Code::TimeInterval, "01"),
-        (batch_mode::Code::FixedSize, "02"),
+        (batch_mode::Code::LeaderSelected, "02"),
     ])
 }

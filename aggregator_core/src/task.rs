@@ -37,10 +37,10 @@ pub enum BatchMode {
     /// Time-interval: used to support a collection style based on fixed time intervals.
     TimeInterval,
 
-    /// Fixed-size: used to support collection of batches as quickly as possible, without the
+    /// Leader-selected: used to support collection of batches as quickly as possible, without the
     /// latency of waiting for batch time intervals to pass, and with direct control over the number
     /// of reports per batch.
-    FixedSize {
+    LeaderSelected {
         /// If present, the maximum number of reports in a batch to allow it to be collected. If
         /// absent, then there is no limit to the number of reports that Janus will include in a
         /// batch, but we generally try to make batches close to the task's `min_batch_size`.
@@ -62,7 +62,7 @@ impl TryFrom<&taskprov::Query> for BatchMode {
     fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
         match value {
             taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
-            taskprov::Query::FixedSize { max_batch_size } => Ok(Self::FixedSize {
+            taskprov::Query::LeaderSelected { max_batch_size } => Ok(Self::LeaderSelected {
                 // taskprov's QueryConfig always sets a max_batch_size value (if batch mode is fixed
                 // size), but in the forthcoming draft 6, a value of 0 will mean "no maximum".
                 //
@@ -158,7 +158,7 @@ impl CommonTaskParameters {
             return Err(Error::InvalidParameter("min_batch_size"));
         }
 
-        if let BatchMode::FixedSize {
+        if let BatchMode::LeaderSelected {
             max_batch_size: Some(max_batch_size),
             batch_time_window_size: Some(batch_time_window_size),
         } = batch_mode
@@ -289,7 +289,7 @@ impl AggregatorTask {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
 
-        if let BatchMode::FixedSize {
+        if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
             ..
         } = common_parameters.batch_mode
@@ -386,7 +386,7 @@ impl AggregatorTask {
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.1.2
                 batch_size >= self.common_parameters.min_batch_size
             }
-            BatchMode::FixedSize { max_batch_size, .. } => {
+            BatchMode::LeaderSelected { max_batch_size, .. } => {
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.2.2
                 batch_size >= self.common_parameters.min_batch_size
                     && max_batch_size.map_or(true, |max_batch_size| batch_size <= max_batch_size)
@@ -1647,7 +1647,7 @@ mod tests {
             &AggregatorTask::new(
                 TaskId::from([255; 32]),
                 "https://example.com/".parse().unwrap(),
-                BatchMode::FixedSize {
+                BatchMode::LeaderSelected {
                     max_batch_size: Some(10),
                     batch_time_window_size: None,
                 },
@@ -1704,7 +1704,7 @@ mod tests {
                 Token::Str("batch_mode"),
                 Token::StructVariant {
                     name: "BatchMode",
-                    variant: "FixedSize",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1857,14 +1857,14 @@ mod tests {
             }],
         );
         assert_tokens(
-            &BatchMode::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
-                    variant: "FixedSize",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1876,14 +1876,14 @@ mod tests {
             ],
         );
         assert_tokens(
-            &BatchMode::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
-                    variant: "FixedSize",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1897,14 +1897,14 @@ mod tests {
             ],
         );
         assert_tokens(
-            &BatchMode::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: None,
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
-                    variant: "FixedSize",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1917,14 +1917,14 @@ mod tests {
 
         // Backwards compatibility cases:
         assert_de_tokens(
-            &BatchMode::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
-                    variant: "FixedSize",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1934,15 +1934,15 @@ mod tests {
             ],
         );
         assert_matches!(
-            serde_json::from_value(json!({ "FixedSize": { "max_batch_size": 10 } })),
-            Ok(BatchMode::FixedSize {
+            serde_json::from_value(json!({ "LeaderSelected": { "max_batch_size": 10 } })),
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
         );
         assert_matches!(
-            serde_yaml::from_str("!FixedSize { max_batch_size: 10 }"),
-            Ok(BatchMode::FixedSize {
+            serde_yaml::from_str("!LeaderSelected { max_batch_size: 10 }"),
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
@@ -1950,11 +1950,11 @@ mod tests {
         assert_matches!(
             serde_yaml::from_str(
                 "---
-!FixedSize
+!LeaderSelected
   max_batch_size: 10
   batch_time_window_size: 3600"
             ),
-            Ok(BatchMode::FixedSize {
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: Some(duration),
             }) => assert_eq!(duration, Duration::from_seconds(3600))

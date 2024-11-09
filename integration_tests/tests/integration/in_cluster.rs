@@ -448,11 +448,11 @@ impl InClusterJanusPair {
             min_batch_size: task.min_batch_size(),
             max_batch_size: match task.batch_mode() {
                 BatchMode::TimeInterval => None,
-                BatchMode::FixedSize { max_batch_size, .. } => *max_batch_size,
+                BatchMode::LeaderSelected { max_batch_size, .. } => *max_batch_size,
             },
             batch_time_window_size_seconds: match task.batch_mode() {
                 BatchMode::TimeInterval => None,
-                BatchMode::FixedSize {
+                BatchMode::LeaderSelected {
                     batch_time_window_size,
                     ..
                 } => batch_time_window_size.map(|window| window.as_seconds()),
@@ -606,14 +606,14 @@ async fn in_cluster_histogram() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn in_cluster_fixed_size() {
+async fn in_cluster_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: None,
         },
@@ -622,7 +622,7 @@ async fn in_cluster_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "in_cluster_fixed_size",
+        "in_cluster_leader_selected",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -631,14 +631,14 @@ async fn in_cluster_fixed_size() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn in_cluster_time_bucketed_fixed_size() {
+async fn in_cluster_time_bucketed_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
@@ -647,7 +647,7 @@ async fn in_cluster_time_bucketed_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "in_cluster_time_bucketed_fixed_size",
+        "in_cluster_time_bucketed_leader_selected",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -938,7 +938,7 @@ async fn in_cluster_histogram_dp_noise() {
                 PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
             ),
         },
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
@@ -1005,7 +1005,7 @@ async fn in_cluster_sumvec_dp_noise() {
                 PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
             ),
         },
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },

@@ -29,7 +29,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
     PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult, ReportIdChecksum,
@@ -623,7 +623,7 @@ async fn aggregate_init_batch_already_collected() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(100),
             batch_time_window_size: None,
         },
@@ -649,7 +649,7 @@ async fn aggregate_init_batch_already_collected() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([prepare_init.clone()]),
     );
 
@@ -665,7 +665,7 @@ async fn aggregate_init_batch_already_collected() {
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.
                 for shard in 0..BATCH_AGGREGATION_SHARD_COUNT {
-                    let batch_aggregation = BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                    let batch_aggregation = BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         batch_id,
                         dummy::AggregationParam(0),
@@ -697,7 +697,7 @@ async fn aggregate_init_batch_already_collected() {
     .with_request_header(header, value)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_body(request.get_encoded().unwrap())
     .run_async(&handler)

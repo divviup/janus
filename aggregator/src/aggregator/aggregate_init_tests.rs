@@ -637,11 +637,11 @@ async fn aggregation_job_init_two_step_vdaf_idempotence() {
 async fn aggregation_job_init_wrong_query() {
     let test_case = setup_aggregate_init_test().await;
 
-    // setup_aggregate_init_test sets up a task with a time interval query. We send a fixed size
-    // query which should yield an error.
+    // setup_aggregate_init_test sets up a task with a time interval query. We send a
+    // leader-selected query which should yield an error.
     let wrong_query = AggregationJobInitializeReq::new(
         test_case.aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(random()),
+        PartialBatchSelector::new_leader_selected(random()),
         test_case.aggregation_job_init_req.prepare_inits().to_vec(),
     );
 

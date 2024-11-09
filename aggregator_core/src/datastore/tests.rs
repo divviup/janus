@@ -31,10 +31,10 @@ use janus_core::{
     vdaf::{vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
-    CollectionJobId, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeCiphertext,
-    HpkeConfigId, Interval, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
+    CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
+    LeaderSelectedQuery, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
@@ -1297,7 +1297,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
-        task::BatchMode::FixedSize {
+        task::BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1308,7 +1308,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
     .leader_view()
     .unwrap();
     let unrelated_task = TaskBuilder::new(
-        task::BatchMode::FixedSize {
+        task::BatchMode::LeaderSelected {
             max_batch_size: None,
             batch_time_window_size: None,
         },
@@ -1345,7 +1345,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                         .unwrap(),
                 );
 
-                let expired_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let expired_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     random(),
                     dummy::AggregationParam(22),
@@ -1363,7 +1363,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                 let expired_report_aggregation = expired_report
                     .as_start_leader_report_aggregation(*expired_aggregation_job.id(), 0);
 
-                let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let aggregation_job_0 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     random(),
                     dummy::AggregationParam(22),
@@ -1378,7 +1378,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                 let aggregation_job_0_report_aggregation_1 =
                     report_1.as_start_leader_report_aggregation(*aggregation_job_0.id(), 2);
 
-                let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let aggregation_job_1 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     random(),
                     dummy::AggregationParam(23),
@@ -1552,10 +1552,10 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-    // We use a dummy VDAF & fixed-size task for this test, to better exercise the
+    // We use a dummy VDAF & leader-selected task for this test, to better exercise the
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
-        task::BatchMode::FixedSize {
+        task::BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1566,7 +1566,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .leader_view()
     .unwrap();
     let batch_id = random();
-    let leader_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let leader_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         random(),
         dummy::AggregationParam(23),
@@ -1575,7 +1575,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         AggregationJobState::InProgress,
         AggregationJobStep::from(0),
     );
-    let helper_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let helper_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         random(),
         dummy::AggregationParam(23),
@@ -1712,7 +1712,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     );
 
     // Trying to write an aggregation job again should fail.
-    let new_leader_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let new_leader_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         *leader_aggregation_job.id(),
         dummy::AggregationParam(24),
@@ -1751,13 +1751,13 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
             );
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_job::<0, FixedSize, dummy::Vdaf>(
+                    tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         new_leader_aggregation_job.task_id(),
                         new_leader_aggregation_job.id(),
                     )
                     .await
                     .unwrap(),
-                    tx.get_aggregation_job::<0, FixedSize, dummy::Vdaf>(
+                    tx.get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         new_helper_aggregation_job.task_id(),
                         new_helper_aggregation_job.id(),
                     )
@@ -2161,10 +2161,10 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-    // We use a dummy VDAF & fixed-size task for this test, to better exercise the
+    // We use a dummy VDAF & leader-selected task for this test, to better exercise the
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
-        task::BatchMode::FixedSize {
+        task::BatchMode::LeaderSelected {
             max_batch_size: None,
             batch_time_window_size: None,
         },
@@ -2173,7 +2173,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     .build()
     .leader_view()
     .unwrap();
-    let first_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let first_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         random(),
         dummy::AggregationParam(23),
@@ -2182,7 +2182,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         AggregationJobState::InProgress,
         AggregationJobStep::from(0),
     );
-    let second_aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let second_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         random(),
         dummy::AggregationParam(42),
@@ -2191,7 +2191,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         AggregationJobState::InProgress,
         AggregationJobStep::from(0),
     );
-    let aggregation_job_with_request_hash = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let aggregation_job_with_request_hash = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
         random(),
         dummy::AggregationParam(42),
@@ -2220,7 +2220,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
             // Also write an unrelated aggregation job with a different task ID to check that it
             // is not returned.
             let unrelated_task = TaskBuilder::new(
-                task::BatchMode::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size: None,
                     batch_time_window_size: None,
                 },
@@ -2230,7 +2230,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
             .leader_view()
             .unwrap();
             tx.put_aggregator_task(&unrelated_task).await.unwrap();
-            tx.put_aggregation_job(&AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+            tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                 *unrelated_task.id(),
                 random(),
                 dummy::AggregationParam(82),
@@ -3334,10 +3334,10 @@ impl TestBatchModeExt for TimeInterval {
 }
 
 #[async_trait]
-impl TestBatchModeExt for FixedSize {
+impl TestBatchModeExt for LeaderSelected {
     fn query_for_batch_identifier(_: &Self::BatchIdentifier) -> Query<Self> {
         // We could also generate a by-batch-id query, but using current-batch is more realistic.
-        Query::new_fixed_size(FixedSizeQuery::CurrentBatch)
+        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch)
     }
 
     fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
@@ -3678,7 +3678,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn fixed_size_collection_job_acquire_release_happy_path(
+async fn leader_selected_collection_job_acquire_release_happy_path(
     ephemeral_datastore: EphemeralDatastore,
 ) {
     install_test_trace_subscriber();
@@ -3692,7 +3692,7 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
     )]);
     let batch_id = random();
     let aggregation_job_id = random();
-    let aggregation_jobs = Vec::from([AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+    let aggregation_jobs = Vec::from([AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         task_id,
         aggregation_job_id,
         dummy::AggregationParam(0),
@@ -3715,14 +3715,14 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
         &ds,
         CollectionJobAcquireTestCase {
             task_ids: Vec::from([task_id]),
-            batch_mode: task::BatchMode::FixedSize {
+            batch_mode: task::BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             reports,
             aggregation_jobs,
             report_aggregations,
-            collection_job_test_cases: Vec::from([CollectionJobTestCase::<FixedSize> {
+            collection_job_test_cases: Vec::from([CollectionJobTestCase::<LeaderSelected> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: batch_id,
@@ -4551,14 +4551,14 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDatastore) {
+async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
-        task::BatchMode::FixedSize {
+        task::BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -4576,7 +4576,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
             let task = task.clone();
             Box::pin(async move {
                 let other_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -4589,7 +4589,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 tx.put_aggregator_task(&task).await.unwrap();
                 tx.put_aggregator_task(&other_task).await.unwrap();
 
-                let batch_aggregation = BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                let batch_aggregation = BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
                     aggregation_param,
@@ -4615,7 +4615,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
 
                 // Wrong batch ID.
                 let other_batch_id = random();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     other_batch_id,
                     aggregation_param,
@@ -4634,7 +4634,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 .unwrap();
 
                 // Task ID differs from that queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *other_task.id(),
                     batch_id,
                     aggregation_param,
@@ -4653,7 +4653,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 .unwrap();
 
                 // Index differs from that queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
                     aggregation_param,
@@ -4686,7 +4686,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
             let vdaf = dummy::Vdaf::default();
 
             let got_batch_aggregation = tx
-                .get_batch_aggregation::<0, FixedSize, dummy::Vdaf>(
+                .get_batch_aggregation::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     &batch_id,
@@ -4697,7 +4697,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 .unwrap();
             assert_eq!(got_batch_aggregation.as_ref(), Some(&batch_aggregation));
 
-            let batch_aggregation = BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+            let batch_aggregation = BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                 *batch_aggregation.task_id(),
                 *batch_aggregation.batch_id(),
                 *batch_aggregation.aggregation_parameter(),
@@ -4717,7 +4717,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 .unwrap();
 
             let got_batch_aggregation = tx
-                .get_batch_aggregation::<0, FixedSize, dummy::Vdaf>(
+                .get_batch_aggregation::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     &batch_id,
@@ -4742,7 +4742,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
             let vdaf = dummy::Vdaf::default();
 
             let got_batch_aggregation = tx
-                .get_batch_aggregation::<0, FixedSize, dummy::Vdaf>(
+                .get_batch_aggregation::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     &batch_id,
@@ -4932,7 +4932,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: EphemeralDatastore) {
+async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -4942,7 +4942,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: None,
                         batch_time_window_size: None,
                     },
@@ -4955,7 +4955,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
                 tx.put_aggregator_task(&task).await.unwrap();
 
                 let batch_id = random();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
                     dummy::AggregationParam(11),
@@ -4982,7 +4982,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                 );
 
-                tx.put_aggregate_share_job::<0, FixedSize, dummy::Vdaf>(&aggregate_share_job)
+                tx.put_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(&aggregate_share_job)
                     .await
                     .unwrap();
 
@@ -5001,7 +5001,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
             let vdaf = dummy::Vdaf::default();
 
             let got_aggregate_share_job = tx
-                .get_aggregate_share_job::<0, FixedSize, dummy::Vdaf>(
+                .get_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     want_aggregate_share_job.batch_id(),
@@ -5013,7 +5013,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
             assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
 
             assert!(tx
-                .get_aggregate_share_job::<0, FixedSize, dummy::Vdaf>(
+                .get_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     &random(),
@@ -5050,7 +5050,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
             let vdaf = dummy::Vdaf::default();
 
             assert_eq!(
-                tx.get_aggregate_share_job::<0, FixedSize, dummy::Vdaf>(
+                tx.get_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     want_aggregate_share_job.batch_id(),
@@ -5098,7 +5098,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             let clock = clock.clone();
             Box::pin(async move {
                 let task_1 = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -5113,7 +5113,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_1 =
                     LeaderStoredReport::new_dummy(*task_1.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_1.id(),
                     batch_id_1,
                     dummy::AggregationParam(0),
@@ -5130,7 +5130,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 ))
                 .await
                 .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_1.id(),
                     batch_id_1,
                     dummy::AggregationParam(0),
@@ -5152,7 +5152,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     .unwrap();
 
                 let task_2 = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: Some(batch_time_window_size),
                     },
@@ -5167,7 +5167,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_2 =
                     LeaderStoredReport::new_dummy(*task_2.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_2.id(),
                     batch_id_2,
                     dummy::AggregationParam(0),
@@ -5193,7 +5193,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
                 // Write a few aggregation jobs & report aggregations to produce useful
                 // min_size/max_size values to validate later.
-                let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let aggregation_job_0 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_1.id(),
                     random(),
                     dummy::AggregationParam(0),
@@ -5239,7 +5239,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     }, // Not counted among min_size or max_size.
                 );
 
-                let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let aggregation_job_1 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_1.id(),
                     random(),
                     dummy::AggregationParam(0),
@@ -5279,7 +5279,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     }, // Not counted among min_size or max_size.
                 );
 
-                let aggregation_job_2 = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                let aggregation_job_2 = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_2.id(),
                     random(),
                     dummy::AggregationParam(0),
@@ -5706,8 +5706,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     let (
         leader_time_interval_task_id,
         helper_time_interval_task_id,
-        leader_fixed_size_task_id,
-        helper_fixed_size_task_id,
+        leader_leader_selected_task_id,
+        helper_leader_selected_task_id,
         want_aggregation_job_ids,
         want_report_ids,
     ) = ds
@@ -5729,8 +5729,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 .build()
                 .helper_view()
                 .unwrap();
-                let leader_fixed_size_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                let leader_leader_selected_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -5740,8 +5740,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 .build()
                 .helper_view()
                 .unwrap();
-                let helper_fixed_size_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                let helper_leader_selected_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -5757,10 +5757,10 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 tx.put_aggregator_task(&helper_time_interval_task)
                     .await
                     .unwrap();
-                tx.put_aggregator_task(&leader_fixed_size_task)
+                tx.put_aggregator_task(&leader_leader_selected_task)
                     .await
                     .unwrap();
-                tx.put_aggregator_task(&helper_fixed_size_task)
+                tx.put_aggregator_task(&helper_leader_selected_task)
                     .await
                     .unwrap();
 
@@ -5869,10 +5869,10 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 aggregation_job_ids.insert(aggregation_job_id);
                 all_report_ids.extend(report_ids);
 
-                // Leader, fixed-size aggregation job with old reports [GC'ed].
-                write_aggregation_artifacts::<FixedSize>(
+                // Leader, leader-selected aggregation job with old reports [GC'ed].
+                write_aggregation_artifacts::<LeaderSelected>(
                     tx,
-                    leader_fixed_size_task.id(),
+                    leader_leader_selected_task.id(),
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5884,44 +5884,46 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 )
                 .await;
 
-                // Leader, fixed-size aggregation job with old & new reports [not GC'ed].
-                let (_, aggregation_job_id, report_ids) = write_aggregation_artifacts::<FixedSize>(
-                    tx,
-                    leader_fixed_size_task.id(),
-                    &[
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub(&Duration::from_seconds(5))
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(8))
-                            .unwrap(),
-                    ],
-                )
-                .await;
+                // Leader, leader-selected aggregation job with old & new reports [not GC'ed].
+                let (_, aggregation_job_id, report_ids) =
+                    write_aggregation_artifacts::<LeaderSelected>(
+                        tx,
+                        leader_leader_selected_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(5))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(8))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
                 aggregation_job_ids.insert(aggregation_job_id);
                 all_report_ids.extend(report_ids);
 
-                // Leader, fixed-size aggregation job with new reports [not GC'ed].
-                let (_, aggregation_job_id, report_ids) = write_aggregation_artifacts::<FixedSize>(
-                    tx,
-                    leader_fixed_size_task.id(),
-                    &[
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(19))
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(20))
-                            .unwrap(),
-                    ],
-                )
-                .await;
+                // Leader, leader-selected aggregation job with new reports [not GC'ed].
+                let (_, aggregation_job_id, report_ids) =
+                    write_aggregation_artifacts::<LeaderSelected>(
+                        tx,
+                        leader_leader_selected_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(19))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(20))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
                 aggregation_job_ids.insert(aggregation_job_id);
                 all_report_ids.extend(report_ids);
 
-                // Helper, fixed-size aggregation job with old reports [GC'ed].
-                write_aggregation_artifacts::<FixedSize>(
+                // Helper, leader-selected aggregation job with old reports [GC'ed].
+                write_aggregation_artifacts::<LeaderSelected>(
                     tx,
-                    helper_fixed_size_task.id(),
+                    helper_leader_selected_task.id(),
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5933,45 +5935,47 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 )
                 .await;
 
-                // Helper, fixed-size aggregation job with old & new reports [not GC'ed].
-                let (_, aggregation_job_id, report_ids) = write_aggregation_artifacts::<FixedSize>(
-                    tx,
-                    helper_fixed_size_task.id(),
-                    &[
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub(&Duration::from_seconds(5))
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(8))
-                            .unwrap(),
-                    ],
-                )
-                .await;
+                // Helper, leader-selected aggregation job with old & new reports [not GC'ed].
+                let (_, aggregation_job_id, report_ids) =
+                    write_aggregation_artifacts::<LeaderSelected>(
+                        tx,
+                        helper_leader_selected_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(5))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(8))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
                 aggregation_job_ids.insert(aggregation_job_id);
                 all_report_ids.extend(report_ids);
 
-                // Helper, fixed-size aggregation job with new reports [not GC'ed].
-                let (_, aggregation_job_id, report_ids) = write_aggregation_artifacts::<FixedSize>(
-                    tx,
-                    helper_fixed_size_task.id(),
-                    &[
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(19))
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(20))
-                            .unwrap(),
-                    ],
-                )
-                .await;
+                // Helper, leader-selected aggregation job with new reports [not GC'ed].
+                let (_, aggregation_job_id, report_ids) =
+                    write_aggregation_artifacts::<LeaderSelected>(
+                        tx,
+                        helper_leader_selected_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(19))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(20))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
                 aggregation_job_ids.insert(aggregation_job_id);
                 all_report_ids.extend(report_ids);
 
                 Ok((
                     *leader_time_interval_task.id(),
                     *helper_time_interval_task.id(),
-                    *leader_fixed_size_task.id(),
-                    *helper_fixed_size_task.id(),
+                    *leader_leader_selected_task.id(),
+                    *helper_leader_selected_task.id(),
                     aggregation_job_ids,
                     all_report_ids,
                 ))
@@ -5997,11 +6001,11 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         u64::try_from(i64::MAX).unwrap(),
                     ),
                     tx.delete_expired_aggregation_artifacts(
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                         u64::try_from(i64::MAX).unwrap(),
                     ),
                     tx.delete_expired_aggregation_artifacts(
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                         u64::try_from(i64::MAX).unwrap(),
                     )
                 )
@@ -6032,17 +6036,17 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .unwrap()
                     .into_iter()
                     .map(|job| *job.id());
-                let leader_fixed_size_aggregation_job_ids = tx
-                    .get_aggregation_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
-                        &leader_fixed_size_task_id,
+                let leader_leader_selected_aggregation_job_ids = tx
+                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &leader_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|job| *job.id());
-                let helper_fixed_size_aggregation_job_ids = tx
-                    .get_aggregation_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
-                        &helper_fixed_size_task_id,
+                let helper_leader_selected_aggregation_job_ids = tx
+                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &helper_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
@@ -6050,8 +6054,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     .map(|job| *job.id());
                 let got_aggregation_job_ids = leader_time_interval_aggregation_job_ids
                     .chain(helper_time_interval_aggregation_job_ids)
-                    .chain(leader_fixed_size_aggregation_job_ids)
-                    .chain(helper_fixed_size_aggregation_job_ids)
+                    .chain(leader_leader_selected_aggregation_job_ids)
+                    .chain(helper_leader_selected_aggregation_job_ids)
                     .collect();
 
                 let leader_time_interval_report_aggregations = tx
@@ -6070,27 +6074,27 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     )
                     .await
                     .unwrap();
-                let leader_fixed_size_report_aggregations = tx
+                let leader_leader_selected_report_aggregations = tx
                     .get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Leader,
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                     )
                     .await
                     .unwrap();
-                let helper_fixed_size_report_aggregations = tx
+                let helper_leader_selected_report_aggregations = tx
                     .get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Helper,
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                     )
                     .await
                     .unwrap();
                 let got_report_ids = leader_time_interval_report_aggregations
                     .into_iter()
                     .chain(helper_time_interval_report_aggregations)
-                    .chain(leader_fixed_size_report_aggregations)
-                    .chain(helper_fixed_size_report_aggregations)
+                    .chain(leader_leader_selected_report_aggregations)
+                    .chain(helper_leader_selected_report_aggregations)
                     .map(|report_aggregation| *report_aggregation.report_id())
                     .collect();
 
@@ -6177,11 +6181,11 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
 
             let time_bucket_start = match task.batch_mode() {
                 task::BatchMode::TimeInterval
-                | task::BatchMode::FixedSize {
+                | task::BatchMode::LeaderSelected {
                     batch_time_window_size: None,
                     ..
                 } => None,
-                task::BatchMode::FixedSize {
+                task::BatchMode::LeaderSelected {
                     batch_time_window_size: Some(batch_time_window_size),
                     ..
                 } => {
@@ -6238,9 +6242,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
     let (
         leader_time_interval_task_id,
         helper_time_interval_task_id,
-        leader_fixed_size_task_id,
-        helper_fixed_size_task_id,
-        leader_fixed_size_time_bucketed_task_id,
+        leader_leader_selected_task_id,
+        helper_leader_selected_task_id,
+        leader_leader_selected_time_bucketed_task_id,
         other_task_id,
         want_collection_job_ids,
         want_aggregate_share_job_ids,
@@ -6266,8 +6270,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .build()
                 .helper_view()
                 .unwrap();
-                let leader_fixed_size_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                let leader_leader_selected_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -6277,8 +6281,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .build()
                 .leader_view()
                 .unwrap();
-                let helper_fixed_size_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                let helper_leader_selected_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
@@ -6288,8 +6292,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .build()
                 .helper_view()
                 .unwrap();
-                let leader_fixed_size_time_bucketed_task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                let leader_leader_selected_time_bucketed_task = TaskBuilder::new(
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: Some(10),
                         batch_time_window_size: Some(Duration::from_hours(24).unwrap()),
                     },
@@ -6314,13 +6318,13 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 tx.put_aggregator_task(&helper_time_interval_task)
                     .await
                     .unwrap();
-                tx.put_aggregator_task(&leader_fixed_size_task)
+                tx.put_aggregator_task(&leader_leader_selected_task)
                     .await
                     .unwrap();
-                tx.put_aggregator_task(&helper_fixed_size_task)
+                tx.put_aggregator_task(&helper_leader_selected_task)
                     .await
                     .unwrap();
-                tx.put_aggregator_task(&leader_fixed_size_time_bucketed_task)
+                tx.put_aggregator_task(&leader_leader_selected_time_bucketed_task)
                     .await
                     .unwrap();
                 tx.put_aggregator_task(&other_task).await.unwrap();
@@ -6464,10 +6468,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 outstanding_batch_ids.extend(outstanding_batch_id);
                 batch_aggregation_ids.extend(batch_aggregation_id);
 
-                // Leader, fixed-size collection artifacts with old reports. [GC'ed]
-                write_collect_artifacts::<FixedSize>(
+                // Leader, leader-selected collection artifacts with old reports. [GC'ed]
+                write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_task,
+                    &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(10))
@@ -6479,7 +6483,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Leader, fixed-size collection artifacts with old & new reports. [not GC'ed]
+                // Leader, leader-selected collection artifacts with old & new reports. [not GC'ed]
                 let (
                     collection_job_id,
                     aggregate_share_job_id,
@@ -6487,9 +6491,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     _,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_task,
+                    &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(5))
@@ -6506,7 +6510,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 outstanding_batch_ids.extend(outstanding_batch_id);
                 batch_aggregation_ids.extend(batch_aggregation_id);
 
-                // Leader, fixed-size collection artifacts with new reports. [not GC'ed]
+                // Leader, leader-selected collection artifacts with new reports. [not GC'ed]
                 let (
                     collection_job_id,
                     aggregate_share_job_id,
@@ -6514,9 +6518,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     _,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_task,
+                    &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add(&Duration::from_seconds(9))
@@ -6533,10 +6537,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 outstanding_batch_ids.extend(outstanding_batch_id);
                 batch_aggregation_ids.extend(batch_aggregation_id);
 
-                // Helper, fixed-size collection artifacts with old reports. [GC'ed]
-                write_collect_artifacts::<FixedSize>(
+                // Helper, leader-selected collection artifacts with old reports. [GC'ed]
+                write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &helper_fixed_size_task,
+                    &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(10))
@@ -6548,7 +6552,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Helper, fixed-size collection artifacts with old & new reports. [not GC'ed]
+                // Helper, leader-selected collection artifacts with old & new reports. [not GC'ed]
                 let (
                     collection_job_id,
                     aggregate_share_job_id,
@@ -6556,9 +6560,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     _,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &helper_fixed_size_task,
+                    &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(5))
@@ -6575,7 +6579,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 outstanding_batch_ids.extend(outstanding_batch_id);
                 batch_aggregation_ids.extend(batch_aggregation_id);
 
-                // Helper, fixed-size collection artifacts with new reports. [not GC'ed]
+                // Helper, leader-selected collection artifacts with new reports. [not GC'ed]
                 let (
                     collection_job_id,
                     aggregate_share_job_id,
@@ -6583,9 +6587,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     _,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &helper_fixed_size_task,
+                    &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add(&Duration::from_seconds(9))
@@ -6602,11 +6606,11 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 outstanding_batch_ids.extend(outstanding_batch_id);
                 batch_aggregation_ids.extend(batch_aggregation_id);
 
-                // Leader, fixed-size time bucketed collection artifacts with old reports.
+                // Leader, leader-selected time bucketed collection artifacts with old reports.
                 // [GC'ed]
-                let (_, _, _, _, _, time_bucket_start) = write_collect_artifacts::<FixedSize>(
+                let (_, _, _, _, _, time_bucket_start) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_time_bucketed_task,
+                    &leader_leader_selected_time_bucketed_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(10))
@@ -6619,7 +6623,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .await;
                 time_bucket_starts.extend(time_bucket_start);
 
-                // Leader, fixed-size time bucketed collection artifacts with old and new
+                // Leader, leader-selected time bucketed collection artifacts with old and new
                 // reports. [not GC'ed]
                 let (
                     collection_job_id,
@@ -6628,9 +6632,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     time_bucket_start,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_time_bucketed_task,
+                    &leader_leader_selected_time_bucketed_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(5))
@@ -6648,7 +6652,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 batch_aggregation_ids.extend(batch_aggregation_id);
                 time_bucket_starts.extend(time_bucket_start);
 
-                // Leader, fixed-size time bucketed collection artifacts with new reports [not
+                // Leader, leader-selected time bucketed collection artifacts with new reports [not
                 // GC'ed]
                 let (
                     collection_job_id,
@@ -6657,9 +6661,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     outstanding_batch_id,
                     batch_aggregation_id,
                     time_bucket_start,
-                ) = write_collect_artifacts::<FixedSize>(
+                ) = write_collect_artifacts::<LeaderSelected>(
                     tx,
-                    &leader_fixed_size_time_bucketed_task,
+                    &leader_leader_selected_time_bucketed_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add(&Duration::from_seconds(9))
@@ -6707,9 +6711,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 Ok((
                     *leader_time_interval_task.id(),
                     *helper_time_interval_task.id(),
-                    *leader_fixed_size_task.id(),
-                    *helper_fixed_size_task.id(),
-                    *leader_fixed_size_time_bucketed_task.id(),
+                    *leader_leader_selected_task.id(),
+                    *helper_leader_selected_task.id(),
+                    *leader_leader_selected_time_bucketed_task.id(),
                     *other_task.id(),
                     collection_job_ids,
                     aggregate_share_job_ids,
@@ -6739,15 +6743,15 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                         u64::try_from(i64::MAX).unwrap(),
                     ),
                     tx.delete_expired_collection_artifacts(
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                         u64::try_from(i64::MAX).unwrap(),
                     ),
                     tx.delete_expired_collection_artifacts(
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                         u64::try_from(i64::MAX).unwrap(),
                     ),
                     tx.delete_expired_collection_artifacts(
-                        &leader_fixed_size_time_bucketed_task_id,
+                        &leader_leader_selected_time_bucketed_task_id,
                         u64::try_from(i64::MAX).unwrap(),
                     )
                 )
@@ -6790,28 +6794,28 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .unwrap()
                     .into_iter()
                     .map(|collection_job| *collection_job.id());
-                let leader_fixed_size_collection_job_ids = tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_collection_job_ids = tx
+                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|collection_job| *collection_job.id());
-                let helper_fixed_size_collection_job_ids = tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let helper_leader_selected_collection_job_ids = tx
+                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|collection_job| *collection_job.id());
-                let leader_fixed_size_time_bucketed_collection_job_ids = tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_time_bucketed_collection_job_ids = tx
+                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_time_bucketed_task_id,
+                        &leader_leader_selected_time_bucketed_task_id,
                     )
                     .await
                     .unwrap()
@@ -6828,9 +6832,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .map(|collection_job| *collection_job.id());
                 let got_collection_job_ids = leader_time_interval_collection_job_ids
                     .chain(helper_time_interval_collection_job_ids)
-                    .chain(leader_fixed_size_collection_job_ids)
-                    .chain(helper_fixed_size_collection_job_ids)
-                    .chain(leader_fixed_size_time_bucketed_collection_job_ids)
+                    .chain(leader_leader_selected_collection_job_ids)
+                    .chain(helper_leader_selected_collection_job_ids)
+                    .chain(leader_leader_selected_time_bucketed_collection_job_ids)
                     .chain(other_task_collection_job_ids)
                     .collect();
 
@@ -6862,10 +6866,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             job.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let leader_fixed_size_aggregate_share_job_ids = tx
-                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_aggregate_share_job_ids = tx
+                    .get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
@@ -6876,10 +6880,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             job.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let helper_fixed_size_aggregate_share_job_ids = tx
-                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let helper_leader_selected_aggregate_share_job_ids = tx
+                    .get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
@@ -6890,10 +6894,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             job.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let leader_fixed_size_time_bucketed_aggregate_share_job_ids = tx
-                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_time_bucketed_aggregate_share_job_ids = tx
+                    .get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_time_bucketed_task_id,
+                        &leader_leader_selected_time_bucketed_task_id,
                     )
                     .await
                     .unwrap()
@@ -6920,9 +6924,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     });
                 let got_aggregate_share_job_ids = leader_time_interval_aggregate_share_job_ids
                     .chain(helper_time_interval_aggregate_share_job_ids)
-                    .chain(leader_fixed_size_aggregate_share_job_ids)
-                    .chain(helper_fixed_size_aggregate_share_job_ids)
-                    .chain(leader_fixed_size_time_bucketed_aggregate_share_job_ids)
+                    .chain(leader_leader_selected_aggregate_share_job_ids)
+                    .chain(helper_leader_selected_aggregate_share_job_ids)
+                    .chain(leader_leader_selected_time_bucketed_aggregate_share_job_ids)
                     .chain(other_task_aggregate_share_job_ids)
                     .collect();
 
@@ -6938,23 +6942,23 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
-                let leader_fixed_size_outstanding_batch_ids = tx
-                    .get_unfilled_outstanding_batches(&leader_fixed_size_task_id, &None)
+                let leader_leader_selected_outstanding_batch_ids = tx
+                    .get_unfilled_outstanding_batches(&leader_leader_selected_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
-                let helper_fixed_size_outstanding_batch_ids = tx
-                    .get_unfilled_outstanding_batches(&helper_fixed_size_task_id, &None)
+                let helper_leader_selected_outstanding_batch_ids = tx
+                    .get_unfilled_outstanding_batches(&helper_leader_selected_task_id, &None)
                     .await
                     .unwrap()
                     .into_iter()
                     .map(|batch| (*batch.task_id(), *batch.id()));
-                let leader_fixed_size_time_bucketed_outstanding_batch_ids =
+                let leader_leader_selected_time_bucketed_outstanding_batch_ids =
                     try_join_all(time_bucket_starts.iter().copied().map(
                         |time_bucket_start| async move {
                             tx.get_unfilled_outstanding_batches(
-                                &leader_fixed_size_time_bucketed_task_id,
+                                &leader_leader_selected_time_bucketed_task_id,
                                 &Some(time_bucket_start),
                             )
                             .await
@@ -6973,9 +6977,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .map(|batch| (*batch.task_id(), *batch.id()));
                 let got_outstanding_batch_ids = leader_time_interval_outstanding_batch_ids
                     .chain(helper_time_interval_outstanding_batch_ids)
-                    .chain(leader_fixed_size_outstanding_batch_ids)
-                    .chain(helper_fixed_size_outstanding_batch_ids)
-                    .chain(leader_fixed_size_time_bucketed_outstanding_batch_ids)
+                    .chain(leader_leader_selected_outstanding_batch_ids)
+                    .chain(helper_leader_selected_outstanding_batch_ids)
+                    .chain(leader_leader_selected_time_bucketed_outstanding_batch_ids)
                     .chain(other_task_outstanding_batch_ids)
                     .collect();
 
@@ -7007,10 +7011,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             agg.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let leader_fixed_size_batch_aggregation_ids = tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_batch_aggregation_ids = tx
+                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_task_id,
+                        &leader_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
@@ -7021,10 +7025,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             agg.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let helper_fixed_size_batch_aggregation_ids = tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(
+                let helper_leader_selected_batch_aggregation_ids = tx
+                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &helper_fixed_size_task_id,
+                        &helper_leader_selected_task_id,
                     )
                     .await
                     .unwrap()
@@ -7035,10 +7039,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                             agg.batch_identifier().get_encoded().unwrap(),
                         )
                     });
-                let leader_fixed_size_time_bucketed_batch_aggregation_ids = tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(
+                let leader_leader_selected_time_bucketed_batch_aggregation_ids = tx
+                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
-                        &leader_fixed_size_time_bucketed_task_id,
+                        &leader_leader_selected_time_bucketed_task_id,
                     )
                     .await
                     .unwrap()
@@ -7065,9 +7069,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     });
                 let got_batch_aggregation_ids = leader_time_interval_batch_aggregation_ids
                     .chain(helper_time_interval_batch_aggregation_ids)
-                    .chain(leader_fixed_size_batch_aggregation_ids)
-                    .chain(helper_fixed_size_batch_aggregation_ids)
-                    .chain(leader_fixed_size_time_bucketed_batch_aggregation_ids)
+                    .chain(leader_leader_selected_batch_aggregation_ids)
+                    .chain(helper_leader_selected_batch_aggregation_ids)
+                    .chain(leader_leader_selected_time_bucketed_batch_aggregation_ids)
                     .chain(other_task_batch_aggregation_ids)
                     .collect();
 
@@ -7604,7 +7608,7 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
 
                 // Put a task for us to increment counters for.
                 let task = TaskBuilder::new(
-                    task::BatchMode::FixedSize {
+                    task::BatchMode::LeaderSelected {
                         max_batch_size: None,
                         batch_time_window_size: None,
                     },

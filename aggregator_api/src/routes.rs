@@ -53,12 +53,12 @@ pub(super) async fn get_config(
         ]),
         batch_modes: Vec::from([
             SupportedBatchMode::TimeInterval,
-            SupportedBatchMode::FixedSize,
+            SupportedBatchMode::LeaderSelected,
         ]),
         features: &[
             "TokenHash",
             "UploadMetrics",
-            "TimeBucketedFixedSize",
+            "TimeBucketedLeaderSelected",
             "PureDpDiscreteLaplace",
         ],
         software_name: "Janus",

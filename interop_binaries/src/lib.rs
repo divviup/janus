@@ -8,7 +8,7 @@ use janus_core::{
     vdaf::{vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
-    batch_mode::{BatchMode as _, FixedSize, TimeInterval},
+    batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
     HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use prio::codec::Encode;
@@ -308,7 +308,9 @@ impl AggregatorAddTaskRequest {
     pub fn from_task(task: Task, role: Role) -> Self {
         let (batch_mode, max_batch_size) = match task.batch_mode() {
             BatchMode::TimeInterval => (TimeInterval::CODE as u8, None),
-            BatchMode::FixedSize { max_batch_size, .. } => (FixedSize::CODE as u8, *max_batch_size),
+            BatchMode::LeaderSelected { max_batch_size, .. } => {
+                (LeaderSelected::CODE as u8, *max_batch_size)
+            }
         };
         Self {
             task_id: *task.id(),

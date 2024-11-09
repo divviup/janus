@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
-    Duration, FixedSizeQuery, Interval, Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    Duration, Interval, LeaderSelectedQuery, Query, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
@@ -59,8 +59,8 @@ pub trait AccumulableBatchMode: BatchMode {
 
     /// Determine if the batch is expected to be garbage-collected, based on the identifier.
     /// `Some(true)` and `Some(false)` indicate the expected result, and `None` indicates that the
-    /// answer cannot be determined based on the batch identifier alone (for e.g. the fixed-size
-    /// batch mode).
+    /// answer cannot be determined based on the batch identifier alone (for e.g. the
+    /// leader-selected batch mode).
     fn is_batch_garbage_collected<C: Clock>(
         clock: &C,
         batch_identifier: &Self::BatchIdentifier,
@@ -124,7 +124,7 @@ impl AccumulableBatchMode for TimeInterval {
 }
 
 #[async_trait]
-impl AccumulableBatchMode for FixedSize {
+impl AccumulableBatchMode for LeaderSelected {
     fn to_batch_identifier(
         _: &AggregatorTask,
         batch_id: &Self::PartialBatchIdentifier,
@@ -392,7 +392,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 }
 
 #[async_trait]
-impl CollectableBatchMode for FixedSize {
+impl CollectableBatchMode for LeaderSelected {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
     async fn collection_identifier_for_query<C: Clock>(
@@ -400,9 +400,9 @@ impl CollectableBatchMode for FixedSize {
         task: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
-        match query.fixed_size_query() {
-            FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
-            FixedSizeQuery::CurrentBatch => {
+        match query.leader_selected_query() {
+            LeaderSelectedQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
+            LeaderSelectedQuery::CurrentBatch => {
                 tx.acquire_outstanding_batch_with_report_count(task.id(), task.min_batch_size())
                     .await
             }

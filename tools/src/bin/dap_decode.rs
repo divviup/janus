@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
     AggregationJobResp, Collection, CollectionReq, HpkeConfig, HpkeConfigList, Report,
 };
@@ -53,8 +53,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 let message: AggregationJobInitializeReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: AggregationJobInitializeReq<FixedSize> =
-                    AggregationJobInitializeReq::<FixedSize>::get_decoded(&message_buf)?;
+                let message: AggregationJobInitializeReq<LeaderSelected> =
+                    AggregationJobInitializeReq::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
@@ -72,8 +72,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 let message: AggregateShareReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: AggregateShareReq<FixedSize> =
-                    AggregateShareReq::<FixedSize>::get_decoded(&message_buf)?;
+                let message: AggregateShareReq<LeaderSelected> =
+                    AggregateShareReq::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
@@ -86,8 +86,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 let message: CollectionReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: CollectionReq<FixedSize> =
-                    CollectionReq::<FixedSize>::get_decoded(&message_buf)?;
+                let message: CollectionReq<LeaderSelected> =
+                    CollectionReq::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
@@ -96,8 +96,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 let message: Collection<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: Collection<FixedSize> =
-                    Collection::<FixedSize>::get_decoded(&message_buf)?;
+                let message: Collection<LeaderSelected> =
+                    Collection::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }

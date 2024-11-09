@@ -77,8 +77,8 @@ async fn get_config() {
         concat!(
             r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
-            r#""batch_modes":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"],"#,
+            r#""batch_modes":["TimeInterval","LeaderSelected"],"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","PureDpDiscreteLaplace"],"#,
             r#""software_name":"Janus","software_version":""#,
         )
     );
@@ -1655,7 +1655,7 @@ fn post_task_req_serialization() {
     assert_tokens(
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
-            batch_mode: BatchMode::FixedSize {
+            batch_mode: BatchMode::LeaderSelected {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
@@ -1691,7 +1691,7 @@ fn post_task_req_serialization() {
             Token::Str("batch_mode"),
             Token::StructVariant {
                 name: "BatchMode",
-                variant: "FixedSize",
+                variant: "LeaderSelected",
                 len: 2,
             },
             Token::Str("max_batch_size"),
@@ -1777,7 +1777,7 @@ fn post_task_req_serialization() {
     assert_tokens(
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
-            batch_mode: BatchMode::FixedSize {
+            batch_mode: BatchMode::LeaderSelected {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
@@ -1817,7 +1817,7 @@ fn post_task_req_serialization() {
             Token::Str("batch_mode"),
             Token::StructVariant {
                 name: "BatchMode",
-                variant: "FixedSize",
+                variant: "LeaderSelected",
                 len: 2,
             },
             Token::Str("max_batch_size"),
@@ -1931,7 +1931,7 @@ fn task_resp_serialization() {
     let task = AggregatorTask::new(
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(999),
             batch_time_window_size: None,
         },
@@ -1991,7 +1991,7 @@ fn task_resp_serialization() {
             Token::Str("batch_mode"),
             Token::StructVariant {
                 name: "BatchMode",
-                variant: "FixedSize",
+                variant: "LeaderSelected",
                 len: 2,
             },
             Token::Str("max_batch_size"),

@@ -12,9 +12,9 @@ use janus_integration_tests::{
     AggregatorEndpointFragments, EndpointFragments, TaskParameters,
 };
 use janus_messages::{
-    batch_mode::{self, FixedSize},
+    batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
-    Duration, FixedSizeQuery, Interval, Query, Time,
+    Duration, Interval, LeaderSelectedQuery, Query, Time,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
@@ -314,13 +314,13 @@ where
                 collection_2.aggregate_result().clone(),
             )
         }
-        BatchMode::FixedSize { .. } => {
+        BatchMode::LeaderSelected { .. } => {
             let mut requests = 0;
             let collection_1 = loop {
                 requests += 1;
-                let collection_res = collect_generic::<_, FixedSize>(
+                let collection_res = collect_generic::<_, LeaderSelected>(
                     &collector,
-                    Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
+                    Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
                     aggregation_parameter,
                 )
                 .await;
@@ -344,7 +344,7 @@ where
             // Collect again to verify that collections can be repeated.
             let collection_2 = collect_generic(
                 &collector,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
                 aggregation_parameter,
             )
             .await

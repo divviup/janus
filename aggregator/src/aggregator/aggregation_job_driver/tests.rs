@@ -34,7 +34,7 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     problem_type::DapProblemType,
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
@@ -1310,7 +1310,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
 }
 
 #[tokio::test]
-async fn step_fixed_size_aggregation_job_init_single_step() {
+async fn step_leader_selected_aggregation_job_init_single_step() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
     let mut server = mockito::Server::new_async().await;
@@ -1320,7 +1320,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
     let task = TaskBuilder::new(
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1370,18 +1370,20 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(
-                    &AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        (),
-                        batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    ),
-                )
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    LeaderSelected,
+                    Prio3Count,
+                >::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    (),
+                    batch_id,
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                ))
                 .await
                 .unwrap();
 
@@ -1393,7 +1395,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
 
                 tx.put_batch_aggregation(&BatchAggregation::<
                     VERIFY_KEY_LENGTH,
-                    FixedSize,
+                    LeaderSelected,
                     Prio3Count,
                 >::new(
                     *task.id(),
@@ -1430,7 +1432,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -1469,7 +1471,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
         .match_header(header, value.as_str())
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(200)
@@ -1506,7 +1508,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     mocked_aggregate_failure.assert_async().await;
     mocked_aggregate_success.assert_async().await;
 
-    let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+    let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, LeaderSelected, Prio3Count>::new(
         *task.id(),
         aggregation_job_id,
         (),
@@ -1524,23 +1526,24 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
         None,
         ReportAggregationState::Finished,
     );
-    let want_batch_aggregations =
-        Vec::from([
-            BatchAggregation::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-                *task.id(),
-                batch_id,
-                (),
-                0,
-                Interval::from_time(report.metadata().time()).unwrap(),
-                BatchAggregationState::Aggregating {
-                    aggregate_share: Some(transcript.leader_output_share.clone().into()),
-                    report_count: 1,
-                    checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
-                    aggregation_jobs_created: 1,
-                    aggregation_jobs_terminated: 1,
-                },
-            ),
-        ]);
+    let want_batch_aggregations = Vec::from([BatchAggregation::<
+        VERIFY_KEY_LENGTH,
+        LeaderSelected,
+        Prio3Count,
+    >::new(
+        *task.id(),
+        batch_id,
+        (),
+        0,
+        Interval::from_time(report.metadata().time()).unwrap(),
+        BatchAggregationState::Aggregating {
+            aggregate_share: Some(transcript.leader_output_share.clone().into()),
+            report_count: 1,
+            checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+            aggregation_jobs_created: 1,
+            aggregation_jobs_terminated: 1,
+        },
+    )]);
 
     let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
@@ -1548,7 +1551,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
                 (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
+                    .get_aggregation_job::<VERIFY_KEY_LENGTH, LeaderSelected, Prio3Count>(
                         task.id(),
                         &aggregation_job_id,
                     )
@@ -1567,7 +1570,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
                     .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
+                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, LeaderSelected, Prio3Count>(
                         &vdaf,
                         task.id(),
                     )
@@ -1593,7 +1596,7 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
 }
 
 #[tokio::test]
-async fn step_fixed_size_aggregation_job_init_two_steps() {
+async fn step_leader_selected_aggregation_job_init_two_steps() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
     let mut server = mockito::Server::new_async().await;
@@ -1603,7 +1606,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
     let task = TaskBuilder::new(
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -1663,7 +1666,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
 
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
-                    FixedSize,
+                    LeaderSelected,
                     Poplar1<XofTurboShake128, 16>,
                 >::new(
                     *task.id(),
@@ -1686,7 +1689,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
 
                 tx.put_batch_aggregation(&BatchAggregation::<
                     VERIFY_KEY_LENGTH,
-                    FixedSize,
+                    LeaderSelected,
                     Poplar1<XofTurboShake128, 16>,
                 >::new(
                     *task.id(),
@@ -1723,7 +1726,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     // verification -- but mockito does not expose this functionality at time of writing.)
     let leader_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             ReportShare::new(
                 report.metadata().clone(),
@@ -1750,7 +1753,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
         .match_header(header, value.as_str())
         .match_header(
             CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(200)
@@ -1776,7 +1779,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     mocked_aggregate_success.assert_async().await;
 
     let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
+        AggregationJob::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
             aggregation_job_id,
             aggregation_param.clone(),
@@ -1802,7 +1805,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
         );
     let want_batch_aggregations = Vec::from([BatchAggregation::<
         VERIFY_KEY_LENGTH,
-        FixedSize,
+        LeaderSelected,
         Poplar1<XofTurboShake128, 16>,
     >::new(
         *task.id(),
@@ -1825,7 +1828,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
                 (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(
                         task.id(),
                         &aggregation_job_id,
                     )
@@ -1842,7 +1845,7 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
                     .await.unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
@@ -2201,7 +2204,7 @@ async fn step_time_interval_aggregation_job_continue() {
 }
 
 #[tokio::test]
-async fn step_fixed_size_aggregation_job_continue() {
+async fn step_leader_selected_aggregation_job_continue() {
     // Setup: insert a client report and add it to an aggregation job whose state has already
     // been stepped once.
     install_test_trace_subscriber();
@@ -2212,7 +2215,7 @@ async fn step_fixed_size_aggregation_job_continue() {
     let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
     let task = TaskBuilder::new(
-        BatchMode::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
@@ -2274,7 +2277,7 @@ async fn step_fixed_size_aggregation_job_continue() {
 
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
-                    FixedSize,
+                    LeaderSelected,
                     Poplar1<XofTurboShake128, 16>,
                 >::new(
                     *task.id(),
@@ -2311,7 +2314,7 @@ async fn step_fixed_size_aggregation_job_continue() {
 
                 tx.put_batch_aggregation(&BatchAggregation::<
                     VERIFY_KEY_LENGTH,
-                    FixedSize,
+                    LeaderSelected,
                     Poplar1<XofTurboShake128, 16>,
                 >::new(
                     *task.id(),
@@ -2406,7 +2409,7 @@ async fn step_fixed_size_aggregation_job_continue() {
     mocked_aggregate_success.assert_async().await;
 
     let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
+        AggregationJob::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
             aggregation_job_id,
             aggregation_param.clone(),
@@ -2427,7 +2430,7 @@ async fn step_fixed_size_aggregation_job_continue() {
         );
     let want_batch_aggregations = Vec::from([BatchAggregation::<
         VERIFY_KEY_LENGTH,
-        FixedSize,
+        LeaderSelected,
         Poplar1<XofTurboShake128, 16>,
     >::new(
         *task.id(),
@@ -2458,7 +2461,7 @@ async fn step_fixed_size_aggregation_job_continue() {
             );
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(
                         task.id(),
                         &aggregation_job_id,
                     )
@@ -2475,7 +2478,7 @@ async fn step_fixed_size_aggregation_job_continue() {
                     .await.unwrap()
                     .unwrap();
                 let batch_aggregations =
-                merge_batch_aggregations_by_batch(FixedSize::get_batch_aggregations_for_collection_identifier::<
+                merge_batch_aggregations_by_batch(LeaderSelected::get_batch_aggregations_for_collection_identifier::<
                         VERIFY_KEY_LENGTH,
                         Poplar1<XofTurboShake128, 16>,
                         _,

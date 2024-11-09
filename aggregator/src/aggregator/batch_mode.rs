@@ -10,7 +10,7 @@ use janus_aggregator_core::{
 };
 use janus_core::time::Clock;
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Role,
 };
 use prio::vdaf;
@@ -70,7 +70,7 @@ impl UploadableBatchMode for TimeInterval {
 }
 
 #[async_trait]
-impl UploadableBatchMode for FixedSize {
+impl UploadableBatchMode for LeaderSelected {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
@@ -80,9 +80,9 @@ impl UploadableBatchMode for FixedSize {
         _: &A,
         _: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error> {
-        // Fixed-size tasks associate reports to batches at time of aggregation rather than at time
-        // of upload, and there are no other relevant checks to apply here, so this method simply
-        // returns Ok(()).
+        // Leader-selected tasks associate reports to batches at time of aggregation rather than at
+        // time of upload, and there are no other relevant checks to apply here, so this method
+        // simply returns Ok(()).
         Ok(())
     }
 }
@@ -191,7 +191,7 @@ impl CollectableBatchMode for TimeInterval {
 }
 
 #[async_trait]
-impl CollectableBatchMode for FixedSize {
+impl CollectableBatchMode for LeaderSelected {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,

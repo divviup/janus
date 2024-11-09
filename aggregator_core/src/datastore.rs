@@ -26,7 +26,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
     HpkeConfigId, Interval, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, TaskId, Time,
@@ -1583,7 +1583,7 @@ WHERE client_reports.task_id = $1
     }
 
     /// Return the number of reports in the provided task & batch, regardless of whether the reports
-    /// have been aggregated or collected. Applies only to fixed-size queries.
+    /// have been aggregated or collected. Applies only to leader-selected queries.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn count_client_reports_for_batch_id(
         &self,
@@ -3056,7 +3056,7 @@ WHERE task_id = $1
     }
 
     /// Retrieves all collection jobs for the given batch ID. Multiple collection jobs may be
-    /// returned with distinct aggregation parameters. Applies only to fixed-size tasks.
+    /// returned with distinct aggregation parameters. Applies only to leader-selected tasks.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_by_batch_id<
         const SEED_SIZE: usize,
@@ -3066,7 +3066,7 @@ WHERE task_id = $1
         vdaf: &A,
         task_id: &TaskId,
         batch_id: &BatchId,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, FixedSize, A>>, Error> {
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, LeaderSelected, A>>, Error> {
         // TODO(#1553): write unit test
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -4224,8 +4224,8 @@ WHERE task_id = $1
     }
 
     /// Returns all aggregate share jobs for the given task with the given batch identifier.
-    /// Multiple aggregate share jobs may be returned with distinct aggregation parameters.
-    /// Applies only to fixed-size tasks.
+    /// Multiple aggregate share jobs may be returned with distinct aggregation parameters. Applies
+    /// only to leader-selected tasks.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_by_batch_id<
         const SEED_SIZE: usize,
@@ -4235,7 +4235,7 @@ WHERE task_id = $1
         vdaf: &A,
         task_id: &TaskId,
         batch_id: &BatchId,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, FixedSize, A>>, Error> {
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, LeaderSelected, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -4821,8 +4821,8 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
     ///
     /// * batch_aggregations and outstanding_batches will be considered part of the same entity for
     ///   purposes of GC, and will be considered eligible for GC once the maximum of the
-    ///   batch_interval (for time-interval) or merged client_timestamp_interval (for fixed-size) of
-    ///   the batch_aggregations rows is older than report_expiry_age.
+    ///   batch_interval (for time-interval) or merged client_timestamp_interval (for
+    ///   leader-selected) of the batch_aggregations rows is older than report_expiry_age.
     /// * collection_jobs and aggregate_share_jobs use a batch mode-specific rule to determine
     ///   GC-eligiblity.
     ///   * For time-interval tasks, collection_jobs and aggregate_share_jobs are considered
@@ -4830,8 +4830,9 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
     ///     report_expiry_age. (The minimum is used instead of the maximum to ensure that collection
     ///     jobs are not GC'ed after their underlying aggregation information from
     ///     batch_aggregations.)
-    ///   * For fixed-size tasks, collection_jobs and aggregate_share_jobs are considered eligible
-    ///     for GC if the related batch is eligible for GC, based on the `batch_aggregations` rows.
+    ///   * For leader-selected tasks, collection_jobs and aggregate_share_jobs are considered
+    ///     eligible for GC if the related batch is eligible for GC, based on the
+    ///     `batch_aggregations` rows.
     ///
     /// Up to `limit` batches will be deleted, along with all related collection artifacts.
     ///

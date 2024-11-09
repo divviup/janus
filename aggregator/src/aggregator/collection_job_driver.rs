@@ -24,7 +24,7 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, FixedSize, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShare, AggregateShareReq, BatchSelector,
 };
 use opentelemetry::{
@@ -110,12 +110,12 @@ where
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategy) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
-                        FixedSize,
+                        LeaderSelected,
                         DpStrategy,
                         VdafType
                     >(datastore, Arc::new(vdaf), lease, dp_strategy)
@@ -485,9 +485,9 @@ where
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(
+                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(
                         datastore,
                         Arc::new(vdaf),
                         lease,

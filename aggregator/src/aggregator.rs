@@ -65,7 +65,7 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
-    batch_mode::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     taskprov::{DpMechanism, TaskConfig},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
@@ -1514,9 +1514,9 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         Arc::clone(vdaf),
                         clock,
                         global_hpke_keypairs,
@@ -1574,9 +1574,9 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         datastore,
                         clock,
                         global_hpke_keypairs,
@@ -1630,9 +1630,9 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         datastore,
                         Arc::clone(vdaf),
                         metrics,
@@ -1666,9 +1666,9 @@ impl VdafOps {
                     ).await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
-                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         datastore,
                         task,
                         aggregation_job_id,
@@ -2754,11 +2754,11 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        FixedSize,
+                        LeaderSelected,
                         VdafType,
                         _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
@@ -2907,11 +2907,11 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        FixedSize,
+                        LeaderSelected,
                         VdafType,
                         _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
@@ -3051,11 +3051,11 @@ impl VdafOps {
                     .await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
-                        FixedSize,
+                        LeaderSelected,
                         VdafType,
                         _,
                     >(datastore, task, Arc::clone(vdaf), collection_job_id)
@@ -3138,11 +3138,11 @@ impl VdafOps {
                     >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count, collector_hpke_config, Arc::clone(dp_strategy)).await
                 })
             }
-            task::BatchMode::FixedSize { .. } => {
+            task::BatchMode::LeaderSelected { .. } => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
                     Self::handle_aggregate_share_generic::<
                         VERIFY_KEY_LENGTH,
-                        FixedSize,
+                        LeaderSelected,
                         DpStrategyType,
                         VdafType,
                         _,
