@@ -26,8 +26,9 @@ use janus_core::{
 };
 use janus_messages::{
     batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobResp, AggregationJobStep,
-    Duration, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareError, PrepareResp,
-    PrepareStepResult, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+    Duration, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareResp,
+    PrepareStepResult, ReportError, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role,
+    Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -287,7 +288,7 @@ async fn aggregate_continue() {
             PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
             PrepareResp::new(
                 *report_metadata_2.id(),
-                PrepareStepResult::Reject(PrepareError::BatchCollected),
+                PrepareStepResult::Reject(ReportError::BatchCollected),
             )
         ]))
     );
@@ -356,7 +357,7 @@ async fn aggregate_continue() {
                 1,
                 None,
                 ReportAggregationState::Failed {
-                    prepare_error: PrepareError::ReportDropped
+                    report_error: ReportError::ReportDropped
                 },
             ),
             ReportAggregation::new(
@@ -367,10 +368,10 @@ async fn aggregate_continue() {
                 2,
                 Some(PrepareResp::new(
                     *report_metadata_2.id(),
-                    PrepareStepResult::Reject(PrepareError::BatchCollected)
+                    PrepareStepResult::Reject(ReportError::BatchCollected)
                 )),
                 ReportAggregationState::Failed {
-                    prepare_error: PrepareError::BatchCollected
+                    report_error: ReportError::BatchCollected
                 },
             )
         ])
@@ -1189,7 +1190,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         resp.prepare_resps()[0],
         PrepareResp::new(
             *report_metadata.id(),
-            PrepareStepResult::Reject(PrepareError::VdafPrepError),
+            PrepareStepResult::Reject(ReportError::VdafPrepError),
         )
     );
 
@@ -1308,7 +1309,7 @@ async fn aggregate_continue_prep_step_fails() {
         aggregate_resp,
         AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report_metadata.id(),
-            PrepareStepResult::Reject(PrepareError::VdafPrepError),
+            PrepareStepResult::Reject(ReportError::VdafPrepError),
         )]),)
     );
 
@@ -1366,10 +1367,10 @@ async fn aggregate_continue_prep_step_fails() {
             0,
             Some(PrepareResp::new(
                 *report_metadata.id(),
-                PrepareStepResult::Reject(PrepareError::VdafPrepError)
+                PrepareStepResult::Reject(ReportError::VdafPrepError)
             )),
             ReportAggregationState::Failed {
-                prepare_error: PrepareError::VdafPrepError
+                report_error: ReportError::VdafPrepError
             },
         )
     );
@@ -1745,7 +1746,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     0,
                     None,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     },
                 ))
                 .await

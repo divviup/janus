@@ -25,8 +25,8 @@ use janus_core::{
 use janus_messages::{
     batch_mode::{self, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-    ExtensionType, HpkeConfig, PartialBatchSelector, PrepareError, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportMetadata, ReportShare,
+    ExtensionType, HpkeConfig, PartialBatchSelector, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -430,7 +430,7 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
 
     let want_aggregation_job_resp = AggregationJobResp::new(Vec::from([PrepareResp::new(
         report_id,
-        PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        PrepareStepResult::Reject(ReportError::InvalidMessage),
     )]));
     let got_aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     assert_eq!(want_aggregation_job_resp, got_aggregation_job_resp);
@@ -608,7 +608,7 @@ async fn aggregation_job_intolerable_clock_skew() {
     );
     assert_matches!(
         aggregation_job_init_resp.prepare_resps()[1].result(),
-        &PrepareStepResult::Reject(PrepareError::ReportTooEarly)
+        &PrepareStepResult::Reject(ReportError::ReportTooEarly)
     );
 }
 

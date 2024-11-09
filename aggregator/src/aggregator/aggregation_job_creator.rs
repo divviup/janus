@@ -941,7 +941,7 @@ mod tests {
     use janus_messages::{
         batch_mode::{LeaderSelected, TimeInterval},
         codec::ParameterizedDecode,
-        AggregationJobStep, Interval, PrepareError, Query, ReportId, ReportIdChecksum,
+        AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
         ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
@@ -1652,7 +1652,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         ReportAggregationState::Failed {
-                            prepare_error: PrepareError::BatchCollected,
+                            report_error: ReportError::BatchCollected,
                         },
                     )
                 })

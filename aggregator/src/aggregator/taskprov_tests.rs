@@ -42,8 +42,8 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
-    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
@@ -465,7 +465,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        &PrepareStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test
@@ -548,7 +548,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        &PrepareStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test

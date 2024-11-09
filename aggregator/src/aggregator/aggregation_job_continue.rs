@@ -18,7 +18,7 @@ use janus_aggregator_core::{
 };
 use janus_core::time::Clock;
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobResp, PrepareError, PrepareResp, PrepareStepResult,
+    AggregationJobContinueReq, AggregationJobResp, PrepareResp, PrepareStepResult, ReportError,
     Role,
 };
 use prio::{
@@ -87,7 +87,7 @@ impl VdafOps {
                             report_agg
                                 .clone()
                                 .with_state(ReportAggregationState::Failed {
-                                    prepare_error: PrepareError::ReportDropped,
+                                    report_error: ReportError::ReportDropped,
                                 })
                                 .with_last_prep_resp(None),
                             None,
@@ -134,7 +134,7 @@ impl VdafOps {
                     report_aggregation
                         .clone()
                         .with_state(ReportAggregationState::Failed {
-                            prepare_error: PrepareError::ReportDropped,
+                            report_error: ReportError::ReportDropped,
                         })
                         .with_last_prep_resp(None),
                     None,
@@ -229,10 +229,10 @@ impl VdafOps {
                                         &metrics.aggregate_step_failure_counter,
                                     )
                                 })
-                                .unwrap_or_else(|prepare_error| {
+                                .unwrap_or_else(|report_error| {
                                     (
-                                        ReportAggregationState::Failed { prepare_error },
-                                        PrepareStepResult::Reject(prepare_error),
+                                        ReportAggregationState::Failed { report_error },
+                                        PrepareStepResult::Reject(report_error),
                                         None,
                                     )
                                 });

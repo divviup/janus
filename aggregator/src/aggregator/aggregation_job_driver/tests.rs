@@ -38,7 +38,7 @@ use janus_messages::{
     problem_type::DapProblemType,
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
-    PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata,
+    PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, Time,
 };
 use mockito::ServerGuard;
@@ -588,7 +588,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
             1,
             None,
             ReportAggregationState::Failed {
-                prepare_error: PrepareError::InvalidMessage,
+                report_error: ReportError::InvalidMessage,
             },
         );
     let want_batch_aggregations = Vec::from([BatchAggregation::<

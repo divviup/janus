@@ -71,7 +71,7 @@ use janus_messages::{
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, ExtensionType, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareError, PrepareResp, PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role,
+    PrepareResp, PrepareStepResult, Report, ReportError, ReportIdChecksum, ReportShare, Role,
     TaskId,
 };
 use opentelemetry::{
@@ -2138,7 +2138,7 @@ impl VdafOps {
                             metrics
                                 .aggregate_step_failure_counter
                                 .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
-                            Err(PrepareError::HpkeUnknownConfigId)
+                            Err(ReportError::HpkeUnknownConfigId)
                         } else {
                             Ok(())
                         };
@@ -2164,7 +2164,7 @@ impl VdafOps {
                                 // HpkeDecryptError isn't strictly accurate, but given that this
                                 // fallible encoding is part of the HPKE decryption process, I think
                                 // this is as close as we can get to a meaningful error signal.
-                                PrepareError::HpkeDecryptError
+                                ReportError::HpkeDecryptError
                             })
                         });
 
@@ -2207,7 +2207,7 @@ impl VdafOps {
                                 metrics
                                     .aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "decrypt_failure")]);
-                                PrepareError::HpkeDecryptError
+                                ReportError::HpkeDecryptError
                             })
                         });
 
@@ -2226,7 +2226,7 @@ impl VdafOps {
                                             "plaintext_input_share_decode_failure",
                                         )],
                                     );
-                                    PrepareError::InvalidMessage
+                                    ReportError::InvalidMessage
                                 })?;
 
                             // Build map of extension type to extension data, checking for duplicates.
@@ -2244,7 +2244,7 @@ impl VdafOps {
                                 metrics
                                     .aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                                return Err(PrepareError::InvalidMessage);
+                                return Err(ReportError::InvalidMessage);
                             }
 
                             if require_taskprov_extension {
@@ -2266,7 +2266,7 @@ impl VdafOps {
                                             "missing_or_malformed_taskprov_extension",
                                         )],
                                     );
-                                    return Err(PrepareError::InvalidMessage);
+                                    return Err(ReportError::InvalidMessage);
                                 }
                             } else if extensions.contains_key(&ExtensionType::Taskprov) {
                                 // taskprov not enabled, but the taskprov extension is present.
@@ -2279,7 +2279,7 @@ impl VdafOps {
                                 metrics
                                     .aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
-                                return Err(PrepareError::InvalidMessage);
+                                return Err(ReportError::InvalidMessage);
                             }
 
                             Ok(plaintext_input_share)
@@ -2299,7 +2299,7 @@ impl VdafOps {
                                 metrics
                                     .aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
-                                PrepareError::InvalidMessage
+                                ReportError::InvalidMessage
                             })
                         });
 
@@ -2316,7 +2316,7 @@ impl VdafOps {
                             metrics
                                 .aggregate_step_failure_counter
                                 .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                            PrepareError::InvalidMessage
+                            ReportError::InvalidMessage
                         });
 
                         let shares =
@@ -2330,7 +2330,7 @@ impl VdafOps {
                                 .time()
                                 .is_after(&report_deadline)
                             {
-                                return Err(PrepareError::ReportTooEarly);
+                                return Err(ReportError::ReportTooEarly);
                             }
                             Ok(shares)
                         });
@@ -2382,9 +2382,9 @@ impl VdafOps {
                                     },
                                     Some(output_share),
                                 ),
-                                Err(prepare_error) => (
-                                    ReportAggregationState::Failed { prepare_error },
-                                    PrepareStepResult::Reject(prepare_error),
+                                Err(report_error) => (
+                                    ReportAggregationState::Failed { report_error },
+                                    PrepareStepResult::Reject(report_error),
                                     None,
                                 ),
                             };
@@ -2503,7 +2503,7 @@ impl VdafOps {
                                     report_aggregation = Cow::Owned(
                                         report_aggregation
                                             .into_owned()
-                                            .with_failure(PrepareError::ReportReplayed),
+                                            .with_failure(ReportError::ReportReplayed),
                                     )
                                 }
                                 Err(err) => return Err(err),

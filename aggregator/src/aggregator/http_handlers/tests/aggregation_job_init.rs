@@ -32,7 +32,7 @@ use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
-    PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult, ReportIdChecksum,
+    PartialBatchSelector, PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum,
     ReportMetadata, ReportShare, Time,
 };
 use prio::{codec::Encode, vdaf::dummy};
@@ -494,7 +494,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_1.result(),
-            &PrepareStepResult::Reject(PrepareError::HpkeDecryptError)
+            &PrepareStepResult::Reject(ReportError::HpkeDecryptError)
         );
 
         let prepare_step_2 = aggregate_resp.prepare_resps().get(2).unwrap();
@@ -504,7 +504,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_2.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage)
+            &PrepareStepResult::Reject(ReportError::InvalidMessage)
         );
 
         let prepare_step_3 = aggregate_resp.prepare_resps().get(3).unwrap();
@@ -514,7 +514,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_3.result(),
-            &PrepareStepResult::Reject(PrepareError::HpkeUnknownConfigId)
+            &PrepareStepResult::Reject(ReportError::HpkeUnknownConfigId)
         );
 
         let prepare_step_4 = aggregate_resp.prepare_resps().get(4).unwrap();
@@ -524,7 +524,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_4.result(),
-            &PrepareStepResult::Reject(PrepareError::ReportReplayed)
+            &PrepareStepResult::Reject(ReportError::ReportReplayed)
         );
 
         let prepare_step_5 = aggregate_resp.prepare_resps().get(5).unwrap();
@@ -534,7 +534,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_5.result(),
-            &PrepareStepResult::Reject(PrepareError::BatchCollected)
+            &PrepareStepResult::Reject(ReportError::BatchCollected)
         );
 
         let prepare_step_6 = aggregate_resp.prepare_resps().get(6).unwrap();
@@ -544,7 +544,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_6.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
         let prepare_step_7 = aggregate_resp.prepare_resps().get(7).unwrap();
@@ -554,7 +554,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_7.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
         // Check aggregation job in datastore.
@@ -713,7 +713,7 @@ async fn aggregate_init_batch_already_collected() {
     );
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::BatchCollected)
+        &PrepareStepResult::Reject(ReportError::BatchCollected)
     );
 
     assert_task_aggregation_counter(
@@ -863,7 +863,7 @@ async fn aggregate_init_prep_init_failed() {
     );
     assert_matches!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::VdafPrepError)
+        &PrepareStepResult::Reject(ReportError::VdafPrepError)
     );
 
     assert_task_aggregation_counter(
@@ -923,7 +923,7 @@ async fn aggregate_init_prep_step_failed() {
     );
     assert_matches!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::VdafPrepError)
+        &PrepareStepResult::Reject(ReportError::VdafPrepError)
     );
 
     assert_task_aggregation_counter(

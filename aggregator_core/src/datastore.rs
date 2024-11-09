@@ -2491,7 +2491,7 @@ WHERE report_aggregations.task_id = $1
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
 
             ReportAggregationStateCode::Failed => {
-                let prepare_error = match error_code {
+                let report_error = match error_code {
                     Some(c) => {
                         let c: u8 = c.try_into().map_err(|err| {
                             Error::DbState(format!("couldn't convert error_code value: {err}"))
@@ -2508,7 +2508,7 @@ WHERE report_aggregations.task_id = $1
                     )
                 })?;
 
-                ReportAggregationState::Failed { prepare_error }
+                ReportAggregationState::Failed { report_error }
             }
         };
 
@@ -2600,7 +2600,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
                     /* helper_prep_state */ &encoded_state_values.helper_prep_state,
-                    /* error_code */ &encoded_state_values.prepare_error,
+                    /* error_code */ &encoded_state_values.report_error,
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
@@ -2689,7 +2689,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     .await?,
                 )
             }
-            ReportAggregationMetadataState::Failed { prepare_error } => {
+            ReportAggregationMetadataState::Failed { report_error } => {
                 let stmt = self
                     .prepare_cached(
                         "-- put_leader_report_aggregation()
@@ -2737,7 +2737,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             &report_aggregation_metadata.report_id().as_ref(),
                             /* client_timestamp */
                             &report_aggregation_metadata.time().as_naive_date_time()?,
-                            /* error_code */ &(*prepare_error as i16),
+                            /* error_code */ &(*report_error as i16),
                             /* created_at */ &now,
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
@@ -2807,7 +2807,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
                     /* helper_prep_state */ &encoded_state_values.helper_prep_state,
-                    /* error_code */ &encoded_state_values.prepare_error,
+                    /* error_code */ &encoded_state_values.report_error,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* aggregation_job_id */

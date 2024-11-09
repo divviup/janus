@@ -15,7 +15,7 @@ use janus_core::{
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, HpkeConfigId, Interval, PrepareError, PrepareResp, Query, ReportId,
+    HpkeCiphertext, HpkeConfigId, Interval, PrepareResp, Query, ReportError, ReportId,
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
@@ -922,7 +922,7 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
     },
     Finished,
     Failed {
-        prepare_error: PrepareError,
+        report_error: ReportError,
     },
 }
 
@@ -979,9 +979,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 }
             }
             ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::Failed { prepare_error } => {
+            ReportAggregationState::Failed { report_error } => {
                 EncodedReportAggregationStateValues {
-                    prepare_error: Some(*prepare_error as i16),
+                    report_error: Some(*report_error as i16),
                     ..Default::default()
                 }
             }
@@ -1004,7 +1004,7 @@ pub(super) struct EncodedReportAggregationStateValues {
     pub(super) helper_prep_state: Option<Vec<u8>>,
 
     // State for Failed.
-    pub(super) prepare_error: Option<i16>,
+    pub(super) report_error: Option<i16>,
 }
 
 // ReportAggregationStateCode exists alongside the public ReportAggregationState because there is no
@@ -1074,12 +1074,12 @@ where
             ) => lhs_state == rhs_state,
             (
                 Self::Failed {
-                    prepare_error: lhs_prepare_error,
+                    report_error: lhs_report_error,
                 },
                 Self::Failed {
-                    prepare_error: rhs_prepare_error,
+                    report_error: rhs_report_error,
                 },
-            ) => lhs_prepare_error == rhs_prepare_error,
+            ) => lhs_report_error == rhs_report_error,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -1105,7 +1105,7 @@ where
 #[derive(Clone, Debug)]
 pub enum ReportAggregationMetadataState {
     Start,
-    Failed { prepare_error: PrepareError },
+    Failed { report_error: ReportError },
 }
 
 /// Metadata from the state of a single client report's ongoing aggregation. This is like

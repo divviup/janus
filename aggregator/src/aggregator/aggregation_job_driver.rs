@@ -37,7 +37,7 @@ use janus_core::{
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareStepResult,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareStepResult, ReportError,
     ReportShare, Role,
 };
 use opentelemetry::{
@@ -391,7 +391,7 @@ where
                             .add(1, &[KeyValue::new("type", "duplicate_extension")]);
                         return ra_sender.send(WritableReportAggregation::new(
                             report_aggregation.with_state(ReportAggregationState::Failed {
-                                prepare_error: PrepareError::InvalidMessage,
+                                report_error: ReportError::InvalidMessage,
                             }),
                             None,
                         )).map_err(|_| ());
@@ -406,7 +406,7 @@ where
                                 .add(1, &[KeyValue::new("type", "public_share_encode_failure")]);
                             return ra_sender.send(WritableReportAggregation::new(
                                 report_aggregation.with_state(ReportAggregationState::Failed {
-                                    prepare_error: PrepareError::InvalidMessage,
+                                    report_error: ReportError::InvalidMessage,
                                 }),
                                 None,
                             )).map_err(|_| ());
@@ -449,10 +449,10 @@ where
                                 },
                             )).map_err(|_| ())
                         }
-                        Err(prepare_error) => {
+                        Err(report_error) => {
                             ra_sender.send(WritableReportAggregation::new(
                                 report_aggregation
-                                    .with_state(ReportAggregationState::Failed { prepare_error }),
+                                    .with_state(ReportAggregationState::Failed { report_error }),
                                 None,
                             )).map_err(|_| ())
                         }
@@ -627,7 +627,7 @@ where
                         let (prep_state, message) = match result {
                             Ok((state, message)) => (state, message),
                             Err(error) => {
-                                let prepare_error = handle_ping_pong_error(
+                                let report_error = handle_ping_pong_error(
                                     &task_id,
                                     Role::Leader,
                                     report_aggregation.report_id(),
@@ -637,7 +637,7 @@ where
                                 return ra_sender
                                     .send(WritableReportAggregation::new(
                                         report_aggregation.with_state(
-                                            ReportAggregationState::Failed { prepare_error },
+                                            ReportAggregationState::Failed { report_error },
                                         ),
                                         None,
                                     ))
@@ -841,8 +841,8 @@ where
                                         // already finished. Commit the output share.
                                         (ReportAggregationState::Finished, Some(output_share))
                                     }
-                                    Err(prepare_error) => {
-                                        (ReportAggregationState::Failed { prepare_error }, None)
+                                    Err(report_error) => {
+                                        (ReportAggregationState::Failed { report_error }, None)
                                     }
                                 }
                             }
@@ -861,7 +861,7 @@ where
                                         .add(1, &[KeyValue::new("type", "finish_mismatch")]);
                                     (
                                         ReportAggregationState::Failed {
-                                            prepare_error: PrepareError::VdafPrepError,
+                                            report_error: ReportError::VdafPrepError,
                                         },
                                         None,
                                     )
@@ -880,7 +880,7 @@ where
                                     .add(1, &[KeyValue::new("type", "helper_step_failure")]);
                                 (
                                     ReportAggregationState::Failed {
-                                        prepare_error: *err,
+                                        report_error: *err,
                                     },
                                     None,
                                 )

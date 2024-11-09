@@ -34,7 +34,7 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    LeaderSelectedQuery, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
+    LeaderSelectedQuery, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
@@ -2319,13 +2319,13 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::Failed {
-                prepare_error: PrepareError::VdafPrepError,
+                report_error: ReportError::VdafPrepError,
             },
         ),
         (
             Role::Helper,
             ReportAggregationState::Failed {
-                prepare_error: PrepareError::VdafPrepError,
+                report_error: ReportError::VdafPrepError,
             },
         ),
     ]
@@ -2579,7 +2579,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     0,
                     None,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     },
                 ))
                 .await
@@ -2668,7 +2668,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     },
                     ReportAggregationState::Finished,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     },
                 ]
                 .iter()
@@ -5235,7 +5235,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     2,
                     None,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     }, // Not counted among min_size or max_size.
                 );
 
@@ -5275,7 +5275,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     2,
                     None,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     }, // Not counted among min_size or max_size.
                 );
 

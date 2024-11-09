@@ -1,8 +1,8 @@
 use crate::{
     roundtrip_encoding, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchId, HpkeCiphertext, HpkeConfigId, LeaderSelected,
-    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportId, ReportMetadata, ReportShare, Time,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportId, ReportMetadata, ReportShare, Time,
 };
 use prio::topology::ping_pong::PingPongMessage;
 
@@ -256,7 +256,7 @@ fn roundtrip_prepare_resp() {
         (
             PrepareResp {
                 report_id: ReportId::from([255; 16]),
-                result: PrepareStepResult::Reject(PrepareError::VdafPrepError),
+                result: PrepareStepResult::Reject(ReportError::VdafPrepError),
             },
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
@@ -270,16 +270,16 @@ fn roundtrip_prepare_resp() {
 #[test]
 fn roundtrip_report_share_error() {
     roundtrip_encoding(&[
-        (PrepareError::BatchCollected, "00"),
-        (PrepareError::ReportReplayed, "01"),
-        (PrepareError::ReportDropped, "02"),
-        (PrepareError::HpkeUnknownConfigId, "03"),
-        (PrepareError::HpkeDecryptError, "04"),
-        (PrepareError::VdafPrepError, "05"),
-        (PrepareError::BatchSaturated, "06"),
-        (PrepareError::TaskExpired, "07"),
-        (PrepareError::InvalidMessage, "08"),
-        (PrepareError::ReportTooEarly, "09"),
+        (ReportError::BatchCollected, "00"),
+        (ReportError::ReportReplayed, "01"),
+        (ReportError::ReportDropped, "02"),
+        (ReportError::HpkeUnknownConfigId, "03"),
+        (ReportError::HpkeDecryptError, "04"),
+        (ReportError::VdafPrepError, "05"),
+        (ReportError::BatchSaturated, "06"),
+        (ReportError::TaskExpired, "07"),
+        (ReportError::InvalidMessage, "08"),
+        (ReportError::ReportTooEarly, "09"),
     ])
 }
 

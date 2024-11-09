@@ -3,7 +3,7 @@ use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
     batch_mode::LeaderSelected, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, PartialBatchSelector, PrepareError, PrepareStepResult, ReportIdChecksum,
+    BatchSelector, PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -115,7 +115,7 @@ async fn helper_aggregation_report_share_replay() {
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
     assert_matches!(
         agg_init_resp_2.prepare_resps()[0].result(),
-        PrepareStepResult::Reject(PrepareError::ReportReplayed)
+        PrepareStepResult::Reject(ReportError::ReportReplayed)
     );
     assert_matches!(
         agg_init_resp_2.prepare_resps()[1].result(),

@@ -2133,7 +2133,7 @@ pub enum PrepareStepResult {
         message: PingPongMessage,
     },
     Finished,
-    Reject(PrepareError),
+    Reject(ReportError),
 }
 
 impl Encode for PrepareStepResult {
@@ -2173,7 +2173,7 @@ impl Decode for PrepareStepResult {
                 Self::Continue { message: prep_msg }
             }
             1 => Self::Finished,
-            2 => Self::Reject(PrepareError::decode(bytes)?),
+            2 => Self::Reject(ReportError::decode(bytes)?),
             _ => return Err(CodecError::UnexpectedValue),
         })
     }
@@ -2182,7 +2182,7 @@ impl Decode for PrepareStepResult {
 /// DAP protocol message representing an error while preparing a report share for aggregation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
-pub enum PrepareError {
+pub enum ReportError {
     BatchCollected = 0,
     ReportReplayed = 1,
     ReportDropped = 2,
@@ -2195,7 +2195,7 @@ pub enum PrepareError {
     ReportTooEarly = 9,
 }
 
-impl Encode for PrepareError {
+impl Encode for ReportError {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         (*self as u8).encode(bytes)
     }
@@ -2205,7 +2205,7 @@ impl Encode for PrepareError {
     }
 }
 
-impl Decode for PrepareError {
+impl Decode for ReportError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {

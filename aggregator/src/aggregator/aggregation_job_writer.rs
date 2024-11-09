@@ -24,7 +24,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, Interval, PrepareError, PrepareResp, PrepareStepResult, ReportId,
+    AggregationJobId, Interval, PrepareResp, PrepareStepResult, ReportError, ReportId,
     ReportIdChecksum, Time,
 };
 use opentelemetry::{
@@ -603,7 +603,7 @@ where
                     *report_aggregation.to_mut() = report_aggregation
                         .as_ref()
                         .clone()
-                        .with_failure(PrepareError::BatchCollected);
+                        .with_failure(ReportError::BatchCollected);
                 }
             }
         }
@@ -830,7 +830,7 @@ where
                             *report_aggregation.to_mut() = report_aggregation
                                 .as_ref()
                                 .clone()
-                                .with_failure(PrepareError::VdafPrepError);
+                                .with_failure(ReportError::VdafPrepError);
                         }
                     }
                 }
@@ -981,8 +981,8 @@ pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SE
     fn is_failed(&self) -> bool;
 
     /// Returns a new report aggregation corresponding to this report aggregation updated to have
-    /// the "Failed" state, with the given [`PrepareError`].
-    fn with_failure(self, prepare_error: PrepareError) -> Self;
+    /// the "Failed" state, with the given [`ReportError`].
+    fn with_failure(self, report_error: ReportError) -> Self;
 
     /// Returns the last preparation response from this report aggregation, if any.
     fn last_prep_resp(&self) -> Option<&PrepareResp>;
@@ -1040,10 +1040,10 @@ where
         )
     }
 
-    fn with_failure(self, prepare_error: PrepareError) -> Self {
+    fn with_failure(self, report_error: ReportError) -> Self {
         let mut report_aggregation = self
             .report_aggregation
-            .with_state(ReportAggregationState::Failed { prepare_error });
+            .with_state(ReportAggregationState::Failed { report_error });
 
         // This check effectively checks if we are the Helper. (The Helper will always set
         // last_prep_resp for all non-failed report aggregations, and most failed report
@@ -1052,7 +1052,7 @@ where
             let report_id = *report_aggregation.report_id();
             report_aggregation = report_aggregation.with_last_prep_resp(Some(PrepareResp::new(
                 report_id,
-                PrepareStepResult::Reject(prepare_error),
+                PrepareStepResult::Reject(report_error),
             )));
         }
 
@@ -1107,8 +1107,8 @@ where
         matches!(self.state(), ReportAggregationMetadataState::Failed { .. })
     }
 
-    fn with_failure(self, prepare_error: PrepareError) -> Self {
-        self.with_state(ReportAggregationMetadataState::Failed { prepare_error })
+    fn with_failure(self, report_error: ReportError) -> Self {
+        self.with_state(ReportAggregationMetadataState::Failed { report_error })
     }
 
     /// Returns the last preparation response from this report aggregation, if any.
@@ -1158,9 +1158,9 @@ where
         self.as_ref().is_failed()
     }
 
-    fn with_failure(self, prepare_error: PrepareError) -> Self {
+    fn with_failure(self, report_error: ReportError) -> Self {
         // Since `with_failure` consumes the caller, we must own the CoW.
-        Self::Owned(self.into_owned().with_failure(prepare_error))
+        Self::Owned(self.into_owned().with_failure(report_error))
     }
 
     /// Returns the last preparation response from this report aggregation, if any.
