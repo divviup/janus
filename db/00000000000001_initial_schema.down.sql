@@ -1,5 +1,6 @@
-DROP INDEX outstanding_batches_task_and_time_bucket_index;
+DROP INDEX outstanding_batches_task_id_and_time_bucket_start;
 DROP TABLE outstanding_batches CASCADE;
+DROP TYPE OUTSTANDING_BATCH_STATE CASCADE;
 DROP INDEX aggregate_share_jobs_interval_containment_index CASCADE;
 DROP TABLE aggregate_share_jobs CASCADE;
 DROP INDEX collection_jobs_interval_containment_index CASCADE;
@@ -7,6 +8,7 @@ DROP INDEX collection_jobs_state_and_lease_expiry CASCADE;
 DROP INDEX collection_jobs_task_id_batch_id CASCADE;
 DROP TABLE collection_jobs CASCADE;
 DROP TYPE COLLECTION_JOB_STATE CASCADE;
+DROP INDEX batch_aggregations_gc_time CASCADE;
 DROP TABLE batch_aggregations CASCADE;
 DROP TYPE BATCH_AGGREGATION_STATE;
 DROP INDEX report_aggregations_client_report_id_index CASCADE;
