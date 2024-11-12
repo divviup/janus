@@ -42,14 +42,14 @@ CREATE TABLE global_hpke_keys(
 -- Another DAP aggregator who we've partnered with to use the taskprov extension.
 CREATE TABLE taskprov_peer_aggregators(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal only.
-    endpoint TEXT NOT NULL,         -- peer aggregator HTTPS endpoint
-    role AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator relative to the peer
-    verify_key_init BYTEA NOT NULL, -- the preshared key used for VDAF verify key derivation.
+    endpoint TEXT NOT NULL,          -- peer aggregator HTTPS endpoint
+    role AGGREGATOR_ROLE NOT NULL,   -- the role of this peer aggregator
+    verify_key_init BYTEA NOT NULL,  -- the preshared key used for VDAF verify key derivation.
 
     -- Parameters applied to every task created with this peer aggregator.
-    tolerable_clock_skew   BIGINT NOT NULL, -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    report_expiry_age      BIGINT,          -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
-    collector_hpke_config BYTEA NOT NULL,   -- the HPKE config of the collector (encoded HpkeConfig message)
+    tolerable_clock_skew   BIGINT NOT NULL,  -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
+    report_expiry_age      BIGINT,           -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
+    collector_hpke_config BYTEA NOT NULL,    -- the HPKE config of the collector (encoded HpkeConfig message)
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
