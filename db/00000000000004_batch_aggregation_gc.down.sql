@@ -1,1 +1,0 @@
-DROP INDEX batch_aggregations_gc_time;

@@ -31,24 +31,25 @@ CREATE TABLE global_hpke_keys(
 
     -- These columns are mutable.
     state HPKE_KEY_STATE NOT NULL DEFAULT 'PENDING',  -- state of the key
-    updated_at TIMESTAMP NOT NULL,                    -- when the key state was last changed
+    last_state_change_at TIMESTAMP NOT NULL,          -- when the key state was last changed. Used for key rotation logic.
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 
 -- Another DAP aggregator who we've partnered with to use the taskprov extension.
 CREATE TABLE taskprov_peer_aggregators(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal only.
-    endpoint TEXT NOT NULL,         -- peer aggregator HTTPS endpoint
-    role AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator relative to the peer
-    verify_key_init BYTEA NOT NULL, -- the preshared key used for VDAF verify key derivation.
+    endpoint TEXT NOT NULL,          -- peer aggregator HTTPS endpoint
+    role AGGREGATOR_ROLE NOT NULL,   -- the role of this peer aggregator
+    verify_key_init BYTEA NOT NULL,  -- the preshared key used for VDAF verify key derivation.
 
     -- Parameters applied to every task created with this peer aggregator.
-    tolerable_clock_skew   BIGINT NOT NULL, -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    report_expiry_age      BIGINT,          -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
-    collector_hpke_config BYTEA NOT NULL,   -- the HPKE config of the collector (encoded HpkeConfig message)
+    tolerable_clock_skew   BIGINT NOT NULL,  -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
+    report_expiry_age      BIGINT,           -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
+    collector_hpke_config BYTEA NOT NULL,    -- the HPKE config of the collector (encoded HpkeConfig message)
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
@@ -163,6 +164,21 @@ CREATE TABLE task_upload_counters(
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT task_upload_counters_unique UNIQUE(task_id, ord)
+) WITH (fillfactor = 50);
+
+-- Per-task report aggregation counters, used for metrics.
+--
+-- Fillfactor is lowered to improve the likelihood of heap-only tuple optimizations. See the
+-- discussion around this setting for the task_upload_counters table.
+CREATE TABLE task_aggregation_counters(
+    id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal only
+    task_id  BIGINT NOT NULL,                                  -- task ID the counter is associated with
+    ord      BIGINT NOT NULL,                                  -- the ordinal index of the task aggregation counter
+
+    success  BIGINT NOT NULL DEFAULT 0,  -- reports successfully aggregated
+
+    CONSTRAINT task_aggregation_counters_unique_id UNIQUE(task_id, ord),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 ) WITH (fillfactor = 50);
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.
@@ -321,6 +337,7 @@ CREATE TABLE batch_aggregations(
     CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+CREATE INDEX batch_aggregations_gc_time ON batch_aggregations(task_id, UPPER(COALESCE(batch_interval, client_timestamp_interval)));
 
 -- Specifies the possible state of a collection job.
 CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
@@ -344,6 +361,8 @@ CREATE TABLE collection_jobs(
     client_timestamp_interval  TSRANGE,                        -- the minimal interval containing the reports included in this collection job, aligned to the task's time precision (only if in state FINISHED)
     helper_aggregate_share     BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share     BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
+
+    step_attempts  BIGINT NOT NULL DEFAULT 0,  -- the number of attempts to step the collection job without making progress, regardless of whether the lease was successfully released or not
 
     lease_expiry    TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
     lease_token     BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
@@ -382,6 +401,12 @@ CREATE TABLE aggregate_share_jobs(
 );
 CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);
 
+-- Specifies the possible state of an outstanding batch.
+CREATE TYPE OUTSTANDING_BATCH_STATE AS ENUM(
+    'FILLING',  -- this outstanding batch is still being considered for additional reports
+    'FILLED'    -- this outstanding batch has received enough reports, no more are necessary
+);
+
 -- The leader's view of outstanding batches, which are batches which have not yet started
 -- collection. Used for fixed-size tasks only.
 CREATE TABLE outstanding_batches(
@@ -390,6 +415,8 @@ CREATE TABLE outstanding_batches(
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
     time_bucket_start TIMESTAMP,
 
+    state OUTSTANDING_BATCH_STATE NOT NULL DEFAULT 'FILLING',  -- the current state of this outstanding batch
+
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
@@ -397,4 +424,4 @@ CREATE TABLE outstanding_batches(
     CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
-CREATE INDEX outstanding_batches_task_and_time_bucket_index ON outstanding_batches (task_id, time_bucket_start);
+CREATE INDEX outstanding_batches_task_id_and_time_bucket_start ON outstanding_batches(task_id, time_bucket_start) WHERE state = 'FILLING';
