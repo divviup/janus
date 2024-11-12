@@ -37,7 +37,7 @@ COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
 ARG GIT_REVISION=unknown
-ENV GIT_REVISION ${GIT_REVISION}
+ENV GIT_REVISION=${GIT_REVISION}
 RUN cargo build --release -p janus_aggregator --features=prometheus,otlp
 
 FROM alpine:3.20.3 AS final
