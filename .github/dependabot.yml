@@ -78,3 +78,81 @@ updates:
     target-branch: "main"
     ignore:
       - dependency-name: "postgres"
+
+  # Manage dependencies on the release/0.7 branch
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.7"
+    open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
+      # opentelemetry-rust has removed support for pull exporters, including
+      # opentelemetry-prometheus, and will add it back after the 1.0 release.
+      - dependency-name: opentelemetry
+        versions:
+        - ">= 0.25, < 1.0"
+      - dependency-name: opentelemetry_sdk
+        versions:
+        - ">= 0.25, < 1.0"
+      - dependency-name: opentelemetry-otlp
+        versions:
+        - ">= 0.25, < 1.0"
+    groups:
+      serde:
+        patterns:
+          - serde
+          - serde_*
+      tracing:
+        patterns:
+          - tracing
+          - tracing-*
+      opentelemetry:
+        patterns:
+          - opentelemetry
+          - opentelemetry-*
+          - opentelemetry_*
+      trillium:
+        patterns:
+          - trillium
+          - trillium-*
+      kube:
+        patterns:
+          - kube
+          - k8s-openapi
+      postgres:
+        patterns:
+          - tokio-postgres
+          - postgres-*
+      deadpool:
+        patterns:
+          - deadpool
+          - deadpool-*
+      error-handling:
+        patterns:
+          - thiserror
+          - anyhow
+      rstest:
+        patterns:
+          - rstest
+          - rstest_reuse
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.7"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.7"
+    ignore:
+      - dependency-name: "postgres"
