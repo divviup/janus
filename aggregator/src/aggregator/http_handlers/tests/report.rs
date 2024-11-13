@@ -36,7 +36,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use trillium::{KnownHeaderName, Status};
-use trillium_testing::{assert_headers, prelude::put, TestConn};
+use trillium_testing::{assert_headers, prelude::post, TestConn};
 use trillium_tokio::Stopper;
 
 #[tokio::test]
@@ -86,7 +86,7 @@ async fn upload_handler() {
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
     for _ in 0..2 {
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(report.get_encoded().unwrap())
             .run_async(&handler)
@@ -105,7 +105,7 @@ async fn upload_handler() {
         *accepted_report_id,
         &hpke_keypair,
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(duplicate_id_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -127,7 +127,7 @@ async fn upload_handler() {
         report.leader_encrypted_input_share().clone(),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(gc_eligible_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -161,7 +161,7 @@ async fn upload_handler() {
         ),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(bad_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -189,7 +189,7 @@ async fn upload_handler() {
         report.leader_encrypted_input_share().clone(),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(bad_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -218,7 +218,7 @@ async fn upload_handler() {
         &hpke_keypair,
         clock.now().add(&Duration::from_seconds(120)).unwrap(),
     );
-    let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task_expire_soon.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(report_2.get_encoded().unwrap())
         .run_async(&handler)
@@ -246,7 +246,7 @@ async fn upload_handler() {
             .helper_encrypted_input_share()
             .clone(),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(bad_public_share_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -269,7 +269,7 @@ async fn upload_handler() {
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id((*hpke_keypair.config().id()).into()),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(undecryptable_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -309,7 +309,7 @@ async fn upload_handler() {
             .helper_encrypted_input_share()
             .clone(),
     );
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(bad_leader_input_share_report.get_encoded().unwrap())
         .run_async(&handler)
@@ -331,7 +331,7 @@ async fn upload_handler() {
         (),
     )
     .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-    .with_request_header(KnownHeaderName::AccessControlRequestMethod, "PUT")
+    .with_request_header(KnownHeaderName::AccessControlRequestMethod, "POST")
     .with_request_header(KnownHeaderName::AccessControlRequestHeaders, "content-type")
     .run_async(&handler)
     .await;
@@ -339,13 +339,13 @@ async fn upload_handler() {
     assert_headers!(
         &test_conn,
         "access-control-allow-origin" => "https://example.com/",
-        "access-control-allow-methods"=> "PUT",
+        "access-control-allow-methods"=> "POST",
         "access-control-allow-headers" => "content-type",
         "access-control-max-age"=> "86400",
     );
 
     // Check for appropriate CORS headers in response to the main request.
-    let test_conn = put(task.report_upload_uri().unwrap().path())
+    let test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(report.get_encoded().unwrap())
@@ -375,7 +375,7 @@ async fn upload_handler_helper() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
     let report = create_report(&helper_task, &hpke_keypair, clock.now());
 
-    let mut test_conn = put(task.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(report.get_encoded().unwrap())
         .run_async(&handler)
@@ -455,7 +455,7 @@ async fn upload_handler_error_fanout() {
     // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
     let report: Report = create_report(&leader_task, &hpke_keypair, clock.now());
     let response = client
-        .put(url.clone())
+        .post(url.clone())
         .header("Content-Type", Report::MEDIA_TYPE)
         .body(report.get_encoded().unwrap())
         .send()
@@ -498,7 +498,7 @@ async fn upload_handler_error_fanout() {
                 async move {
                     let report = create_report(&leader_task, &hpke_keypair, clock.now());
                     let response = client
-                        .put(url)
+                        .post(url)
                         .header("Content-Type", Report::MEDIA_TYPE)
                         .body(report.get_encoded().unwrap())
                         .send()
@@ -563,7 +563,7 @@ async fn upload_client_early_disconnect() {
     // Client sends report, using Content-Length, and waits for one byte of response.
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
-        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
         Content-Type: application/dap-report\r\n\
         Content-Length: {}\r\n\r\n",
         encoded_report_1.len(),
@@ -586,7 +586,7 @@ async fn upload_client_early_disconnect() {
     // Client disconnects before sending the entire request body, using Content-Length.
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
-        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
         Content-Type: application/dap-report\r\n\
         Content-Length: 1000\r\n\r\n"
     );
@@ -601,7 +601,7 @@ async fn upload_client_early_disconnect() {
     // Client sends report, using chunked transfer encoding, and waits for one byte of response.
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
-        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
         Content-Type: application/dap-report\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
@@ -630,7 +630,7 @@ async fn upload_client_early_disconnect() {
     // encoding.
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
-        "PUT /tasks/{task_id}/reports HTTP/1.1\r\n\
+        "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
         Content-Type: application/dap-report\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );

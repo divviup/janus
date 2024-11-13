@@ -44,6 +44,7 @@ async fn run_divviup_ts_integration_test(test_name: &str, vdaf: VdafInstance) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not expose a DAP-13-compatible image (issue #3479)"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -52,6 +53,7 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not expose a DAP-13-compatible image (issue #3479)"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -61,6 +63,7 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not expose a DAP-13-compatible image (issue #3479)"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -77,6 +80,7 @@ async fn janus_divviup_ts_histogram() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not expose a DAP-13-compatible image (issue #3479)"]
 async fn janus_divviup_ts_sumvec() {
     install_test_trace_subscriber();
     initialize_rustls();

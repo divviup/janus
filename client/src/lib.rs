@@ -699,7 +699,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 self.http_client
-                    .put(upload_endpoint.clone())
+                    .post(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
                     .body(request_body.to_vec())
                     .send()
@@ -728,7 +728,7 @@ impl<V: vdaf::Client<16>> Client<V> {
 
         // Construct a Message representing the upload request...
         let mut message = Message::request(
-            "PUT".into(),
+            "POST".into(),
             upload_endpoint.scheme().into(),
             upload_endpoint.authority().into(),
             upload_endpoint.path().into(),

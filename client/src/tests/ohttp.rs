@@ -97,7 +97,7 @@ async fn successful_upload() {
                     .control()
                     .method()
                     .map(|a| String::from_utf8(a.to_vec()).unwrap()),
-                Some("PUT".to_string()),
+                Some("POST".to_string()),
             );
             assert_eq!(
                 bin_request

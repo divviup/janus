@@ -41,7 +41,7 @@ use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
-    prelude::{post, put},
+    prelude::{get, put},
     TestConn,
 };
 
@@ -95,17 +95,16 @@ impl CollectionJobTestCase {
         .await
     }
 
-    pub(super) async fn post_collection_job_with_auth_token(
+    pub(super) async fn get_collection_job_with_auth_token(
         &self,
         collection_job_id: &CollectionJobId,
         auth_token: Option<&AuthenticationToken>,
     ) -> TestConn {
-        let mut test_conn = post(
-            self.task
-                .collection_job_uri(collection_job_id)
-                .unwrap()
-                .path(),
-        );
+        let mut test_conn = get(self
+            .task
+            .collection_job_uri(collection_job_id)
+            .unwrap()
+            .path());
         if let Some(auth) = auth_token {
             let (header, value) = auth.request_authentication();
             test_conn = test_conn.with_request_header(header, value);
@@ -113,11 +112,8 @@ impl CollectionJobTestCase {
         test_conn.run_async(&self.handler).await
     }
 
-    pub(super) async fn post_collection_job(
-        &self,
-        collection_job_id: &CollectionJobId,
-    ) -> TestConn {
-        self.post_collection_job_with_auth_token(
+    pub(super) async fn get_collection_job(&self, collection_job_id: &CollectionJobId) -> TestConn {
+        self.get_collection_job_with_auth_token(
             collection_job_id,
             Some(self.task.collector_auth_token()),
         )
@@ -343,7 +339,7 @@ async fn collection_job_success_fixed_size() {
             .await;
         assert_eq!(test_conn.status(), Some(Status::Created));
 
-        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        let test_conn = test_case.get_collection_job(&collection_job_id).await;
         assert_eq!(test_conn.status(), Some(Status::Accepted));
 
         // Update the collection job with the aggregate shares. collection job should now be complete.
@@ -408,7 +404,7 @@ async fn collection_job_success_fixed_size() {
             panic!("unexpected batch ID");
         }
 
-        let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
+        let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
         assert_headers!(&test_conn, "content-type" => (Collection::<FixedSize>::MEDIA_TYPE));
 
         let collect_resp: Collection<FixedSize> = decode_response_body(&mut test_conn).await;
@@ -817,7 +813,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_report
     assert_eq!(response.status(), Some(Status::Created));
 
     // Fetch the first collection job, to advance the current batch.
-    let response = test_case.post_collection_job(&collection_job_id_1).await;
+    let response = test_case.get_collection_job(&collection_job_id_1).await;
     assert_eq!(response.status(), Some(Status::Accepted));
 
     // Create the second collection job.
@@ -828,7 +824,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_report
 
     // Fetch the second collection job, to advance the current batch. There are now no outstanding
     // batches left.
-    let response = test_case.post_collection_job(&collection_job_id_2).await;
+    let response = test_case.get_collection_job(&collection_job_id_2).await;
     assert_eq!(response.status(), Some(Status::Accepted));
 
     // Re-send the collection job creation requests to confirm they are still idempotent.
