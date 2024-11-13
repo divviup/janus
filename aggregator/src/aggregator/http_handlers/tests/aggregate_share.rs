@@ -160,7 +160,6 @@ async fn aggregate_share_request() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
-        .with_max_batch_query_count(1)
         .with_time_precision(Duration::from_seconds(500))
         .with_min_batch_size(10)
         .build();
@@ -583,8 +582,8 @@ async fn aggregate_share_request() {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
-                "title": "The batch described by the query has been queried too many times.",
+                "type": "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes",
+                "title": "The batch described by the query has been queried already.",
                 "taskid": format!("{}", task.id()),
             })
         );

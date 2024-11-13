@@ -14,7 +14,7 @@ use janus_messages::{
     Role,
 };
 use prio::vdaf;
-use std::{collections::HashSet, hash::Hash};
+use std::hash::Hash;
 
 #[async_trait]
 pub trait UploadableBatchMode: BatchMode {
@@ -124,13 +124,9 @@ impl CollectableBatchMode for TimeInterval {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
     {
-        // Check how distinct aggregation parameters appear in rows in the relevant table with an
-        // intersecting batch interval. Each distinct aggregation parameter consumes one unit of
-        // query count.
-        //
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-05.html#section-4.6.6
+        // Compute the aggregation parameters that have already been collected for.
         let mut found_overlapping_nonequal_interval = false;
-        let agg_params = match task.role() {
+        let agg_params: Vec<_> = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_intersecting_interval::<SEED_SIZE, A>(
                     vdaf,
@@ -145,7 +141,7 @@ impl CollectableBatchMode for TimeInterval {
                     }
                     job.take_aggregation_parameter()
                 })
-                .collect::<HashSet<_>>(),
+                .collect(),
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_intersecting_interval::<SEED_SIZE, A>(
@@ -161,7 +157,7 @@ impl CollectableBatchMode for TimeInterval {
                     };
                     job.take_aggregation_parameter()
                 })
-                .collect::<HashSet<_>>(),
+                .collect(),
 
             _ => panic!("Unexpected task role {:?}", task.role()),
         };
@@ -173,17 +169,13 @@ impl CollectableBatchMode for TimeInterval {
             ));
         }
 
-        // Check that the batch query count is being consumed appropriately.
-        let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
-        let query_count = agg_params.len()
-            + if agg_params.contains(aggregation_param) {
-                0
-            } else {
-                1
-            };
-        if query_count > max_batch_query_count {
+        // Check that the batch has not already been queried with a distinct aggregation parameter.
+        if agg_params
+            .iter()
+            .any(|agg_param| agg_param != aggregation_param)
+        {
             return Err(datastore::Error::User(
-                Error::BatchQueriedTooManyTimes(*task.id(), query_count as u64).into(),
+                Error::BatchQueriedMultipleTimes(*task.id()).into(),
             ));
         }
         Ok(())
@@ -206,39 +198,32 @@ impl CollectableBatchMode for LeaderSelected {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
     {
-        // Check how distinct aggregation parameters appear in rows in the relevant table with an
-        // intersecting batch interval. Each distinct aggregation parameter consumes one unit of
-        // query count.
-        //
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-05.html#section-4.6.6
-        let agg_params = match task.role() {
+        // Compute the aggregation parameters that have already been collected for.
+        let agg_params: Vec<_> = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
                 .into_iter()
                 .map(|job| job.take_aggregation_parameter())
-                .collect::<HashSet<_>>(),
+                .collect(),
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
                 .into_iter()
                 .map(|job| job.take_aggregation_parameter())
-                .collect::<HashSet<_>>(),
+                .collect(),
 
             _ => panic!("Unexpected task role {:?}", task.role()),
         };
 
-        let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
-        let query_count = agg_params.len()
-            + if agg_params.contains(aggregation_param) {
-                0
-            } else {
-                1
-            };
-        if query_count > max_batch_query_count {
+        // Check that the batch has not already been queried with a distinct aggregation parameter.
+        if agg_params
+            .iter()
+            .any(|agg_param| agg_param != aggregation_param)
+        {
             return Err(datastore::Error::User(
-                Error::BatchQueriedTooManyTimes(*task.id(), query_count as u64).into(),
+                Error::BatchQueriedMultipleTimes(*task.id()).into(),
             ));
         }
         Ok(())

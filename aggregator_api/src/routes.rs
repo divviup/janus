@@ -173,7 +173,6 @@ pub(super) async fn post_task<C: Clock>(
             /* batch_mode */ req.batch_mode,
             /* vdaf */ req.vdaf,
             vdaf_verify_key,
-            /* max_batch_query_count */ req.max_batch_query_count,
             /* task_expiration */ req.task_expiration,
             /* report_expiry_age */
             Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
@@ -206,7 +205,6 @@ pub(super) async fn post_task<C: Clock>(
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
                 && existing_task.role() == task.role()
-                && existing_task.max_batch_query_count() == task.max_batch_query_count()
                 && existing_task.task_expiration() == task.task_expiration()
                 && existing_task.min_batch_size() == task.min_batch_size()
                 && existing_task.time_precision() == task.time_precision()

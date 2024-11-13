@@ -797,7 +797,6 @@ impl<C: Clock> Aggregator<C> {
                 task_config.query_config().query().try_into()?,
                 vdaf_instance,
                 vdaf_verify_key,
-                task_config.query_config().max_batch_query_count() as u64,
                 Some(*task_config.task_expiration()),
                 peer_aggregator.report_expiry_age().cloned(),
                 task_config.query_config().min_batch_size() as u64,

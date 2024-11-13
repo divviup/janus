@@ -193,7 +193,6 @@ async fn post_task_bad_role() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Collector,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -227,7 +226,6 @@ async fn post_task_unauthorized() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -262,7 +260,6 @@ async fn post_task_helper_no_optional_fields() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -312,7 +309,6 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(&req.batch_mode, got_task.batch_mode());
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
-    assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
@@ -344,7 +340,6 @@ async fn post_task_helper_with_aggregator_auth_token() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -380,7 +375,6 @@ async fn post_task_idempotence() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -428,7 +422,7 @@ async fn post_task_idempotence() {
     assert_eq!(got_tasks[0].id(), &first_task_resp.task_id);
 
     // Mutate the PostTaskReq and re-send it.
-    req.max_batch_query_count = 10;
+    req.min_batch_size = 332;
     let conn = post("/tasks")
         .with_request_body(serde_json::to_vec(&req).unwrap())
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
@@ -455,7 +449,6 @@ async fn post_task_leader_all_optional_fields() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -499,7 +492,6 @@ async fn post_task_leader_all_optional_fields() {
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
     assert_eq!(&vdaf_verify_key, got_task.opaque_vdaf_verify_key());
-    assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
@@ -535,7 +527,6 @@ async fn post_task_leader_no_aggregator_auth_token() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        max_batch_query_count: 12,
         task_expiration: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
@@ -1667,7 +1658,6 @@ fn post_task_req_serialization() {
             },
             role: Role::Helper,
             vdaf_verify_key: "encoded".to_owned(),
-            max_batch_query_count: 1,
             task_expiration: None,
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),
@@ -1684,7 +1674,7 @@ fn post_task_req_serialization() {
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 12,
+                len: 11,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1728,8 +1718,6 @@ fn post_task_req_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("encoded"),
-            Token::Str("max_batch_query_count"),
-            Token::U64(1),
             Token::Str("task_expiration"),
             Token::None,
             Token::Str("min_batch_size"),
@@ -1789,7 +1777,6 @@ fn post_task_req_serialization() {
             },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
-            max_batch_query_count: 1,
             task_expiration: Some(Time::from_seconds_since_epoch(1000)),
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),
@@ -1810,7 +1797,7 @@ fn post_task_req_serialization() {
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 12,
+                len: 11,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1854,8 +1841,6 @@ fn post_task_req_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("encoded"),
-            Token::Str("max_batch_query_count"),
-            Token::U64(1),
             Token::Str("task_expiration"),
             Token::Some,
             Token::NewtypeStruct { name: "Time" },
@@ -1942,7 +1927,6 @@ fn task_resp_serialization() {
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
         SecretBytes::new(b"vdaf verify key!".to_vec()),
-        1,
         None,
         None,
         100,
@@ -1982,7 +1966,7 @@ fn task_resp_serialization() {
         &[
             Token::Struct {
                 name: "TaskResp",
-                len: 15,
+                len: 14,
             },
             Token::Str("task_id"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -2028,8 +2012,6 @@ fn task_resp_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("dmRhZiB2ZXJpZnkga2V5IQ"),
-            Token::Str("max_batch_query_count"),
-            Token::U64(1),
             Token::Str("task_expiration"),
             Token::None,
             Token::Str("report_expiry_age"),

@@ -41,7 +41,6 @@ async fn helper_aggregation_report_share_replay() {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_min_batch_size(1)
-    .with_max_batch_query_count(1)
     .build();
     let vdaf = dummy::Vdaf::new(1);
     let agg_param = dummy::AggregationParam(0);

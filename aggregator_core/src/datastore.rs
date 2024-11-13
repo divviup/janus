@@ -647,14 +647,14 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
+    task_expiration, report_expiry_age, min_batch_size, time_precision,
+    tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type,
     collector_auth_token_hash, created_at, updated_at, updated_by)
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20, $21, $22
+    $19, $20, $21
 )
 ON CONFLICT DO NOTHING",
             )
@@ -669,8 +669,6 @@ ON CONFLICT DO NOTHING",
                     &task.peer_aggregator_endpoint().as_str(),
                     /* batch_mode */ &Json(task.batch_mode()),
                     /* vdaf */ &Json(task.vdaf()),
-                    /* max_batch_query_count */
-                    &i64::try_from(task.max_batch_query_count())?,
                     /* task_expiration */
                     &task
                         .task_expiration()
@@ -845,8 +843,8 @@ UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
             .prepare_cached(
                 "-- get_aggregator_task()
 SELECT aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
+    task_expiration, report_expiry_age, min_batch_size, time_precision,
+    tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
 FROM tasks WHERE task_id = $1",
@@ -876,8 +874,8 @@ WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             .prepare_cached(
                 "-- get_aggregator_tasks()
 SELECT task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-    time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
+    task_expiration, report_expiry_age, min_batch_size, time_precision,
+    tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
 FROM tasks",
@@ -938,7 +936,6 @@ config_id, config, private_key FROM task_hpke_keys",
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
         let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-        let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
         let task_expiration = row
             .get::<_, Option<NaiveDateTime>>("task_expiration")
             .as_ref()
@@ -1059,7 +1056,6 @@ config_id, config, private_key FROM task_hpke_keys",
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            max_batch_query_count,
             task_expiration,
             report_expiry_age,
             min_batch_size,

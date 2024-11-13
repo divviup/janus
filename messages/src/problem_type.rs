@@ -15,7 +15,7 @@ pub enum DapProblemType {
     ReportTooEarly,
     BatchInvalid,
     InvalidBatchSize,
-    BatchQueriedTooManyTimes,
+    BatchQueriedMultipleTimes,
     BatchMismatch,
     UnauthorizedRequest,
     BatchOverlap,
@@ -38,8 +38,8 @@ impl DapProblemType {
             DapProblemType::ReportTooEarly => "urn:ietf:params:ppm:dap:error:reportTooEarly",
             DapProblemType::BatchInvalid => "urn:ietf:params:ppm:dap:error:batchInvalid",
             DapProblemType::InvalidBatchSize => "urn:ietf:params:ppm:dap:error:invalidBatchSize",
-            DapProblemType::BatchQueriedTooManyTimes => {
-                "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes"
+            DapProblemType::BatchQueriedMultipleTimes => {
+                "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes"
             }
             DapProblemType::BatchMismatch => "urn:ietf:params:ppm:dap:error:batchMismatch",
             DapProblemType::UnauthorizedRequest => {
@@ -79,8 +79,8 @@ impl DapProblemType {
             DapProblemType::InvalidBatchSize => {
                 "The number of reports included in the batch is invalid."
             }
-            DapProblemType::BatchQueriedTooManyTimes => {
-                "The batch described by the query has been queried too many times."
+            DapProblemType::BatchQueriedMultipleTimes => {
+                "The batch described by the query has been queried already."
             }
             DapProblemType::BatchMismatch => {
                 "Leader and helper disagree on reports aggregated in a batch."
@@ -119,8 +119,8 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:invalidBatchSize" => {
                 Ok(DapProblemType::InvalidBatchSize)
             }
-            "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes" => {
-                Ok(DapProblemType::BatchQueriedTooManyTimes)
+            "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes" => {
+                Ok(DapProblemType::BatchQueriedMultipleTimes)
             }
             "urn:ietf:params:ppm:dap:error:batchMismatch" => Ok(DapProblemType::BatchMismatch),
             "urn:ietf:params:ppm:dap:error:unauthorizedRequest" => {

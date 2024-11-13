@@ -11,7 +11,7 @@ use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    Duration, Interval, LeaderSelectedQuery, Query, TaskId, Time,
+    Duration, Interval, Query, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
@@ -398,15 +398,10 @@ impl CollectableBatchMode for LeaderSelected {
     async fn collection_identifier_for_query<C: Clock>(
         tx: &Transaction<'_, C>,
         task: &AggregatorTask,
-        query: &Query<Self>,
+        _: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
-        match query.leader_selected_query() {
-            LeaderSelectedQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
-            LeaderSelectedQuery::CurrentBatch => {
-                tx.acquire_outstanding_batch_with_report_count(task.id(), task.min_batch_size())
-                    .await
-            }
-        }
+        tx.acquire_outstanding_batch_with_report_count(task.id(), task.min_batch_size())
+            .await
     }
 
     fn batch_identifiers_for_collection_identifier(

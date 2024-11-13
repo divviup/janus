@@ -24,9 +24,6 @@
   # determined by the task's VDAF.
   vdaf_verify_key: "1CmuYNtBLYIoXN8bU0T_XA"
 
-  # The maximum number of times any report can be collected.
-  max_batch_query_count: 1
-
   # The task's expiration time, as a number of seconds after the Unix epoch.
   task_expiration: 1704088800
 
@@ -105,7 +102,6 @@
   vdaf: Prio3Count
   role: Helper
   vdaf_verify_key: "ZXtE4kLqtsCOr8h_pNUeoQ"
-  max_batch_query_count: 1
   task_expiration: 1704088800
   report_expiry_age: null
   min_batch_size: 100

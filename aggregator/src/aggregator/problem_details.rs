@@ -163,7 +163,7 @@ mod tests {
             DapProblemType::ReportTooEarly,
             DapProblemType::BatchInvalid,
             DapProblemType::InvalidBatchSize,
-            DapProblemType::BatchQueriedTooManyTimes,
+            DapProblemType::BatchQueriedMultipleTimes,
             DapProblemType::BatchMismatch,
             DapProblemType::UnauthorizedRequest,
             DapProblemType::BatchOverlap,
@@ -297,8 +297,8 @@ mod tests {
                     Some(DapProblemType::BatchMismatch),
                 ),
                 TestCase::new(
-                    Box::new(|| Error::BatchQueriedTooManyTimes(random(), 99)),
-                    Some(DapProblemType::BatchQueriedTooManyTimes),
+                    Box::new(|| Error::BatchQueriedMultipleTimes(random())),
+                    Some(DapProblemType::BatchQueriedMultipleTimes),
                 ),
             ]
             .into_iter()

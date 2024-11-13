@@ -12,7 +12,7 @@
 //! use std::{fs::File, str::FromStr};
 //!
 //! use janus_collector::{Collector, PrivateCollectorCredential};
-//! use janus_messages::{Duration, LeaderSelectedQuery, Interval, Query, TaskId, Time};
+//! use janus_messages::{Duration, Interval, Query, TaskId, Time};
 //! use prio::vdaf::prio3::Prio3;
 //! use url::Url;
 //!
@@ -54,7 +54,7 @@
 //!     .unwrap();
 //!
 //! // Or if this is a leader-selected task, make a leader-selected query.
-//! let query = Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
+//! let query = Query::new_leader_selected();
 //! let aggregation_result = collector.collect(query, &()).await.unwrap();
 //! # }
 //! ```
@@ -771,8 +771,8 @@ mod tests {
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
         AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage,
-        CollectionJobId, CollectionReq, Duration, HpkeCiphertext, Interval, LeaderSelectedQuery,
-        PartialBatchSelector, Query, Role, TaskId, Time,
+        CollectionJobId, CollectionReq, Duration, HpkeCiphertext, Interval, PartialBatchSelector,
+        Query, Role, TaskId, Time,
     };
     use mockito::Matcher;
     use prio::{
@@ -1250,16 +1250,9 @@ mod tests {
             .await;
 
         let job = collector
-            .start_collection(
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-                &(),
-            )
+            .start_collection(Query::new_leader_selected(), &())
             .await
             .unwrap();
-        assert_eq!(
-            job.query.leader_selected_query(),
-            &LeaderSelectedQuery::ByBatchId { batch_id }
-        );
 
         mocked_collect_start_success.assert_async().await;
 
@@ -1897,7 +1890,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id: random() }),
+            Query::new_leader_selected(),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -1934,7 +1927,7 @@ mod tests {
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
-            Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id: random() }),
+            Query::new_leader_selected(),
             dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);

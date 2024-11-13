@@ -14,11 +14,11 @@ use janus_integration_tests::{
 use janus_messages::{
     batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
-    Duration, Interval, LeaderSelectedQuery, Query, Time,
+    Duration, Interval, Query, Time,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
-    vdaf::{self, dummy, prio3::Prio3},
+    vdaf::{self, prio3::Prio3},
 };
 use rand::{random, thread_rng, Rng};
 use std::{iter, time::Duration as StdDuration};
@@ -314,13 +314,14 @@ where
                 collection_2.aggregate_result().clone(),
             )
         }
+
         BatchMode::LeaderSelected { .. } => {
             let mut requests = 0;
-            let collection_1 = loop {
+            let collection = loop {
                 requests += 1;
                 let collection_res = collect_generic::<_, LeaderSelected>(
                     &collector,
-                    Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+                    Query::new_leader_selected(),
                     aggregation_parameter,
                 )
                 .await;
@@ -339,26 +340,9 @@ where
                 }
             };
 
-            let batch_id = *collection_1.partial_batch_selector().batch_id();
-
-            // Collect again to verify that collections can be repeated.
-            let collection_2 = collect_generic(
-                &collector,
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-                aggregation_parameter,
-            )
-            .await
-            .unwrap();
-
-            assert_eq!(collection_1.report_count(), collection_2.report_count());
-            assert_eq!(
-                collection_1.aggregate_result(),
-                collection_2.aggregate_result()
-            );
-
             (
-                collection_2.report_count(),
-                collection_2.aggregate_result().clone(),
+                collection.report_count(),
+                collection.aggregate_result().clone(),
             )
         }
     };
@@ -584,61 +568,6 @@ pub async fn submit_measurements_and_verify_aggregate(
                 &client_implementation,
             )
             .await;
-        }
-        _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
-    }
-}
-
-pub async fn submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-    test_name: &str,
-    task_parameters: &TaskParameters,
-    aggregation_parameters: &[dummy::AggregationParam],
-    (leader_port, helper_port): (u16, u16),
-    client_backend: &ClientBackend<'_>,
-) {
-    // We generate exactly one batch's worth of measurement uploads.
-    let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
-
-    match &task_parameters.vdaf {
-        VdafInstance::Fake { rounds } => {
-            let vdaf = dummy::Vdaf::new(*rounds);
-            let client_implementation = client_backend
-                .build(
-                    test_name,
-                    task_parameters,
-                    (leader_port, helper_port),
-                    vdaf.clone(),
-                )
-                .await
-                .unwrap();
-
-            let measurements = iter::repeat_with(random::<u8>)
-                .take(total_measurements)
-                .collect::<Vec<_>>();
-
-            let before_timestamp =
-                submit_measurements_generic(&measurements, &client_implementation).await;
-
-            for aggregation_parameter in aggregation_parameters {
-                let aggregate_result = measurements.iter().map(|m| u64::from(*m)).sum::<u64>()
-                    % (u64::from(u8::MAX) + 1)
-                    + u64::from(aggregation_parameter.0);
-
-                let test_case = AggregationTestCase {
-                    measurements: measurements.clone(),
-                    aggregation_parameter: *aggregation_parameter,
-                    aggregate_result,
-                };
-
-                verify_aggregate_generic(
-                    task_parameters,
-                    leader_port,
-                    vdaf.clone(),
-                    &test_case,
-                    before_timestamp,
-                )
-                .await;
-            }
         }
         _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
     }

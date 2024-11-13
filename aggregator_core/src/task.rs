@@ -116,8 +116,6 @@ struct CommonTaskParameters {
     vdaf: VdafInstance,
     /// Secret verification key shared by the aggregators.
     vdaf_verify_key: SecretBytes,
-    /// The maximum number of times a given batch may be collected.
-    max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
     task_expiration: Option<Time>,
     /// The age after which a report is considered to be "expired" and will be considered a
@@ -147,7 +145,6 @@ impl CommonTaskParameters {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        max_batch_query_count: u64,
         task_expiration: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
@@ -194,7 +191,6 @@ impl CommonTaskParameters {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            max_batch_query_count,
             task_expiration,
             report_expiry_age,
             min_batch_size,
@@ -240,7 +236,6 @@ impl AggregatorTask {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        max_batch_query_count: u64,
         task_expiration: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
@@ -254,7 +249,6 @@ impl AggregatorTask {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            max_batch_query_count,
             task_expiration,
             report_expiry_age,
             min_batch_size,
@@ -345,11 +339,6 @@ impl AggregatorTask {
     /// Retrieves the VDAF verification key associated with this task, as opaque secret bytes.
     pub fn opaque_vdaf_verify_key(&self) -> &SecretBytes {
         &self.common_parameters.vdaf_verify_key
-    }
-
-    /// Retrieves the max batch query count parameter associated with this task.
-    pub fn max_batch_query_count(&self) -> u64 {
-        self.common_parameters.max_batch_query_count
     }
 
     /// Retrieves the task expiration associated with this task.
@@ -626,7 +615,6 @@ pub struct SerializedAggregatorTask {
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_key: Option<String>, // in unpadded base64url
-    max_batch_query_count: u64,
     task_expiration: Option<Time>,
     report_expiry_age: Option<Duration>,
     min_batch_size: u64,
@@ -699,7 +687,6 @@ impl Serialize for AggregatorTask {
             vdaf: self.vdaf().clone(),
             role: *self.role(),
             vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(self.opaque_vdaf_verify_key())),
-            max_batch_query_count: self.max_batch_query_count(),
             task_expiration: self.task_expiration().copied(),
             report_expiry_age: self.report_expiry_age().copied(),
             min_batch_size: self.min_batch_size(),
@@ -764,7 +751,6 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
             serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
-            serialized_task.max_batch_query_count,
             serialized_task.task_expiration,
             serialized_task.report_expiry_age,
             serialized_task.min_batch_size,
@@ -845,7 +831,6 @@ pub mod test_util {
             batch_mode: BatchMode,
             vdaf: VdafInstance,
             vdaf_verify_key: SecretBytes,
-            max_batch_query_count: u64,
             task_expiration: Option<Time>,
             report_expiry_age: Option<Duration>,
             min_batch_size: u64,
@@ -874,7 +859,6 @@ pub mod test_util {
                     batch_mode,
                     vdaf,
                     vdaf_verify_key,
-                    max_batch_query_count,
                     task_expiration,
                     report_expiry_age,
                     min_batch_size,
@@ -923,11 +907,6 @@ pub mod test_util {
         /// Retrieves the VDAF verification key associated with this task, as opaque secret bytes.
         pub fn opaque_vdaf_verify_key(&self) -> &SecretBytes {
             &self.common_parameters.vdaf_verify_key
-        }
-
-        /// Retrieves the max batch query count parameter associated with this task.
-        pub fn max_batch_query_count(&self) -> u64 {
-            self.common_parameters.max_batch_query_count
         }
 
         /// Retrieves the task expiration associated with this task.
@@ -1109,7 +1088,6 @@ pub mod test_util {
                 batch_mode,
                 vdaf,
                 vdaf_verify_key,
-                1,
                 None,
                 None,
                 1,
@@ -1180,17 +1158,6 @@ pub mod test_util {
             Self(Task {
                 common_parameters: CommonTaskParameters {
                     vdaf_verify_key,
-                    ..self.0.common_parameters
-                },
-                ..self.0
-            })
-        }
-
-        /// Associates the eventual task with the given max batch query count parameter.
-        pub fn with_max_batch_query_count(self, max_batch_query_count: u64) -> Self {
-            Self(Task {
-                common_parameters: CommonTaskParameters {
-                    max_batch_query_count,
                     ..self.0.common_parameters
                 },
                 ..self.0
@@ -1466,7 +1433,6 @@ mod tests {
                 BatchMode::TimeInterval,
                 VdafInstance::Prio3Count,
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                1,
                 None,
                 None,
                 10,
@@ -1504,7 +1470,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 17,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1529,8 +1495,6 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::Str("max_batch_query_count"),
-                Token::U64(1),
                 Token::Str("task_expiration"),
                 Token::None,
                 Token::Str("report_expiry_age"),
@@ -1658,7 +1622,6 @@ mod tests {
                     dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                1,
                 None,
                 Some(Duration::from_seconds(1800)),
                 10,
@@ -1694,7 +1657,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 17,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1742,8 +1705,6 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::Str("max_batch_query_count"),
-                Token::U64(1),
                 Token::Str("task_expiration"),
                 Token::None,
                 Token::Str("report_expiry_age"),

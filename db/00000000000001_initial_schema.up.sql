@@ -98,7 +98,6 @@ CREATE TABLE tasks(
     peer_aggregator_endpoint    TEXT NOT NULL,             -- peer aggregator's API endpoint
     batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
-    max_batch_query_count       BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     task_expiration             TIMESTAMP,                 -- the time after which client reports are no longer accepted
     report_expiry_age           BIGINT,                    -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     min_batch_size              BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected

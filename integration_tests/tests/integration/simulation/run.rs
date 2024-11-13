@@ -22,7 +22,7 @@ use janus_core::{
 };
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
-    CollectionJobId, Duration, LeaderSelectedQuery, Time,
+    CollectionJobId, Duration, Time,
 };
 use opentelemetry::metrics::Meter;
 use prio::vdaf::prio3::{optimal_chunk_length, Prio3, Prio3Histogram};
@@ -411,9 +411,8 @@ impl Simulation {
                     Err(error) => info!(?error, "collector error"),
                 }
             }
-            Query::LeaderSelectedCurrentBatch => {
-                let query =
-                    janus_messages::Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
+            Query::LeaderSelected => {
+                let query = janus_messages::Query::new_leader_selected();
                 match self
                     .components
                     .collector
@@ -426,46 +425,6 @@ impl Simulation {
                             .insert(*collection_job_id, collection_job);
                     }
                     Err(error) => info!(?error, "collector error"),
-                }
-            }
-            Query::LeaderSelectedByBatchId(previous_collection_job_id) => {
-                if let Some(collection) = self
-                    .state
-                    .aggregate_results_leader_selected
-                    .get(previous_collection_job_id)
-                {
-                    let query = janus_messages::Query::new_leader_selected(
-                        LeaderSelectedQuery::ByBatchId {
-                            batch_id: *collection.partial_batch_selector().batch_id(),
-                        },
-                    );
-                    match self
-                        .components
-                        .collector
-                        .start_collection_with_id(*collection_job_id, query, &())
-                        .await
-                    {
-                        Ok(collection_job) => {
-                            self.state
-                                .collection_jobs_leader_selected
-                                .insert(*collection_job_id, collection_job);
-
-                            // Store a copy of the collection results from the previous collection
-                            // job under this new collection job as well. When we get results from
-                            // pollng the "by batch ID" job, we will then compare results from the
-                            // two jobs to ensure they are the same.
-                            self.state.aggregate_results_leader_selected.insert(
-                                *collection_job_id,
-                                Collection::new(
-                                    collection.partial_batch_selector().clone(),
-                                    collection.report_count(),
-                                    *collection.interval(),
-                                    collection.aggregate_result().clone(),
-                                ),
-                            );
-                        }
-                        Err(error) => info!(?error, "collector error"),
-                    }
                 }
             }
         }

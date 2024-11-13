@@ -133,9 +133,6 @@ impl Decode for TaskConfig {
 pub struct QueryConfig {
     /// Used by clients to truncate report timestamps.
     time_precision: Duration,
-    /// The maximum number of times a batch of reports may be queried by the
-    /// collector
-    max_batch_query_count: u16,
     /// The smallest number of reports that a batch can include.
     min_batch_size: u32,
     /// The batch mode along with associated parameters.
@@ -143,15 +140,9 @@ pub struct QueryConfig {
 }
 
 impl QueryConfig {
-    pub fn new(
-        time_precision: Duration,
-        max_batch_query_count: u16,
-        min_batch_size: u32,
-        query: Query,
-    ) -> Self {
+    pub fn new(time_precision: Duration, min_batch_size: u32, query: Query) -> Self {
         Self {
             time_precision,
-            max_batch_query_count,
             min_batch_size,
             query,
         }
@@ -159,10 +150,6 @@ impl QueryConfig {
 
     pub fn time_precision(&self) -> &Duration {
         &self.time_precision
-    }
-
-    pub fn max_batch_query_count(&self) -> u16 {
-        self.max_batch_query_count
     }
 
     pub fn min_batch_size(&self) -> u32 {
@@ -177,7 +164,6 @@ impl QueryConfig {
 impl Encode for QueryConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.time_precision.encode(bytes)?;
-        self.max_batch_query_count.encode(bytes)?;
         self.min_batch_size.encode(bytes)?;
         self.query.encode(bytes)?;
         Ok(())
@@ -186,7 +172,6 @@ impl Encode for QueryConfig {
     fn encoded_len(&self) -> Option<usize> {
         Some(
             self.time_precision.encoded_len()?
-                + self.max_batch_query_count.encoded_len()?
                 + self.min_batch_size.encoded_len()?
                 + self.query.encoded_len()?,
         )
@@ -196,13 +181,11 @@ impl Encode for QueryConfig {
 impl Decode for QueryConfig {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let time_precision = Duration::decode(bytes)?;
-        let max_batch_query_count = u16::decode(bytes)?;
         let min_batch_size = u32::decode(bytes)?;
         let query = Query::decode(bytes)?;
 
         Ok(Self {
             time_precision,
-            max_batch_query_count,
             min_batch_size,
             query,
         })
@@ -836,15 +819,9 @@ mod tests {
     fn roundtrip_query_config() {
         roundtrip_encoding(&[
             (
-                QueryConfig::new(
-                    Duration::from_seconds(0x3C),
-                    0x40,
-                    0x24,
-                    Query::TimeInterval,
-                ),
+                QueryConfig::new(Duration::from_seconds(0x3C), 0x24, Query::TimeInterval),
                 concat!(
                     "000000000000003C", // time_precision
-                    "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
                     "01",               // batch_mode
                 ),
@@ -852,7 +829,6 @@ mod tests {
             (
                 QueryConfig::new(
                     Duration::from_seconds(u64::MIN),
-                    u16::MIN,
                     u32::MIN,
                     Query::LeaderSelected {
                         max_batch_size: u32::MIN,
@@ -860,7 +836,6 @@ mod tests {
                 ),
                 concat!(
                     "0000000000000000", // time_precision
-                    "0000",             // max_batch_query_count
                     "00000000",         // min_batch_size
                     "02",               // batch_mode
                     "00000000",         // max_batch_size
@@ -869,7 +844,6 @@ mod tests {
             (
                 QueryConfig::new(
                     Duration::from_seconds(0x3C),
-                    0x40,
                     0x24,
                     Query::LeaderSelected {
                         max_batch_size: 0xFAFA,
@@ -877,7 +851,6 @@ mod tests {
                 ),
                 concat!(
                     "000000000000003C", // time_precision
-                    "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
                     "02",               // batch_mode
                     "0000FAFA",         // max_batch_size
@@ -886,7 +859,6 @@ mod tests {
             (
                 QueryConfig::new(
                     Duration::from_seconds(u64::MAX),
-                    u16::MAX,
                     u32::MAX,
                     Query::LeaderSelected {
                         max_batch_size: u32::MAX,
@@ -894,7 +866,6 @@ mod tests {
                 ),
                 concat!(
                     "FFFFFFFFFFFFFFFF", // time_precision
-                    "FFFF",             // max_batch_query_count
                     "FFFFFFFF",         // min_batch_size
                     "02",               // batch_mode
                     "FFFFFFFF",         // max_batch_size
@@ -952,7 +923,6 @@ mod tests {
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
-                        0xBBBB,
                         0xCCCC,
                         Query::LeaderSelected {
                             max_batch_size: 0xDDDD,
@@ -981,9 +951,8 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "0013",             // query_config length
+                        "0011",             // query_config length
                         "000000000000AAAA", // time_precision
-                        "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
                         "02",               // batch_mode
                         "0000DDDD",         // max_batch_size
@@ -1009,12 +978,7 @@ mod tests {
                     "f".as_bytes().to_vec(),
                     Url::try_from("https://example.com/".as_ref()).unwrap(),
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    QueryConfig::new(
-                        Duration::from_seconds(0xAAAA),
-                        0xBBBB,
-                        0xCCCC,
-                        Query::TimeInterval,
-                    ),
+                    QueryConfig::new(Duration::from_seconds(0xAAAA), 0xCCCC, Query::TimeInterval),
                     Time::from_seconds_since_epoch(0xEEEE),
                     VdafConfig::new(
                         DpConfig::new(DpMechanism::None),
@@ -1044,9 +1008,8 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "000F",             // query_config length
+                        "000D",             // query_config length
                         "000000000000AAAA", // time_precision
-                        "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
                         "01",               // batch_mode
                     ),
@@ -1090,9 +1053,8 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "000F",             // query_config length
+                        "000D",             // query_config length
                         "000000000000AAAA", // time_precision
-                        "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
                         "01",               // batch_mode
                     ),

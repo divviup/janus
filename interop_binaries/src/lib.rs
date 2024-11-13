@@ -295,7 +295,6 @@ pub struct AggregatorAddTaskRequest {
     pub collector_authentication_token: Option<String>,
     pub role: AggregatorRole,
     pub vdaf_verify_key: String, // in unpadded base64url
-    pub max_batch_query_count: u64,
     pub batch_mode: u8,
     pub min_batch_size: u64,
     pub max_batch_size: Option<u64>,
@@ -328,7 +327,6 @@ impl AggregatorAddTaskRequest {
             },
             role: role.try_into().unwrap(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
-            max_batch_query_count: task.max_batch_query_count(),
             batch_mode,
             min_batch_size: task.min_batch_size(),
             max_batch_size,

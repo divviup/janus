@@ -34,8 +34,8 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    LeaderSelectedQuery, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    PrepareResp, PrepareStepResult, Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata,
+    ReportShare, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -3336,8 +3336,7 @@ impl TestBatchModeExt for TimeInterval {
 #[async_trait]
 impl TestBatchModeExt for LeaderSelected {
     fn query_for_batch_identifier(_: &Self::BatchIdentifier) -> Query<Self> {
-        // We could also generate a by-batch-id query, but using current-batch is more realistic.
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch)
+        Query::new_leader_selected()
     }
 
     fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {

@@ -74,8 +74,6 @@ pub(crate) struct PostTaskReq {
     /// The VDAF verification key used for this DAP task, as Base64 encoded bytes. Task ID is
     /// derived from the verify key.
     pub(crate) vdaf_verify_key: String,
-    /// The maximum number of times a given batch may be collected.
-    pub(crate) max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
     pub(crate) task_expiration: Option<Time>,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -118,8 +116,6 @@ pub(crate) struct TaskResp {
     /// The VDAF verification key used for this DAP task, as Base64 encoded bytes. Task ID is
     /// derived from the verify key.
     pub(crate) vdaf_verify_key: String,
-    /// The maximum number of times a given batch may be collected.
-    pub(crate) max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
     pub(crate) task_expiration: Option<Time>,
     /// The age after which a report is considered to be "expired" and will be considered a
@@ -160,7 +156,6 @@ impl TryFrom<&AggregatorTask> for TaskResp {
             vdaf: task.vdaf().clone(),
             role: *task.role(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
-            max_batch_query_count: task.max_batch_query_count(),
             task_expiration: task.task_expiration().copied(),
             report_expiry_age: task.report_expiry_age().cloned(),
             min_batch_size: task.min_batch_size(),

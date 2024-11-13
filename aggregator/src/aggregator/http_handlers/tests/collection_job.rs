@@ -525,7 +525,7 @@ async fn collection_job_get_request_no_such_collection_job() {
 }
 
 #[tokio::test]
-async fn collection_job_put_request_batch_queried_too_many_times() {
+async fn collection_job_put_request_batch_queried_multiple_times() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
@@ -555,8 +555,8 @@ async fn collection_job_put_request_batch_queried_too_many_times() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
-            "title": "The batch described by the query has been queried too many times.",
+            "type": "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes",
+            "title": "The batch described by the query has been queried already.",
             "taskid": format!("{}", test_case.task.id()),
         })
     );

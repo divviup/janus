@@ -107,7 +107,6 @@ async fn handle_add_task(
         batch_mode,
         vdaf,
         vdaf_verify_key,
-        request.max_batch_query_count,
         request.task_expiration.map(Time::from_seconds_since_epoch),
         None,
         request.min_batch_size,
