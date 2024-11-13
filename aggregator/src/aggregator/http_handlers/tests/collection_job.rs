@@ -262,7 +262,7 @@ async fn collection_job_put_request_unauthenticated() {
 }
 
 #[tokio::test]
-async fn collection_job_post_request_unauthenticated_collection_jobs() {
+async fn collection_job_get_request_unauthenticated_collection_jobs() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
