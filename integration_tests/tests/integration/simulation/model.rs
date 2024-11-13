@@ -2,8 +2,8 @@ use janus_messages::{CollectionJobId, Duration, Interval, Time};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {
-    /// Task query type selector. This is fixed by the test harness, and not randomly generated.
-    pub(super) is_fixed_size: bool,
+    /// Task batch mode selector. This is fixed by the test harness, and not randomly generated.
+    pub(super) is_leader_selected: bool,
 
     /// Combination of Janus configuration and task parameters.
     pub(super) config: Config,
@@ -20,12 +20,12 @@ pub(super) struct Config {
     /// DAP task parameter: minimum batch size.
     pub(super) min_batch_size: u64,
 
-    /// DAP task parameter: maximum batch size. This is only used with fixed size tasks, and ignored
-    /// otherwise.
+    /// DAP task parameter: maximum batch size. This is only used with leader-selected tasks, and
+    /// ignored otherwise.
     pub(super) max_batch_size: Option<u64>,
 
-    /// Janus-specific task parameter: batch time window size (for the time-bucketed fixed size
-    /// feature). This is only used with fixed size tasks, and ignored otherwise.
+    /// Janus-specific task parameter: batch time window size (for the time-bucketed leader-selected
+    /// feature). This is only used with leader-selected tasks, and ignored otherwise.
     pub(super) batch_time_window_size: Option<Duration>,
 
     /// Janus-specific task parameter: report expiry age (for garbage collection).
@@ -118,8 +118,8 @@ pub(super) enum Query {
     /// A time interval query, parameterized with a batch interval.
     TimeInterval(Interval),
     /// A current batch query.
-    FixedSizeCurrentBatch,
+    LeaderSelectedCurrentBatch,
     /// A "by batch ID" query. The batch ID will be taken from a previous collection result, with
     /// the given collection job ID.
-    FixedSizeByBatchId(CollectionJobId),
+    LeaderSelectedByBatchId(CollectionJobId),
 }

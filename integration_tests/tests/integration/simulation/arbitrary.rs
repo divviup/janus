@@ -68,13 +68,13 @@ impl Arbitrary for Config {
 pub(super) struct TimeIntervalInput(pub(super) Input);
 
 #[derive(Debug, Clone)]
-pub(super) struct FixedSizeInput(pub(super) Input);
+pub(super) struct LeaderSelectedInput(pub(super) Input);
 
 #[derive(Debug, Clone)]
 pub(super) struct TimeIntervalFaultInjectionInput(pub(super) Input);
 
 #[derive(Debug, Clone)]
-pub(super) struct FixedSizeFaultInjectionInput(pub(super) Input);
+pub(super) struct LeaderSelectedFaultInjectionInput(pub(super) Input);
 
 #[derive(Debug, Clone)]
 pub(super) struct KeyRotatorInput(pub(super) Input);
@@ -289,16 +289,16 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
     }
 }
 
-fn arbitrary_collector_start_op_fixed_size(g: &mut Gen, context: &Context) -> Op {
+fn arbitrary_collector_start_op_leader_selected(g: &mut Gen, context: &Context) -> Op {
     if context.polled_collection_job_ids.is_empty() || bool::arbitrary(g) {
         Op::CollectorStart {
             collection_job_id: random(),
-            query: super::model::Query::FixedSizeCurrentBatch,
+            query: super::model::Query::LeaderSelectedCurrentBatch,
         }
     } else {
         Op::CollectorStart {
             collection_job_id: random(),
-            query: super::model::Query::FixedSizeByBatchId(
+            query: super::model::Query::LeaderSelectedByBatchId(
                 *g.choose(&context.polled_collection_job_ids).unwrap(),
             ),
         }
@@ -328,7 +328,7 @@ impl Arbitrary for TimeIntervalInput {
             choices::OP_KIND_CHOICES,
         );
         Self(Input {
-            is_fixed_size: false,
+            is_leader_selected: false,
             config,
             ops,
         })
@@ -435,18 +435,18 @@ fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]
     }
 }
 
-impl Arbitrary for FixedSizeInput {
+impl Arbitrary for LeaderSelectedInput {
     fn arbitrary(g: &mut Gen) -> Self {
         let config = Config::arbitrary(g);
         let context = Context::new(&config);
         let ops = arbitrary_vec_with_context(
-            arbitrary_op_fixed_size,
+            arbitrary_op_leader_selected,
             g,
             context,
             choices::OP_KIND_CHOICES,
         );
         Self(Input {
-            is_fixed_size: true,
+            is_leader_selected: true,
             config,
             ops,
         })
@@ -457,8 +457,8 @@ impl Arbitrary for FixedSizeInput {
     }
 }
 
-/// Generate an operation, using fixed size queries.
-fn arbitrary_op_fixed_size(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
+/// Generate an operation, using leader-selected queries.
+fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
     match g.choose(choices).unwrap() {
         OpKind::AdvanceTime => Op::AdvanceTime {
             amount: Duration::from_seconds(u16::arbitrary(g).into()),
@@ -478,7 +478,7 @@ fn arbitrary_op_fixed_size(g: &mut Gen, context: &Context, choices: &[OpKind]) -
         OpKind::CollectionJobDriver => Op::CollectionJobDriver,
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
-        OpKind::CollectorStart => arbitrary_collector_start_op_fixed_size(g, context),
+        OpKind::CollectorStart => arbitrary_collector_start_op_leader_selected(g, context),
         OpKind::CollectorPoll => arbitrary_collector_poll_op(g, context),
     }
 }
@@ -494,7 +494,7 @@ impl Arbitrary for TimeIntervalFaultInjectionInput {
             choices::OP_KIND_CHOICES_FAULT_INJECTION,
         );
         Self(Input {
-            is_fixed_size: false,
+            is_leader_selected: false,
             config,
             ops,
         })
@@ -505,18 +505,18 @@ impl Arbitrary for TimeIntervalFaultInjectionInput {
     }
 }
 
-impl Arbitrary for FixedSizeFaultInjectionInput {
+impl Arbitrary for LeaderSelectedFaultInjectionInput {
     fn arbitrary(g: &mut Gen) -> Self {
         let config = Config::arbitrary(g);
         let context = Context::new(&config);
         let ops = arbitrary_vec_with_context(
-            arbitrary_op_fixed_size,
+            arbitrary_op_leader_selected,
             g,
             context,
             choices::OP_KIND_CHOICES_FAULT_INJECTION,
         );
         Self(Input {
-            is_fixed_size: true,
+            is_leader_selected: true,
             config,
             ops,
         })
@@ -538,7 +538,7 @@ impl Arbitrary for KeyRotatorInput {
             choices::OP_KIND_CHOICES_KEY_ROTATOR,
         );
         Self(Input {
-            is_fixed_size: false,
+            is_leader_selected: false,
             config,
             ops,
         })
@@ -555,21 +555,21 @@ where
 {
     let with_shrunk_ops = shrink_ops(&input.ops).map({
         let config = input.config.clone();
-        let is_fixed_size = input.is_fixed_size;
+        let is_leader_selected = input.is_leader_selected;
         move |ops| {
             constructor(Input {
                 config: config.clone(),
                 ops,
-                is_fixed_size,
+                is_leader_selected,
             })
         }
     });
     let with_shrunk_config = input.config.shrink().map({
-        let is_fixed_size = input.is_fixed_size;
+        let is_leader_selected = input.is_leader_selected;
         let ops = input.ops.clone();
         move |config| {
             constructor(Input {
-                is_fixed_size,
+                is_leader_selected,
                 config,
                 ops: ops.clone(),
             })
@@ -623,7 +623,7 @@ impl<T> Iterator for CoalesceOps<T> {
         }
         ops.extend(last_op);
         Some((self.constructor)(Input {
-            is_fixed_size: original_input.is_fixed_size,
+            is_leader_selected: original_input.is_leader_selected,
             config: original_input.config,
             ops,
         }))
@@ -758,7 +758,7 @@ fn coalesce_ops_correct() {
     for (input_ops, expected_ops) in cases {
         let opt = CoalesceOps::new(
             Input {
-                is_fixed_size: false,
+                is_leader_selected: false,
                 config: config.clone(),
                 ops: input_ops,
             },

@@ -13,7 +13,7 @@ use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask,
     SumVec, Vdaf,
 };
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 #[cfg(feature = "ohttp")]
 use janus_client::OhttpConfig;
 use janus_collector::PrivateCollectorCredential;
@@ -73,11 +73,11 @@ struct InClusterJanusPair {
 }
 
 impl InClusterJanusPair {
-    /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
+    /// Set up a new DAP task, using the given VDAF and batch mode, in a pair of existing Janus
     /// instances, which can be running either in a local Kubernetes cluster accessed over port-
     /// forwards, or remotely, depending on whether the `--in-cloud` flag is set.
     /// `divviup-api` is used to provision the task into the aggregators.
-    async fn new(vdaf: VdafInstance, query_type: QueryType) -> Self {
+    async fn new(vdaf: VdafInstance, batch_mode: BatchMode) -> Self {
         // The test invocation will be like
         // `cargo test <args for cargo> -- <args for test runner> -- <args for Janus tests>`. We
         // want to parse just that last set of arguments into `struct Options` so we:
@@ -106,9 +106,9 @@ impl InClusterJanusPair {
         .unwrap();
 
         if options.in_cloud == Some(true) {
-            Self::new_in_cloud(vdaf, query_type).await
+            Self::new_in_cloud(vdaf, batch_mode).await
         } else {
-            Self::new_in_kind(vdaf, query_type).await
+            Self::new_in_kind(vdaf, batch_mode).await
         }
     }
 
@@ -143,7 +143,7 @@ impl InClusterJanusPair {
     ///      "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU",
     ///      "token": "Krx-CLfdWo1ULAfsxhr0rA"
     ///    }
-    async fn new_in_cloud(vdaf: VdafInstance, query_type: QueryType) -> Self {
+    async fn new_in_cloud(vdaf: VdafInstance, batch_mode: BatchMode) -> Self {
         let (
             divviup_api_url,
             divviup_api_token,
@@ -202,7 +202,7 @@ impl InClusterJanusPair {
             .unwrap();
 
         let (task_parameters, task_builder) = build_test_task(
-            TaskBuilder::new(query_type, vdaf)
+            TaskBuilder::new(batch_mode, vdaf)
                 .with_leader_aggregator_endpoint(leader_aggregator_dap_url)
                 .with_helper_aggregator_endpoint(helper_aggregator_dap_url),
             TestContext::Remote,
@@ -230,7 +230,7 @@ impl InClusterJanusPair {
         .await
     }
 
-    /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
+    /// Set up a new DAP task, using the given VDAF and batch mode, in a pair of existing Janus
     /// instances in a Kubernetes cluster. `divviup-api` is used to create an account, pair both
     /// aggregators and configure the task in each Janus instance. The following environment
     /// variables must be set.
@@ -246,7 +246,7 @@ impl InClusterJanusPair {
     ///     helper's aggregator API are authenticated.
     ///  - `JANUS_E2E_DIVVIUP_API_NAMESPACE`: The Kubernetes namespace where `divviup-api` is
     ///     deployed.
-    async fn new_in_kind(vdaf: VdafInstance, query_type: QueryType) -> Self {
+    async fn new_in_kind(vdaf: VdafInstance, batch_mode: BatchMode) -> Self {
         let (
             kubeconfig_path,
             kubectl_context_name,
@@ -287,7 +287,7 @@ impl InClusterJanusPair {
         let cluster = Cluster::new(&kubeconfig_path, &kubectl_context_name);
 
         let (task_parameters, task_builder) = build_test_task(
-            TaskBuilder::new(query_type, vdaf),
+            TaskBuilder::new(batch_mode, vdaf),
             TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
@@ -446,13 +446,13 @@ impl InClusterJanusPair {
                 other => panic!("unsupported vdaf {other:?}"),
             },
             min_batch_size: task.min_batch_size(),
-            max_batch_size: match task.query_type() {
-                QueryType::TimeInterval => None,
-                QueryType::FixedSize { max_batch_size, .. } => *max_batch_size,
+            max_batch_size: match task.batch_mode() {
+                BatchMode::TimeInterval => None,
+                BatchMode::LeaderSelected { max_batch_size, .. } => *max_batch_size,
             },
-            batch_time_window_size_seconds: match task.query_type() {
-                QueryType::TimeInterval => None,
-                QueryType::FixedSize {
+            batch_time_window_size_seconds: match task.batch_mode() {
+                BatchMode::TimeInterval => None,
+                BatchMode::LeaderSelected {
                     batch_time_window_size,
                     ..
                 } => batch_time_window_size.map(|window| window.as_seconds()),
@@ -511,7 +511,7 @@ async fn in_cluster_count() {
 
     // Start port forwards and set up task.
     let janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+        InClusterJanusPair::new(VdafInstance::Prio3Count, BatchMode::TimeInterval).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -531,7 +531,7 @@ async fn in_cluster_count_ohttp() {
 
     // Start port forwards and set up task.
     let mut janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+        InClusterJanusPair::new(VdafInstance::Prio3Count, BatchMode::TimeInterval).await;
 
     // Set up the client to use OHTTP. The keys and relay are assumed to be deployed adjacent to the
     // leader.
@@ -567,7 +567,7 @@ async fn in_cluster_sum() {
 
     // Start port forwards and set up task.
     let janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Sum { bits: 16 }, QueryType::TimeInterval).await;
+        InClusterJanusPair::new(VdafInstance::Prio3Sum { bits: 16 }, BatchMode::TimeInterval).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -591,7 +591,7 @@ async fn in_cluster_histogram() {
             chunk_length: 2,
             dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
     )
     .await;
 
@@ -606,14 +606,14 @@ async fn in_cluster_histogram() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn in_cluster_fixed_size() {
+async fn in_cluster_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: None,
         },
@@ -622,7 +622,7 @@ async fn in_cluster_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "in_cluster_fixed_size",
+        "in_cluster_leader_selected",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -631,14 +631,14 @@ async fn in_cluster_fixed_size() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn in_cluster_time_bucketed_fixed_size() {
+async fn in_cluster_time_bucketed_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
@@ -647,7 +647,7 @@ async fn in_cluster_time_bucketed_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "in_cluster_time_bucketed_fixed_size",
+        "in_cluster_time_bucketed_leader_selected",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -661,7 +661,7 @@ mod rate_limits {
     use crate::initialize_rustls;
     use assert_matches::assert_matches;
     use http::Method;
-    use janus_aggregator_core::task::QueryType;
+    use janus_aggregator_core::task::BatchMode;
     use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
     use janus_messages::{AggregationJobId, CollectionJobId, TaskId};
     use rand::random;
@@ -719,7 +719,7 @@ mod rate_limits {
         let test_config = TestConfig::load();
 
         let janus_pair =
-            InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+            InClusterJanusPair::new(VdafInstance::Prio3Count, BatchMode::TimeInterval).await;
 
         let (leader_url, helper_url) = janus_pair
             .task_parameters
@@ -938,7 +938,7 @@ async fn in_cluster_histogram_dp_noise() {
                 PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
             ),
         },
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
@@ -1005,7 +1005,7 @@ async fn in_cluster_sumvec_dp_noise() {
                 PureDpDiscreteLaplace::from_budget(PureDpBudget::new(epsilon).unwrap()),
             ),
         },
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },

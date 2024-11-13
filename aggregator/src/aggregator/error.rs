@@ -1,7 +1,7 @@
 use janus_aggregator_core::{datastore, task};
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
-    AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, PrepareError,
+    AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, ReportError,
     ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use opentelemetry::{metrics::Counter, KeyValue};
@@ -367,14 +367,14 @@ impl Display for BatchMismatch {
 }
 
 /// Inspect the provided `ping_pong_error`, log it, increment the [`Counter`] with appropriate
-/// labels, and return a suitable [`PrepareError`].
+/// labels, and return a suitable [`ReportError`].
 pub(crate) fn handle_ping_pong_error(
     task_id: &TaskId,
     role: Role,
     report_id: &ReportId,
     ping_pong_error: PingPongError,
     aggregate_step_failure_counter: &Counter<u64>,
-) -> PrepareError {
+) -> ReportError {
     let peer_role = match role {
         Role::Leader => Role::Helper,
         Role::Helper => Role::Leader,
@@ -430,5 +430,5 @@ pub(crate) fn handle_ping_pong_error(
 
     // Per DAP, any occurrence of state Rejected() from a ping-pong routime is translated to
     // VdafPrepError
-    PrepareError::VdafPrepError
+    ReportError::VdafPrepError
 }

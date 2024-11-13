@@ -11,7 +11,7 @@ use crate::{
 };
 use janus_aggregator_core::{
     datastore::test_util::{ephemeral_datastore, EphemeralDatastoreBuilder},
-    task::{test_util::TaskBuilder, QueryType},
+    task::{test_util::TaskBuilder, BatchMode},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -75,7 +75,7 @@ async fn upload_handler() {
     } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
 
@@ -205,7 +205,7 @@ async fn upload_handler() {
     .await;
 
     // Reports with timestamps past the task's expiration should be rejected.
-    let task_expire_soon = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task_expire_soon = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
         .build();
     let leader_task_expire_soon = task_expire_soon.leader_view().unwrap();
@@ -370,7 +370,7 @@ async fn upload_handler_helper() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
     let report = create_report(&helper_task, &hpke_keypair, clock.now());
@@ -429,7 +429,7 @@ async fn upload_handler_error_fanout() {
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
 
@@ -541,7 +541,7 @@ async fn upload_client_early_disconnect() {
     .build()
     .unwrap();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
     let task_id = *task.id();
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();

@@ -9,7 +9,7 @@ use janus_aggregator_core::{
     task::AggregatorTask,
 };
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
-use janus_messages::{query_type::QueryType, Interval, ReportIdChecksum};
+use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
 
 /// Computes the aggregate share over the provided batch aggregations.
@@ -20,11 +20,11 @@ use prio::vdaf::{self, Aggregatable};
 #[tracing::instrument(skip(task, batch_aggregations), fields(task_id = ?task.id()), err)]
 pub(crate) async fn compute_aggregate_share<
     const SEED_SIZE: usize,
-    Q: QueryType,
+    B: BatchMode,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 >(
     task: &AggregatorTask,
-    batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
+    batch_aggregations: &[BatchAggregation<SEED_SIZE, B, A>],
 ) -> Result<(A::AggregateShare, u64, Interval, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation

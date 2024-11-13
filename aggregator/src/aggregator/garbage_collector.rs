@@ -191,8 +191,8 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        query_type::{FixedSize, TimeInterval},
-        AggregationJobStep, Duration, FixedSizeQuery, HpkeCiphertext, HpkeConfigId, Interval,
+        batch_mode::{LeaderSelected, TimeInterval},
+        AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelectedQuery,
         Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use prio::vdaf::dummy;
@@ -217,7 +217,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
+                        task::BatchMode::TimeInterval,
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -368,7 +368,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
+                        task::BatchMode::TimeInterval,
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -526,7 +526,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gc_task_leader_fixed_size() {
+    async fn gc_task_leader_leader_selected() {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -540,7 +540,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize {
+                        task::BatchMode::LeaderSelected {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
@@ -564,7 +564,7 @@ mod tests {
 
                     // Aggregation artifacts.
                     let batch_id = random();
-                    let aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                    let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
                         dummy::AggregationParam(0),
@@ -582,20 +582,22 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        0,
-                        Interval::from_time(&client_timestamp).unwrap(),
-                        BatchAggregationState::Collected {
-                            aggregate_share: Some(dummy::AggregateShare(11)),
-                            report_count: 1,
-                            checksum: random(),
-                            aggregation_jobs_created: 5,
-                            aggregation_jobs_terminated: 5,
-                        },
-                    ))
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                            *task.id(),
+                            batch_id,
+                            dummy::AggregationParam(0),
+                            0,
+                            Interval::from_time(&client_timestamp).unwrap(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(dummy::AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                                aggregation_jobs_created: 5,
+                                aggregation_jobs_terminated: 5,
+                            },
+                        ),
+                    )
                     .await
                     .unwrap();
 
@@ -603,10 +605,10 @@ mod tests {
                         .await
                         .unwrap();
 
-                    tx.put_collection_job(&CollectionJob::<0, FixedSize, dummy::Vdaf>::new(
+                    tx.put_collection_job(&CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
+                        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
                         dummy::AggregationParam(0),
                         batch_id,
                         CollectionJobState::Start,
@@ -651,7 +653,7 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_aggregation_jobs_for_task::<0, FixedSize, dummy::Vdaf>(task.id())
+                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
                     .await
                     .unwrap()
                     .is_empty());
@@ -665,7 +667,10 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, task.id(),)
+                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
                     .await
                     .unwrap()
                     .is_empty());
@@ -675,7 +680,10 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, task.id(),)
+                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
                     .await
                     .unwrap()
                     .is_empty());
@@ -687,7 +695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gc_task_helper_fixed_size() {
+    async fn gc_task_helper_leader_selected() {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -701,7 +709,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize {
+                        task::BatchMode::LeaderSelected {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
@@ -735,7 +743,7 @@ mod tests {
 
                     // Aggregation artifacts.
                     let batch_id = random();
-                    let aggregation_job = AggregationJob::<0, FixedSize, dummy::Vdaf>::new(
+                    let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
                         dummy::AggregationParam(0),
@@ -760,20 +768,22 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        0,
-                        Interval::from_time(&client_timestamp).unwrap(),
-                        BatchAggregationState::Collected {
-                            aggregate_share: Some(dummy::AggregateShare(11)),
-                            report_count: 1,
-                            checksum: random(),
-                            aggregation_jobs_created: 6,
-                            aggregation_jobs_terminated: 6,
-                        },
-                    ))
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                            *task.id(),
+                            batch_id,
+                            dummy::AggregationParam(0),
+                            0,
+                            Interval::from_time(&client_timestamp).unwrap(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(dummy::AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                                aggregation_jobs_created: 6,
+                                aggregation_jobs_terminated: 6,
+                            },
+                        ),
+                    )
                     .await
                     .unwrap();
 
@@ -782,7 +792,7 @@ mod tests {
                         .unwrap();
 
                     tx.put_aggregate_share_job(
-                        &AggregateShareJob::<0, FixedSize, dummy::Vdaf>::new(
+                        &AggregateShareJob::<0, LeaderSelected, dummy::Vdaf>::new(
                             *task.id(),
                             batch_id,
                             dummy::AggregationParam(0),
@@ -834,7 +844,7 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_aggregation_jobs_for_task::<0, FixedSize, dummy::Vdaf>(task.id())
+                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
                     .await
                     .unwrap()
                     .is_empty());
@@ -848,12 +858,15 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, task.id(),)
+                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
                     .await
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                    .get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )

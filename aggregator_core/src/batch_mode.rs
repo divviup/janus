@@ -10,17 +10,17 @@ use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, FixedSizeQuery, Interval, Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    Duration, Interval, LeaderSelectedQuery, Query, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
 
 #[async_trait]
-pub trait AccumulableQueryType: QueryType {
+pub trait AccumulableBatchMode: BatchMode {
     /// This method converts various values related to a client report into a batch identifier. The
     /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
-    /// necessary functionality to be implemented for all query types.
+    /// necessary functionality to be implemented for all batch modes.
     fn to_batch_identifier(
         _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
@@ -39,9 +39,9 @@ pub trait AccumulableQueryType: QueryType {
         batch_identifier: &Self::BatchIdentifier,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>;
 
-    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
+    /// Some batch modes (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
-    /// query type does not represent batch identifiers as an interval.
+    /// batch mode does not represent batch identifiers as an interval.
     fn to_batch_interval(batch_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 
     /// Downgrade a batch identifier into a partial batch identifier.
@@ -59,8 +59,8 @@ pub trait AccumulableQueryType: QueryType {
 
     /// Determine if the batch is expected to be garbage-collected, based on the identifier.
     /// `Some(true)` and `Some(false)` indicate the expected result, and `None` indicates that the
-    /// answer cannot be determined based on the batch identifier alone (for e.g. the fixed-size
-    /// query type).
+    /// answer cannot be determined based on the batch identifier alone (for e.g. the
+    /// leader-selected batch mode).
     fn is_batch_garbage_collected<C: Clock>(
         clock: &C,
         batch_identifier: &Self::BatchIdentifier,
@@ -68,7 +68,7 @@ pub trait AccumulableQueryType: QueryType {
 }
 
 #[async_trait]
-impl AccumulableQueryType for TimeInterval {
+impl AccumulableBatchMode for TimeInterval {
     fn to_batch_identifier(
         task: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
@@ -124,7 +124,7 @@ impl AccumulableQueryType for TimeInterval {
 }
 
 #[async_trait]
-impl AccumulableQueryType for FixedSize {
+impl AccumulableBatchMode for LeaderSelected {
     fn to_batch_identifier(
         _: &AggregatorTask,
         batch_id: &Self::PartialBatchIdentifier,
@@ -172,10 +172,10 @@ impl AccumulableQueryType for FixedSize {
     }
 }
 
-/// CollectableQueryType represents a query type that can be collected by Janus. This trait extends
-/// [`AccumulableQueryType`] with additional functionality required for collection.
+/// CollectableBatchMode represents a batch mode that can be collected by Janus. This trait extends
+/// [`AccumulableBatchMode`] with additional functionality required for collection.
 #[async_trait]
-pub trait CollectableQueryType: AccumulableQueryType {
+pub trait CollectableBatchMode: AccumulableBatchMode {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
 
     /// Retrieves the batch identifier for a given query.
@@ -185,7 +185,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
 
-    /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collection
+    /// Some batch modes (e.g. [`TimeInterval`]) can receive a batch identifier in collection
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
@@ -295,7 +295,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
 }
 
 #[async_trait]
-impl CollectableQueryType for TimeInterval {
+impl CollectableBatchMode for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
 
     async fn collection_identifier_for_query<C: Clock>(
@@ -337,7 +337,7 @@ impl CollectableQueryType for TimeInterval {
     }
 }
 
-// This type only exists because the CollectableQueryType trait requires specifying the type of the
+// This type only exists because the CollectableBatchMode trait requires specifying the type of the
 // iterator explicitly (i.e. it cannot be inferred or replaced with an `impl Trait` expression), and
 // the type of the iterator created via method chaining does not have a type which is expressible.
 pub struct TimeIntervalBatchIdentifierIter {
@@ -392,7 +392,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 }
 
 #[async_trait]
-impl CollectableQueryType for FixedSize {
+impl CollectableBatchMode for LeaderSelected {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
     async fn collection_identifier_for_query<C: Clock>(
@@ -400,9 +400,9 @@ impl CollectableQueryType for FixedSize {
         task: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
-        match query.fixed_size_query() {
-            FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
-            FixedSizeQuery::CurrentBatch => {
+        match query.leader_selected_query() {
+            LeaderSelectedQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
+            LeaderSelectedQuery::CurrentBatch => {
                 tx.acquire_outstanding_batch_with_report_count(task.id(), task.min_batch_size())
                     .await
             }
@@ -433,16 +433,16 @@ impl CollectableQueryType for FixedSize {
 #[cfg(test)]
 mod tests {
     use crate::{
-        query_type::CollectableQueryType,
-        task::{test_util::TaskBuilder, QueryType},
+        batch_mode::CollectableBatchMode,
+        task::{test_util::TaskBuilder, BatchMode},
     };
     use janus_core::vdaf::VdafInstance;
-    use janus_messages::{query_type::TimeInterval, Duration, Interval, Time};
+    use janus_messages::{batch_mode::TimeInterval, Duration, Interval, Time};
 
     #[test]
     fn validate_collect_identifier() {
         let time_precision_secs = 3600;
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_time_precision(Duration::from_seconds(time_precision_secs))
             .build()
             .leader_view()

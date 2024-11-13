@@ -1,6 +1,6 @@
 use crate::aggregator::{
+    batch_mode::UploadableBatchMode,
     error::{ReportRejection, ReportRejectionReason},
-    query_type::UploadableQueryType,
     Error,
 };
 use async_trait::async_trait;
@@ -245,40 +245,40 @@ pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-pub struct WritableReport<const SEED_SIZE: usize, Q, A>
+pub struct WritableReport<const SEED_SIZE: usize, B, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
-    Q: UploadableQueryType,
+    B: UploadableBatchMode,
 {
     vdaf: Arc<A>,
     report: LeaderStoredReport<SEED_SIZE, A>,
-    _phantom_q: PhantomData<Q>,
+    _phantom_q: PhantomData<B>,
 }
 
-impl<const SEED_SIZE: usize, Q, A> WritableReport<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, B, A> WritableReport<SEED_SIZE, B, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
-    Q: UploadableQueryType,
+    B: UploadableBatchMode,
 {
     pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<SEED_SIZE, A>) -> Self {
         Self {
             vdaf,
             report,
-            _phantom_q: PhantomData::<Q>,
+            _phantom_q: PhantomData::<B>,
         }
     }
 }
 
 #[async_trait]
-impl<const SEED_SIZE: usize, C, Q, A> ReportWriter<C> for WritableReport<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, C, B, A> ReportWriter<C> for WritableReport<SEED_SIZE, B, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
@@ -286,7 +286,7 @@ where
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
     C: Clock,
-    Q: UploadableQueryType,
+    B: UploadableBatchMode,
 {
     async fn write_report(
         &self,
@@ -295,7 +295,7 @@ where
     ) -> Result<(), Error> {
         // Some validation requires we query the database. Thus it's still possible to reject a
         // report at this stage.
-        match Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await {
+        match B::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await {
             Ok(_) => {
                 let result = tx.put_client_report::<SEED_SIZE, A>(&self.report).await;
                 match result {

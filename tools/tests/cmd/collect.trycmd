@@ -83,7 +83,7 @@ Collect Request Parameters (Time Interval):
       --batch-interval-duration <BATCH_INTERVAL_DURATION>
           Duration of the collection batch interval, in seconds
 
-Collect Request Parameters (Fixed Size):
+Collect Request Parameters (Leader Selected):
       --batch-id <BATCH_ID>
           Batch identifier, encoded with base64url
 

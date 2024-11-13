@@ -752,7 +752,7 @@ mod tests {
     use clap::CommandFactory;
     use janus_aggregator_core::{
         datastore::{models::HpkeKeyState, test_util::ephemeral_datastore, Datastore},
-        task::{test_util::TaskBuilder, AggregatorTask, QueryType},
+        task::{test_util::TaskBuilder, AggregatorTask, BatchMode},
         taskprov::{PeerAggregator, VerifyKeyInit},
     };
     use janus_core::{
@@ -1211,11 +1211,11 @@ mod tests {
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
                 .build()
                 .helper_view()
                 .unwrap(),
@@ -1242,7 +1242,7 @@ mod tests {
 
         let tasks =
             Vec::from([
-                TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+                TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                     .build()
                     .leader_view()
                     .unwrap(),
@@ -1264,11 +1264,11 @@ mod tests {
     #[tokio::test]
     async fn replace_task() {
         let tasks = Vec::from([
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1288,7 +1288,7 @@ mod tests {
 
         // Construct a "new" task with a previously existing ID.
         let replacement_task = TaskBuilder::new(
-            QueryType::FixedSize {
+            BatchMode::LeaderSelected {
                 max_batch_size: Some(100),
                 batch_time_window_size: None,
             },
@@ -1340,7 +1340,7 @@ mod tests {
         // or HPKE keys.
         let serialized_task_yaml = r#"
 - peer_aggregator_endpoint: https://helper
-  query_type: TimeInterval
+  batch_mode: TimeInterval
   vdaf: !Prio3Sum
     bits: 2
   role: Leader
@@ -1364,7 +1364,7 @@ mod tests {
     hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
   hpke_keys: []
 - peer_aggregator_endpoint: https://leader
-  query_type: TimeInterval
+  batch_mode: TimeInterval
   vdaf: !Prio3Sum
     bits: 2
   role: Helper

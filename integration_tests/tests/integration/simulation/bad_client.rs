@@ -378,7 +378,7 @@ async fn bad_client_report_validity() {
         dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
     };
     let task = TaskBuilder::new(
-        janus_aggregator_core::task::QueryType::TimeInterval,
+        janus_aggregator_core::task::BatchMode::TimeInterval,
         vdaf_instance,
     )
     .with_leader_aggregator_endpoint(format!("http://{socket_address}/").parse().unwrap())

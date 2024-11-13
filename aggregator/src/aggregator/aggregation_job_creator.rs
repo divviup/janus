@@ -35,7 +35,7 @@ use janus_core::{
 #[cfg(feature = "test-util")]
 use janus_messages::ReportMetadata;
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
+    batch_mode::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter},
@@ -81,8 +81,8 @@ pub struct AggregationJobCreator<C: Clock> {
     /// The minimum number of client reports to include in an aggregation job. For time-interval
     /// tasks, applies to the "current" batch only; historical batches will create aggregation jobs
     /// of any size, on the theory that almost all reports will have be received for these batches
-    /// already. For fixed-size tasks, a single small aggregation job per batch will be created if
-    /// necessary to meet the batch size requirements.
+    /// already. For leader-selected tasks, a single small aggregation job per batch will be created
+    /// if necessary to meet the batch size requirements.
     min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     max_aggregation_job_size: usize,
@@ -306,21 +306,21 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
     ) -> anyhow::Result<bool> {
-        match (task.query_type(), task.vdaf()) {
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
+        match (task.batch_mode(), task.vdaf()) {
+            (task::BatchMode::TimeInterval, VdafInstance::Prio3Count) => {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
+            (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVec {
                     bits,
                     length,
@@ -334,7 +334,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     proofs,
                     bits,
@@ -353,7 +353,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
@@ -367,7 +367,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (
-                task::QueryType::TimeInterval,
+                task::BatchMode::TimeInterval,
                 VdafInstance::Prio3FixedPointBoundedL2VecSum {
                     bitsize,
                     dp_strategy: _,
@@ -389,7 +389,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             },
 
             #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafInstance::Fake { rounds }) => {
+            (task::BatchMode::TimeInterval, VdafInstance::Fake { rounds }) => {
                 let vdaf = Arc::new(prio::vdaf::dummy::Vdaf::new(*rounds));
                 self.create_aggregation_jobs_for_time_interval_task_with_param::<
                     0,
@@ -398,7 +398,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -407,14 +407,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3Count,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -423,14 +423,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3Sum,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -444,14 +444,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3SumVec,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -468,14 +468,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 >(*proofs, *bits, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH_HMACSHA256_AES128,
                     Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -488,7 +488,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3Histogram,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
@@ -496,7 +496,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size,
                     batch_time_window_size,
                 },
@@ -513,7 +513,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
                         let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
                             Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                        self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                        self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                                 VERIFY_KEY_LENGTH,
                             Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>,
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
@@ -521,7 +521,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
                         let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
                             Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                        self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                        self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                                 VERIFY_KEY_LENGTH,
                             Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>,
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
@@ -531,14 +531,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             #[cfg(feature = "test-util")]
             (
-                task::QueryType::FixedSize {
+                task::BatchMode::LeaderSelected {
                     max_batch_size: _max_batch_size,
                     batch_time_window_size: _batch_time_window_size,
                 },
                 VdafInstance::Fake { rounds },
             ) => {
                 let _vdaf = prio::vdaf::dummy::Vdaf::new(*rounds);
-                todo!("wire up call to self.create_aggregation_jobs_for_fixed_size_task_with_param")
+                todo!("wire up call to self.create_aggregation_jobs_for_leader_selected_task_with_param")
             }
 
             _ => {
@@ -845,7 +845,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    async fn create_aggregation_jobs_for_fixed_size_task_no_param<const SEED_SIZE: usize, A>(
+    async fn create_aggregation_jobs_for_leader_selected_task_no_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
@@ -919,6 +919,7 @@ mod tests {
     use super::AggregationJobCreator;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
+        batch_mode::AccumulableBatchMode,
         datastore::{
             models::{
                 merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState,
@@ -928,8 +929,7 @@ mod tests {
             test_util::ephemeral_datastore,
             Transaction,
         },
-        query_type::AccumulableQueryType,
-        task::{test_util::TaskBuilder, QueryType as TaskQueryType},
+        task::{test_util::TaskBuilder, BatchMode as TaskBatchMode},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -939,9 +939,9 @@ mod tests {
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
+        batch_mode::{LeaderSelected, TimeInterval},
         codec::ParameterizedDecode,
-        query_type::{FixedSize, TimeInterval},
-        AggregationJobStep, Interval, PrepareError, Query, ReportId, ReportIdChecksum,
+        AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
         ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
@@ -980,7 +980,7 @@ mod tests {
 
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1006,7 +1006,7 @@ mod tests {
         ));
 
         let helper_task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .helper_view()
                 .unwrap(),
@@ -1158,7 +1158,7 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1346,7 +1346,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1556,7 +1556,7 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1652,7 +1652,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         ReportAggregationState::Failed {
-                            prepare_error: PrepareError::BatchCollected,
+                            report_error: ReportError::BatchCollected,
                         },
                     )
                 })
@@ -1722,7 +1722,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_task() {
+    async fn create_aggregation_jobs_for_leader_selected_task() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -1736,7 +1736,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -1826,33 +1826,32 @@ mod tests {
                 })
                 .collect(),
         );
-        let (outstanding_batches, (agg_jobs, batch_aggregations)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, batch_aggregations)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify outstanding batches.
         let mut total_max_size = 0;
@@ -1943,7 +1942,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_task_insufficient_reports() {
+    async fn create_aggregation_jobs_for_leader_selected_task_insufficient_reports() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -1958,7 +1957,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2043,33 +2042,32 @@ mod tests {
                 })
                 .collect(),
         );
-        let (outstanding_batches, (agg_jobs, batches)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, batches)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify outstanding batches and aggregation jobs.
         assert_eq!(outstanding_batches.len(), 0);
@@ -2107,7 +2105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_task_finish_batch() {
+    async fn create_aggregation_jobs_for_leader_selected_task_finish_batch() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -2122,7 +2120,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2212,33 +2210,32 @@ mod tests {
                 })
                 .collect(),
         );
-        let (outstanding_batches, (agg_jobs, _batches)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
@@ -2308,33 +2305,32 @@ mod tests {
                 .collect(),
         );
 
-        let (outstanding_batches, (agg_jobs, _batches)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         let batch_ids: HashSet<_> = outstanding_batches
             .iter()
             .map(|outstanding_batch| *outstanding_batch.id())
@@ -2371,7 +2367,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_task_intermediate_agg_job_size() {
+    async fn create_aggregation_jobs_for_leader_selected_task_intermediate_agg_job_size() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -2386,7 +2382,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: None,
                 },
@@ -2476,33 +2472,32 @@ mod tests {
                 })
                 .collect(),
         );
-        let (outstanding_batches, (agg_jobs, _batches)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
@@ -2580,33 +2575,32 @@ mod tests {
                 .collect(),
         );
 
-        let (outstanding_batches, (agg_jobs, _batches)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         let batch_ids: HashSet<_> = outstanding_batches
             .iter()
             .map(|outstanding_batch| *outstanding_batch.id())
@@ -2643,7 +2637,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_time_bucketed_task() {
+    async fn create_aggregation_jobs_for_leader_selected_time_bucketed_task() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -2659,7 +2653,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: Some(MAX_BATCH_SIZE as u64),
                     batch_time_window_size: Some(batch_time_window_size),
                 },
@@ -2781,42 +2775,35 @@ mod tests {
             outstanding_batches_bucket_1,
             outstanding_batches_bucket_2,
             (agg_jobs, batch_aggregations),
-        ) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        ) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(
-                                task.id(),
-                                &Some(time_bucket_start_1),
-                            )
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_1))
                             .await
                             .unwrap(),
-                            tx.get_unfilled_outstanding_batches(
-                                task.id(),
-                                &Some(time_bucket_start_2),
-                            )
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_2))
                             .await
                             .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify outstanding batches.
         for outstanding_batches in [&outstanding_batches_bucket_1, &outstanding_batches_bucket_2] {
@@ -2960,7 +2947,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_aggregation_jobs_for_fixed_size_task_no_max_batch_size() {
+    async fn create_aggregation_jobs_for_leader_selected_task_no_max_batch_size() {
         // Setup.
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
@@ -2973,7 +2960,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::FixedSize {
+                TaskBatchMode::LeaderSelected {
                     max_batch_size: None,
                     batch_time_window_size: None,
                 },
@@ -3063,33 +3050,32 @@ mod tests {
                 })
                 .collect(),
         );
-        let (outstanding_batches, (agg_jobs, _)) =
-            job_creator
-                .datastore
-                .run_unnamed_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    let vdaf = Arc::clone(&vdaf);
-                    let want_ra_states = Arc::clone(&want_ra_states);
+        let (outstanding_batches, (agg_jobs, _)) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
 
-                    Box::pin(async move {
-                        Ok((
-                            tx.get_unfilled_outstanding_batches(task.id(), &None)
-                                .await
-                                .unwrap(),
-                            read_and_verify_aggregate_info_for_task::<
-                                VERIFY_KEY_LENGTH,
-                                FixedSize,
-                                _,
-                                _,
-                            >(
-                                tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
-                            )
-                            .await,
-                        ))
-                    })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_unfilled_outstanding_batches(task.id(), &None)
+                            .await
+                            .unwrap(),
+                        read_and_verify_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            LeaderSelected,
+                            _,
+                            _,
+                        >(
+                            tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref()
+                        )
+                        .await,
+                    ))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         // Verify outstanding batches.
         let mut total_max_size = 0;
@@ -3160,7 +3146,7 @@ mod tests {
         let vdaf = Arc::new(dummy::Vdaf::new(1));
         let task = Arc::new(
             TaskBuilder::new(
-                TaskQueryType::TimeInterval,
+                TaskBatchMode::TimeInterval,
                 VdafInstance::Fake { rounds: 1 },
             )
             .build()
@@ -3439,7 +3425,7 @@ mod tests {
     /// aggregation parameter) are merged together, with the resulting batch aggregation having
     /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
     /// identifier, and aggregation parameter.
-    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, Q, A, C>(
+    async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, B, A, C>(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task_id: &TaskId,
@@ -3449,13 +3435,13 @@ mod tests {
         >,
     ) -> (
         Vec<(
-            AggregationJob<SEED_SIZE, Q, A>,
+            AggregationJob<SEED_SIZE, B, A>,
             Vec<ReportAggregation<SEED_SIZE, A>>,
         )>,
-        Vec<BatchAggregation<SEED_SIZE, Q, A>>,
+        Vec<BatchAggregation<SEED_SIZE, B, A>>,
     )
     where
-        Q: AccumulableQueryType,
+        B: AccumulableBatchMode,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
         C: Clock,
         A::AggregationParam: Ord,
@@ -3503,7 +3489,7 @@ mod tests {
                         Ok((agg_job, report_aggs))
                     }),
             ),
-            tx.get_batch_aggregations_for_task::<SEED_SIZE, Q, A>(vdaf, task_id),
+            tx.get_batch_aggregations_for_task::<SEED_SIZE, B, A>(vdaf, task_id),
         )
         .unwrap();
 

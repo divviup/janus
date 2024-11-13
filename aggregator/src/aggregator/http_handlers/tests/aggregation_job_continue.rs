@@ -11,12 +11,12 @@ use crate::aggregator::{
 };
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    batch_mode::CollectableBatchMode,
     datastore::models::{
         merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState, BatchAggregation,
         BatchAggregationState, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
-    query_type::CollectableQueryType,
-    task::{test_util::TaskBuilder, QueryType, VerifyKey},
+    task::{test_util::TaskBuilder, BatchMode, VerifyKey},
 };
 use janus_core::{
     report_id::ReportIdChecksumExt,
@@ -25,9 +25,10 @@ use janus_core::{
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobContinueReq, AggregationJobResp, AggregationJobStep,
-    Duration, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareError, PrepareResp,
-    PrepareStepResult, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+    batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobResp, AggregationJobStep,
+    Duration, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareResp,
+    PrepareStepResult, ReportError, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role,
+    Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -55,7 +56,7 @@ async fn aggregate_continue() {
     } = HttpHandlerTest::new().await;
 
     let aggregation_job_id = random();
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(Poplar1::<XofTurboShake128, 16>::new(1));
@@ -287,7 +288,7 @@ async fn aggregate_continue() {
             PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
             PrepareResp::new(
                 *report_metadata_2.id(),
-                PrepareStepResult::Reject(PrepareError::BatchCollected),
+                PrepareStepResult::Reject(ReportError::BatchCollected),
             )
         ]))
     );
@@ -356,7 +357,7 @@ async fn aggregate_continue() {
                 1,
                 None,
                 ReportAggregationState::Failed {
-                    prepare_error: PrepareError::ReportDropped
+                    report_error: ReportError::ReportDropped
                 },
             ),
             ReportAggregation::new(
@@ -367,10 +368,10 @@ async fn aggregate_continue() {
                 2,
                 Some(PrepareResp::new(
                     *report_metadata_2.id(),
-                    PrepareStepResult::Reject(PrepareError::BatchCollected)
+                    PrepareStepResult::Reject(ReportError::BatchCollected)
                 )),
                 ReportAggregationState::Failed {
-                    prepare_error: PrepareError::BatchCollected
+                    report_error: ReportError::BatchCollected
                 },
             )
         ])
@@ -394,7 +395,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id_0 = random();
     let aggregation_job_id_1 = random();
@@ -1088,7 +1089,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
     let aggregation_param =
@@ -1189,7 +1190,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         resp.prepare_resps()[0],
         PrepareResp::new(
             *report_metadata.id(),
-            PrepareStepResult::Reject(PrepareError::VdafPrepError),
+            PrepareStepResult::Reject(ReportError::VdafPrepError),
         )
     );
 
@@ -1212,7 +1213,7 @@ async fn aggregate_continue_prep_step_fails() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let vdaf = Poplar1::new_turboshake128(1);
     let report_id = random();
@@ -1308,7 +1309,7 @@ async fn aggregate_continue_prep_step_fails() {
         aggregate_resp,
         AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report_metadata.id(),
-            PrepareStepResult::Reject(PrepareError::VdafPrepError),
+            PrepareStepResult::Reject(ReportError::VdafPrepError),
         )]),)
     );
 
@@ -1366,10 +1367,10 @@ async fn aggregate_continue_prep_step_fails() {
             0,
             Some(PrepareResp::new(
                 *report_metadata.id(),
-                PrepareStepResult::Reject(PrepareError::VdafPrepError)
+                PrepareStepResult::Reject(ReportError::VdafPrepError)
             )),
             ReportAggregationState::Failed {
-                prepare_error: PrepareError::VdafPrepError
+                report_error: ReportError::VdafPrepError
             },
         )
     );
@@ -1392,7 +1393,7 @@ async fn aggregate_continue_unexpected_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
     let aggregation_param =
@@ -1515,7 +1516,7 @@ async fn aggregate_continue_out_of_order_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let report_id_0 = random();
     let aggregation_param =
@@ -1697,7 +1698,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
@@ -1745,7 +1746,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     0,
                     None,
                     ReportAggregationState::Failed {
-                        prepare_error: PrepareError::VdafPrepError,
+                        report_error: ReportError::VdafPrepError,
                     },
                 ))
                 .await

@@ -138,7 +138,7 @@ pub struct QueryConfig {
     max_batch_query_count: u16,
     /// The smallest number of reports that a batch can include.
     min_batch_size: u32,
-    /// The query type along with associated parameters.
+    /// The batch mode along with associated parameters.
     query: Query,
 }
 
@@ -209,23 +209,23 @@ impl Decode for QueryConfig {
     }
 }
 
-/// A query type and its associated parameter(s).
+/// A batch mode and its associated parameter(s).
 ///
 /// The redefinition of Query relative to the parent mod is because the type of Query is not known
 /// at compile time. For queries of unknown type, using the parent mod would require attempting
-/// decoding for each query type until success.
+/// decoding for each batch mode until success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Query {
     Reserved,
     TimeInterval,
-    FixedSize { max_batch_size: u32 },
+    LeaderSelected { max_batch_size: u32 },
 }
 
 impl Query {
     const RESERVED: u8 = 0;
     const TIME_INTERVAL: u8 = 1;
-    const FIXED_SIZE: u8 = 2;
+    const LEADER_SELECTED: u8 = 2;
 }
 
 impl Encode for Query {
@@ -233,8 +233,8 @@ impl Encode for Query {
         match self {
             Query::Reserved => Query::RESERVED.encode(bytes)?,
             Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
-            Query::FixedSize { max_batch_size } => {
-                Query::FIXED_SIZE.encode(bytes)?;
+            Query::LeaderSelected { max_batch_size } => {
+                Query::LEADER_SELECTED.encode(bytes)?;
                 max_batch_size.encode(bytes)?;
             }
         };
@@ -244,23 +244,23 @@ impl Encode for Query {
     fn encoded_len(&self) -> Option<usize> {
         Some(match self {
             Query::Reserved | Query::TimeInterval => 1,
-            Query::FixedSize { .. } => 5,
+            Query::LeaderSelected { .. } => 5,
         })
     }
 }
 
 impl Decode for Query {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let query_type = u8::decode(bytes)?;
-        Ok(match query_type {
+        let batch_mode = u8::decode(bytes)?;
+        Ok(match batch_mode {
             Query::RESERVED => Query::Reserved,
             Query::TIME_INTERVAL => Query::TimeInterval,
-            Query::FIXED_SIZE => Query::FixedSize {
+            Query::LEADER_SELECTED => Query::LeaderSelected {
                 max_batch_size: u32::decode(bytes)?,
             },
             val => {
                 return Err(CodecError::Other(
-                    anyhow!("unexpected QueryType value {}", val).into(),
+                    anyhow!("unexpected BatchMode value {}", val).into(),
                 ))
             }
         })
@@ -846,7 +846,7 @@ mod tests {
                     "000000000000003C", // time_precision
                     "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
-                    "01",               // query_type
+                    "01",               // batch_mode
                 ),
             ),
             (
@@ -854,7 +854,7 @@ mod tests {
                     Duration::from_seconds(u64::MIN),
                     u16::MIN,
                     u32::MIN,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: u32::MIN,
                     },
                 ),
@@ -862,7 +862,7 @@ mod tests {
                     "0000000000000000", // time_precision
                     "0000",             // max_batch_query_count
                     "00000000",         // min_batch_size
-                    "02",               // query_type
+                    "02",               // batch_mode
                     "00000000",         // max_batch_size
                 ),
             ),
@@ -871,7 +871,7 @@ mod tests {
                     Duration::from_seconds(0x3C),
                     0x40,
                     0x24,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: 0xFAFA,
                     },
                 ),
@@ -879,7 +879,7 @@ mod tests {
                     "000000000000003C", // time_precision
                     "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
-                    "02",               // query_type
+                    "02",               // batch_mode
                     "0000FAFA",         // max_batch_size
                 ),
             ),
@@ -888,7 +888,7 @@ mod tests {
                     Duration::from_seconds(u64::MAX),
                     u16::MAX,
                     u32::MAX,
-                    Query::FixedSize {
+                    Query::LeaderSelected {
                         max_batch_size: u32::MAX,
                     },
                 ),
@@ -896,7 +896,7 @@ mod tests {
                     "FFFFFFFFFFFFFFFF", // time_precision
                     "FFFF",             // max_batch_query_count
                     "FFFFFFFF",         // min_batch_size
-                    "02",               // query_type
+                    "02",               // batch_mode
                     "FFFFFFFF",         // max_batch_size
                 ),
             ),
@@ -909,33 +909,33 @@ mod tests {
             (
                 Query::TimeInterval,
                 concat!(
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: u32::MIN,
                 },
                 concat!(
-                    "02",       // query_type
+                    "02",       // batch_mode
                     "00000000", // max_batch_size
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: 0xFAFA,
                 },
                 concat!(
-                    "02",       // query_type
+                    "02",       // batch_mode
                     "0000FAFA", // max_batch_size
                 ),
             ),
             (
-                Query::FixedSize {
+                Query::LeaderSelected {
                     max_batch_size: u32::MAX,
                 },
                 concat!(
-                    "02",       // query_type
+                    "02",       // batch_mode
                     "FFFFFFFF", // max_batch_size
                 ),
             ),
@@ -954,7 +954,7 @@ mod tests {
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
                         0xCCCC,
-                        Query::FixedSize {
+                        Query::LeaderSelected {
                             max_batch_size: 0xDDDD,
                         },
                     ),
@@ -985,7 +985,7 @@ mod tests {
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "02",               // query_type
+                        "02",               // batch_mode
                         "0000DDDD",         // max_batch_size
                     ),
                     "000000000000EEEE", // task_expiration
@@ -1048,7 +1048,7 @@ mod tests {
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "01",               // query_type
+                        "01",               // batch_mode
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
@@ -1094,7 +1094,7 @@ mod tests {
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "01",               // query_type
+                        "01",               // batch_mode
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(

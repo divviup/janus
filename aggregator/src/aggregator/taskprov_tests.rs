@@ -19,7 +19,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
     taskprov::{test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
@@ -33,8 +33,8 @@ use janus_core::{
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
+    batch_mode::LeaderSelected,
     codec::{Decode, Encode},
-    query_type::FixedSize,
     taskprov::{
         DpConfig, DpMechanism, Query as TaskprovQuery, QueryConfig, TaskConfig, VdafConfig,
         VdafType,
@@ -42,8 +42,8 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
-    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
@@ -180,7 +180,7 @@ where
                 time_precision,
                 max_batch_query_count,
                 min_batch_size,
-                TaskprovQuery::FixedSize { max_batch_size },
+                TaskprovQuery::LeaderSelected { max_batch_size },
             ),
             task_expiration,
             vdaf_config,
@@ -194,7 +194,7 @@ where
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize {
+            BatchMode::LeaderSelected {
                 max_batch_size: Some(max_batch_size as u64),
                 batch_time_window_size: None,
             },
@@ -274,7 +274,7 @@ async fn taskprov_aggregate_init() {
     let batch_id_1 = random();
     let request_1 = AggregationJobInitializeReq::new(
         aggregation_param_1.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id_1),
+        PartialBatchSelector::new_leader_selected(batch_id_1),
         Vec::from([PrepareInit::new(
             report_share_1.clone(),
             transcript_1.leader_prepare_transitions[0].message.clone(),
@@ -286,7 +286,7 @@ async fn taskprov_aggregate_init() {
     let batch_id_2 = random();
     let request_2 = AggregationJobInitializeReq::new(
         aggregation_param_2.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id_2),
+        PartialBatchSelector::new_leader_selected(batch_id_2),
         Vec::from([PrepareInit::new(
             report_share_2.clone(),
             transcript_2.leader_prepare_transitions[0].message.clone(),
@@ -311,7 +311,7 @@ async fn taskprov_aggregate_init() {
         .with_request_header(auth.0, "Bearer invalid_token")
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_header(
             TASKPROV_HEADER,
@@ -340,7 +340,7 @@ async fn taskprov_aggregate_init() {
         .with_request_header(auth.0, auth.1)
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_header(
             TASKPROV_HEADER,
@@ -377,7 +377,7 @@ async fn taskprov_aggregate_init() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -422,7 +422,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -443,7 +443,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -465,7 +465,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        &PrepareStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test
@@ -474,7 +474,7 @@ async fn taskprov_aggregate_init_missing_extension() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -505,7 +505,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -526,7 +526,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -548,7 +548,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        &PrepareStepResult::Reject(ReportError::InvalidMessage),
     );
 
     let (aggregation_jobs, got_task) = test
@@ -557,7 +557,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -588,7 +588,7 @@ async fn taskprov_opt_out_task_expired() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -613,7 +613,7 @@ async fn taskprov_opt_out_task_expired() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -642,7 +642,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -665,7 +665,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
             Duration::from_seconds(1),
             100,
             100,
-            TaskprovQuery::FixedSize {
+            TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,
             },
         ),
@@ -692,7 +692,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -722,7 +722,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -745,7 +745,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
             Duration::from_seconds(1),
             100,
             100,
-            TaskprovQuery::FixedSize {
+            TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,
             },
         ),
@@ -774,7 +774,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -803,7 +803,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -826,7 +826,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             Duration::from_seconds(1),
             100,
             100,
-            TaskprovQuery::FixedSize {
+            TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,
             },
         ),
@@ -855,7 +855,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     .with_request_header(auth.0, auth.1)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -898,18 +898,20 @@ async fn taskprov_aggregate_continue() {
 
                 tx.put_scrubbed_report(task.id(), &report_share).await?;
 
-                tx.put_aggregation_job(
-                    &AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, TestVdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        aggregation_param.clone(),
-                        batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    ),
-                )
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    LeaderSelected,
+                    TestVdaf,
+                >::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    aggregation_param.clone(),
+                    batch_id,
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                ))
                 .await?;
 
                 tx.put_report_aggregation::<VERIFY_KEY_LENGTH, TestVdaf>(&ReportAggregation::new(
@@ -927,7 +929,7 @@ async fn taskprov_aggregate_continue() {
                 ))
                 .await?;
 
-                tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, FixedSize, TestVdaf>(
+                tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, LeaderSelected, TestVdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
                         batch_id,
@@ -1039,7 +1041,7 @@ async fn taskprov_aggregate_share() {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_batch_aggregation(&BatchAggregation::<16, FixedSize, TestVdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<16, LeaderSelected, TestVdaf>::new(
                     *task.id(),
                     batch_id,
                     aggregation_param,
@@ -1062,7 +1064,7 @@ async fn taskprov_aggregate_share() {
         .unwrap();
 
     let request = AggregateShareReq::new(
-        BatchSelector::new_fixed_size(batch_id),
+        BatchSelector::new_leader_selected(batch_id),
         aggregation_param.get_encoded().unwrap(),
         1,
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -1078,7 +1080,7 @@ async fn taskprov_aggregate_share() {
         .with_request_header(auth.0, "Bearer invalid_token")
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_header(
             TASKPROV_HEADER,
@@ -1102,7 +1104,7 @@ async fn taskprov_aggregate_share() {
         .with_request_header(auth.0, auth.1)
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_body(request.get_encoded().unwrap())
         .with_request_header(
@@ -1150,7 +1152,7 @@ async fn end_to_end_poplar1() {
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -1165,7 +1167,7 @@ async fn end_to_end_poplar1() {
     .with_request_header(auth_header_name, auth_header_value.clone())
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -1226,7 +1228,7 @@ async fn end_to_end_poplar1() {
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
-        BatchSelector::new_fixed_size(batch_id),
+        BatchSelector::new_leader_selected(batch_id),
         aggregation_param.get_encoded().unwrap(),
         1,
         checksum,
@@ -1236,7 +1238,7 @@ async fn end_to_end_poplar1() {
         .with_request_header(auth_header_name, auth_header_value.clone())
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_header(
             TASKPROV_HEADER,
@@ -1296,7 +1298,7 @@ async fn end_to_end_sumvec_hmac() {
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
             transcript.leader_prepare_transitions[0].message.clone(),
@@ -1311,7 +1313,7 @@ async fn end_to_end_sumvec_hmac() {
     .with_request_header(auth_header_name, auth_header_value.clone())
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_header(
         TASKPROV_HEADER,
@@ -1333,7 +1335,7 @@ async fn end_to_end_sumvec_hmac() {
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
-        BatchSelector::new_fixed_size(batch_id),
+        BatchSelector::new_leader_selected(batch_id),
         aggregation_param.get_encoded().unwrap(),
         1,
         checksum,
@@ -1343,7 +1345,7 @@ async fn end_to_end_sumvec_hmac() {
         .with_request_header(auth_header_name, auth_header_value.clone())
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
         )
         .with_request_header(
             TASKPROV_HEADER,

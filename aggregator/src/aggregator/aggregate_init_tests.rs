@@ -12,7 +12,7 @@ use janus_aggregator_core::{
     datastore::test_util::{ephemeral_datastore, EphemeralDatastore},
     task::{
         test_util::{Task, TaskBuilder},
-        AggregatorTask, QueryType,
+        AggregatorTask, BatchMode,
     },
     test_util::noop_meter,
 };
@@ -23,10 +23,10 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{self, TimeInterval},
+    batch_mode::{self, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-    ExtensionType, HpkeConfig, PartialBatchSelector, PrepareError, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportMetadata, ReportShare,
+    ExtensionType, HpkeConfig, PartialBatchSelector, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -246,7 +246,7 @@ async fn setup_aggregate_init_test_without_sending_request<
 ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, vdaf_instance)
         .with_aggregator_auth_token(auth_token)
         .build();
     let helper_task = task.helper_view().unwrap();
@@ -302,10 +302,10 @@ async fn setup_aggregate_init_test_without_sending_request<
     }
 }
 
-pub(crate) async fn put_aggregation_job<Q: query_type::QueryType>(
+pub(crate) async fn put_aggregation_job<B: batch_mode::BatchMode>(
     task: &Task,
     aggregation_job_id: &AggregationJobId,
-    aggregation_job: &AggregationJobInitializeReq<Q>,
+    aggregation_job: &AggregationJobInitializeReq<B>,
     handler: &impl Handler,
 ) -> TestConn {
     let (header, value) = task.aggregator_auth_token().request_authentication();
@@ -314,7 +314,7 @@ pub(crate) async fn put_aggregation_job<Q: query_type::QueryType>(
         .with_request_header(header, value)
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<B>::MEDIA_TYPE,
         )
         .with_request_body(aggregation_job.get_encoded().unwrap())
         .run_async(handler)
@@ -430,7 +430,7 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
 
     let want_aggregation_job_resp = AggregationJobResp::new(Vec::from([PrepareResp::new(
         report_id,
-        PrepareStepResult::Reject(PrepareError::InvalidMessage),
+        PrepareStepResult::Reject(ReportError::InvalidMessage),
     )]));
     let got_aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     assert_eq!(want_aggregation_job_resp, got_aggregation_job_resp);
@@ -608,7 +608,7 @@ async fn aggregation_job_intolerable_clock_skew() {
     );
     assert_matches!(
         aggregation_job_init_resp.prepare_resps()[1].result(),
-        &PrepareStepResult::Reject(PrepareError::ReportTooEarly)
+        &PrepareStepResult::Reject(ReportError::ReportTooEarly)
     );
 }
 
@@ -637,11 +637,11 @@ async fn aggregation_job_init_two_step_vdaf_idempotence() {
 async fn aggregation_job_init_wrong_query() {
     let test_case = setup_aggregate_init_test().await;
 
-    // setup_aggregate_init_test sets up a task with a time interval query. We send a fixed size
-    // query which should yield an error.
+    // setup_aggregate_init_test sets up a task with a time interval query. We send a
+    // leader-selected query which should yield an error.
     let wrong_query = AggregationJobInitializeReq::new(
         test_case.aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(random()),
+        PartialBatchSelector::new_leader_selected(random()),
         test_case.aggregation_job_init_req.prepare_inits().to_vec(),
     );
 

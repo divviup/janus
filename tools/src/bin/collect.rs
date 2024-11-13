@@ -15,9 +15,9 @@ use janus_collector::{
 };
 use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
-    BatchId, CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector,
-    Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    BatchId, CollectionJobId, Duration, HpkeConfig, Interval, LeaderSelectedQuery,
+    PartialBatchSelector, Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -198,7 +198,7 @@ struct QueryOptions {
     #[clap(
         long,
         conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
+        help_heading = "Collect Request Parameters (Leader Selected)",
     )]
     batch_id: Option<BatchId>,
     /// Have the aggregator select a batch that has not yet been collected
@@ -206,7 +206,7 @@ struct QueryOptions {
         long,
         action = ArgAction::SetTrue,
         conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
+        help_heading = "Collect Request Parameters (Leader Selected)",
     )]
     current_batch: bool,
 }
@@ -459,13 +459,13 @@ macro_rules! options_query_dispatch {
                 $body
             }
             (None, None, Some(batch_id), false) => {
-                let $query = Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                let $query = Query::new_leader_selected(LeaderSelectedQuery::ByBatchId {
                     batch_id: *batch_id,
                 });
                 $body
             }
             (None, None, None, true) => {
-                let $query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+                let $query = Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
                 $body
             }
             _ => unreachable!("clap argument parsing shouldn't allow this to be possible"),
@@ -562,11 +562,11 @@ async fn run(options: Options) -> Result<(), Error> {
     })
 }
 
-async fn run_collection<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_collection<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
 ) -> Result<(), Error>
 where
@@ -576,15 +576,15 @@ where
         .collect(query, agg_param)
         .await
         .map_err(|err| Error::Anyhow(err.into()))?;
-    print_collection::<V, Q>(collection)?;
+    print_collection::<V, B>(collection)?;
     Ok(())
 }
 
-async fn run_new_job<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_new_job<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
     collection_job_id: CollectionJobId,
 ) -> Result<(), Error>
@@ -599,11 +599,11 @@ where
     Ok(())
 }
 
-async fn run_poll_job<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_poll_job<V: vdaf::Collector, B: BatchModeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
-    query: Query<Q>,
+    query: Query<B>,
     agg_param: &V::AggregationParam,
     collection_job_id: CollectionJobId,
 ) -> Result<(), Error>
@@ -618,7 +618,7 @@ where
     match poll_result {
         PollResult::CollectionResult(collection) => {
             println!("State: Ready");
-            print_collection::<V, Q>(collection)?;
+            print_collection::<V, B>(collection)?;
             Ok(())
         }
         PollResult::NotReady(retry_after) => {
@@ -656,13 +656,13 @@ fn new_collector<V: vdaf::Collector>(
     Ok(collector)
 }
 
-fn print_collection<V: vdaf::Collector, Q: QueryTypeExt>(
-    collection: Collection<<V as Vdaf>::AggregateResult, Q>,
+fn print_collection<V: vdaf::Collector, B: BatchModeExt>(
+    collection: Collection<<V as Vdaf>::AggregateResult, B>,
 ) -> Result<(), Error> {
-    if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
+    if !B::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
         println!(
             "Batch: {}",
-            Q::format_partial_batch_selector(collection.partial_batch_selector())
+            B::format_partial_batch_selector(collection.partial_batch_selector())
         );
     }
     let (start, duration) = collection.interval();
@@ -693,14 +693,14 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
     Ok(())
 }
 
-trait QueryTypeExt: QueryType {
+trait BatchModeExt: BatchMode {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
 
     fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
         -> String;
 }
 
-impl QueryTypeExt for TimeInterval {
+impl BatchModeExt for TimeInterval {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = true;
 
     fn format_partial_batch_selector(_: &PartialBatchSelector<Self>) -> String {
@@ -708,7 +708,7 @@ impl QueryTypeExt for TimeInterval {
     }
 }
 
-impl QueryTypeExt for FixedSize {
+impl BatchModeExt for LeaderSelected {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
 
     fn format_partial_batch_selector(

@@ -17,7 +17,7 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
         ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
-    task::{test_util::TaskBuilder, QueryType, VerifyKey},
+    task::{test_util::TaskBuilder, BatchMode, VerifyKey},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -29,10 +29,10 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
-    PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult, ReportIdChecksum,
+    PartialBatchSelector, PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum,
     ReportMetadata, ReportShare, Time,
 };
 use prio::{codec::Encode, vdaf::dummy};
@@ -50,7 +50,7 @@ async fn aggregate_leader() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
     datastore
         .put_aggregator_task(&task.leader_view().unwrap())
         .await
@@ -120,7 +120,7 @@ async fn aggregate_wrong_agg_auth_token() {
 
     let dap_auth_token = AuthenticationToken::DapAuth(random());
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_aggregator_auth_token(dap_auth_token.clone())
         .build();
 
@@ -194,7 +194,7 @@ async fn aggregate_init() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
 
@@ -494,7 +494,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_1.result(),
-            &PrepareStepResult::Reject(PrepareError::HpkeDecryptError)
+            &PrepareStepResult::Reject(ReportError::HpkeDecryptError)
         );
 
         let prepare_step_2 = aggregate_resp.prepare_resps().get(2).unwrap();
@@ -504,7 +504,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_2.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage)
+            &PrepareStepResult::Reject(ReportError::InvalidMessage)
         );
 
         let prepare_step_3 = aggregate_resp.prepare_resps().get(3).unwrap();
@@ -514,7 +514,7 @@ async fn aggregate_init() {
         );
         assert_matches!(
             prepare_step_3.result(),
-            &PrepareStepResult::Reject(PrepareError::HpkeUnknownConfigId)
+            &PrepareStepResult::Reject(ReportError::HpkeUnknownConfigId)
         );
 
         let prepare_step_4 = aggregate_resp.prepare_resps().get(4).unwrap();
@@ -524,7 +524,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_4.result(),
-            &PrepareStepResult::Reject(PrepareError::ReportReplayed)
+            &PrepareStepResult::Reject(ReportError::ReportReplayed)
         );
 
         let prepare_step_5 = aggregate_resp.prepare_resps().get(5).unwrap();
@@ -534,7 +534,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_5.result(),
-            &PrepareStepResult::Reject(PrepareError::BatchCollected)
+            &PrepareStepResult::Reject(ReportError::BatchCollected)
         );
 
         let prepare_step_6 = aggregate_resp.prepare_resps().get(6).unwrap();
@@ -544,7 +544,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_6.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
         let prepare_step_7 = aggregate_resp.prepare_resps().get(7).unwrap();
@@ -554,7 +554,7 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_7.result(),
-            &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
         // Check aggregation job in datastore.
@@ -623,7 +623,7 @@ async fn aggregate_init_batch_already_collected() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(100),
             batch_time_window_size: None,
         },
@@ -649,7 +649,7 @@ async fn aggregate_init_batch_already_collected() {
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
+        PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([prepare_init.clone()]),
     );
 
@@ -665,7 +665,7 @@ async fn aggregate_init_batch_already_collected() {
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.
                 for shard in 0..BATCH_AGGREGATION_SHARD_COUNT {
-                    let batch_aggregation = BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                    let batch_aggregation = BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         batch_id,
                         dummy::AggregationParam(0),
@@ -697,7 +697,7 @@ async fn aggregate_init_batch_already_collected() {
     .with_request_header(header, value)
     .with_request_header(
         KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
     )
     .with_request_body(request.get_encoded().unwrap())
     .run_async(&handler)
@@ -713,7 +713,7 @@ async fn aggregate_init_batch_already_collected() {
     );
     assert_eq!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::BatchCollected)
+        &PrepareStepResult::Reject(ReportError::BatchCollected)
     );
 
     assert_task_aggregation_counter(
@@ -735,7 +735,7 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -824,7 +824,7 @@ async fn aggregate_init_prep_init_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -863,7 +863,7 @@ async fn aggregate_init_prep_init_failed() {
     );
     assert_matches!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::VdafPrepError)
+        &PrepareStepResult::Reject(ReportError::VdafPrepError)
     );
 
     assert_task_aggregation_counter(
@@ -885,7 +885,7 @@ async fn aggregate_init_prep_step_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -923,7 +923,7 @@ async fn aggregate_init_prep_step_failed() {
     );
     assert_matches!(
         prepare_step.result(),
-        &PrepareStepResult::Reject(PrepareError::VdafPrepError)
+        &PrepareStepResult::Reject(ReportError::VdafPrepError)
     );
 
     assert_task_aggregation_counter(
@@ -945,7 +945,7 @@ async fn aggregate_init_duplicated_report_id() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(

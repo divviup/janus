@@ -24,7 +24,7 @@ use janus_aggregator::{
 };
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
-    task::{test_util::TaskBuilder, QueryType},
+    task::{test_util::TaskBuilder, BatchMode},
 };
 use janus_core::{
     hpke::HpkeCiphersuite, test_util::install_test_trace_subscriber, time::RealClock,
@@ -140,7 +140,7 @@ async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut c
     common_config.database.connection_pool_timeouts_s = 60;
     common_config.health_check_listen_address = health_check_listen_address;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .build()
         .leader_view()
         .unwrap();

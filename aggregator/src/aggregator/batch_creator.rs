@@ -1,4 +1,4 @@
-//! In-memory data structure to incrementally build fixed-size batches.
+//! In-memory data structure to incrementally build leader-selected batches.
 
 use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
 use futures::future::try_join_all;
@@ -11,7 +11,7 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId,
+    batch_mode::LeaderSelected, AggregationJobStep, BatchId, Duration, Interval, ReportId,
     ReportMetadata, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
@@ -37,7 +37,7 @@ where
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<
         SEED_SIZE,
-        FixedSize,
+        LeaderSelected,
         A,
         InitialWrite,
         ReportAggregationMetadata,
@@ -74,7 +74,7 @@ where
         task_batch_time_window_size: Option<Duration>,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
-            FixedSize,
+            LeaderSelected,
             A,
             InitialWrite,
             ReportAggregationMetadata,
@@ -179,7 +179,7 @@ where
         properties: &Properties,
         aggregation_job_writer: &mut AggregationJobWriter<
             SEED_SIZE,
-            FixedSize,
+            LeaderSelected,
             A,
             InitialWrite,
             ReportAggregationMetadata,
@@ -325,7 +325,7 @@ where
         unaggregated_reports: &mut VecDeque<ReportMetadata>,
         aggregation_job_writer: &mut AggregationJobWriter<
             SEED_SIZE,
-            FixedSize,
+            LeaderSelected,
             A,
             InitialWrite,
             ReportAggregationMetadata,
@@ -374,7 +374,7 @@ where
                 .difference(&min_client_timestamp)?
                 .add(&Duration::from_seconds(1))?,
         )?;
-        let aggregation_job = AggregationJob::<SEED_SIZE, FixedSize, A>::new(
+        let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
             task_id,
             aggregation_job_id,
             (),

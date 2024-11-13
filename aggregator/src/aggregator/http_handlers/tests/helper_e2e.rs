@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
-    query_type::FixedSize, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, PartialBatchSelector, PrepareError, PrepareStepResult, ReportIdChecksum,
+    batch_mode::LeaderSelected, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
+    BatchSelector, PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -34,7 +34,7 @@ async fn helper_aggregation_report_share_replay() {
     } = HttpHandlerTest::new().await;
 
     let task = TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: None,
             batch_time_window_size: None,
         },
@@ -67,26 +67,26 @@ async fn helper_aggregation_report_share_replay() {
 
     let agg_init_req_1 = AggregationJobInitializeReq::new(
         agg_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id_1),
+        PartialBatchSelector::new_leader_selected(batch_id_1),
         Vec::from([replayed_report.clone(), other_report_1.clone()]),
     );
     let agg_init_req_2 = AggregationJobInitializeReq::new(
         agg_param.get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id_2),
+        PartialBatchSelector::new_leader_selected(batch_id_2),
         Vec::from([replayed_report.clone(), other_report_2.clone()]),
     );
 
     let checksum_1 =
         ReportIdChecksum::for_report_id(replayed_report.report_share().metadata().id())
             .updated_with(other_report_1.report_share().metadata().id());
-    let agg_share_req_1 = AggregateShareReq::<FixedSize>::new(
+    let agg_share_req_1 = AggregateShareReq::<LeaderSelected>::new(
         BatchSelector::new(batch_id_1),
         agg_param.get_encoded().unwrap(),
         2,
         checksum_1,
     );
     let checksum_2 = ReportIdChecksum::for_report_id(other_report_2.report_share().metadata().id());
-    let agg_share_req_2 = AggregateShareReq::<FixedSize>::new(
+    let agg_share_req_2 = AggregateShareReq::<LeaderSelected>::new(
         BatchSelector::new(batch_id_2),
         agg_param.get_encoded().unwrap(),
         1,
@@ -115,7 +115,7 @@ async fn helper_aggregation_report_share_replay() {
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
     assert_matches!(
         agg_init_resp_2.prepare_resps()[0].result(),
-        PrepareStepResult::Reject(PrepareError::ReportReplayed)
+        PrepareStepResult::Reject(ReportError::ReportReplayed)
     );
     assert_matches!(
         agg_init_resp_2.prepare_resps()[1].result(),

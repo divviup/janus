@@ -7,7 +7,7 @@ use crate::{
     },
     initialize_rustls,
 };
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_core::{
     test_util::install_test_trace_subscriber,
     vdaf::{vdaf_dp_strategies, VdafInstance},
@@ -43,14 +43,14 @@ struct JanusContainerPair {
 #[cfg(feature = "testcontainer")]
 impl JanusContainerPair {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
-    /// the given VDAF and query type.
+    /// the given VDAF and batch mode.
     pub async fn new(
         test_name: &str,
         vdaf: VdafInstance,
-        query_type: QueryType,
+        batch_mode: BatchMode,
     ) -> JanusContainerPair {
         let (task_parameters, task_builder) = build_test_task(
-            TaskBuilder::new(query_type, vdaf),
+            TaskBuilder::new(batch_mode, vdaf),
             TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
@@ -83,7 +83,7 @@ struct JanusInProcessPair {
 
 impl JanusInProcessPair {
     /// Set up a new pair of in-process Janus test instances, and set up a new task in each using
-    /// the given VDAF and query type.
+    /// the given VDAF and batch mode.
     pub async fn new(task_builder: TaskBuilder) -> JanusInProcessPair {
         let (task_parameters, mut task_builder) = build_test_task(
             task_builder,
@@ -118,7 +118,7 @@ async fn janus_janus_count() {
 
     // Start servers.
     let janus_pair =
-        JanusContainerPair::new(TEST_NAME, VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+        JanusContainerPair::new(TEST_NAME, VdafInstance::Prio3Count, BatchMode::TimeInterval).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -138,7 +138,7 @@ async fn janus_in_process_count() {
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3Count,
     ))
     .await;
@@ -165,7 +165,7 @@ async fn janus_janus_sum_16() {
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
         VdafInstance::Prio3Sum { bits: 16 },
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
     )
     .await;
 
@@ -187,7 +187,7 @@ async fn janus_in_process_sum_16() {
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3Sum { bits: 16 },
     ))
     .await;
@@ -218,7 +218,7 @@ async fn janus_janus_histogram_4_buckets() {
             chunk_length: 2,
             dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
         },
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
     )
     .await;
 
@@ -240,7 +240,7 @@ async fn janus_in_process_histogram_4_buckets() {
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
@@ -259,11 +259,11 @@ async fn janus_in_process_histogram_4_buckets() {
     .await;
 }
 
-/// This test exercises the fixed-size query type with Janus as both the leader and the helper.
+/// This test exercises the leader-selected batch mode with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
-async fn janus_janus_fixed_size() {
-    static TEST_NAME: &str = "janus_janus_fixed_size";
+async fn janus_janus_leader_selected() {
+    static TEST_NAME: &str = "janus_janus_leader_selected";
     install_test_trace_subscriber();
     initialize_rustls();
 
@@ -271,7 +271,7 @@ async fn janus_janus_fixed_size() {
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
         VdafInstance::Prio3Count,
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(50),
             batch_time_window_size: None,
         },
@@ -288,15 +288,15 @@ async fn janus_janus_fixed_size() {
     .await;
 }
 
-/// This test exercises the fixed-size query type with Janus as both the leader and the helper.
+/// This test exercises the leader-selected batch mode with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
-async fn janus_in_process_fixed_size() {
+async fn janus_in_process_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::FixedSize {
+        BatchMode::LeaderSelected {
             max_batch_size: Some(50),
             batch_time_window_size: None,
         },
@@ -306,7 +306,7 @@ async fn janus_in_process_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
-        "janus_in_process_fixed_size",
+        "janus_in_process_leader_selected",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -330,7 +330,7 @@ async fn janus_janus_sum_vec() {
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
         },
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
     )
     .await;
 
@@ -350,7 +350,7 @@ async fn janus_in_process_sum_vec() {
     initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,
@@ -377,7 +377,7 @@ async fn janus_in_process_customized_sum_vec() {
     initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs: 2,
             bits: 16,
@@ -399,14 +399,14 @@ async fn janus_in_process_customized_sum_vec() {
 
 /// This test exercises a 1-round VDAF with an aggregation parameter.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "fixed size with agg param not yet supported (#225)"]
-async fn janus_in_process_one_round_with_agg_param_fixed_size() {
+#[ignore = "leader-selected with agg param not yet supported (#225)"]
+async fn janus_in_process_one_round_with_agg_param_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(
         TaskBuilder::new(
-            QueryType::FixedSize {
+            BatchMode::LeaderSelected {
                 max_batch_size: Some(50),
                 batch_time_window_size: None,
             },
@@ -417,7 +417,7 @@ async fn janus_in_process_one_round_with_agg_param_fixed_size() {
     .await;
 
     submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-        "janus_in_process_one_round_with_agg_param_fixed_size",
+        "janus_in_process_one_round_with_agg_param_leader_selected",
         &janus_pair.task_parameters,
         &[
             dummy::AggregationParam(10),
@@ -439,7 +439,7 @@ async fn janus_in_process_one_round_with_agg_param_time_interval() {
     initialize_rustls();
 
     let janus_pair = JanusInProcessPair::new(
-        TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+        TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_max_batch_query_count(3),
     )
     .await;
@@ -471,7 +471,7 @@ async fn janus_in_process_histogram_dp_noise() {
 
     let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3Histogram {
             length: HISTOGRAM_LENGTH,
             chunk_length: CHUNK_LENGTH,
@@ -533,7 +533,7 @@ async fn janus_in_process_sumvec_dp_noise() {
 
     let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
-        QueryType::TimeInterval,
+        BatchMode::TimeInterval,
         VdafInstance::Prio3SumVec {
             bits: BITS,
             length: VECTOR_LENGTH,

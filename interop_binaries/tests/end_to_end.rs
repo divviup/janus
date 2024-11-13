@@ -16,7 +16,7 @@ use janus_interop_binaries::{
     ContainerLogsDropGuard,
 };
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Duration, TaskId,
 };
 use prio::codec::Encode;
@@ -32,7 +32,7 @@ const TIME_PRECISION: u64 = 3600;
 
 enum QueryKind {
     TimeInterval,
-    FixedSize,
+    LeaderSelected,
 }
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
@@ -47,14 +47,14 @@ async fn run(
 ) -> serde_json::Value {
     install_test_trace_subscriber();
 
-    let (query_type_json, max_batch_size) = match query_kind {
+    let (batch_mode_json, max_batch_size) = match query_kind {
         QueryKind::TimeInterval => {
-            let query_type = json!(TimeInterval::CODE as u8);
-            (query_type, None)
+            let batch_mode = json!(TimeInterval::CODE as u8);
+            (batch_mode, None)
         }
-        QueryKind::FixedSize => {
-            let query_type = json!(FixedSize::CODE as u8);
-            (query_type, Some(json!(measurements.len())))
+        QueryKind::LeaderSelected => {
+            let batch_mode = json!(LeaderSelected::CODE as u8);
+            (batch_mode, Some(json!(measurements.len())))
         }
     };
 
@@ -249,7 +249,7 @@ async fn run(
             "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
             "collector_authentication_token": collector_auth_token,
-            "query_type": query_type_json,
+            "batch_mode": batch_mode_json,
         }))
         .send()
         .await
@@ -292,7 +292,7 @@ async fn run(
         "role": "leader",
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
-        "query_type": query_type_json,
+        "batch_mode": batch_mode_json,
         "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
@@ -344,7 +344,7 @@ async fn run(
         "role": "helper",
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
-        "query_type": query_type_json,
+        "batch_mode": batch_mode_json,
         "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
@@ -433,27 +433,27 @@ async fn run(
             // batch boundary.
             let batch_interval_duration = TIME_PRECISION * 2;
             json!({
-                "type": query_type_json,
+                "type": batch_mode_json,
                 "batch_interval_start": batch_interval_start,
                 "batch_interval_duration": batch_interval_duration,
             })
         }
-        QueryKind::FixedSize => {
+        QueryKind::LeaderSelected => {
             json!({
-                "type": query_type_json,
+                "type": batch_mode_json,
                 "subtype": 1, // current_batch
             })
         }
     };
 
-    // Try collecting one or more times. For fixed size tasks, a "current batch" query will fail
-    // with an invalid batch until enough reports are ready.
+    // Try collecting one or more times. For leader-selected tasks, a "current batch" query will
+    // fail with an invalid batch until enough reports are ready.
     let mut collect_attempt_backoff = ExponentialBackoffBuilder::new()
         .with_initial_interval(StdDuration::from_secs(1))
         .with_max_interval(StdDuration::from_secs(1))
         .with_max_elapsed_time(match query_kind {
             QueryKind::TimeInterval => Some(StdDuration::from_secs(0)),
-            QueryKind::FixedSize => Some(StdDuration::from_secs(15)),
+            QueryKind::LeaderSelected => Some(StdDuration::from_secs(15)),
         })
         .build();
     loop {
@@ -561,7 +561,7 @@ async fn run(
             "error: {:?}",
             collection_poll_response_object.get("error"),
         );
-        if let QueryKind::FixedSize = query_kind {
+        if let QueryKind::LeaderSelected = query_kind {
             let batch_id_encoded = collection_poll_response_object
                 .get("batch_id")
                 .expect("completed collection_poll response is missing \"batch_id\"")
@@ -777,13 +777,13 @@ async fn e2e_prio3_fixed32vec() {
 }
 
 #[tokio::test]
-async fn e2e_prio3_fixed16vec_fixed_size() {
+async fn e2e_prio3_fixed16vec_leader_selected() {
     const FP16_4_INV: I1F15 = I1F15::lit("0.25");
     const FP16_8_INV: I1F15 = I1F15::lit("0.125");
     const FP16_16_INV: I1F15 = I1F15::lit("0.0625");
     let result = run(
-        "e2e_prio3_fixed16vec_fixed_size",
-        QueryKind::FixedSize,
+        "e2e_prio3_fixed16vec_leader_selected",
+        QueryKind::LeaderSelected,
         json!({"type": "Prio3FixedPointBoundedL2VecSum",
                "bitsize": "BitSize16",
                "length": "3"}),
@@ -816,13 +816,13 @@ async fn e2e_prio3_fixed16vec_fixed_size() {
 }
 
 #[tokio::test]
-async fn e2e_prio3_fixed32vec_fixed_size() {
+async fn e2e_prio3_fixed32vec_leader_selected() {
     const FP32_4_INV: I1F31 = I1F31::lit("0.25");
     const FP32_8_INV: I1F31 = I1F31::lit("0.125");
     const FP32_16_INV: I1F31 = I1F31::lit("0.0625");
     let result = run(
-        "e2e_prio3_fixed32vec_fixed_size",
-        QueryKind::FixedSize,
+        "e2e_prio3_fixed32vec_leader_selected",
+        QueryKind::LeaderSelected,
         json!({"type": "Prio3FixedPointBoundedL2VecSum",
                "bitsize": "BitSize32",
                "length": "3"}),
@@ -855,10 +855,10 @@ async fn e2e_prio3_fixed32vec_fixed_size() {
 }
 
 #[tokio::test]
-async fn e2e_prio3_count_fixed_size() {
+async fn e2e_prio3_count_leader_selected() {
     let result = run(
-        "e2e_prio3_count_fixed_size",
-        QueryKind::FixedSize,
+        "e2e_prio3_count_leader_selected",
+        QueryKind::LeaderSelected,
         json!({"type": "Prio3Count"}),
         &[
             json!("0"),

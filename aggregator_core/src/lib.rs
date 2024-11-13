@@ -11,8 +11,8 @@ use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
 use trillium_router::RouterConnExt;
 
+pub mod batch_mode;
 pub mod datastore;
-pub mod query_type;
 pub mod task;
 pub mod taskprov;
 

@@ -1,8 +1,8 @@
 use crate::{
     roundtrip_encoding, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchId, FixedSize, HpkeCiphertext, HpkeConfigId, PartialBatchSelector,
-    PrepareContinue, PrepareError, PrepareInit, PrepareResp, PrepareStepResult, ReportId,
-    ReportMetadata, ReportShare, Time,
+    AggregationJobStep, BatchId, HpkeCiphertext, HpkeConfigId, LeaderSelected,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportId, ReportMetadata, ReportShare, Time,
 };
 use prio::topology::ping_pong::PingPongMessage;
 
@@ -256,7 +256,7 @@ fn roundtrip_prepare_resp() {
         (
             PrepareResp {
                 report_id: ReportId::from([255; 16]),
-                result: PrepareStepResult::Reject(PrepareError::VdafPrepError),
+                result: PrepareStepResult::Reject(ReportError::VdafPrepError),
             },
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
@@ -270,16 +270,16 @@ fn roundtrip_prepare_resp() {
 #[test]
 fn roundtrip_report_share_error() {
     roundtrip_encoding(&[
-        (PrepareError::BatchCollected, "00"),
-        (PrepareError::ReportReplayed, "01"),
-        (PrepareError::ReportDropped, "02"),
-        (PrepareError::HpkeUnknownConfigId, "03"),
-        (PrepareError::HpkeDecryptError, "04"),
-        (PrepareError::VdafPrepError, "05"),
-        (PrepareError::BatchSaturated, "06"),
-        (PrepareError::TaskExpired, "07"),
-        (PrepareError::InvalidMessage, "08"),
-        (PrepareError::ReportTooEarly, "09"),
+        (ReportError::BatchCollected, "00"),
+        (ReportError::ReportReplayed, "01"),
+        (ReportError::ReportDropped, "02"),
+        (ReportError::HpkeUnknownConfigId, "03"),
+        (ReportError::HpkeDecryptError, "04"),
+        (ReportError::VdafPrepError, "05"),
+        (ReportError::BatchSaturated, "06"),
+        (ReportError::TaskExpired, "07"),
+        (ReportError::InvalidMessage, "08"),
+        (ReportError::ReportTooEarly, "09"),
     ])
 }
 
@@ -335,7 +335,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // partial_batch_selector
-                "01", // query_type
+                "01", // batch_mode
             ),
             concat!(
                 // prepare_inits
@@ -419,11 +419,13 @@ fn roundtrip_aggregation_job_initialize_req() {
         ),
     )]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[(
-        AggregationJobInitializeReq::<FixedSize> {
+        AggregationJobInitializeReq::<LeaderSelected> {
             aggregation_parameter: Vec::from("012345"),
-            partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from([2u8; 32])),
+            partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
+                [2u8; 32],
+            )),
             prepare_inits: Vec::from([
                 PrepareInit {
                     report_share: ReportShare {
@@ -469,7 +471,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // partial_batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
             ),
             concat!(

@@ -1,8 +1,8 @@
 use crate::{
     roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
-    BatchSelector, Collection, CollectionReq, Duration, FixedSize, FixedSizeQuery, HpkeCiphertext,
-    HpkeConfigId, Interval, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time,
-    TimeInterval,
+    BatchSelector, Collection, CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, Interval,
+    LeaderSelected, LeaderSelectedQuery, PartialBatchSelector, Query, ReportIdChecksum, TaskId,
+    Time, TimeInterval,
 };
 use prio::codec::Decode;
 
@@ -24,7 +24,7 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // query_body
                         "000000000000D431", // start
@@ -52,7 +52,7 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000BF11", // start
@@ -68,12 +68,12 @@ fn roundtrip_collection_req() {
         ),
     ]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
-            CollectionReq::<FixedSize> {
+            CollectionReq::<LeaderSelected> {
                 query: Query {
-                    query_body: FixedSizeQuery::ByBatchId {
+                    query_body: LeaderSelectedQuery::ByBatchId {
                         batch_id: BatchId::from([10u8; 32]),
                     },
                 },
@@ -81,10 +81,10 @@ fn roundtrip_collection_req() {
             },
             concat!(
                 concat!(
-                    "02", // query_type
+                    "02", // batch_mode
                     concat!(
                         // query_body
-                        "00", // query_type
+                        "00", // batch_mode
                         "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                     ),
                 ),
@@ -96,18 +96,18 @@ fn roundtrip_collection_req() {
             ),
         ),
         (
-            CollectionReq::<FixedSize> {
-                query: Query::<FixedSize> {
-                    query_body: FixedSizeQuery::CurrentBatch,
+            CollectionReq::<LeaderSelected> {
+                query: Query::<LeaderSelected> {
+                    query_body: LeaderSelectedQuery::CurrentBatch,
                 },
                 aggregation_parameter: Vec::from("012345"),
             },
             concat!(
                 concat!(
-                    "02", // query_type
+                    "02", // batch_mode
                     concat!(
                         // query_body
-                        "01", // query_type
+                        "01", // batch_mode
                     ),
                 ),
                 concat!(
@@ -126,23 +126,23 @@ fn roundtrip_partial_batch_selector() {
     roundtrip_encoding(&[(
         PartialBatchSelector::new_time_interval(),
         concat!(
-            "01", // query_type
+            "01", // batch_mode
         ),
     )]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
-            PartialBatchSelector::new_fixed_size(BatchId::from([3u8; 32])),
+            PartialBatchSelector::new_leader_selected(BatchId::from([3u8; 32])),
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
             ),
         ),
         (
-            PartialBatchSelector::new_fixed_size(BatchId::from([4u8; 32])),
+            PartialBatchSelector::new_leader_selected(BatchId::from([4u8; 32])),
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
             ),
         ),
@@ -176,7 +176,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
                 "0000000000000000", // report_count
                 concat!(
@@ -233,7 +233,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                 ),
                 "0000000000000017", // report_count
                 concat!(
@@ -273,11 +273,11 @@ fn roundtrip_collection() {
         ),
     ]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
             Collection {
-                partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [3u8; 32],
                 )),
                 report_count: 0,
@@ -296,7 +296,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
                 ),
                 "0000000000000000", // report_count
@@ -337,7 +337,7 @@ fn roundtrip_collection() {
         ),
         (
             Collection {
-                partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [4u8; 32],
                 )),
                 report_count: 23,
@@ -356,7 +356,7 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
                 ),
                 "0000000000000017", // report_count
@@ -411,7 +411,7 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000D431", // start
@@ -428,7 +428,7 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000C685", // start
@@ -438,24 +438,24 @@ fn roundtrip_batch_selector() {
         ),
     ]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
-            BatchSelector::<FixedSize> {
+            BatchSelector::<LeaderSelected> {
                 batch_identifier: BatchId::from([12u8; 32]),
             },
             concat!(
                 // batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
             ),
         ),
         (
-            BatchSelector::<FixedSize> {
+            BatchSelector::<LeaderSelected> {
                 batch_identifier: BatchId::from([7u8; 32]),
             },
             concat!(
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
             ),
         ),
@@ -482,7 +482,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000D431", // start
@@ -514,7 +514,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // query_type
+                    "01", // batch_mode
                     concat!(
                         // batch_interval
                         "000000000000C685", // start
@@ -532,10 +532,10 @@ fn roundtrip_aggregate_share_req() {
         ),
     ]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[
         (
-            AggregateShareReq::<FixedSize> {
+            AggregateShareReq::<LeaderSelected> {
                 batch_selector: BatchSelector {
                     batch_identifier: BatchId::from([12u8; 32]),
                 },
@@ -546,7 +546,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
                 ),
                 concat!(
@@ -559,7 +559,7 @@ fn roundtrip_aggregate_share_req() {
             ),
         ),
         (
-            AggregateShareReq::<FixedSize> {
+            AggregateShareReq::<LeaderSelected> {
                 batch_selector: BatchSelector {
                     batch_identifier: BatchId::from([7u8; 32]),
                 },
@@ -570,7 +570,7 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // query_type
+                    "02", // batch_mode
                     "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
                 ),
                 concat!(
@@ -660,7 +660,7 @@ fn roundtrip_aggregate_share_aad() {
             ),
             concat!(
                 // batch_selector
-                "01", // query_type
+                "01", // batch_mode
                 concat!(
                     // batch_interval
                     "000000000000D431", // start
@@ -670,9 +670,9 @@ fn roundtrip_aggregate_share_aad() {
         ),
     )]);
 
-    // FixedSize.
+    // LeaderSelected.
     roundtrip_encoding(&[(
-        AggregateShareAad::<FixedSize> {
+        AggregateShareAad::<LeaderSelected> {
             task_id: TaskId::from([u8::MIN; 32]),
             aggregation_parameter: Vec::from([3, 2, 1, 0]),
             batch_selector: BatchSelector {
@@ -688,7 +688,7 @@ fn roundtrip_aggregate_share_aad() {
             ),
             concat!(
                 // batch_selector
-                "02",                                                               // query_type
+                "02",                                                               // batch_mode
                 "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
             ),
         ),

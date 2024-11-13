@@ -4,7 +4,7 @@ use janus_aggregator_core::{
     datastore::models::{
         GlobalHpkeKeypair, HpkeKeyState, TaskAggregationCounter, TaskUploadCounter,
     },
-    task::{AggregatorTask, QueryType},
+    task::{AggregatorTask, BatchMode},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
 use janus_core::{
@@ -12,7 +12,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
+    batch_mode::Code as SupportedBatchMode, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
     Role, TaskId, Time,
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -35,7 +35,7 @@ pub(crate) struct AggregatorApiConfig {
     pub dap_url: Url,
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
-    pub query_types: Vec<SupportedQueryType>,
+    pub batch_modes: Vec<SupportedBatchMode>,
     pub features: &'static [&'static str],
     pub software_name: &'static str,
     pub software_version: &'static str,
@@ -65,8 +65,8 @@ pub(crate) struct PostTaskReq {
     /// aggregator plays the DAP role opposite to the one in the `role` field.
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub(crate) peer_aggregator_endpoint: Url,
-    /// DAP query type for this task.
-    pub(crate) query_type: QueryType,
+    /// DAP batch mode for this task.
+    pub(crate) batch_mode: BatchMode,
     /// The VDAF being run by this task.
     pub(crate) vdaf: VdafInstance,
     /// The role that this aggregator will play in this task.
@@ -109,8 +109,8 @@ pub(crate) struct TaskResp {
     /// aggregator plays the DAP role opposite to the one in the `role` field.
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub(crate) peer_aggregator_endpoint: Url,
-    /// DAP query type for this task.
-    pub(crate) query_type: QueryType,
+    /// DAP batch mode for this task.
+    pub(crate) batch_mode: BatchMode,
     /// The VDAF being run by this task.
     pub(crate) vdaf: VdafInstance,
     /// The role that this aggregator will play in this task.
@@ -156,7 +156,7 @@ impl TryFrom<&AggregatorTask> for TaskResp {
         Ok(Self {
             task_id: *task.id(),
             peer_aggregator_endpoint: task.peer_aggregator_endpoint().clone(),
-            query_type: *task.query_type(),
+            batch_mode: *task.batch_mode(),
             vdaf: task.vdaf().clone(),
             role: *task.role(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),

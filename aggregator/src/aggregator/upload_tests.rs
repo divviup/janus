@@ -13,7 +13,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        QueryType,
+        BatchMode,
     },
     test_util::noop_meter,
 };
@@ -28,7 +28,7 @@ use janus_core::{
     Runtime,
 };
 use janus_messages::{
-    query_type::TimeInterval, Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
+    batch_mode::TimeInterval, Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
     PlaintextInputShare, Query, Report, Role,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
@@ -58,7 +58,7 @@ impl UploadTest {
 
         let clock = MockClock::default();
         let vdaf = Prio3Count::new_count(2).unwrap();
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
 
         let leader_task = task.leader_view().unwrap();
 
@@ -562,7 +562,7 @@ async fn upload_report_task_expired() {
     )
     .await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_task_expiration(Some(clock.now()))
         .build()
         .leader_view()
@@ -622,7 +622,7 @@ async fn upload_report_report_expired() {
     )
     .await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
         .with_report_expiry_age(Some(Duration::from_seconds(60)))
         .build()
         .leader_view()

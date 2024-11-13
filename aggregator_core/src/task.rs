@@ -31,16 +31,16 @@ pub enum Error {
     Base64Decode(#[from] base64::DecodeError),
 }
 
-/// Identifiers for query types used by a task, along with query-type specific configuration.
+/// Identifiers for batch modes used by a task, along with batch mode-specific configuration.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum QueryType {
+pub enum BatchMode {
     /// Time-interval: used to support a collection style based on fixed time intervals.
     TimeInterval,
 
-    /// Fixed-size: used to support collection of batches as quickly as possible, without the
+    /// Leader-selected: used to support collection of batches as quickly as possible, without the
     /// latency of waiting for batch time intervals to pass, and with direct control over the number
     /// of reports per batch.
-    FixedSize {
+    LeaderSelected {
         /// If present, the maximum number of reports in a batch to allow it to be collected. If
         /// absent, then there is no limit to the number of reports that Janus will include in a
         /// batch, but we generally try to make batches close to the task's `min_batch_size`.
@@ -56,16 +56,15 @@ pub enum QueryType {
     },
 }
 
-impl TryFrom<&taskprov::Query> for QueryType {
+impl TryFrom<&taskprov::Query> for BatchMode {
     type Error = Error;
 
     fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
         match value {
             taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
-            taskprov::Query::FixedSize { max_batch_size } => Ok(Self::FixedSize {
-                // taskprov's QueryConfig always sets a max_batch_size value (if
-                // query type is fixed size), but in the forthcoming draft 6, a
-                // value of 0 will mean "no maximum".
+            taskprov::Query::LeaderSelected { max_batch_size } => Ok(Self::LeaderSelected {
+                // taskprov's QueryConfig always sets a max_batch_size value (if batch mode is fixed
+                // size), but in the forthcoming draft 6, a value of 0 will mean "no maximum".
                 //
                 // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/blob/1ddcb35830923d2a770bb737b95e19033fa44a83/draft-wang-ppm-dap-taskprov.md?plain=1#L197
                 max_batch_size: if *max_batch_size == 0 {
@@ -75,7 +74,7 @@ impl TryFrom<&taskprov::Query> for QueryType {
                 },
                 batch_time_window_size: None,
             }),
-            _ => Err(Error::InvalidParameter("unknown query type")),
+            _ => Err(Error::InvalidParameter("unknown batch mode")),
         }
     }
 }
@@ -111,8 +110,8 @@ impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
 struct CommonTaskParameters {
     /// Unique identifier for the task.
     task_id: TaskId,
-    /// The query type this task uses to generate batches.
-    query_type: QueryType,
+    /// The batch mode this task uses to generate batches.
+    batch_mode: BatchMode,
     /// The VDAF this task executes.
     vdaf: VdafInstance,
     /// Secret verification key shared by the aggregators.
@@ -145,7 +144,7 @@ impl CommonTaskParameters {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
-        query_type: QueryType,
+        batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
         max_batch_query_count: u64,
@@ -159,10 +158,10 @@ impl CommonTaskParameters {
             return Err(Error::InvalidParameter("min_batch_size"));
         }
 
-        if let QueryType::FixedSize {
+        if let BatchMode::LeaderSelected {
             max_batch_size: Some(max_batch_size),
             batch_time_window_size: Some(batch_time_window_size),
-        } = query_type
+        } = batch_mode
         {
             if max_batch_size < min_batch_size {
                 return Err(Error::InvalidParameter("max_batch_size"));
@@ -192,7 +191,7 @@ impl CommonTaskParameters {
 
         Ok(Self {
             task_id,
-            query_type,
+            batch_mode,
             vdaf,
             vdaf_verify_key,
             max_batch_query_count,
@@ -238,7 +237,7 @@ impl AggregatorTask {
     pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
         peer_aggregator_endpoint: Url,
-        query_type: QueryType,
+        batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
         max_batch_query_count: u64,
@@ -252,7 +251,7 @@ impl AggregatorTask {
     ) -> Result<Self, Error> {
         let common_parameters = CommonTaskParameters::new(
             task_id,
-            query_type,
+            batch_mode,
             vdaf,
             vdaf_verify_key,
             max_batch_query_count,
@@ -290,10 +289,10 @@ impl AggregatorTask {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
 
-        if let QueryType::FixedSize {
+        if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
             ..
-        } = common_parameters.query_type
+        } = common_parameters.batch_mode
         {
             if matches!(
                 aggregator_parameters,
@@ -333,9 +332,9 @@ impl AggregatorTask {
         &self.peer_aggregator_endpoint
     }
 
-    /// Retrieves the query type associated with this task.
-    pub fn query_type(&self) -> &QueryType {
-        &self.common_parameters.query_type
+    /// Retrieves the batch mode associated with this task.
+    pub fn batch_mode(&self) -> &BatchMode {
+        &self.common_parameters.batch_mode
     }
 
     /// Retrieves the VDAF associated with this task.
@@ -378,16 +377,16 @@ impl AggregatorTask {
         &self.common_parameters.tolerable_clock_skew
     }
 
-    /// Returns true if the `batch_size` is valid given this task's query type and batch size
+    /// Returns true if the `batch_size` is valid given this task's batch mode and batch size
     /// parameters, per
     /// <https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#name-batch-validation>
     pub fn validate_batch_size(&self, batch_size: u64) -> bool {
-        match self.common_parameters.query_type {
-            QueryType::TimeInterval => {
+        match self.common_parameters.batch_mode {
+            BatchMode::TimeInterval => {
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.1.2
                 batch_size >= self.common_parameters.min_batch_size
             }
-            QueryType::FixedSize { max_batch_size, .. } => {
+            BatchMode::LeaderSelected { max_batch_size, .. } => {
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.2.2
                 batch_size >= self.common_parameters.min_batch_size
                     && max_batch_size.map_or(true, |max_batch_size| batch_size <= max_batch_size)
@@ -623,7 +622,7 @@ impl AggregatorTaskParameters {
 pub struct SerializedAggregatorTask {
     task_id: Option<TaskId>,
     peer_aggregator_endpoint: Url,
-    query_type: QueryType,
+    batch_mode: BatchMode,
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_key: Option<String>, // in unpadded base64url
@@ -696,7 +695,7 @@ impl Serialize for AggregatorTask {
         SerializedAggregatorTask {
             task_id: Some(*self.id()),
             peer_aggregator_endpoint: self.peer_aggregator_endpoint().clone(),
-            query_type: *self.query_type(),
+            batch_mode: *self.batch_mode(),
             vdaf: self.vdaf().clone(),
             role: *self.role(),
             vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(self.opaque_vdaf_verify_key())),
@@ -762,7 +761,7 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
         AggregatorTask::new(
             task_id,
             serialized_task.peer_aggregator_endpoint,
-            serialized_task.query_type,
+            serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
             serialized_task.max_batch_query_count,
@@ -790,7 +789,7 @@ impl<'de> Deserialize<'de> for AggregatorTask {
 pub mod test_util {
     use crate::{
         task::{
-            AggregatorTask, AggregatorTaskParameters, CommonTaskParameters, Error, QueryType,
+            AggregatorTask, AggregatorTaskParameters, BatchMode, CommonTaskParameters, Error,
             VerifyKey,
         },
         SecretBytes,
@@ -843,7 +842,7 @@ pub mod test_util {
             task_id: TaskId,
             leader_aggregator_endpoint: Url,
             helper_aggregator_endpoint: Url,
-            query_type: QueryType,
+            batch_mode: BatchMode,
             vdaf: VdafInstance,
             vdaf_verify_key: SecretBytes,
             max_batch_query_count: u64,
@@ -872,7 +871,7 @@ pub mod test_util {
             Self {
                 common_parameters: CommonTaskParameters {
                     task_id,
-                    query_type,
+                    batch_mode,
                     vdaf,
                     vdaf_verify_key,
                     max_batch_query_count,
@@ -911,9 +910,9 @@ pub mod test_util {
             &self.helper_aggregator_endpoint
         }
 
-        /// Retrieves the query type associated with this task.
-        pub fn query_type(&self) -> &QueryType {
-            &self.common_parameters.query_type
+        /// Retrieves the batch mode associated with this task.
+        pub fn batch_mode(&self) -> &BatchMode {
+            &self.common_parameters.batch_mode
         }
 
         /// Retrieves the VDAF associated with this task.
@@ -1090,7 +1089,7 @@ pub mod test_util {
         /// Create a [`TaskBuilder`] from the provided values, with arbitrary values for the other
         /// task parameters. Defaults to using `AuthenticationToken::Bearer` for the aggregator and
         /// collector authentication tokens.
-        pub fn new(query_type: QueryType, vdaf: VdafInstance) -> Self {
+        pub fn new(batch_mode: BatchMode, vdaf: VdafInstance) -> Self {
             let task_id = random();
 
             let leader_hpke_keypairs = [HpkeKeypair::test(), HpkeKeypair::test_with_id(1)];
@@ -1107,7 +1106,7 @@ pub mod test_util {
                 task_id,
                 "https://leader.endpoint".parse().unwrap(),
                 "https://helper.endpoint".parse().unwrap(),
-                query_type,
+                batch_mode,
                 vdaf,
                 vdaf_verify_key,
                 1,
@@ -1150,9 +1149,9 @@ pub mod test_util {
             })
         }
 
-        /// Gets the query type for the eventual task
-        pub fn query_type(&self) -> &QueryType {
-            self.0.query_type()
+        /// Gets the batch mode for the eventual task
+        pub fn batch_mode(&self) -> &BatchMode {
+            self.0.batch_mode()
         }
 
         /// Gets the VDAF for the eventual task
@@ -1333,7 +1332,7 @@ pub mod test_util {
 mod tests {
     use crate::{
         task::{
-            test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType,
+            test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, BatchMode,
             VdafInstance,
         },
         SecretBytes,
@@ -1356,7 +1355,7 @@ mod tests {
     #[test]
     fn leader_task_serialization() {
         roundtrip_encoding(
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .leader_view()
                 .unwrap(),
@@ -1366,7 +1365,7 @@ mod tests {
     #[test]
     fn helper_task_serialization() {
         roundtrip_encoding(
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                 .build()
                 .helper_view()
                 .unwrap(),
@@ -1381,7 +1380,7 @@ mod tests {
 
     #[test]
     fn aggregator_endpoints_end_in_slash() {
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
             .with_leader_aggregator_endpoint("http://leader_endpoint/foo/bar".parse().unwrap())
             .with_helper_aggregator_endpoint("http://helper_endpoint".parse().unwrap())
             .build();
@@ -1401,11 +1400,11 @@ mod tests {
         for (prefix, task) in [
             (
                 "",
-                TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build(),
+                TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build(),
             ),
             (
                 "/prefix",
-                TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+                TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
                     .with_leader_aggregator_endpoint("https://leader.com/prefix/".parse().unwrap())
                     .with_helper_aggregator_endpoint("https://helper.com/prefix/".parse().unwrap())
                     .build(),
@@ -1432,7 +1431,7 @@ mod tests {
 
     #[test]
     fn request_authentication() {
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
 
         let leader_task = task.leader_view().unwrap();
         let helper_task = task.helper_view().unwrap();
@@ -1464,7 +1463,7 @@ mod tests {
             &AggregatorTask::new(
                 TaskId::from([0; 32]),
                 "https://example.net/".parse().unwrap(),
-                QueryType::TimeInterval,
+                BatchMode::TimeInterval,
                 VdafInstance::Prio3Count,
                 SecretBytes::new(b"1234567812345678".to_vec()),
                 1,
@@ -1512,9 +1511,9 @@ mod tests {
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.net/"),
-                Token::Str("query_type"),
+                Token::Str("batch_mode"),
                 Token::UnitVariant {
-                    name: "QueryType",
+                    name: "BatchMode",
                     variant: "TimeInterval",
                 },
                 Token::Str("vdaf"),
@@ -1648,7 +1647,7 @@ mod tests {
             &AggregatorTask::new(
                 TaskId::from([255; 32]),
                 "https://example.com/".parse().unwrap(),
-                QueryType::FixedSize {
+                BatchMode::LeaderSelected {
                     max_batch_size: Some(10),
                     batch_time_window_size: None,
                 },
@@ -1702,10 +1701,10 @@ mod tests {
                 Token::Str("__________________________________________8"),
                 Token::Str("peer_aggregator_endpoint"),
                 Token::Str("https://example.com/"),
-                Token::Str("query_type"),
+                Token::Str("batch_mode"),
                 Token::StructVariant {
-                    name: "QueryType",
-                    variant: "FixedSize",
+                    name: "BatchMode",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1849,23 +1848,23 @@ mod tests {
     }
 
     #[test]
-    fn query_type_serde() {
+    fn batch_mode_serde() {
         assert_tokens(
-            &QueryType::TimeInterval,
+            &BatchMode::TimeInterval,
             &[Token::UnitVariant {
-                name: "QueryType",
+                name: "BatchMode",
                 variant: "TimeInterval",
             }],
         );
         assert_tokens(
-            &QueryType::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
-                    name: "QueryType",
-                    variant: "FixedSize",
+                    name: "BatchMode",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1877,14 +1876,14 @@ mod tests {
             ],
         );
         assert_tokens(
-            &QueryType::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
             },
             &[
                 Token::StructVariant {
-                    name: "QueryType",
-                    variant: "FixedSize",
+                    name: "BatchMode",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1898,14 +1897,14 @@ mod tests {
             ],
         );
         assert_tokens(
-            &QueryType::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: None,
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
-                    name: "QueryType",
-                    variant: "FixedSize",
+                    name: "BatchMode",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1918,14 +1917,14 @@ mod tests {
 
         // Backwards compatibility cases:
         assert_de_tokens(
-            &QueryType::FixedSize {
+            &BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
-                    name: "QueryType",
-                    variant: "FixedSize",
+                    name: "BatchMode",
+                    variant: "LeaderSelected",
                     len: 2,
                 },
                 Token::Str("max_batch_size"),
@@ -1935,15 +1934,15 @@ mod tests {
             ],
         );
         assert_matches!(
-            serde_json::from_value(json!({ "FixedSize": { "max_batch_size": 10 } })),
-            Ok(QueryType::FixedSize {
+            serde_json::from_value(json!({ "LeaderSelected": { "max_batch_size": 10 } })),
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
         );
         assert_matches!(
-            serde_yaml::from_str("!FixedSize { max_batch_size: 10 }"),
-            Ok(QueryType::FixedSize {
+            serde_yaml::from_str("!LeaderSelected { max_batch_size: 10 }"),
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
@@ -1951,11 +1950,11 @@ mod tests {
         assert_matches!(
             serde_yaml::from_str(
                 "---
-!FixedSize
+!LeaderSelected
   max_batch_size: 10
   batch_time_window_size: 3600"
             ),
-            Ok(QueryType::FixedSize {
+            Ok(BatchMode::LeaderSelected {
                 max_batch_size: Some(10),
                 batch_time_window_size: Some(duration),
             }) => assert_eq!(duration, Duration::from_seconds(3600))

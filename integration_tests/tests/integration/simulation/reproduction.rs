@@ -14,7 +14,7 @@ fn successful_collection_time_interval() {
 
     let collection_job_id = random();
     let input = Input {
-        is_fixed_size: false,
+        is_leader_selected: false,
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 4,
@@ -82,12 +82,12 @@ fn successful_collection_time_interval() {
 }
 
 #[test]
-fn successful_collection_fixed_size() {
+fn successful_collection_leader_selected() {
     install_test_trace_subscriber();
 
     let collection_job_id = random();
     let input = Input {
-        is_fixed_size: true,
+        is_leader_selected: true,
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 4,
@@ -121,7 +121,7 @@ fn successful_collection_fixed_size() {
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSizeCurrentBatch,
+                query: Query::LeaderSelectedCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -133,7 +133,7 @@ fn successful_collection_fixed_size() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSizeCurrentBatch,
+                query: Query::LeaderSelectedCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -149,7 +149,7 @@ fn repro_slow_uploads_with_max_batch_size() {
 
     let collection_job_id = random();
     let input = Input {
-        is_fixed_size: true,
+        is_leader_selected: true,
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 4,
@@ -198,7 +198,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::FixedSizeCurrentBatch,
+                query: Query::LeaderSelectedCurrentBatch,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -213,7 +213,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
     install_test_trace_subscriber();
 
     let input = Input {
-        is_fixed_size: false,
+        is_leader_selected: false,
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 1,
@@ -249,11 +249,11 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
 
 #[test]
 /// Regression test for https://github.com/divviup/janus/issues/2442.
-fn repro_gc_changes_aggregation_job_retry_fixed_size() {
+fn repro_gc_changes_aggregation_job_retry_leader_selected() {
     install_test_trace_subscriber();
 
     let input = Input {
-        is_fixed_size: true,
+        is_leader_selected: true,
         config: Config {
             time_precision: Duration::from_seconds(3600),
             min_batch_size: 1,
@@ -293,7 +293,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
     install_test_trace_subscriber();
 
     let input = Input {
-        is_fixed_size: false,
+        is_leader_selected: false,
         config: Config {
             time_precision: Duration::from_seconds(1000),
             min_batch_size: 100,
@@ -332,7 +332,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
 
     let collection_job_id = random();
     let input = Input {
-        is_fixed_size: false,
+        is_leader_selected: false,
         config: Config {
             time_precision: Duration::from_seconds(1000),
             min_batch_size: 1,
@@ -381,7 +381,7 @@ fn repro_helper_accumulate_on_retried_request() {
     install_test_trace_subscriber();
 
     let input = Input {
-        is_fixed_size: false,
+        is_leader_selected: false,
         config: Config {
             time_precision: Duration::from_seconds(1000),
             min_batch_size: 1,

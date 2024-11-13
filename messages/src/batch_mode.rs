@@ -1,4 +1,4 @@
-use crate::{Collection, FixedSizeQuery, Query};
+use crate::{Collection, LeaderSelectedQuery, Query};
 
 use super::{BatchId, Interval};
 use anyhow::anyhow;
@@ -11,10 +11,10 @@ use std::{
     io::Cursor,
 };
 
-/// QueryType represents a DAP query type. This is a task-level configuration setting which
+/// BatchMode represents a DAP batch mode. This is a task-level configuration setting which
 /// determines how individual client reports are grouped together into batches for collection.
-pub trait QueryType: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
-    /// The [`Code`] associated with this query type.
+pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
+    /// The [`Code`] associated with this batch mode.
     const CODE: Code;
 
     /// The type of a batch identifier.
@@ -45,7 +45,7 @@ pub trait QueryType: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
         + Send
         + Sync;
 
-    /// The type of the body of a [`Query`] for this query type.
+    /// The type of the body of a [`Query`] for this batch mode.
     type QueryBody: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
 
     /// Computes the `PartialBatchIdentifier` corresponding to the given
@@ -61,11 +61,11 @@ pub trait QueryType: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
     ) -> Self::BatchIdentifier;
 }
 
-/// Represents a `time-interval` DAP query type.
+/// Represents the `time-interval` DAP batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TimeInterval;
 
-impl QueryType for TimeInterval {
+impl BatchMode for TimeInterval {
     const CODE: Code = Code::TimeInterval;
 
     type BatchIdentifier = Interval;
@@ -84,16 +84,16 @@ impl QueryType for TimeInterval {
     }
 }
 
-/// Represents a `fixed-size` DAP query type.
+/// Represents the `leader-selected` DAP batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct FixedSize;
+pub struct LeaderSelected;
 
-impl QueryType for FixedSize {
-    const CODE: Code = Code::FixedSize;
+impl BatchMode for LeaderSelected {
+    const CODE: Code = Code::LeaderSelected;
 
     type BatchIdentifier = BatchId;
     type PartialBatchIdentifier = BatchId;
-    type QueryBody = FixedSizeQuery;
+    type QueryBody = LeaderSelectedQuery;
 
     fn partial_batch_identifier(
         batch_identifier: &Self::BatchIdentifier,
@@ -109,14 +109,14 @@ impl QueryType for FixedSize {
     }
 }
 
-/// DAP protocol message representing the type of a query.
+/// DAP protocol message indicating a batch mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum Code {
     Reserved = 0,
     TimeInterval = 1,
-    FixedSize = 2,
+    LeaderSelected = 2,
 }
 
 impl Code {
@@ -127,7 +127,7 @@ impl Code {
         let code = Self::decode(bytes)?;
         if code != expected_code {
             return Err(CodecError::Other(
-                format!("unexpected query_type: {code:?} (expected {expected_code:?})").into(),
+                format!("unexpected batch_mode: {code:?} (expected {expected_code:?})").into(),
             ));
         }
         Ok(())
@@ -148,6 +148,6 @@ impl Decode for Code {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected QueryType value {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected BatchMode code {}", val).into()))
     }
 }
