@@ -11,7 +11,7 @@ use prio::{
 use serde::{Deserialize, Serialize};
 use std::str;
 
-/// The length of the verify key parameter for Prio3 and Poplar1 VDAF instantiations using
+/// The length of the verify key parameter for Prio3 VDAF instantiations using
 /// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
 pub const VERIFY_KEY_LENGTH: usize = 16;
 
@@ -131,8 +131,6 @@ pub enum VdafInstance {
         dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
         length: usize,
     },
-    /// The `poplar1` VDAF. Support for this VDAF is experimental.
-    Poplar1 { bits: usize },
 
     /// A fake, no-op VDAF, which uses an aggregation parameter and a variable number of rounds.
     #[cfg(feature = "test-util")]
@@ -161,7 +159,7 @@ impl VdafInstance {
                 VERIFY_KEY_LENGTH_HMACSHA256_AES128
             }
 
-            // All other VDAFs (Prio3 as-specified and Poplar1) have the same verify key length.
+            // All other VDAFs (Prio3 as-specified) have the same verify key length.
             _ => VERIFY_KEY_LENGTH,
         }
     }
@@ -206,9 +204,10 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
             }),
-            taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
-                bits: *bits as usize,
-            }),
+
+            #[cfg(feature = "test-util")]
+            taskprov::VdafType::Fake { rounds } => Ok(Self::Fake { rounds: *rounds }),
+
             _ => Err("unknown VdafType"),
         }
     }
@@ -349,16 +348,6 @@ macro_rules! vdaf_dispatch_impl_base {
                 }
             }
 
-            ::janus_core::vdaf::VdafInstance::Poplar1 { bits } => {
-                let $vdaf = ::prio::vdaf::poplar1::Poplar1::new_turboshake128(*bits);
-                type $Vdaf =
-                    ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofTurboShake128, 16>;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
             _ => unreachable!(),
         }
     };
@@ -480,8 +469,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
+            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
@@ -510,8 +498,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
+            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
@@ -534,8 +521,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
+            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
@@ -560,8 +546,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
+            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
@@ -788,19 +773,6 @@ mod tests {
                 Token::Str("dp_strategy"),
                 Token::Str("NoDifferentialPrivacy"),
                 Token::StructEnd,
-                Token::StructVariantEnd,
-            ],
-        );
-        assert_tokens(
-            &VdafInstance::Poplar1 { bits: 64 },
-            &[
-                Token::StructVariant {
-                    name: "VdafInstance",
-                    variant: "Poplar1",
-                    len: 1,
-                },
-                Token::Str("bits"),
-                Token::U64(64),
                 Token::StructVariantEnd,
             ],
         );

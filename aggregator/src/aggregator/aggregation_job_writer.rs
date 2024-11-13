@@ -795,13 +795,6 @@ where
                                                 )],
                                             ),
 
-                                        Poplar1 { bits } => metrics
-                                            .aggregated_report_share_dimension_histogram
-                                            .record(
-                                                u64::try_from(*bits).unwrap_or(u64::MAX),
-                                                &[KeyValue::new("type", "Poplar1")],
-                                            ),
-
                                         #[cfg(feature = "test-util")]
                                         Fake { rounds: _ }
                                         | FakeFailsPrepInit

@@ -7,7 +7,7 @@ use prio::flp::{
     types::fixedpoint_l2::{compatible_float::CompatibleFloat, FixedPointBoundedL2VecSum},
 };
 #[cfg(feature = "test-util")]
-use prio::vdaf::dummy::Vdaf;
+use prio::vdaf::{dummy, AggregatorWithNoise};
 use prio::{
     dp::{
         DifferentialPrivacyBudget, DifferentialPrivacyDistribution, DifferentialPrivacyStrategy,
@@ -18,7 +18,6 @@ use prio::{
         gadgets::{Mul, ParallelSumGadget},
         TypeWithNoise,
     },
-    vdaf::{xof::XofTurboShake128, AggregatorWithNoise},
 };
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +49,7 @@ impl DifferentialPrivacyStrategy for NoDifferentialPrivacy {
 
 // identity strategy implementations for vdafs from janus
 #[cfg(feature = "test-util")]
-impl AggregatorWithNoise<0, 16, NoDifferentialPrivacy> for Vdaf {
+impl AggregatorWithNoise<0, 16, NoDifferentialPrivacy> for dummy::Vdaf {
     fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
@@ -141,20 +140,6 @@ where
         _agg_result: &mut [Self::Field],
         _num_measurements: usize,
     ) -> Result<(), prio::flp::FlpError> {
-        Ok(())
-    }
-}
-
-impl AggregatorWithNoise<16, 16, NoDifferentialPrivacy>
-    for prio::vdaf::poplar1::Poplar1<XofTurboShake128, 16>
-{
-    fn add_noise_to_agg_share(
-        &self,
-        _dp_strategy: &NoDifferentialPrivacy,
-        _agg_param: &Self::AggregationParam,
-        _agg_share: &mut Self::AggregateShare,
-        _num_measurements: usize,
-    ) -> Result<(), prio::vdaf::VdafError> {
         Ok(())
     }
 }

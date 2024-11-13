@@ -422,7 +422,7 @@ mod tests {
     use janus_core::{
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::{IntervalExt, MockClock},
-        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+        vdaf::VdafInstance,
     };
     use janus_messages::{
         batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobId,
@@ -430,13 +430,8 @@ mod tests {
         PartialBatchSelector, PrepareContinue, PrepareResp, PrepareStepResult, Role,
     };
     use prio::{
-        codec::Encode,
-        idpf::IdpfInput,
-        vdaf::{
-            poplar1::{Poplar1, Poplar1AggregationParam},
-            xof::XofTurboShake128,
-            Aggregator,
-        },
+        codec::Encode as _,
+        vdaf::{dummy, Aggregator},
     };
     use rand::random;
     use serde_json::json;
@@ -461,14 +456,14 @@ mod tests {
 
     /// Set up a helper with an aggregation job in step 0
     #[allow(clippy::unit_arg)]
-    async fn setup_aggregation_job_continue_test(
-    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>> {
+    async fn setup_aggregation_job_continue_test() -> AggregationJobContinueTestCase<0, dummy::Vdaf>
+    {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
         let task =
-            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 2 }).build();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -476,26 +471,22 @@ mod tests {
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let keypair = datastore.put_global_hpke_key().await.unwrap();
 
-        let aggregation_parameter = Poplar1AggregationParam::try_from_prefixes(Vec::from([
-            IdpfInput::from_bools(&[false]),
-        ]))
-        .unwrap();
+        let aggregation_parameter = dummy::AggregationParam(7);
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             keypair.config().clone(),
-            Poplar1::new_turboshake128(1),
-            aggregation_parameter.clone(),
+            dummy::Vdaf::new(2),
+            aggregation_parameter,
         );
 
-        let (prepare_init, transcript) =
-            prepare_init_generator.next(&IdpfInput::from_bools(&[true]));
+        let (prepare_init, transcript) = prepare_init_generator.next(&13);
 
         datastore
             .run_unnamed_tx(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (
                     helper_task.clone(),
-                    aggregation_parameter.clone(),
+                    aggregation_parameter,
                     prepare_init.clone(),
                     transcript.clone(),
                 );
@@ -506,11 +497,7 @@ mod tests {
                         .await
                         .unwrap();
 
-                    tx.put_aggregation_job(&AggregationJob::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Poplar1<XofTurboShake128, 16>,
-                    >::new(
+                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         aggregation_param,
@@ -522,21 +509,18 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
-                        &ReportAggregation::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            *prepare_init.report_share().metadata().id(),
-                            *prepare_init.report_share().metadata().time(),
-                            0,
-                            None,
-                            ReportAggregationState::WaitingHelper {
-                                prepare_state: transcript.helper_prepare_transitions[0]
-                                    .prepare_state()
-                                    .clone(),
-                            },
-                        ),
-                    )
+                    tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *prepare_init.report_share().metadata().id(),
+                        *prepare_init.report_share().metadata().time(),
+                        0,
+                        None,
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: *transcript.helper_prepare_transitions[0]
+                                .prepare_state(),
+                        },
+                    ))
                     .await
                     .unwrap();
 
@@ -583,7 +567,7 @@ mod tests {
     /// Set up a helper with an aggregation job in step 1.
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_step_recovery_test(
-    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>> {
+    ) -> AggregationJobContinueTestCase<0, dummy::Vdaf> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
         let first_continue_response = post_aggregation_job_and_decode(
@@ -728,9 +712,8 @@ mod tests {
     async fn aggregation_job_continue_step_recovery_mutate_continue_request() {
         let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
-        let (unrelated_prepare_init, unrelated_transcript) = test_case
-            .prepare_init_generator
-            .next(&IdpfInput::from_bools(&[false]));
+        let (unrelated_prepare_init, unrelated_transcript) =
+            test_case.prepare_init_generator.next(&13);
 
         let (before_aggregation_job, before_report_aggregations) = test_case
             .datastore
@@ -746,7 +729,7 @@ mod tests {
                         .unwrap();
 
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                        .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -754,8 +737,8 @@ mod tests {
                         .unwrap();
 
                     let report_aggregations = tx
-                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
-                            &Poplar1::new_turboshake128(1),
+                        .get_report_aggregations_for_aggregation_job::<0, dummy::Vdaf>(
+                            &dummy::Vdaf::new(2),
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
@@ -798,7 +781,7 @@ mod tests {
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                        .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -806,8 +789,8 @@ mod tests {
                         .unwrap();
 
                     let report_aggregations = tx
-                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
-                            &Poplar1::new_turboshake128(1),
+                        .get_report_aggregations_for_aggregation_job::<0, dummy::Vdaf>(
+                            &dummy::Vdaf::new(2),
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
@@ -835,12 +818,8 @@ mod tests {
                 let (task_id, aggregation_job_id) =
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
-                    // This is a cheat: dummy_vdaf only has a single step, so we artificially force
-                    // this job into step 2 so that we can send a request for step 1 and force a
-                    // step mismatch error instead of tripping the check for a request to continue
-                    // to step 0.
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                        .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -931,7 +910,7 @@ mod tests {
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                        .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -948,9 +927,7 @@ mod tests {
             .unwrap();
 
         // Subsequent attempts to initialize the job should fail.
-        let (prep_init, _) = test_case
-            .prepare_init_generator
-            .next(&IdpfInput::from_bools(&[true]));
+        let (prep_init, _) = test_case.prepare_init_generator.next(&13);
         let init_req = AggregationJobInitializeReq::new(
             test_case.aggregation_parameter.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
