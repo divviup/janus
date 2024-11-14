@@ -131,8 +131,8 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 .with_task_id(&inner.task_id)
                 .with_detail(&inner.to_string()),
         ),
-        Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
+        Error::BatchQueriedMultipleTimes(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchQueriedMultipleTimes)
                 .with_task_id(task_id),
         ),
         Error::Hpke(_)

@@ -1246,7 +1246,7 @@ mod tests {
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes\"}")
             .create_async()
             .await;
 
@@ -1257,7 +1257,7 @@ mod tests {
         assert_matches!(
             error,
             Error::Http(error_response) => {
-                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::BatchQueriedTooManyTimes));
+                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::BatchQueriedMultipleTimes));
                 assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             }
         );

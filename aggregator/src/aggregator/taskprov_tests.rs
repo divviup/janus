@@ -168,7 +168,6 @@ where
         .unwrap();
 
         let time_precision = Duration::from_seconds(1);
-        let max_batch_query_count = 1;
         let min_batch_size = 1;
         let max_batch_size = 1;
         let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
@@ -178,7 +177,6 @@ where
             "https://helper.example.com/".as_bytes().try_into().unwrap(),
             QueryConfig::new(
                 time_precision,
-                max_batch_query_count,
                 min_batch_size,
                 TaskprovQuery::LeaderSelected { max_batch_size },
             ),
@@ -204,7 +202,6 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_max_batch_query_count(max_batch_query_count as u64)
         .with_task_expiration(Some(task_expiration))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
@@ -664,7 +661,6 @@ async fn taskprov_opt_out_mismatched_task_id() {
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
-            100,
             TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,
             },
@@ -743,7 +739,6 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
-            100,
             100,
             TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,
@@ -824,7 +819,6 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
-            100,
             100,
             TaskprovQuery::LeaderSelected {
                 max_batch_size: 100,

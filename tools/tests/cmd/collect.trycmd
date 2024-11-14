@@ -4,7 +4,7 @@ Command-line DAP-PPM collector from ISRG's Divvi Up
 
 The default subcommand is "run", which will create a collection job and poll it to completion
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch> [COMMAND]
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> [COMMAND]
 
 Commands:
   run       Create a new collection job and poll it to completion
@@ -82,12 +82,5 @@ Collect Request Parameters (Time Interval):
 
       --batch-interval-duration <BATCH_INTERVAL_DURATION>
           Duration of the collection batch interval, in seconds
-
-Collect Request Parameters (Leader Selected):
-      --batch-id <BATCH_ID>
-          Batch identifier, encoded with base64url
-
-      --current-batch
-          Have the aggregator select a batch that has not yet been collected
 
 ```

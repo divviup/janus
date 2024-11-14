@@ -1435,48 +1435,6 @@ impl Decode for Report {
     }
 }
 
-/// DAP protocol message representing a leader-selected query.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LeaderSelectedQuery {
-    ByBatchId { batch_id: BatchId },
-    CurrentBatch,
-}
-
-impl Encode for LeaderSelectedQuery {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        match self {
-            LeaderSelectedQuery::ByBatchId { batch_id } => {
-                0u8.encode(bytes)?;
-                batch_id.encode(bytes)
-            }
-            LeaderSelectedQuery::CurrentBatch => 1u8.encode(bytes),
-        }
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        match self {
-            LeaderSelectedQuery::ByBatchId { batch_id } => Some(1 + batch_id.encoded_len()?),
-            LeaderSelectedQuery::CurrentBatch => Some(1),
-        }
-    }
-}
-
-impl Decode for LeaderSelectedQuery {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let query_type = u8::decode(bytes)?;
-        match query_type {
-            0 => {
-                let batch_id = BatchId::decode(bytes)?;
-                Ok(LeaderSelectedQuery::ByBatchId { batch_id })
-            }
-            1 => Ok(LeaderSelectedQuery::CurrentBatch),
-            _ => Err(CodecError::Other(
-                anyhow!("unexpected LeaderSelectedQuery type value {}", query_type).into(),
-            )),
-        }
-    }
-}
-
 /// Represents a query for a specific batch identifier, received from a Collector as part of the
 /// collection flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1497,8 +1455,7 @@ impl<B: BatchMode> Query<B> {
     /// Gets the query body included in this query.
     ///
     /// This method would typically be used for code which is generic over the batch mode. Batch
-    /// mode-specific code will typically call one of [`Self::batch_interval`] or
-    /// [`Self::leader_selected_query`].
+    /// mode-specific code will typically call [`Self::batch_interval`].
     pub fn query_body(&self) -> &B::QueryBody {
         &self.query_body
     }
@@ -1518,13 +1475,8 @@ impl Query<TimeInterval> {
 
 impl Query<LeaderSelected> {
     /// Constructs a new query for a leader-selected task.
-    pub fn new_leader_selected(leader_selected_query: LeaderSelectedQuery) -> Self {
-        Self::new(leader_selected_query)
-    }
-
-    /// Gets the leader-selected query associated with this query.
-    pub fn leader_selected_query(&self) -> &LeaderSelectedQuery {
-        self.query_body()
+    pub fn new_leader_selected() -> Self {
+        Self::new(())
     }
 }
 

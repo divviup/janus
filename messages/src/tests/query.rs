@@ -1,6 +1,6 @@
 use crate::{
-    batch_mode, roundtrip_encoding, BatchId, Duration, Interval, LeaderSelected,
-    LeaderSelectedQuery, Query, TaskId, Time, TimeInterval,
+    batch_mode, roundtrip_encoding, BatchId, Duration, Interval, LeaderSelected, Query, TaskId,
+    Time, TimeInterval,
 };
 
 #[test]
@@ -20,27 +20,6 @@ fn roundtrip_batch_id() {
         (
             BatchId::from([u8::MAX; TaskId::LEN]),
             "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-        ),
-    ])
-}
-
-#[test]
-fn roundtrip_leader_selected_query() {
-    roundtrip_encoding(&[
-        (
-            LeaderSelectedQuery::ByBatchId {
-                batch_id: BatchId::from([10u8; 32]),
-            },
-            concat!(
-                "00",                                                               // batch_mode
-                "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
-            ),
-        ),
-        (
-            LeaderSelectedQuery::CurrentBatch,
-            concat!(
-                "01", // batch_mode
-            ),
         ),
     ])
 }
@@ -86,35 +65,12 @@ fn roundtrip_query() {
     ]);
 
     // LeaderSelected.
-    roundtrip_encoding(&[
-        (
-            Query::<LeaderSelected> {
-                query_body: LeaderSelectedQuery::ByBatchId {
-                    batch_id: BatchId::from([10u8; 32]),
-                },
-            },
-            concat!(
+    roundtrip_encoding(&[(
+        Query::<LeaderSelected> { query_body: () },
+        concat!(
                 "02", // batch_mode
-                concat!(
-                    // query_body
-                    "00", // batch_mode
-                    "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
-                ),
             ),
-        ),
-        (
-            Query::<LeaderSelected> {
-                query_body: LeaderSelectedQuery::CurrentBatch,
-            },
-            concat!(
-                "02", // batch_mode
-                concat!(
-                    // query_body
-                    "01", // batch_mode
-                ),
-            ),
-        ),
-    ])
+    )])
 }
 
 #[test]

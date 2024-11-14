@@ -1,9 +1,7 @@
 use crate::{
     common::{
         build_test_task, collect_aggregate_result_generic,
-        submit_measurements_and_verify_aggregate,
-        submit_measurements_and_verify_aggregate_varying_aggregation_parameter,
-        submit_measurements_generic, TestContext,
+        submit_measurements_and_verify_aggregate, submit_measurements_generic, TestContext,
     },
     initialize_rustls,
 };
@@ -23,7 +21,7 @@ use prio::{
         distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
     },
     field::{Field128, FieldElementWithInteger},
-    vdaf::{dummy, prio3::Prio3},
+    vdaf::prio3::Prio3,
 };
 use std::{iter, time::Duration};
 
@@ -391,69 +389,6 @@ async fn janus_in_process_customized_sum_vec() {
     submit_measurements_and_verify_aggregate(
         "janus_in_process_customized_sum_vec",
         &janus_pair.task_parameters,
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &ClientBackend::InProcess,
-    )
-    .await;
-}
-
-/// This test exercises a 1-round VDAF with an aggregation parameter.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "leader-selected with agg param not yet supported (#225)"]
-async fn janus_in_process_one_round_with_agg_param_leader_selected() {
-    install_test_trace_subscriber();
-    initialize_rustls();
-
-    let janus_pair = JanusInProcessPair::new(
-        TaskBuilder::new(
-            BatchMode::LeaderSelected {
-                max_batch_size: Some(50),
-                batch_time_window_size: None,
-            },
-            VdafInstance::Fake { rounds: 1 },
-        )
-        .with_max_batch_query_count(3),
-    )
-    .await;
-
-    submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-        "janus_in_process_one_round_with_agg_param_leader_selected",
-        &janus_pair.task_parameters,
-        &[
-            dummy::AggregationParam(10),
-            // TODO(#225): Querying a single batch multiple times doesn't work yet, failing with
-            // "invalid number of reports (0)"
-            // dummy::AggregationParam(11),
-            // dummy::AggregationParam(12),
-        ],
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &ClientBackend::InProcess,
-    )
-    .await;
-}
-
-/// This test exercises a 1-round VDAF with an aggregation parameter.
-#[tokio::test(flavor = "multi_thread")]
-async fn janus_in_process_one_round_with_agg_param_time_interval() {
-    install_test_trace_subscriber();
-    initialize_rustls();
-
-    let janus_pair = JanusInProcessPair::new(
-        TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
-            .with_max_batch_query_count(3),
-    )
-    .await;
-
-    submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
-        "janus_in_process_one_round_with_agg_param_time_interval",
-        &janus_pair.task_parameters,
-        &[
-            dummy::AggregationParam(10),
-            // TODO(#225): Querying a single batch multiple times doesn't work yet, failing with
-            // "invalid number of reports (0)"
-            // dummy::AggregationParam(11),
-            // dummy::AggregationParam(12),
-        ],
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
     )

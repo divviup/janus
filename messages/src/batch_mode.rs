@@ -1,6 +1,4 @@
-use crate::{Collection, LeaderSelectedQuery, Query};
-
-use super::{BatchId, Interval};
+use crate::{BatchId, Collection, Interval, Query};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{CodecError, Decode, Encode};
@@ -93,7 +91,7 @@ impl BatchMode for LeaderSelected {
 
     type BatchIdentifier = BatchId;
     type PartialBatchIdentifier = BatchId;
-    type QueryBody = LeaderSelectedQuery;
+    type QueryBody = ();
 
     fn partial_batch_identifier(
         batch_identifier: &Self::BatchIdentifier,

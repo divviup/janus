@@ -289,22 +289,6 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
     }
 }
 
-fn arbitrary_collector_start_op_leader_selected(g: &mut Gen, context: &Context) -> Op {
-    if context.polled_collection_job_ids.is_empty() || bool::arbitrary(g) {
-        Op::CollectorStart {
-            collection_job_id: random(),
-            query: super::model::Query::LeaderSelectedCurrentBatch,
-        }
-    } else {
-        Op::CollectorStart {
-            collection_job_id: random(),
-            query: super::model::Query::LeaderSelectedByBatchId(
-                *g.choose(&context.polled_collection_job_ids).unwrap(),
-            ),
-        }
-    }
-}
-
 /// Generate a collect poll operation.
 fn arbitrary_collector_poll_op(g: &mut Gen, context: &Context) -> Op {
     Op::CollectorPoll {
@@ -478,7 +462,10 @@ fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKin
         OpKind::CollectionJobDriver => Op::CollectionJobDriver,
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
-        OpKind::CollectorStart => arbitrary_collector_start_op_leader_selected(g, context),
+        OpKind::CollectorStart => Op::CollectorStart {
+            collection_job_id: random(),
+            query: super::model::Query::LeaderSelected,
+        },
         OpKind::CollectorPoll => arbitrary_collector_poll_op(g, context),
     }
 }

@@ -1345,7 +1345,6 @@ mod tests {
     bits: 2
   role: Leader
   vdaf_verify_key:
-  max_batch_query_count: 1
   task_expiration: 9000000000
   min_batch_size: 10
   time_precision: 300
@@ -1369,7 +1368,6 @@ mod tests {
     bits: 2
   role: Helper
   vdaf_verify_key:
-  max_batch_query_count: 1
   task_expiration: 9000000000
   min_batch_size: 10
   time_precision: 300

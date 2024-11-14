@@ -1,8 +1,7 @@
 use crate::{
     roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
     BatchSelector, Collection, CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, Interval,
-    LeaderSelected, LeaderSelectedQuery, PartialBatchSelector, Query, ReportIdChecksum, TaskId,
-    Time, TimeInterval,
+    LeaderSelected, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval,
 };
 use prio::codec::Decode;
 
@@ -72,21 +71,12 @@ fn roundtrip_collection_req() {
     roundtrip_encoding(&[
         (
             CollectionReq::<LeaderSelected> {
-                query: Query {
-                    query_body: LeaderSelectedQuery::ByBatchId {
-                        batch_id: BatchId::from([10u8; 32]),
-                    },
-                },
+                query: Query { query_body: () },
                 aggregation_parameter: Vec::new(),
             },
             concat!(
                 concat!(
                     "02", // batch_mode
-                    concat!(
-                        // query_body
-                        "00", // batch_mode
-                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
-                    ),
                 ),
                 concat!(
                     // aggregation_parameter
@@ -97,18 +87,12 @@ fn roundtrip_collection_req() {
         ),
         (
             CollectionReq::<LeaderSelected> {
-                query: Query::<LeaderSelected> {
-                    query_body: LeaderSelectedQuery::CurrentBatch,
-                },
+                query: Query { query_body: () },
                 aggregation_parameter: Vec::from("012345"),
             },
             concat!(
                 concat!(
                     "02", // batch_mode
-                    concat!(
-                        // query_body
-                        "01", // batch_mode
-                    ),
                 ),
                 concat!(
                     // aggregation_parameter

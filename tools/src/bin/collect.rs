@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
-    ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+    Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
@@ -16,8 +16,7 @@ use janus_collector::{
 use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    BatchId, CollectionJobId, Duration, HpkeConfig, Interval, LeaderSelectedQuery,
-    PartialBatchSelector, Query, TaskId, Time,
+    CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -177,7 +176,6 @@ struct AuthenticationOptions {
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
-#[group(required = true)]
 struct QueryOptions {
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
     #[clap(
@@ -186,6 +184,7 @@ struct QueryOptions {
         help_heading = "Collect Request Parameters (Time Interval)"
     )]
     batch_interval_start: Option<u64>,
+
     /// Duration of the collection batch interval, in seconds
     #[clap(
         long,
@@ -193,22 +192,6 @@ struct QueryOptions {
         help_heading = "Collect Request Parameters (Time Interval)"
     )]
     batch_interval_duration: Option<u64>,
-
-    /// Batch identifier, encoded with base64url
-    #[clap(
-        long,
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
-        help_heading = "Collect Request Parameters (Leader Selected)",
-    )]
-    batch_id: Option<BatchId>,
-    /// Have the aggregator select a batch that has not yet been collected
-    #[clap(
-        long,
-        action = ArgAction::SetTrue,
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
-        help_heading = "Collect Request Parameters (Leader Selected)",
-    )]
-    current_batch: bool,
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
@@ -445,10 +428,8 @@ macro_rules! options_query_dispatch {
         match (
             &$options.query.batch_interval_start,
             &$options.query.batch_interval_duration,
-            &$options.query.batch_id,
-            $options.query.current_batch,
         ) {
-            (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
+            (Some(batch_interval_start), Some(batch_interval_duration)) => {
                 let $query = Query::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(*batch_interval_start),
@@ -458,14 +439,8 @@ macro_rules! options_query_dispatch {
                 );
                 $body
             }
-            (None, None, Some(batch_id), false) => {
-                let $query = Query::new_leader_selected(LeaderSelectedQuery::ByBatchId {
-                    batch_id: *batch_id,
-                });
-                $body
-            }
-            (None, None, None, true) => {
-                let $query = Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch);
+            (None, None) => {
+                let $query = Query::new_leader_selected();
                 $body
             }
             _ => unreachable!("clap argument parsing shouldn't allow this to be possible"),
@@ -732,7 +707,7 @@ mod tests {
         auth_tokens::{BearerToken, DapAuthToken},
         hpke::HpkeKeypair,
     };
-    use janus_messages::{BatchId, TaskId};
+    use janus_messages::TaskId;
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
@@ -786,8 +761,6 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
-                batch_id: None,
-                current_batch: false,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
@@ -1000,7 +973,7 @@ mod tests {
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
         let auth_token = AuthenticationToken::DapAuth(random());
 
-        // Check parsing arguments for a current batch query.
+        // Check parsing arguments for a leader-selected query.
         let expected = Options {
             subcommand: None,
             task_id,
@@ -1021,8 +994,6 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
-                batch_id: None,
-                current_batch: true,
             },
         };
         let correct_arguments = [
@@ -1035,57 +1006,15 @@ mod tests {
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
             "count",
-            "--current-batch",
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
 
-        // Check parsing arguments for a by-batch-id query.
-        let batch_id: BatchId = random();
-        let batch_id_encoded = URL_SAFE_NO_PAD.encode(batch_id.as_ref());
-        let expected = Options {
-            subcommand: None,
-            task_id,
-            leader: leader.clone(),
-            authentication: AuthenticationOptions {
-                dap_auth_token: Some(auth_token.clone()),
-                authorization_bearer_token: None,
-            },
-            hpke_config: HpkeConfigOptions {
-                hpke_config: Some(hpke_keypair.config().clone()),
-                hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                collector_credential_file: None,
-                collector_credential: None,
-            },
-            vdaf: VdafType::Count,
-            length: None,
-            bits: None,
-            query: QueryOptions {
-                batch_interval_start: None,
-                batch_interval_duration: None,
-                batch_id: Some(batch_id),
-                current_batch: false,
-            },
-        };
-        let correct_arguments = [
-            "collect",
-            &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
-            &format!("--dap-auth-token={}", auth_token.as_str()),
-            &format!("--hpke-config={encoded_hpke_config}"),
-            &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
-            &format!("--batch-id={batch_id_encoded}"),
-        ];
-        match Options::try_parse_from(correct_arguments) {
-            Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
-        }
-
+        // Check that clap enforces all the constraints we need on combinations of query arguments.
+        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
+        // argument matches.
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
@@ -1097,20 +1026,7 @@ mod tests {
             "--vdaf=count".to_string(),
         ]);
 
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.push("--current-batch".to_string());
-        Options::try_parse_from(good_arguments).unwrap();
-
-        // Check that clap enforces all the constraints we need on combinations of query arguments.
-        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
-        // argument matches.
-
-        assert_eq!(
-            Options::try_parse_from(base_arguments.clone())
-                .unwrap_err()
-                .kind(),
-            ErrorKind::MissingRequiredArgument
-        );
+        Options::try_parse_from(base_arguments.clone()).unwrap();
 
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.push("--batch-interval-start=1".to_string());
@@ -1124,67 +1040,6 @@ mod tests {
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::MissingRequiredArgument
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-start=1".to_string(),
-            "--batch-interval-duration=1".to_string(),
-            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-start=1".to_string(),
-            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-duration=1".to_string(),
-            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-start=1".to_string(),
-            "--current-batch".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-duration=1".to_string(),
-            "--current-batch".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments;
-        bad_arguments.extend([
-            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-            "--current-batch".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
         );
     }
 
@@ -1397,7 +1252,6 @@ mod tests {
             format!("--dap-auth-token={}", auth_token.as_str()),
             "--vdaf".to_string(),
             "count".to_string(),
-            "--current-batch".to_string(),
         ]);
 
         let mut correct_arguments = base_arguments.clone();
@@ -1481,8 +1335,6 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
-                batch_id: None,
-                current_batch: false,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
@@ -1566,8 +1418,6 @@ mod tests {
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
-                batch_id: None,
-                current_batch: false,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());

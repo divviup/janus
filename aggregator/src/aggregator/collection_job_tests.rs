@@ -29,7 +29,7 @@ use janus_core::{
 use janus_messages::{
     batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, Collection, CollectionJobId,
-    CollectionReq, Interval, LeaderSelectedQuery, Query, Role, Time,
+    CollectionReq, Interval, Query, Role, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -331,7 +331,7 @@ async fn collection_job_success_leader_selected() {
     let helper_aggregate_share = dummy::AggregateShare(1);
     let aggregation_param = dummy::AggregationParam::default();
     let request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+        Query::new_leader_selected(),
         aggregation_param.get_encoded().unwrap(),
     );
 
@@ -526,9 +526,9 @@ async fn collection_job_put_idempotence_time_interval() {
 #[tokio::test]
 async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
     // This test sends repeated, identical collection requests with differing collection job IDs and
-    // validates that they are accepted. They should be accepted because calculation of the query
-    // count for max_batch_query_count testing is based on the number of distinct aggregation
-    // parameters that the batch has been collected against.
+    // validates that they are accepted. They should be accepted because the check for repeated
+    // collection should allow a batch to be repeatedly collected as long as it uses the same
+    // aggregation parameter each time.
 
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
@@ -563,60 +563,6 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
             Box::pin(async move {
                 let collection_jobs = tx
                     .get_collection_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
-                        &dummy::Vdaf::new(1),
-                        &task_id,
-                    )
-                    .await
-                    .unwrap();
-
-                assert_eq!(collection_jobs.len(), 2);
-                assert_eq!(
-                    collection_jobs
-                        .into_iter()
-                        .map(|job| *job.id())
-                        .collect::<HashSet<_>>(),
-                    collection_job_ids
-                );
-
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_varied_collection_id() {
-    // This test sends repeated, identical collection requests with differing collection job IDs and
-    // validates that they are accepted. They should be accepted because calculation of the query
-    // count for max_batch_query_count testing is based on the number of distinct aggregation
-    // parameters that the batch has been collected against.
-
-    let (test_case, batch_id, _, _) =
-        setup_leader_selected_current_batch_collection_job_test_case().await;
-
-    let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
-    let request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-        dummy::AggregationParam::default().get_encoded().unwrap(),
-    );
-
-    for collection_job_id in &collection_job_ids {
-        let response = test_case
-            .put_collection_job(collection_job_id, &request)
-            .await;
-        assert_eq!(response.status(), Some(Status::Created));
-    }
-
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task_id = *test_case.task.id();
-            let collection_job_ids = collection_job_ids.clone();
-
-            Box::pin(async move {
-                let collection_jobs = tx
-                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &dummy::Vdaf::new(1),
                         &task_id,
                     )
@@ -722,13 +668,13 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
 }
 
 #[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_current_batch() {
+async fn collection_job_put_idempotence_leader_selected() {
     let (test_case, batch_id_1, batch_id_2, _) =
         setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
     let request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+        Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
     let mut seen_batch_id = None;
@@ -774,12 +720,12 @@ async fn collection_job_put_idempotence_leader_selected_current_batch() {
 }
 
 #[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_current_batch_mutate_aggregation_param() {
+async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param() {
     let (test_case, _, _, _) = setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
     let request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+        Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
@@ -790,7 +736,7 @@ async fn collection_job_put_idempotence_leader_selected_current_batch_mutate_agg
     assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+        Query::new_leader_selected(),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
@@ -801,14 +747,14 @@ async fn collection_job_put_idempotence_leader_selected_current_batch_mutate_agg
 }
 
 #[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_current_batch_no_extra_reports() {
+async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
     let (test_case, _batch_id_1, _batch_id_2, _) =
         setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let collection_job_id_1 = random();
     let collection_job_id_2 = random();
-    let request = Arc::new(CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+    let request: Arc<CollectionReq<LeaderSelected>> = Arc::new(CollectionReq::new(
+        Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     ));
 
@@ -842,121 +788,4 @@ async fn collection_job_put_idempotence_leader_selected_current_batch_no_extra_r
         .put_collection_job(&collection_job_id_2, &request)
         .await;
     assert_eq!(response.status(), Some(Status::Created));
-}
-
-#[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_by_batch_id() {
-    let test_case = setup_collection_job_test_case(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
-            batch_time_window_size: None,
-        },
-    )
-    .await;
-    let batch_id = test_case
-        .setup_leader_selected_batch(test_case.clock.now(), 1)
-        .await;
-
-    let collection_job_id = random();
-
-    let request = CollectionReq::new(
-        Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-        dummy::AggregationParam(0).get_encoded().unwrap(),
-    );
-
-    for _ in 0..2 {
-        let response = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
-
-        assert_eq!(response.status(), Some(Status::Created));
-    }
-}
-
-#[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_by_batch_id_mutate_batch_id() {
-    let test_case = setup_collection_job_test_case(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
-            batch_time_window_size: None,
-        },
-    )
-    .await;
-    let first_batch_id = test_case
-        .setup_leader_selected_batch(test_case.clock.now(), 1)
-        .await;
-    let second_batch_id = test_case
-        .setup_leader_selected_batch(test_case.clock.now(), 1)
-        .await;
-
-    let collection_job_id = random();
-
-    let response = test_case
-        .put_collection_job(
-            &collection_job_id,
-            &CollectionReq::new(
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId {
-                    batch_id: first_batch_id,
-                }),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
-            ),
-        )
-        .await;
-    assert_eq!(response.status(), Some(Status::Created));
-
-    let response = test_case
-        .put_collection_job(
-            &collection_job_id,
-            &CollectionReq::new(
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId {
-                    batch_id: second_batch_id,
-                }),
-                dummy::AggregationParam(0).get_encoded().unwrap(),
-            ),
-        )
-        .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
-}
-
-#[tokio::test]
-async fn collection_job_put_idempotence_leader_selected_by_batch_id_mutate_aggregation_param() {
-    let test_case = setup_collection_job_test_case(
-        Role::Leader,
-        BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
-            batch_time_window_size: None,
-        },
-    )
-    .await;
-    let batch_id = test_case
-        .setup_leader_selected_batch(test_case.clock.now(), 1)
-        .await;
-
-    let collection_job_id = random();
-    let first_aggregation_param = dummy::AggregationParam(0);
-    let second_aggregation_param = dummy::AggregationParam(1);
-
-    let response = test_case
-        .put_collection_job(
-            &collection_job_id,
-            &CollectionReq::new(
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-                first_aggregation_param.get_encoded().unwrap(),
-            ),
-        )
-        .await;
-    assert_eq!(response.status(), Some(Status::Created));
-
-    let response = test_case
-        .put_collection_job(
-            &collection_job_id,
-            &CollectionReq::new(
-                Query::new_leader_selected(LeaderSelectedQuery::ByBatchId { batch_id }),
-                second_aggregation_param.get_encoded().unwrap(),
-            ),
-        )
-        .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
 }

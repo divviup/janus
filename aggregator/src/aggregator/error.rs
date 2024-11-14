@@ -96,10 +96,10 @@ pub enum Error {
     /// sets of reports were aggregated.
     #[error("{0}")]
     BatchMismatch(Box<BatchMismatch>),
-    /// Corresponds to `batchQueriedTooManyTimes` in DAP. A collect or aggregate share request was
-    /// rejected because the queries against a single batch exceed the task's `max_batch_query_count`.
-    #[error("task {0}: batch queried too many times ({1})")]
-    BatchQueriedTooManyTimes(TaskId, u64),
+    /// Corresponds to `batchQueriedMultipleTimes` in DAP. A collect or aggregate share request was
+    /// rejected because there was already a distinct query against the relevant batch.
+    #[error("task {0}: batch queried multiple times")]
+    BatchQueriedMultipleTimes(TaskId),
     /// A collect or aggregate share request was rejected because the batch overlaps with a
     /// previously collected one.
     #[error("task {0}: queried batch {1} overlaps with previously collected batch(es)")]
@@ -300,7 +300,7 @@ impl Error {
             Error::InvalidBatchSize(_, _) => "invalid_batch_size",
             Error::Url(_) => "url",
             Error::BatchMismatch { .. } => "batch_mismatch",
-            Error::BatchQueriedTooManyTimes(_, _) => "batch_queried_too_many_times",
+            Error::BatchQueriedMultipleTimes(_) => "batch_queried_multiple_times",
             Error::BatchOverlap(_, _) => "batch_overlap",
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",

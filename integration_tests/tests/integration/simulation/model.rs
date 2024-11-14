@@ -117,9 +117,6 @@ pub(super) enum Op {
 pub(super) enum Query {
     /// A time interval query, parameterized with a batch interval.
     TimeInterval(Interval),
-    /// A current batch query.
-    LeaderSelectedCurrentBatch,
-    /// A "by batch ID" query. The batch ID will be taken from a previous collection result, with
-    /// the given collection job ID.
-    LeaderSelectedByBatchId(CollectionJobId),
+    /// A leader-selected query.
+    LeaderSelected,
 }

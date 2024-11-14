@@ -192,8 +192,8 @@ mod tests {
     };
     use janus_messages::{
         batch_mode::{LeaderSelected, TimeInterval},
-        AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelectedQuery,
-        Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+        AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
+        ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use prio::vdaf::dummy;
     use rand::random;
@@ -608,7 +608,7 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Query::new_leader_selected(LeaderSelectedQuery::CurrentBatch),
+                        Query::new_leader_selected(),
                         dummy::AggregationParam(0),
                         batch_id,
                         CollectionJobState::Start,

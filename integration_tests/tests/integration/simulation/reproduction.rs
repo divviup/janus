@@ -121,7 +121,7 @@ fn successful_collection_leader_selected() {
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::LeaderSelectedCurrentBatch,
+                query: Query::LeaderSelected,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -133,7 +133,7 @@ fn successful_collection_leader_selected() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::LeaderSelectedCurrentBatch,
+                query: Query::LeaderSelected,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
@@ -198,7 +198,7 @@ fn repro_slow_uploads_with_max_batch_size() {
             Op::AggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
-                query: Query::LeaderSelectedCurrentBatch,
+                query: Query::LeaderSelected,
             },
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
