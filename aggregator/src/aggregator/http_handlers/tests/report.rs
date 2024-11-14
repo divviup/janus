@@ -92,7 +92,7 @@ async fn upload_handler() {
             .run_async(&handler)
             .await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(test_conn.status(), Some(Status::Created));
         assert!(test_conn.take_response_body().is_none());
     }
 
@@ -110,7 +110,7 @@ async fn upload_handler() {
         .with_request_body(duplicate_id_report.get_encoded().unwrap())
         .run_async(&handler)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert!(test_conn.take_response_body().is_none());
 
     // Verify that reports older than the report expiry age are rejected with the reportRejected
@@ -461,7 +461,7 @@ async fn upload_handler_error_fanout() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(response.status().as_u16(), 201);
 
     // Use up the connection pool's connections to cause a transaction-level error in the next
     // uploads.
@@ -750,6 +750,6 @@ async fn upload_client_early_disconnect() {
                     .to_string()
             })
             .collect::<HashSet<String>>(),
-        HashSet::from(["400".into(), "200".into()])
+        HashSet::from(["400".into(), "201".into()])
     );
 }
