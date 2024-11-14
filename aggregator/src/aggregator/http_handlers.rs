@@ -511,7 +511,7 @@ async fn upload<C: Clock>(
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
-    Ok(Status::Ok)
+    Ok(Status::Created)
 }
 
 /// Handler for CORS preflight requests to "/tasks/.../reports".
