@@ -30,12 +30,7 @@ use janus_messages::{
 };
 use prio::{
     codec::Encode,
-    idpf::IdpfInput,
-    vdaf::{
-        self, dummy,
-        poplar1::{Poplar1, Poplar1AggregationParam},
-        xof::XofTurboShake128,
-    },
+    vdaf::{self, dummy},
 };
 use rand::random;
 use serde_json::json;
@@ -179,16 +174,12 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0,
     .await
 }
 
-async fn setup_poplar1_aggregate_init_test(
-) -> AggregationJobInitTestCase<16, Poplar1<XofTurboShake128, 16>> {
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
+async fn setup_multi_step_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
     setup_aggregate_init_test_for_vdaf(
-        Poplar1::new_turboshake128(1),
-        VdafInstance::Poplar1 { bits: 1 },
-        aggregation_param,
-        IdpfInput::from_bools(&[true]),
+        dummy::Vdaf::new(2),
+        VdafInstance::Fake { rounds: 2 },
+        dummy::AggregationParam(7),
+        13,
     )
     .await
 }
@@ -501,8 +492,9 @@ async fn aggregation_job_mutation_report_shares() {
 
 #[tokio::test]
 async fn aggregation_job_mutation_report_aggregations() {
-    // We must run Poplar1 in this test so that the aggregation job won't finish on the first step
-    let test_case = setup_poplar1_aggregate_init_test().await;
+    // We set up a multi-step VDAF in this test so that the aggregation job won't finish on the
+    // first step.
+    let test_case = setup_multi_step_aggregate_init_test().await;
 
     // Generate some new reports using the existing reports' metadata, but varying the measurement
     // values such that the prepare state computed during aggregation initializaton won't match the
@@ -514,10 +506,7 @@ async fn aggregation_job_mutation_report_aggregations() {
         .map(|s| {
             test_case
                 .prepare_init_generator
-                .next_with_metadata(
-                    s.report_share().metadata().clone(),
-                    &IdpfInput::from_bools(&[false]),
-                )
+                .next_with_metadata(s.report_share().metadata().clone(), &13)
                 .0
         })
         .collect();
@@ -614,8 +603,9 @@ async fn aggregation_job_intolerable_clock_skew() {
 
 #[tokio::test]
 async fn aggregation_job_init_two_step_vdaf_idempotence() {
-    // We must run Poplar1 in this test so that the aggregation job won't finish on the first step
-    let test_case = setup_poplar1_aggregate_init_test().await;
+    // We set up a multi-step VDAF in this test so that the aggregation job won't finish on the
+    // first step.
+    let test_case = setup_multi_step_aggregate_init_test().await;
 
     // Send the aggregation job init request again. We should get an identical response back.
     let mut response = put_aggregation_job(

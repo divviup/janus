@@ -44,11 +44,9 @@ use janus_messages::{
 use mockito::ServerGuard;
 use prio::{
     codec::Encode,
-    idpf::IdpfInput,
     vdaf::{
-        poplar1::{Poplar1, Poplar1AggregationParam},
+        dummy,
         prio3::{Prio3, Prio3Count},
-        xof::XofTurboShake128,
         Aggregator,
     },
 };
@@ -72,8 +70,8 @@ async fn aggregation_job_driver() {
     let mut runtime_manager = TestRuntimeManager::new();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 2 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -85,11 +83,9 @@ async fn aggregation_job_driver() {
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time);
-    let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-    let measurement = IdpfInput::from_bools(&[true]);
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
-            .unwrap();
+    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
+    let measurement = 13;
+    let aggregation_param = dummy::AggregationParam(7);
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
@@ -112,11 +108,8 @@ async fn aggregation_job_driver() {
     let aggregation_job_id = random();
 
     ds.run_unnamed_tx(|tx| {
-        let (task, report, aggregation_param) = (
-            leader_task.clone(),
-            report.clone(),
-            aggregation_param.clone(),
-        );
+        let (task, report, aggregation_param) =
+            (leader_task.clone(), report.clone(), aggregation_param);
         Box::pin(async move {
             tx.put_aggregator_task(&task).await.unwrap();
             tx.put_client_report(&report).await.unwrap();
@@ -127,14 +120,10 @@ async fn aggregation_job_driver() {
                 .await
                 .unwrap();
 
-            tx.put_aggregation_job(&AggregationJob::<
-                VERIFY_KEY_LENGTH,
-                TimeInterval,
-                Poplar1<XofTurboShake128, 16>,
-            >::new(
+            tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                 *task.id(),
                 aggregation_job_id,
-                aggregation_param.clone(),
+                aggregation_param,
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -149,14 +138,10 @@ async fn aggregation_job_driver() {
             .await
             .unwrap();
 
-            tx.put_batch_aggregation(&BatchAggregation::<
-                VERIFY_KEY_LENGTH,
-                TimeInterval,
-                Poplar1<XofTurboShake128, 16>,
-            >::new(
+            tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                 *task.id(),
                 batch_identifier,
-                aggregation_param.clone(),
+                aggregation_param,
                 0,
                 Interval::from_time(&time).unwrap(),
                 BatchAggregationState::Aggregating {
@@ -272,44 +257,40 @@ async fn aggregation_job_driver() {
         mocked_aggregate.assert_async().await;
     }
 
-    let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
+    let want_aggregation_job: AggregationJob<0, TimeInterval, _> =
+        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
             *task.id(),
             aggregation_job_id,
-            aggregation_param.clone(),
+            aggregation_param,
             (),
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(2),
         );
-    let want_report_aggregation =
-        ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        );
-    let want_batch_aggregations = Vec::from([BatchAggregation::<
-        VERIFY_KEY_LENGTH,
-        TimeInterval,
-        Poplar1<XofTurboShake128, 16>,
-    >::new(
+    let want_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
         *task.id(),
-        batch_identifier,
-        aggregation_param.clone(),
+        aggregation_job_id,
+        *report.metadata().id(),
+        *report.metadata().time(),
         0,
-        Interval::from_time(&time).unwrap(),
-        BatchAggregationState::Aggregating {
-            aggregate_share: Some(transcript.leader_output_share.clone()),
-            report_count: 1,
-            checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
-            aggregation_jobs_created: 1,
-            aggregation_jobs_terminated: 1,
-        },
-    )]);
+        None,
+        ReportAggregationState::Finished,
+    );
+    let want_batch_aggregations =
+        Vec::from([BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+            *task.id(),
+            batch_identifier,
+            aggregation_param,
+            0,
+            Interval::from_time(&time).unwrap(),
+            BatchAggregationState::Aggregating {
+                aggregate_share: Some(transcript.leader_aggregate_share),
+                report_count: 1,
+                checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+                aggregation_jobs_created: 1,
+                aggregation_jobs_terminated: 1,
+            },
+        )]);
 
     let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
@@ -319,11 +300,12 @@ async fn aggregation_job_driver() {
 
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
                         &aggregation_job_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let report_aggregation = tx
                     .get_report_aggregation_by_report_id(
@@ -333,12 +315,16 @@ async fn aggregation_job_driver() {
                         &aggregation_job_id,
                         &report_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
-                        .await
-                        .unwrap(),
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
+                    .await
+                    .unwrap(),
                 );
                 Ok((aggregation_job, report_aggregation, batch_aggregations))
             })
@@ -691,9 +677,9 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 2 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
@@ -705,11 +691,9 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time);
-    let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-    let measurement = IdpfInput::from_bools(&[true]);
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
-            .unwrap();
+    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
+    let measurement = 13;
+    let aggregation_param = dummy::AggregationParam(7);
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
@@ -732,11 +716,8 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
 
     let lease = ds
         .run_unnamed_tx(|tx| {
-            let (task, report, aggregation_param) = (
-                leader_task.clone(),
-                report.clone(),
-                aggregation_param.clone(),
-            );
+            let (task, report, aggregation_param) =
+                (leader_task.clone(), report.clone(), aggregation_param);
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 tx.put_client_report(&report).await.unwrap();
@@ -744,14 +725,10 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -767,11 +744,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     batch_identifier,
                     aggregation_param,
@@ -858,49 +831,44 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     // Verify.
     mocked_aggregate_success.assert_async().await;
 
-    let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            aggregation_param.clone(),
-            (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            AggregationJobState::InProgress,
-            AggregationJobStep::from(1),
-        );
-    let want_report_aggregation =
-        ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::WaitingLeader {
-                transition: transcript.leader_prepare_transitions[1]
-                    .transition
-                    .clone()
-                    .unwrap(),
-            },
-        );
-    let want_batch_aggregations = Vec::from([BatchAggregation::<
-        VERIFY_KEY_LENGTH,
-        TimeInterval,
-        Poplar1<XofTurboShake128, 16>,
-    >::new(
+    let want_aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
         *task.id(),
-        batch_identifier,
+        aggregation_job_id,
         aggregation_param,
+        (),
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        AggregationJobState::InProgress,
+        AggregationJobStep::from(1),
+    );
+    let want_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
+        *task.id(),
+        aggregation_job_id,
+        *report.metadata().id(),
+        *report.metadata().time(),
         0,
-        Interval::from_time(&time).unwrap(),
-        BatchAggregationState::Aggregating {
-            aggregate_share: None,
-            report_count: 0,
-            checksum: ReportIdChecksum::default(),
-            aggregation_jobs_created: 1,
-            aggregation_jobs_terminated: 0,
+        None,
+        ReportAggregationState::WaitingLeader {
+            transition: transcript.leader_prepare_transitions[1]
+                .transition
+                .clone()
+                .unwrap(),
         },
-    )]);
+    );
+    let want_batch_aggregations =
+        Vec::from([BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+            *task.id(),
+            batch_identifier,
+            aggregation_param,
+            0,
+            Interval::from_time(&time).unwrap(),
+            BatchAggregationState::Aggregating {
+                aggregate_share: None,
+                report_count: 0,
+                checksum: ReportIdChecksum::default(),
+                aggregation_jobs_created: 1,
+                aggregation_jobs_terminated: 0,
+            },
+        )]);
 
     let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
@@ -908,11 +876,12 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
                 (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
                         &aggregation_job_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let report_aggregation = tx
                     .get_report_aggregation_by_report_id(
@@ -922,12 +891,16 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
                         &aggregation_job_id,
                         &report_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
-                        .await
-                        .unwrap(),
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
+                    .await
+                    .unwrap(),
                 );
                 Ok((aggregation_job, report_aggregation, batch_aggregations))
             })
@@ -1603,14 +1576,14 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
-        VdafInstance::Poplar1 { bits: 1 },
+        VdafInstance::Fake { rounds: 2 },
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
@@ -1624,11 +1597,9 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
     );
-    let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-    let measurement = IdpfInput::from_bools(&[true]);
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
-            .unwrap();
+    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
+    let measurement = 13;
+    let aggregation_param = dummy::AggregationParam(7);
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
@@ -1652,11 +1623,8 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
 
     let lease = ds
         .run_unnamed_tx(|tx| {
-            let (task, report, aggregation_param) = (
-                leader_task.clone(),
-                report.clone(),
-                aggregation_param.clone(),
-            );
+            let (task, report, aggregation_param) =
+                (leader_task.clone(), report.clone(), aggregation_param);
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
                 tx.put_client_report(&report).await.unwrap();
@@ -1664,14 +1632,10 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    LeaderSelected,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     batch_id,
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -1687,14 +1651,10 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    LeaderSelected,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     0,
                     Interval::from_time(report.metadata().time()).unwrap(),
                     BatchAggregationState::Aggregating {
@@ -1778,49 +1738,44 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
     // Verify.
     mocked_aggregate_success.assert_async().await;
 
-    let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            aggregation_param.clone(),
-            batch_id,
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            AggregationJobState::InProgress,
-            AggregationJobStep::from(1),
-        );
-    let want_report_aggregation =
-        ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::WaitingLeader {
-                transition: transcript.leader_prepare_transitions[1]
-                    .transition
-                    .clone()
-                    .unwrap(),
-            },
-        );
-    let want_batch_aggregations = Vec::from([BatchAggregation::<
-        VERIFY_KEY_LENGTH,
-        LeaderSelected,
-        Poplar1<XofTurboShake128, 16>,
-    >::new(
+    let want_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
+        aggregation_job_id,
+        aggregation_param,
         batch_id,
-        aggregation_param.clone(),
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        AggregationJobState::InProgress,
+        AggregationJobStep::from(1),
+    );
+    let want_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
+        *task.id(),
+        aggregation_job_id,
+        *report.metadata().id(),
+        *report.metadata().time(),
         0,
-        Interval::from_time(report.metadata().time()).unwrap(),
-        BatchAggregationState::Aggregating {
-            aggregate_share: None,
-            report_count: 0,
-            checksum: ReportIdChecksum::default(),
-            aggregation_jobs_created: 1,
-            aggregation_jobs_terminated: 0,
+        None,
+        ReportAggregationState::WaitingLeader {
+            transition: transcript.leader_prepare_transitions[1]
+                .transition
+                .clone()
+                .unwrap(),
         },
-    )]);
+    );
+    let want_batch_aggregations =
+        Vec::from([BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+            *task.id(),
+            batch_id,
+            aggregation_param,
+            0,
+            Interval::from_time(report.metadata().time()).unwrap(),
+            BatchAggregationState::Aggregating {
+                aggregate_share: None,
+                report_count: 0,
+                checksum: ReportIdChecksum::default(),
+                aggregation_jobs_created: 1,
+                aggregation_jobs_terminated: 0,
+            },
+        )]);
 
     let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
@@ -1828,11 +1783,12 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
                 (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         task.id(),
                         &aggregation_job_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let report_aggregation = tx
                     .get_report_aggregation_by_report_id(
@@ -1842,12 +1798,16 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
                         &aggregation_job_id,
                         &report_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
-                        .await
-                        .unwrap(),
+                    tx.get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
+                    .await
+                    .unwrap(),
                 );
                 Ok((aggregation_job, report_aggregation, batch_aggregations))
             })
@@ -1872,9 +1832,9 @@ async fn step_time_interval_aggregation_job_continue() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 2 })
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
     let leader_task = task.leader_view().unwrap();
@@ -1893,17 +1853,15 @@ async fn step_time_interval_aggregation_job_continue() {
     )
     .unwrap();
     let report_metadata = ReportMetadata::new(random(), time);
-    let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
+    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
 
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
+    let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         vdaf.as_ref(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
-        &IdpfInput::from_bools(&[true]),
+        &13,
     );
 
     let agg_auth_token = task.aggregator_auth_token();
@@ -1921,7 +1879,7 @@ async fn step_time_interval_aggregation_job_continue() {
         .run_unnamed_tx(|tx| {
             let (task, aggregation_param, report, transcript) = (
                 leader_task.clone(),
-                aggregation_param.clone(),
+                aggregation_param,
                 report.clone(),
                 transcript.clone(),
             );
@@ -1935,14 +1893,10 @@ async fn step_time_interval_aggregation_job_continue() {
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -1952,10 +1906,7 @@ async fn step_time_interval_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_report_aggregation(&ReportAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     *report.metadata().id(),
@@ -1972,14 +1923,10 @@ async fn step_time_interval_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     active_batch_identifier,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     0,
                     Interval::from_time(report.metadata().time()).unwrap(),
                     BatchAggregationState::Aggregating {
@@ -1992,14 +1939,10 @@ async fn step_time_interval_aggregation_job_continue() {
                 ))
                 .await
                 .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     other_batch_identifier,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     0,
                     Interval::EMPTY,
                     BatchAggregationState::Aggregating {
@@ -2099,46 +2042,44 @@ async fn step_time_interval_aggregation_job_continue() {
     mocked_aggregate_failure.assert_async().await;
     mocked_aggregate_success.assert_async().await;
 
-    let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            aggregation_param.clone(),
-            (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(2),
-        );
-    let want_report_aggregation =
-        ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        );
+    let want_aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+        *task.id(),
+        aggregation_job_id,
+        aggregation_param,
+        (),
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        AggregationJobState::Finished,
+        AggregationJobStep::from(2),
+    );
+    let want_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
+        *task.id(),
+        aggregation_job_id,
+        *report.metadata().id(),
+        *report.metadata().time(),
+        0,
+        None,
+        ReportAggregationState::Finished,
+    );
 
     let want_batch_aggregations = Vec::from([
-        BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
+        BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
             *task.id(),
             active_batch_identifier,
-            aggregation_param.clone(),
+            aggregation_param,
             0,
             Interval::from_time(report.metadata().time()).unwrap(),
             BatchAggregationState::Aggregating {
-                aggregate_share: Some(transcript.leader_output_share.clone()),
+                aggregate_share: Some(transcript.leader_aggregate_share),
                 report_count: 1,
                 checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
                 aggregation_jobs_created: 1,
                 aggregation_jobs_terminated: 1,
             },
         ),
-        BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
+        BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
             *task.id(),
             other_batch_identifier,
-            aggregation_param.clone(),
+            aggregation_param,
             0,
             Interval::EMPTY,
             BatchAggregationState::Aggregating {
@@ -2151,11 +2092,7 @@ async fn step_time_interval_aggregation_job_continue() {
         ),
     ]);
 
-    let (
-        got_aggregation_job,
-        got_report_aggregation,
-        got_batch_aggregations,
-    ) = ds
+    let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
             let vdaf = Arc::clone(&vdaf);
             let task = leader_task.clone();
@@ -2163,11 +2100,12 @@ async fn step_time_interval_aggregation_job_continue() {
 
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         task.id(),
                         &aggregation_job_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let report_aggregation = tx
                     .get_report_aggregation_by_report_id(
@@ -2177,19 +2115,19 @@ async fn step_time_interval_aggregation_job_continue() {
                         &aggregation_job_id,
                         report_metadata.id(),
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
-                        .await
-                        .unwrap(),
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
+                    .await
+                    .unwrap(),
                 );
 
-                Ok((
-                    aggregation_job,
-                    report_aggregation,
-                    batch_aggregations,
-                ))
+                Ok((aggregation_job, report_aggregation, batch_aggregations))
             })
         })
         .await
@@ -2212,14 +2150,14 @@ async fn step_leader_selected_aggregation_job_continue() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
             max_batch_size: Some(10),
             batch_time_window_size: None,
         },
-        VdafInstance::Poplar1 { bits: 1 },
+        VdafInstance::Fake { rounds: 2 },
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
@@ -2232,17 +2170,15 @@ async fn step_leader_selected_aggregation_job_continue() {
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
     );
-    let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
+    let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
 
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
+    let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         vdaf.as_ref(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
-        &IdpfInput::from_bools(&[true]),
+        &13,
     );
 
     let agg_auth_token = task.aggregator_auth_token();
@@ -2257,7 +2193,7 @@ async fn step_leader_selected_aggregation_job_continue() {
     let batch_id = random();
     let aggregation_job_id = random();
     let leader_aggregate_share = vdaf
-        .aggregate(&aggregation_param, [transcript.leader_output_share.clone()])
+        .aggregate(&aggregation_param, [transcript.leader_output_share])
         .unwrap();
 
     let lease = ds
@@ -2265,7 +2201,7 @@ async fn step_leader_selected_aggregation_job_continue() {
             let (task, report, aggregation_param, transcript) = (
                 leader_task.clone(),
                 report.clone(),
-                aggregation_param.clone(),
+                aggregation_param,
                 transcript.clone(),
             );
             Box::pin(async move {
@@ -2275,14 +2211,10 @@ async fn step_leader_selected_aggregation_job_continue() {
                     .await
                     .unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    LeaderSelected,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     batch_id,
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -2292,10 +2224,7 @@ async fn step_leader_selected_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_report_aggregation(&ReportAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     *report.metadata().id(),
@@ -2312,14 +2241,10 @@ async fn step_leader_selected_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
-                    LeaderSelected,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     0,
                     Interval::from_time(report.metadata().time()).unwrap(),
                     BatchAggregationState::Aggregating {
@@ -2408,64 +2333,56 @@ async fn step_leader_selected_aggregation_job_continue() {
     mocked_aggregate_failure.assert_async().await;
     mocked_aggregate_success.assert_async().await;
 
-    let want_aggregation_job =
-        AggregationJob::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            aggregation_param.clone(),
-            batch_id,
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(2),
-        );
-    let want_report_aggregation =
-        ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Finished,
-        );
-    let want_batch_aggregations = Vec::from([BatchAggregation::<
-        VERIFY_KEY_LENGTH,
-        LeaderSelected,
-        Poplar1<XofTurboShake128, 16>,
-    >::new(
+    let want_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
         *task.id(),
+        aggregation_job_id,
+        aggregation_param,
         batch_id,
-        aggregation_param.clone(),
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        AggregationJobState::Finished,
+        AggregationJobStep::from(2),
+    );
+    let want_report_aggregation = ReportAggregation::<0, dummy::Vdaf>::new(
+        *task.id(),
+        aggregation_job_id,
+        *report.metadata().id(),
+        *report.metadata().time(),
         0,
-        Interval::from_time(report.metadata().time()).unwrap(),
-        BatchAggregationState::Aggregating {
-            aggregate_share: Some(leader_aggregate_share),
-            report_count: 1,
-            checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
-            aggregation_jobs_created: 1,
-            aggregation_jobs_terminated: 1,
-        },
-    )]);
+        None,
+        ReportAggregationState::Finished,
+    );
+    let want_batch_aggregations =
+        Vec::from([BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+            *task.id(),
+            batch_id,
+            aggregation_param,
+            0,
+            Interval::from_time(report.metadata().time()).unwrap(),
+            BatchAggregationState::Aggregating {
+                aggregate_share: Some(leader_aggregate_share),
+                report_count: 1,
+                checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+                aggregation_jobs_created: 1,
+                aggregation_jobs_terminated: 1,
+            },
+        )]);
 
-    let (
-        got_aggregation_job,
-        got_report_aggregation,
-        got_batch_aggregations,
-    ) = ds
+    let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
             let (vdaf, task, report_metadata, aggregation_param) = (
                 Arc::clone(&vdaf),
                 leader_task.clone(),
                 report.metadata().clone(),
-                aggregation_param.clone(),
+                aggregation_param,
             );
             Box::pin(async move {
                 let aggregation_job = tx
-                    .get_aggregation_job::<VERIFY_KEY_LENGTH, LeaderSelected, Poplar1<XofTurboShake128, 16>>(
+                    .get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
                         task.id(),
                         &aggregation_job_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
                 let report_aggregation = tx
                     .get_report_aggregation_by_report_id(
@@ -2475,20 +2392,26 @@ async fn step_leader_selected_aggregation_job_continue() {
                         &aggregation_job_id,
                         report_metadata.id(),
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
-                let batch_aggregations =
-                merge_batch_aggregations_by_batch(LeaderSelected::get_batch_aggregations_for_collection_identifier::<
-                        VERIFY_KEY_LENGTH,
-                        Poplar1<XofTurboShake128, 16>,
+                let batch_aggregations = merge_batch_aggregations_by_batch(
+                    LeaderSelected::get_batch_aggregations_for_collection_identifier::<
+                        0,
+                        dummy::Vdaf,
                         _,
-                    >(tx, task.id(), task.time_precision(), &vdaf, &batch_id, &aggregation_param)
-                    .await.unwrap());
-                Ok((
-                    aggregation_job,
-                    report_aggregation,
-                    batch_aggregations,
-                ))
+                    >(
+                        tx,
+                        task.id(),
+                        task.time_precision(),
+                        &vdaf,
+                        &batch_id,
+                        &aggregation_param,
+                    )
+                    .await
+                    .unwrap(),
+                );
+                Ok((aggregation_job, report_aggregation, batch_aggregations))
             })
         })
         .await

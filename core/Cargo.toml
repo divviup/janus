@@ -26,6 +26,7 @@ test-util = [
     "dep:tokio-stream",
     "dep:tracing-log",
     "dep:tracing-subscriber",
+    "janus_messages/test-util",
     "kube/ws",
     "prio/test-util",
     "tokio/macros",

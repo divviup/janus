@@ -90,9 +90,7 @@ use prio::{
     topology::ping_pong::{PingPongState, PingPongTopology},
     vdaf::{
         self,
-        poplar1::Poplar1,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
-        xof::XofTurboShake128,
     },
 };
 use rand::{thread_rng, Rng};
@@ -1004,12 +1002,6 @@ impl<C: Clock> TaskAggregator<C> {
                 }
             },
 
-            VdafInstance::Poplar1 { bits } => {
-                let vdaf = Poplar1::new_turboshake128(*bits);
-                let verify_key = task.vdaf_verify_key()?;
-                VdafOps::Poplar1(Arc::new(vdaf), verify_key)
-            }
-
             #[cfg(feature = "test-util")]
             VdafInstance::Fake { rounds } => VdafOps::Fake(Arc::new(dummy::Vdaf::new(*rounds))),
 
@@ -1300,10 +1292,6 @@ enum VdafOps {
         VerifyKey<VERIFY_KEY_LENGTH>,
         vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
     ),
-    Poplar1(
-        Arc<Poplar1<XofTurboShake128, 16>>,
-        VerifyKey<VERIFY_KEY_LENGTH>,
-    ),
     #[cfg(feature = "test-util")]
     Fake(Arc<dummy::Vdaf>),
 }
@@ -1456,17 +1444,6 @@ macro_rules! vdaf_ops_dispatch {
                         body
                     }
                 }
-            }
-
-            crate::aggregator::VdafOps::Poplar1(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofTurboShake128, 16>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                let body = $body;
-                body
             }
 
             #[cfg(feature = "test-util")]

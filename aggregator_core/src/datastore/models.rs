@@ -1609,18 +1609,21 @@ pub fn merge_batch_aggregations_by_batch<
     mut batch_aggregations: Vec<BatchAggregation<SEED_SIZE, B, A>>,
 ) -> Vec<BatchAggregation<SEED_SIZE, B, A>>
 where
-    A::AggregationParam: PartialEq,
+    A::AggregationParam: Ord,
 {
     use itertools::Itertools as _;
 
-    // We sort using encoded aggregation param, removing requirement for AggregationParam: Ord,
-    // which is not satisfied by all VDAFs (e.g. Poplar1).
-    batch_aggregations.sort_by_key(|ba| {
+    batch_aggregations.sort_by(|ba_l, ba_r| {
         (
-            *ba.task_id(),
-            ba.batch_identifier().clone(),
-            ba.aggregation_parameter().get_encoded().unwrap(),
+            ba_l.task_id(),
+            ba_l.batch_identifier(),
+            ba_l.aggregation_parameter(),
         )
+            .cmp(&(
+                ba_r.task_id(),
+                ba_r.batch_identifier(),
+                ba_r.aggregation_parameter(),
+            ))
     });
     batch_aggregations
         .into_iter()

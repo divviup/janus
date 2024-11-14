@@ -331,9 +331,12 @@ pub enum VdafType {
         /// Size of each proof chunk.
         chunk_length: u32,
     },
-    Poplar1 {
-        /// Bit length of the input string.
-        bits: u16,
+
+    /// A fake, no-op VDAF, which uses an aggregation parameter and a variable number of rounds.
+    #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+    Fake {
+        rounds: u32,
     },
 }
 
@@ -343,7 +346,9 @@ impl VdafType {
     const PRIO3SUMVEC: u32 = 0x00000002;
     const PRIO3HISTOGRAM: u32 = 0x00000003;
     const PRIO3SUMVECFIELD64MULTIPROOFHMACSHA256AES128: u32 = 0xFFFF1003;
-    const POPLAR1: u32 = 0x00001000;
+
+    #[cfg(feature = "test-util")]
+    const FAKE: u32 = 0xFFFF0000; // Chosen from the "reserved for private use" space.
 
     fn vdaf_type_code(&self) -> u32 {
         match self {
@@ -354,7 +359,9 @@ impl VdafType {
                 Self::PRIO3SUMVECFIELD64MULTIPROOFHMACSHA256AES128
             }
             Self::Prio3Histogram { .. } => Self::PRIO3HISTOGRAM,
-            Self::Poplar1 { .. } => Self::POPLAR1,
+
+            #[cfg(feature = "test-util")]
+            Self::Fake { .. } => Self::FAKE,
         }
     }
 }
@@ -394,8 +401,10 @@ impl Encode for VdafType {
                 length.encode(bytes)?;
                 chunk_length.encode(bytes)?;
             }
-            Self::Poplar1 { bits } => {
-                bits.encode(bytes)?;
+
+            #[cfg(feature = "test-util")]
+            Self::Fake { rounds } => {
+                rounds.encode(bytes)?;
             }
         }
         Ok(())
@@ -409,7 +418,9 @@ impl Encode for VdafType {
                 Self::Prio3SumVec { .. } => 9,
                 Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 10,
                 Self::Prio3Histogram { .. } => 8,
-                Self::Poplar1 { .. } => 2,
+
+                #[cfg(feature = "test-util")]
+                Self::Fake { .. } => 4,
             },
         )
     }
@@ -440,9 +451,12 @@ impl Decode for VdafType {
                 length: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
             },
-            Self::POPLAR1 => Self::Poplar1 {
-                bits: u16::decode(bytes)?,
+
+            #[cfg(feature = "test-util")]
+            Self::FAKE => Self::Fake {
+                rounds: u32::decode(bytes)?,
             },
+
             val => {
                 return Err(CodecError::Other(
                     anyhow!("unexpected VDAF type code value {}", val).into(),
@@ -653,27 +667,6 @@ mod tests {
                     "00000003", // vdaf_type_code
                     "00000100", // length
                     "00000012", // chunk_length
-                ),
-            ),
-            (
-                VdafType::Poplar1 { bits: u16::MIN },
-                concat!(
-                    "00001000", // vdaf_type_code
-                    "0000",     // bits
-                ),
-            ),
-            (
-                VdafType::Poplar1 { bits: 0xABAB },
-                concat!(
-                    "00001000", // vdaf_type_code
-                    "ABAB",     // bits
-                ),
-            ),
-            (
-                VdafType::Poplar1 { bits: u16::MAX },
-                concat!(
-                    "00001000", // vdaf_type_code
-                    "FFFF"      // bits
                 ),
             ),
         ])

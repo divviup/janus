@@ -30,7 +30,7 @@ use janus_core::{
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
-    vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VERIFY_KEY_LENGTH},
+    vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
     batch_mode::LeaderSelected,
@@ -47,12 +47,7 @@ use janus_messages::{
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
-    idpf::IdpfInput,
-    vdaf::{
-        poplar1::{Poplar1, Poplar1AggregationParam},
-        xof::XofTurboShake128,
-        Aggregator, Client, Vdaf,
-    },
+    vdaf::{dummy, Aggregator, Client, Vdaf},
 };
 use rand::random;
 use ring::digest::{digest, SHA256};
@@ -67,9 +62,7 @@ use url::Url;
 
 use super::http_handlers::AggregatorHandlerBuilder;
 
-type TestVdaf = Poplar1<XofTurboShake128, 16>;
-
-pub struct TaskprovTestCase<V: Vdaf, const VERIFY_KEY_SIZE: usize> {
+pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     _ephemeral_datastore: EphemeralDatastore,
     clock: MockClock,
     collector_hpke_keypair: HpkeKeypair,
@@ -85,26 +78,21 @@ pub struct TaskprovTestCase<V: Vdaf, const VERIFY_KEY_SIZE: usize> {
     global_hpke_key: HpkeKeypair,
 }
 
-impl TaskprovTestCase<TestVdaf, 16> {
+impl TaskprovTestCase<0, dummy::Vdaf> {
     async fn new() -> Self {
-        // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
-        // Poplar1 so that the VDAF wil take more than one step, so we can exercise aggregation
-        // continuation.
-        let vdaf = Poplar1::new(1);
+        let vdaf = dummy::Vdaf::new(2);
         let vdaf_config = VdafConfig::new(
             DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
+            VdafType::Fake { rounds: 2 },
         )
         .unwrap();
-        let measurement = IdpfInput::from_bools(&[true]);
-        let aggregation_param =
-            Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
-                .unwrap();
+        let measurement = 13;
+        let aggregation_param = dummy::AggregationParam(7);
         Self::with_vdaf(vdaf_config, vdaf, measurement, aggregation_param).await
     }
 }
 
-impl<V, const VERIFY_KEY_SIZE: usize> TaskprovTestCase<V, VERIFY_KEY_SIZE>
+impl<const VERIFY_KEY_SIZE: usize, V> TaskprovTestCase<VERIFY_KEY_SIZE, V>
 where
     V: Vdaf + Client<16> + Aggregator<VERIFY_KEY_SIZE, 16> + Clone,
 {
@@ -374,7 +362,7 @@ async fn taskprov_aggregate_init() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -471,7 +459,7 @@ async fn taskprov_aggregate_init_missing_extension() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -554,7 +542,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
-                    tx.get_aggregation_jobs_for_task::<16, LeaderSelected, TestVdaf>(&task_id)
+                    tx.get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(&task_id)
                         .await
                         .unwrap(),
                     tx.get_aggregator_task(&task_id).await.unwrap(),
@@ -668,7 +656,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         task_expiration,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
+            VdafType::Fake { rounds: 2 },
         )
         .unwrap(),
     )
@@ -747,7 +735,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         task_expiration,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
+            VdafType::Fake { rounds: 2 },
         )
         .unwrap(),
     )
@@ -827,7 +815,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         task_expiration,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
+            VdafType::Fake { rounds: 2 },
         )
         .unwrap(),
     )
@@ -883,7 +871,6 @@ async fn taskprov_aggregate_continue() {
             let task = test.task.clone();
             let report_share = report_share.clone();
             let transcript = transcript.clone();
-            let aggregation_param = aggregation_param.clone();
 
             Box::pin(async move {
                 // Aggregate continue is only possible if the task has already been inserted.
@@ -892,14 +879,10 @@ async fn taskprov_aggregate_continue() {
 
                 tx.put_scrubbed_report(task.id(), &report_share).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    LeaderSelected,
-                    TestVdaf,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    aggregation_param.clone(),
+                    aggregation_param,
                     batch_id,
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -908,7 +891,7 @@ async fn taskprov_aggregate_continue() {
                 ))
                 .await?;
 
-                tx.put_report_aggregation::<VERIFY_KEY_LENGTH, TestVdaf>(&ReportAggregation::new(
+                tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                     *task.id(),
                     aggregation_job_id,
                     *report_share.metadata().id(),
@@ -916,14 +899,12 @@ async fn taskprov_aggregate_continue() {
                     0,
                     None,
                     ReportAggregationState::WaitingHelper {
-                        prepare_state: transcript.helper_prepare_transitions[0]
-                            .prepare_state()
-                            .clone(),
+                        prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
                 .await?;
 
-                tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, LeaderSelected, TestVdaf>(
+                tx.put_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
                         batch_id,
@@ -1028,14 +1009,13 @@ async fn taskprov_aggregate_share() {
             let interval =
                 Interval::new(Time::from_seconds_since_epoch(6000), *task.time_precision())
                     .unwrap();
-            let aggregation_param = aggregation_param.clone();
             let transcript = transcript.clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_batch_aggregation(&BatchAggregation::<16, LeaderSelected, TestVdaf>::new(
+                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
                     batch_id,
                     aggregation_param,
@@ -1133,7 +1113,7 @@ async fn taskprov_aggregate_share() {
 /// This runs aggregation job init, aggregation job continue, and aggregate share requests against a
 /// taskprov-enabled helper, and confirms that correct results are returned.
 #[tokio::test]
-async fn end_to_end_poplar1() {
+async fn end_to_end() {
     let test = TaskprovTestCase::new().await;
     let (auth_header_name, auth_header_value) = test
         .peer_aggregator

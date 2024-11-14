@@ -42,14 +42,8 @@ use prio::{
     dp::{
         distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
     },
-    idpf::IdpfInput,
     topology::ping_pong::PingPongMessage,
-    vdaf::{
-        dummy,
-        poplar1::{Poplar1, Poplar1AggregationParam},
-        prio3::Prio3Count,
-        xof::XofTurboShake128,
-    },
+    vdaf::{dummy, prio3::Prio3Count},
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use std::{
@@ -200,8 +194,6 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             },
             Role::Leader,
         ),
-        (VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
-        (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
     ] {
         let task = TaskBuilder::new(task::BatchMode::TimeInterval, vdaf)
             .with_report_expiry_age(Some(Duration::from_seconds(3600)))
@@ -2267,29 +2259,20 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let report_id = random();
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
-    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
-    let vdaf_transcript = run_vdaf(
-        vdaf.as_ref(),
-        &verify_key,
-        &aggregation_param,
-        &report_id,
-        &IdpfInput::from_bools(&[false]),
-    );
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
+    let aggregation_param = dummy::AggregationParam(5);
+    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
 
     for (ord, (role, state)) in [
         (
             Role::Leader,
             ReportAggregationState::StartLeader {
-                public_share: vdaf_transcript.public_share.clone(),
+                public_share: vdaf_transcript.public_share,
                 leader_extensions: Vec::from([
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
                 ]),
-                leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                leader_input_share: vdaf_transcript.leader_input_share,
                 helper_encrypted_input_share: HpkeCiphertext::new(
                     HpkeConfigId::from(13),
                     Vec::from("encapsulated_context"),
@@ -2309,9 +2292,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Helper,
             ReportAggregationState::WaitingHelper {
-                prepare_state: vdaf_transcript.helper_prepare_transitions[0]
-                    .prepare_state()
-                    .clone(),
+                prepare_state: *vdaf_transcript.helper_prepare_transitions[0].prepare_state(),
             },
         ),
         (Role::Leader, ReportAggregationState::Finished),
@@ -2337,7 +2318,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let task = TaskBuilder::new(
             task::BatchMode::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
+            VdafInstance::Fake { rounds: 2 },
         )
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build()
@@ -2349,14 +2330,10 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         let want_report_aggregation = ds
             .run_tx("test-put-report-aggregations", |tx| {
                 let (task, state, aggregation_param) =
-                    (task.clone(), state.clone(), aggregation_param.clone());
+                    (task.clone(), state.clone(), aggregation_param);
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_aggregation_job(&AggregationJob::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Poplar1<XofTurboShake128, 16>,
-                    >::new(
+                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         aggregation_param,
@@ -2598,23 +2575,14 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let report_id = random();
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
-    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
+    let aggregation_param = dummy::AggregationParam(7);
 
-    let vdaf_transcript = run_vdaf(
-        vdaf.as_ref(),
-        &verify_key,
-        &aggregation_param,
-        &report_id,
-        &IdpfInput::from_bools(&[false]),
-    );
+    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
 
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
-        VdafInstance::Poplar1 { bits: 1 },
+        VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .build()
@@ -2624,19 +2592,12 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
     let want_report_aggregations = ds
         .run_unnamed_tx(|tx| {
-            let (task, vdaf_transcript, aggregation_param) = (
-                task.clone(),
-                vdaf_transcript.clone(),
-                aggregation_param.clone(),
-            );
+            let (task, vdaf_transcript, aggregation_param) =
+                (task.clone(), vdaf_transcript.clone(), aggregation_param);
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     aggregation_param,
@@ -2652,9 +2613,9 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
                     ReportAggregationState::StartLeader {
-                        public_share: vdaf_transcript.public_share.clone(),
+                        public_share: vdaf_transcript.public_share,
                         leader_extensions: Vec::new(),
-                        leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                        leader_input_share: vdaf_transcript.leader_input_share,
                         helper_encrypted_input_share: HpkeCiphertext::new(
                             HpkeConfigId::from(13),
                             Vec::from("encapsulated_context"),
@@ -2662,9 +2623,8 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         ),
                     },
                     ReportAggregationState::WaitingHelper {
-                        prepare_state: vdaf_transcript.helper_prepare_transitions[0]
-                            .prepare_state()
-                            .clone(),
+                        prepare_state: *vdaf_transcript.helper_prepare_transitions[0]
+                            .prepare_state(),
                     },
                     ReportAggregationState::Finished,
                     ReportAggregationState::Failed {
@@ -2762,23 +2722,14 @@ async fn create_report_aggregation_from_client_reports_table(
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let report_id = random();
-    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
-    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
-    let aggregation_param =
-        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
-            .unwrap();
+    let vdaf = Arc::new(dummy::Vdaf::new(2));
+    let aggregation_param = dummy::AggregationParam(7);
 
-    let vdaf_transcript = run_vdaf(
-        vdaf.as_ref(),
-        &verify_key,
-        &aggregation_param,
-        &report_id,
-        &IdpfInput::from_bools(&[false]),
-    );
+    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
 
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
-        VdafInstance::Poplar1 { bits: 1 },
+        VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .build()
@@ -2790,14 +2741,10 @@ async fn create_report_aggregation_from_client_reports_table(
             let clock = clock.clone();
             let task = task.clone();
             let vdaf_transcript = vdaf_transcript.clone();
-            let aggregation_param = aggregation_param.clone();
+
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_aggregation_job(&AggregationJob::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Poplar1<XofTurboShake128, 16>,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     aggregation_param,
@@ -2812,19 +2759,18 @@ async fn create_report_aggregation_from_client_reports_table(
 
                 let report_id = random();
                 let timestamp = clock.now();
-                let leader_stored_report =
-                    LeaderStoredReport::<16, Poplar1<XofTurboShake128, 16>>::new(
-                        *task.id(),
-                        ReportMetadata::new(report_id, timestamp),
-                        vdaf_transcript.public_share,
-                        Vec::new(),
-                        vdaf_transcript.leader_input_share,
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(9),
-                            Vec::from(b"encapsulated"),
-                            Vec::from(b"encrypted helper share"),
-                        ),
-                    );
+                let leader_stored_report = LeaderStoredReport::<0, dummy::Vdaf>::new(
+                    *task.id(),
+                    ReportMetadata::new(report_id, timestamp),
+                    (),
+                    Vec::new(),
+                    vdaf_transcript.leader_input_share,
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(9),
+                        Vec::from(b"encapsulated"),
+                        Vec::from(b"encrypted helper share"),
+                    ),
+                );
                 tx.put_client_report(&leader_stored_report).await.unwrap();
 
                 let report_aggregation_metadata = ReportAggregationMetadata::new(
@@ -2846,10 +2792,10 @@ async fn create_report_aggregation_from_client_reports_table(
                     timestamp,
                     0,
                     None,
-                    ReportAggregationState::<16, Poplar1<XofTurboShake128, 16>>::StartLeader {
-                        public_share: leader_stored_report.public_share().clone(),
+                    ReportAggregationState::<0, dummy::Vdaf>::StartLeader {
+                        public_share: *leader_stored_report.public_share(),
                         leader_extensions: leader_stored_report.leader_extensions().to_owned(),
-                        leader_input_share: leader_stored_report.leader_input_share().clone(),
+                        leader_input_share: *leader_stored_report.leader_input_share(),
                         helper_encrypted_input_share: leader_stored_report
                             .helper_encrypted_input_share()
                             .clone(),
