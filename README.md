@@ -41,7 +41,7 @@ branch.
 | `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Unmaintained as of November 1, 2023 |
 | `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of June 24, 2024 |
 | `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Unmaintained as of June 24, 2024 |
-| `release/0.7` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes | Supported |
+| `release/0.7` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes, [with errata](#draft-ietf-ppm-dap-09-errata) | Supported |
 | `main` | [`draft-ietf-ppm-dap-13`][dap-13] | Not yet (under development) | Supported |
 
 Note that not every DAP draft has been implemented.
@@ -62,6 +62,17 @@ incorrectly encoded, making Janus incompatible with other DAP Aggregator
 implementations.
 
 See [issue #2466](https://github.com/divviup/janus/issues/2466) for details.
+
+### `draft-ietf-ppm-dap-09` errata
+
+Janus' `release/0.7` branch contains the following issues which cause it to skew
+from the behavior specified in the DAP specification:
+
+* When acting as a Leader aggregator, Janus responds to successful upload
+  requests with an HTTP 200 OK status rather than an HTTP 201 Created status.
+  The suggested workaround is for clients to accept any HTTP status code in the
+  2xx range as success. See [issue
+  #3483](https://github.com/divviup/janus/issues/3483) for details.
 
 ## Versioning and Stability
 
