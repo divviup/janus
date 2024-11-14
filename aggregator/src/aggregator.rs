@@ -16,7 +16,7 @@ use crate::{
         report_writer::{ReportWriteBatcher, WritableReport},
     },
     cache::{
-        GlobalHpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
+        HpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
         TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
     config::TaskprovConfig,
@@ -27,7 +27,6 @@ use crate::{
     },
 };
 use backoff::{backoff::Backoff, Notify};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
@@ -55,7 +54,7 @@ use janus_aggregator_core::{
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    hpke::{self, HpkeApplicationInfo, Label},
     retries::retry_http_request_notify,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{
@@ -155,8 +154,8 @@ pub struct Aggregator<C: Clock> {
     /// Metrics.
     metrics: AggregatorMetrics,
 
-    /// Cache of global HPKE keypairs and configs.
-    global_hpke_keypairs: GlobalHpkeKeypairCache,
+    /// Cache of HPKE keypairs and configs.
+    hpke_keypairs: Arc<HpkeKeypairCache>,
 
     /// Cache of taskprov peer aggregators.
     peer_aggregators: PeerAggregatorCache,
@@ -213,9 +212,9 @@ pub struct Config {
     /// of getting task metrics.
     pub task_counter_shard_count: u64,
 
-    /// Defines how often to refresh the global HPKE configs cache. This affects how often an aggregator
+    /// Defines how often to refresh the HPKE configs cache. This affects how often an aggregator
     /// becomes aware of key state changes.
-    pub global_hpke_configs_refresh_interval: StdDuration,
+    pub hpke_configs_refresh_interval: StdDuration,
 
     /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
     /// of task parameter changes.
@@ -236,12 +235,6 @@ pub struct Config {
     ///
     /// This option is not stable, and not subject to Janus' typical API/config stability promises.
     pub log_forbidden_mutations: Option<PathBuf>,
-
-    // If set, always prefer to advertise global HPKE keys. This is implicitly enabled if taskprov
-    // is enabled.
-    //
-    // This will become on by default in a future version of Janus.
-    pub require_global_hpke_keys: bool,
 }
 
 impl Default for Config {
@@ -251,13 +244,12 @@ impl Default for Config {
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
             task_counter_shard_count: 32,
-            global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+            hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
             task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
             task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
             log_forbidden_mutations: None,
-            require_global_hpke_keys: true,
         }
     }
 }
@@ -269,9 +261,8 @@ impl<C: Clock> Aggregator<C> {
     ///
     /// Fails on general datastore errors.
     ///
-    /// If [`Self::require_global_hpke_keys`] is `true`, and there is not at least one
-    /// [`GlobalHpkeKeypair`] in the database in the [`HpkeKeyState::Active`] state then this
-    /// function will fail.
+    /// If  there is not at least one HPKE keypair in the database in the [`HpkeKeyState::Active`]
+    /// state then this function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
         clock: C,
@@ -319,12 +310,10 @@ impl<C: Clock> Aggregator<C> {
         let aggregated_report_share_dimension_histogram =
             aggregated_report_share_dimension_histogram(meter);
 
-        let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
-            datastore.clone(),
-            cfg.global_hpke_configs_refresh_interval,
-            cfg.require_global_hpke_keys || cfg.taskprov_config.enabled,
-        )
-        .await?;
+        let hpke_keypairs = Arc::new(
+            HpkeKeypairCache::new(Arc::clone(&datastore), cfg.hpke_configs_refresh_interval)
+                .await?,
+        );
 
         let peer_aggregators = PeerAggregatorCache::new(&datastore).await?;
 
@@ -340,7 +329,7 @@ impl<C: Clock> Aggregator<C> {
                 aggregate_step_failure_counter,
                 aggregated_report_share_dimension_histogram,
             },
-            global_hpke_keypairs,
+            hpke_keypairs,
             peer_aggregators,
         })
     }
@@ -349,75 +338,20 @@ impl<C: Clock> Aggregator<C> {
     ///
     /// The returned value is the encoded HPKE config list (i.e. the response body), and an optional
     /// signature over the body if the aggregator is configured to sign HPKE config responses.
-    async fn handle_hpke_config(
-        &self,
-        task_id_base64: Option<&[u8]>,
-    ) -> Result<(Vec<u8>, Option<Signature>), Error> {
-        // Retrieve the appropriate HPKE config list.
-        let hpke_config_list =
-            if self.cfg.taskprov_config.enabled || self.cfg.require_global_hpke_keys {
-                // If we're running in taskprov mode or requiring global keys, unconditionally
-                // provide the global keys and ignore the task_id parameter.
-                let configs = self.global_hpke_keypairs.configs();
-                if configs.is_empty() {
-                    return Err(Error::Internal(
-                        "this server is missing its global HPKE config".into(),
-                    ));
-                } else {
-                    HpkeConfigList::new(configs.to_vec())
-                }
-            } else {
-                // Otherwise, try to get the task-specific key.
-                match task_id_base64 {
-                    Some(task_id_base64) => {
-                        let task_id_bytes = URL_SAFE_NO_PAD
-                            .decode(task_id_base64)
-                            .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
-                        let task_id = TaskId::get_decoded(&task_id_bytes)
-                            .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
-                        let task_aggregator = self
-                            .task_aggregators
-                            .get(&task_id)
-                            .await?
-                            .ok_or(Error::UnrecognizedTask(task_id))?;
-
-                        match task_aggregator.handle_hpke_config() {
-                            Some(hpke_config_list) => hpke_config_list,
-                            // Assuming something hasn't gone horribly wrong with the database, this
-                            // should only happen in the case where the system has been moved from taskprov
-                            // mode to non-taskprov mode. Thus there's still taskprov tasks in the database.
-                            // This isn't a supported use case, so the operator needs to delete these tasks
-                            // or move the system back into taskprov mode.
-                            None => {
-                                return Err(Error::Internal("task has no HPKE configs".to_string()))
-                            }
-                        }
-                    }
-                    // No task ID present, try to fall back to a global config.
-                    None => {
-                        let configs = self.global_hpke_keypairs.configs();
-                        if configs.is_empty() {
-                            // This server isn't configured to provide global HPKE keys, the client
-                            // should have given us a task ID.
-                            return Err(Error::MissingTaskId);
-                        } else {
-                            HpkeConfigList::new(configs.to_vec())
-                        }
-                    }
-                }
-            };
-
-        // Encode & (if configured to do so) sign the HPKE config list.
-        let encoded_hpke_config_list = hpke_config_list
+    async fn handle_hpke_config(&self) -> Result<(Vec<u8>, Option<Signature>), Error> {
+        // Retrieve HPKE keys & encode the HPKE config list.
+        let encoded_hpke_config_list = HpkeConfigList::new(self.hpke_keypairs.configs().to_vec())
             .get_encoded()
             .map_err(Error::MessageEncode)?;
+
+        // If configured to do so, sign the encoded HPKE config list.
         let signature = self
             .cfg
             .hpke_config_signing_key
             .as_ref()
             .map(|key| key.sign(&SystemRandom::new(), &encoded_hpke_config_list))
             .transpose()
-            .map_err(|_| Error::Internal("hpke config list signing error".to_string()))?;
+            .map_err(|_| Error::Internal("HPKE config list signing error".to_string()))?;
 
         Ok((encoded_hpke_config_list, signature))
     }
@@ -435,12 +369,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
         task_aggregator
-            .handle_upload(
-                &self.clock,
-                &self.global_hpke_keypairs,
-                &self.metrics,
-                report,
-            )
+            .handle_upload(&self.clock, &self.hpke_keypairs, &self.metrics, report)
             .await
     }
 
@@ -501,7 +430,7 @@ impl<C: Clock> Aggregator<C> {
             .handle_aggregate_init(
                 Arc::clone(&self.datastore),
                 &self.clock,
-                &self.global_hpke_keypairs,
+                Arc::clone(&self.hpke_keypairs),
                 &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
                 self.cfg.task_counter_shard_count,
@@ -800,8 +729,6 @@ impl<C: Clock> Aggregator<C> {
                 task_config.query_config().min_batch_size() as u64,
                 *task_config.query_config().time_precision(),
                 *peer_aggregator.tolerable_clock_skew(),
-                // Taskprov task has no per-task HPKE keys
-                [],
                 task::AggregatorTaskParameters::TaskprovHelper,
             )
             .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
@@ -886,7 +813,7 @@ impl<C: Clock> Aggregator<C> {
 
     #[cfg(feature = "test-util")]
     pub async fn refresh_caches(&self) -> Result<(), Error> {
-        self.global_hpke_keypairs.refresh(&self.datastore).await
+        self.hpke_keypairs.refresh(&self.datastore).await
     }
 }
 
@@ -1035,31 +962,17 @@ impl<C: Clock> TaskAggregator<C> {
         })
     }
 
-    fn handle_hpke_config(&self) -> Option<HpkeConfigList> {
-        // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
-        // config/key -- right now it's the one with the maximal config ID, but that will run into
-        // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
-        Some(HpkeConfigList::new(Vec::from([self
-            .task
-            .hpke_keys()
-            .iter()
-            .max_by_key(|(&id, _)| id)?
-            .1
-            .config()
-            .clone()])))
-    }
-
     async fn handle_upload(
         &self,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         report: Report,
     ) -> Result<(), Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
                 clock,
-                global_hpke_keypairs,
+                hpke_keypairs,
                 metrics,
                 &self.task,
                 &self.report_writer,
@@ -1072,7 +985,7 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: Arc<Datastore<C>>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
@@ -1085,7 +998,7 @@ impl<C: Clock> TaskAggregator<C> {
             .handle_aggregate_init(
                 datastore,
                 clock,
-                global_hpke_keypairs,
+                hpke_keypairs,
                 metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
@@ -1469,7 +1382,7 @@ impl VdafOps {
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
@@ -1481,7 +1394,7 @@ impl VdafOps {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         Arc::clone(vdaf),
                         clock,
-                        global_hpke_keypairs,
+                        hpke_keypairs,
                         metrics,
                         task,
                         report_writer,
@@ -1495,7 +1408,7 @@ impl VdafOps {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         Arc::clone(vdaf),
                         clock,
-                        global_hpke_keypairs,
+                        hpke_keypairs,
                         metrics,
                         task,
                         report_writer,
@@ -1511,7 +1424,7 @@ impl VdafOps {
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     #[tracing::instrument(
-        skip(self, datastore, global_hpke_keypairs, metrics, task, req_bytes),
+        skip(self, datastore, hpke_keypairs, metrics, task, req_bytes),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
@@ -1519,7 +1432,7 @@ impl VdafOps {
         &self,
         datastore: Arc<Datastore<C>>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
@@ -1535,7 +1448,7 @@ impl VdafOps {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
                         clock,
-                        global_hpke_keypairs,
+                        hpke_keypairs,
                         Arc::clone(vdaf),
                         metrics,
                         task,
@@ -1555,7 +1468,7 @@ impl VdafOps {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, LeaderSelected, VdafType, _>(
                         datastore,
                         clock,
-                        global_hpke_keypairs,
+                        hpke_keypairs,
                         Arc::clone(vdaf),
                         metrics,
                         task,
@@ -1657,7 +1570,7 @@ impl VdafOps {
     async fn handle_upload_generic<const SEED_SIZE: usize, B, A, C>(
         vdaf: Arc<A>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
@@ -1742,42 +1655,26 @@ impl VdafOps {
         )
         .get_encoded()
         .map_err(|e| Arc::new(Error::MessageEncode(e)))?;
-        let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
-            hpke::open(
-                hpke_keypair,
-                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
-                report.leader_encrypted_input_share(),
-                &input_share_aad,
-            )
-        };
 
-        let global_hpke_keypair =
-            global_hpke_keypairs.keypair(report.leader_encrypted_input_share().config_id());
+        // Retrieve the HPKE key indicated by the report & verify that it is known.
+        let hpke_keypair =
+            match hpke_keypairs.keypair(report.leader_encrypted_input_share().config_id()) {
+                Some(hpke_keypair) => hpke_keypair,
+                None => {
+                    return Err(reject_report(ReportRejectionReason::OutdatedHpkeConfig(
+                        *report.leader_encrypted_input_share().config_id(),
+                    ))
+                    .await?);
+                }
+            };
 
-        let task_hpke_keypair = task
-            .hpke_keys()
-            .get(report.leader_encrypted_input_share().config_id());
-
-        let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
-            // Verify that the report's HPKE config ID is known.
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-17
-            (None, None) => {
-                return Err(reject_report(ReportRejectionReason::OutdatedHpkeConfig(
-                    *report.leader_encrypted_input_share().config_id(),
-                ))
-                .await?);
-            }
-            (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
-            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-                    // Only attempt second trial if _decryption_ fails, and not some
-                    // error in server-side HPKE configuration.
-                    hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-                    error => Err(error),
-                })
-            }
-        };
+        // Verify that we can decrypt & decode the Leader input share with the key we retrieved.
+        let decryption_result = hpke::open(
+            &hpke_keypair,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
+            report.leader_encrypted_input_share(),
+            &input_share_aad,
+        );
 
         let encoded_leader_input_share = match decryption_result {
             Ok(plaintext) => plaintext,
@@ -1970,7 +1867,7 @@ impl VdafOps {
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, B, A, C>(
         datastore: Arc<Datastore<C>>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
@@ -2070,7 +1967,7 @@ impl VdafOps {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let producer_task = tokio::task::spawn_blocking({
             let parent_span = Span::current();
-            let global_hpke_keypairs = global_hpke_keypairs.view();
+            let hpke_keypairs = Arc::clone(&hpke_keypairs);
             let vdaf = Arc::clone(&vdaf);
             let task = Arc::clone(&task);
             let metrics = metrics.clone();
@@ -2090,23 +1987,12 @@ impl VdafOps {
                         let _entered = span.enter();
 
                         // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-                        let global_hpke_keypair = global_hpke_keypairs.keypair(
+                        let hpke_keypair = hpke_keypairs.keypair(
                             prepare_init
                                 .report_share()
                                 .encrypted_input_share()
                                 .config_id(),
-                        );
-
-                        let task_hpke_keypair = task.hpke_keys().get(
-                            prepare_init
-                                .report_share()
-                                .encrypted_input_share()
-                                .config_id(),
-                        );
-
-                        let check_keypairs = if task_hpke_keypair.is_none()
-                            && global_hpke_keypair.is_none()
-                        {
+                        ).ok_or_else(|| {
                             debug!(
                                 config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
                                 "Helper encrypted input share references unknown HPKE config ID"
@@ -2114,13 +2000,11 @@ impl VdafOps {
                             metrics
                                 .aggregate_step_failure_counter
                                 .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
-                            Err(ReportError::HpkeUnknownConfigId)
-                        } else {
-                            Ok(())
-                        };
+                            ReportError::HpkeUnknownConfigId
+                        });
 
-                        let input_share_aad = check_keypairs.and_then(|_| {
-                            InputShareAad::new(
+                        let plaintext = hpke_keypair.and_then(|hpke_keypair| {
+                            let input_share_aad = InputShareAad::new(
                                 *task.id(),
                                 prepare_init.report_share().metadata().clone(),
                                 prepare_init.report_share().public_share().to_vec(),
@@ -2141,38 +2025,18 @@ impl VdafOps {
                                 // fallible encoding is part of the HPKE decryption process, I think
                                 // this is as close as we can get to a meaningful error signal.
                                 ReportError::HpkeDecryptError
-                            })
-                        });
+                            })?;
 
-                        let plaintext = input_share_aad.and_then(|input_share_aad| {
-                            let try_hpke_open = |hpke_keypair| {
-                                hpke::open(
-                                    hpke_keypair,
-                                    &HpkeApplicationInfo::new(
-                                        &Label::InputShare,
-                                        &Role::Client,
-                                        &Role::Helper,
-                                    ),
-                                    prepare_init.report_share().encrypted_input_share(),
-                                    &input_share_aad,
-                                )
-                            };
-
-                            match (task_hpke_keypair, global_hpke_keypair) {
-                                (None, None) => unreachable!("already checked this condition"),
-                                (None, Some(global_hpke_keypair)) => {
-                                    try_hpke_open(&global_hpke_keypair)
-                                }
-                                (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-                                (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                                    try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-                                        // Only attempt second trial if _decryption_ fails, and not some
-                                        // error in server-side HPKE configuration.
-                                        hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-                                        error => Err(error),
-                                    })
-                                }
-                            }
+                            hpke::open(
+                                &hpke_keypair,
+                                &HpkeApplicationInfo::new(
+                                    &Label::InputShare,
+                                    &Role::Client,
+                                    &Role::Helper,
+                                ),
+                                prepare_init.report_share().encrypted_input_share(),
+                                &input_share_aad,
+                            )
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),

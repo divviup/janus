@@ -75,7 +75,7 @@ pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     vdaf: V,
     measurement: V::Measurement,
     aggregation_param: V::AggregationParam,
-    global_hpke_key: HpkeKeypair,
+    hpke_key: HpkeKeypair,
 }
 
 impl TaskprovTestCase<0, dummy::Vdaf> {
@@ -108,7 +108,7 @@ where
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let global_hpke_key = HpkeKeypair::test();
+        let hpke_key = HpkeKeypair::test();
         let collector_hpke_keypair = HpkeKeypair::test();
         let peer_aggregator = PeerAggregatorBuilder::new()
             .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
@@ -118,16 +118,13 @@ where
 
         datastore
             .run_unnamed_tx(|tx| {
-                let global_hpke_key = global_hpke_key.clone();
+                let hpke_key = hpke_key.clone();
                 let peer_aggregator = peer_aggregator.clone();
                 Box::pin(async move {
-                    tx.put_global_hpke_keypair(&global_hpke_key).await.unwrap();
-                    tx.set_global_hpke_keypair_state(
-                        global_hpke_key.config().id(),
-                        &HpkeKeyState::Active,
-                    )
-                    .await
-                    .unwrap();
+                    tx.put_hpke_keypair(&hpke_key).await.unwrap();
+                    tx.set_hpke_keypair_state(hpke_key.config().id(), &HpkeKeyState::Active)
+                        .await
+                        .unwrap();
                     tx.put_taskprov_peer_aggregator(&peer_aggregator)
                         .await
                         .unwrap();
@@ -211,7 +208,7 @@ where
             vdaf,
             measurement,
             aggregation_param,
-            global_hpke_key,
+            hpke_key,
         }
     }
 
@@ -239,7 +236,7 @@ where
         let (report_share, transcript) = PrepareInitGenerator::new(
             self.clock.clone(),
             self.task.helper_view().unwrap(),
-            self.global_hpke_key.config().clone(),
+            self.hpke_key.config().clone(),
             self.vdaf.clone(),
             self.aggregation_param.clone(),
         )

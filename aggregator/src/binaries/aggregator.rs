@@ -7,8 +7,7 @@ use crate::{
     binaries::garbage_collector::run_garbage_collector,
     binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
     cache::{
-        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+        HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
@@ -380,12 +379,11 @@ pub struct Config {
     #[serde(default = "default_task_counter_shard_count")]
     pub task_counter_shard_count: u64,
 
-    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects how
-    /// often an aggregator becomes aware of key state changes. If unspecified, default is defined
-    /// by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
-    /// specify this.
+    /// Defines how often to refresh the HPKE configs cache in milliseconds. This affects how often
+    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined by
+    /// [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to specify this.
     #[serde(default)]
-    pub global_hpke_configs_refresh_interval: Option<u64>,
+    pub hpke_configs_refresh_interval: Option<u64>,
 
     /// Defines how long to cache tasks for, in seconds. This affects how often the aggregator
     /// becomes aware of task parameter changes. If unspecified, default is defined by
@@ -399,11 +397,6 @@ pub struct Config {
     /// [`TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY`]. You shouldn't normally have to specify this.
     #[serde(default)]
     pub task_cache_capacity: Option<u64>,
-
-    /// Experimental. Always advertise global HPKE keys instead of per-task HPKE keys. This will
-    /// become on by default in a future version of Janus.
-    #[serde(default)]
-    pub require_global_hpke_keys: bool,
 
     /// Experimental. Queue aggregate init and continue requests with a LIFO strategy.
     #[serde(default)]
@@ -466,9 +459,9 @@ impl Config {
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
             task_counter_shard_count: self.task_counter_shard_count,
             taskprov_config: self.taskprov_config,
-            global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
+            hpke_configs_refresh_interval: match self.hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
-                None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+                None => HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
             hpke_config_signing_key: options
                 .hpke_config_signing_key
@@ -483,7 +476,6 @@ impl Config {
                 .task_cache_capacity
                 .unwrap_or(TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY),
             log_forbidden_mutations: self.log_forbidden_mutations.clone(),
-            require_global_hpke_keys: self.require_global_hpke_keys,
         })
     }
 }
@@ -612,11 +604,10 @@ mod tests {
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
-            global_hpke_configs_refresh_interval: Some(42),
+            hpke_configs_refresh_interval: Some(42),
             task_cache_ttl_s: None,
             task_cache_capacity: None,
             log_forbidden_mutations: Some(PathBuf::from("/tmp/events")),
-            require_global_hpke_keys: true,
             helper_aggregation_request_queue: None,
         })
     }
@@ -1065,8 +1056,8 @@ mod tests {
             right.task_counter_shard_count
         );
         assert_eq!(
-            left.global_hpke_configs_refresh_interval,
-            right.global_hpke_configs_refresh_interval
+            left.hpke_configs_refresh_interval,
+            right.hpke_configs_refresh_interval
         );
         assert_eq!(left.taskprov_config, right.taskprov_config);
 

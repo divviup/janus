@@ -332,7 +332,7 @@ impl HpkeKeypair {
         Self::test_with_id(random())
     }
 
-    pub fn test_with_id(id: u8) -> Self {
+    pub fn test_with_id(id: HpkeConfigId) -> Self {
         Self::test_with_ciphersuite(
             id,
             HpkeCiphersuite::new(
@@ -343,9 +343,9 @@ impl HpkeKeypair {
         )
     }
 
-    pub fn test_with_ciphersuite(id: u8, ciphersuite: HpkeCiphersuite) -> Self {
+    pub fn test_with_ciphersuite(id: HpkeConfigId, ciphersuite: HpkeCiphersuite) -> Self {
         Self::generate(
-            HpkeConfigId::from(id),
+            id,
             ciphersuite.kem_id(),
             ciphersuite.kdf_id(),
             ciphersuite.aead_id(),

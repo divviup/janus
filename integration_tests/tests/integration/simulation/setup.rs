@@ -18,8 +18,7 @@ use janus_aggregator::{
         Config as AggregatorConfig,
     },
     cache::{
-        GlobalHpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+        HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
 };
 use janus_aggregator_core::{
@@ -73,28 +72,27 @@ impl SimulationAggregator {
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(state.clock.clone()).await);
 
-        let aggregator_config = AggregatorConfig {
-            // Set this to 1 because report uploads will be serialized.
-            max_upload_batch_size: 1,
-            max_upload_batch_write_delay: StdDuration::from_secs(0),
-            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
-            task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
-            global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
-            hpke_config_signing_key: None,
-            // We only support Taskprov on the helper side, so leave it disabled.
-            taskprov_config: Default::default(),
-            task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
-            task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-            log_forbidden_mutations: None,
-            require_global_hpke_keys: false,
-        };
+        datastore.put_hpke_key().await.unwrap();
 
         let aggregator_handler = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
             state.clock.clone(),
             report_writer_runtime,
             &state.meter,
-            aggregator_config,
+            AggregatorConfig {
+                // Set this to 1 because report uploads will be serialized.
+                max_upload_batch_size: 1,
+                max_upload_batch_write_delay: StdDuration::from_secs(0),
+                batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
+                task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
+                hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+                hpke_config_signing_key: None,
+                // We only support Taskprov on the helper side, so leave it disabled.
+                taskprov_config: Default::default(),
+                task_cache_ttl: TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+                task_cache_capacity: TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+                log_forbidden_mutations: None,
+            },
         )
         .await
         .unwrap()

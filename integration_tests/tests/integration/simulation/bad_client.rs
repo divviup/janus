@@ -359,8 +359,8 @@ async fn bad_client_report_validity() {
         .run_unnamed_tx(|tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
-                tx.put_global_hpke_keypair(&keypair).await?;
-                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                tx.put_hpke_keypair(&keypair).await?;
+                tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                     .await
             })
         })

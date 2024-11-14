@@ -1,6 +1,6 @@
 use crate::{
     status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole,
 };
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -24,7 +24,6 @@ use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
 use trillium::{Conn, Handler, Status};
 use trillium_api::{api, ApiConnExt, Json};
 use trillium_proxy::{upstream::IntoUpstreamSelector, Client, Proxy};
@@ -40,7 +39,6 @@ struct EndpointResponse {
 
 async fn handle_add_task(
     datastore: &Datastore<RealClock>,
-    keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let peer_aggregator_endpoint = match request.role {
@@ -85,8 +83,6 @@ async fn handle_add_task(
         },
     };
 
-    let hpke_keypair = keyring.lock().await.get_random_keypair();
-
     let batch_mode = match request.batch_mode {
         1 => task::BatchMode::TimeInterval,
         2 => task::BatchMode::LeaderSelected {
@@ -114,7 +110,6 @@ async fn handle_add_task(
         // We can be strict about clock skew since this executable is only intended for use with
         // other aggregators running on the same host.
         Duration::from_seconds(1),
-        [hpke_keypair],
         aggregator_parameters,
     )
     .context("error constructing task")?;
@@ -134,8 +129,6 @@ async fn make_handler(
     aggregator_address: SocketAddr,
     health_check_peers: Vec<Url>,
 ) -> anyhow::Result<impl Handler> {
-    let keyring = Keyring::new();
-
     let upstream = format!("http://{aggregator_address}/").into_upstream();
     let proxy_handler = Proxy::new(
         Client::new(ClientConfig::default()).with_default_pool(),
@@ -175,9 +168,8 @@ async fn make_handler(
             api(
                 move |_conn: &mut Conn, Json(request): Json<AggregatorAddTaskRequest>| {
                     let datastore = Arc::clone(&datastore);
-                    let keyring = keyring.clone();
                     async move {
-                        match handle_add_task(&datastore, &keyring.0, request).await {
+                        match handle_add_task(&datastore, request).await {
                             Ok(()) => Json(AddTaskResponse {
                                 status: SUCCESS.to_string(),
                                 error: None,
@@ -259,12 +251,12 @@ impl Options {
             RealClock::default(),
             true,
             |ctx| async move {
-                let datastore = Arc::new(ctx.datastore);
+                ctx.datastore.put_hpke_key().await.unwrap();
 
                 // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
                 // endpoints.
                 let handler = make_handler(
-                    Arc::clone(&datastore),
+                    Arc::new(ctx.datastore),
                     ctx.config.dap_serving_prefix,
                     ctx.config.aggregator_address,
                     ctx.config.health_check_peers,

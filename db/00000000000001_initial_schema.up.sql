@@ -23,7 +23,7 @@ CREATE TYPE HPKE_KEY_STATE AS ENUM(
                  -- for decrypting client reports depending on the age of those reports
 );
 
-CREATE TABLE global_hpke_keys(
+CREATE TABLE hpke_keys(
     -- These columns should be treated as immutable.
     config_id SMALLINT PRIMARY KEY,  -- HPKE config ID
     config BYTEA NOT NULL,           -- HPKE config, including public key (encoded HpkeConfig message)
@@ -179,22 +179,6 @@ CREATE TABLE task_aggregation_counters(
     CONSTRAINT task_aggregation_counters_unique_id UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 ) WITH (fillfactor = 50);
-
--- The HPKE public keys (aka configs) and private keys used by a given task.
-CREATE TABLE task_hpke_keys(
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,      -- task ID the HPKE key is associated with
-    config_id SMALLINT NOT NULL,  -- HPKE config ID
-    config BYTEA NOT NULL,        -- HPKE config, including public key (encoded HpkeConfig message)
-    private_key BYTEA NOT NULL,   -- private key (encrypted)
-
-    -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
-
-    CONSTRAINT task_hpke_keys_unique_task_id_and_config_id UNIQUE(task_id, config_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
 
 -- Individual reports received from clients.
 CREATE TABLE client_reports(

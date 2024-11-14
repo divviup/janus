@@ -25,7 +25,8 @@ database:
 # reasonably high limit to prevent legitimate work from being cancelled.
 max_transaction_retries: 1000
 
-# Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
+# Socket address for /healthz and /traceconfigz HTTP requests. Defaults to
+# 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
 # Logging configuration. (optional)
@@ -61,7 +62,8 @@ metrics_config:
   # "prometheus" or "otlp". (optional)
   exporter:
     prometheus:
-      # Address on which to listen for Prometheus metrics scrape requests. (optional)
+      # Address on which to listen for Prometheus metrics scrape requests.
+      # (optional)
       host: "0.0.0.0"
       # Port number for metrics server. (optional)
       port: 9464
@@ -79,8 +81,8 @@ metrics_config:
     # Enable a histogram of task poll times. This introduces some additional
     # overhead. (optional)
     enable_poll_time_histogram: false
-    # Configure the scale and parameters of the poll time histogram. Defaults
-    # to a linear scale. (optional)
+    # Configure the scale and parameters of the poll time histogram. Defaults to
+    # a linear scale. (optional)
     poll_time_histogram:
       linear:
         # Sets the poll time histogram's resolution. (optional)
@@ -96,15 +98,16 @@ thread_pool_stack_size: 2097152
 # Socket address for DAP requests. (required)
 listen_address: "0.0.0.0:8080"
 
-# How to serve the Janus aggregator API. If not set, Janus aggregator API is not served. (optional)
+# How to serve the Janus aggregator API. If not set, Janus aggregator API is not
+# served. (optional)
 aggregator_api:
-  # Serve the aggregator API on an address and port that is separate from the DAP API. This is
-  # mutually exclusive with path_prefix.
+  # Serve the aggregator API on an address and port that is separate from the
+  # DAP API. This is mutually exclusive with path_prefix.
   listen_address: "0.0.0.0:8081"
 
-  # Alternatively, serve the aggregator API on the same address as the DAP API, but on a separate
-  # path denoted by `path_prefix`. This is mutually exclusive with listen_address.
-  # path_prefix: "aggregator-api"
+  # Alternatively, serve the aggregator API on the same address as the DAP API,
+  # but on a separate path denoted by `path_prefix`. This is mutually exclusive
+  # with listen_address. path_prefix: "aggregator-api"
 
   # Resource location at which the DAP service managed by this
   # aggregator api can be found on the public internet. Required.
@@ -120,48 +123,54 @@ max_upload_batch_write_delay_ms: 250
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
 
-# Defines the number of shards to break report & aggregation metric counters into. Increasing this
-# value will reduce the amount of database contention during report uploads & aggregations, while
-# increasing the cost of getting task metrics. (optional, default: 32)
+# Defines the number of shards to break report & aggregation metric counters
+# into. Increasing this value will reduce the amount of database contention
+# during report uploads & aggregations, while increasing the cost of getting
+# task metrics. (optional, default: 32)
 task_counter_shard_count: 32
 
-# Configuration for the taskprov extension. If enabled, this changes the behavior of the
-# aggregator as described in draft-wang-ppm-dap-taskprov. (optional)
+# Configuration for the taskprov extension. If enabled, this changes the
+# behavior of the aggregator as described in draft-wang-ppm-dap-taskprov.
+# (optional)
 taskprov_config:
   # Whether to enable the taskprov extension. Defaults to false.
   enabled: false
 
-# Where forbidden mutations should be logged. In DAP, it's permitted to retry HTTP requests like
-# aggregation job creation/initialization, but it's not legal to mutate the resource, for example by
-# changing which reports are included in an aggregation job. Janus always rejects such forbidden
-# mutations. If this option is enabled, then it will log the hash of the request that created the
-# resource, the hash of the incoming request that attempted to mutate it, and the list of report
-# metadatas in both, into a file created under the path provided here.
+# Where forbidden mutations should be logged. In DAP, it's permitted to retry
+# HTTP requests like aggregation job creation/initialization, but it's not legal
+# to mutate the resource, for example by changing which reports are included in
+# an aggregation job. Janus always rejects such forbidden mutations. If this
+# option is enabled, then it will log the hash of the request that created the
+# resource, the hash of the incoming request that attempted to mutate it, and
+# the list of report metadatas in both, into a file created under the path
+# provided here.
 #
-# Janus does not unconditionally log this information because retrieving the report metadata for the
-# existing request is expensive and the resulting event is large.
+# Janus does not unconditionally log this information because retrieving the
+# report metadata for the existing request is expensive and the resulting event
+# is large.
 #
-# This option is not stable and not subject to Janus' typical API and configuration stability
-# promises.
+# This option is not stable and not subject to Janus' typical API and
+# configuration stability promises.
 #
 # Optional; the default is not to log events.
 log_forbidden_mutations: "/tmp/event-storage"
 
-# Configuration for garbage collection. If omitted, old data is never deleted. (optional)
+# Configuration for garbage collection. If omitted, old data is never deleted.
+# (optional)
 garbage_collection:
   # How frequently to collect garbage, in seconds.
   gc_frequency_s: 60
 
-  # The maximum number of client reports, per task, to delete in a single run of the garbage
-  # collector.
+  # The maximum number of client reports, per task, to delete in a single run of
+  # the garbage collector.
   report_limit: 5000
 
-  # The maximum number of aggregation jobs (& related artifacts), per task, to delete in a single
-  # run of the garbage collector.
+  # The maximum number of aggregation jobs (& related artifacts), per task, to
+  # delete in a single run of the garbage collector.
   aggregation_limit: 500
 
-  # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
-  # of the garbage collector.
+  # The maximum number of collection jobs (& related artifacts), per task, to
+  # delete in a single run of the garbage collector.
   collection_limit: 50
 
   # The maximum number of tasks to process together for GC in a single database
@@ -172,17 +181,17 @@ garbage_collection:
   # processing GC. Leaving this unset means there is no maximum. (optional)
   concurrent_tx_limit: null
 
-# Configuration for key rotator. Allows running the key rotator as part of the aggregator process.
-# If omitted, you should run the key rotator as a separate cronjob.
+# Configuration for key rotator. Allows running the key rotator as part of the
+# aggregator process. If omitted, you should run the key rotator as a separate
+# cronjob.
 key_rotator:
   # How frequently to run the key rotator, in seconds. Required.
   frequency_s: 3600
 
-  # Rotation policy for global HPKE keys.
+  # Rotation policy for HPKE keys.
   hpke:
-    # How long keys remains pending before they're promoted to active. Should
-    # be greater than the global HPKE keypair cache refresh rate. Defaults to
-    # 1 hour.
+    # How long keys remains pending before they're promoted to active. Should be
+    # greater than the HPKE keypair cache refresh rate. Defaults to 1 hour.
     pending_duration_s: 3600
 
     # The TTL of keys. Defaults to 4 weeks.
@@ -200,10 +209,10 @@ key_rotator:
         kdf_id: HkdfSha256
         aead_id: Aes128Gcm
 
-# Defines how often to refresh the global HPKE configs cache, in milliseconds.
-# This affects how often an aggregator becomes aware of key state changes.
-# (optional, defaults to 30 minutes)
-global_hpke_configs_refresh_interval: 1800000
+# Defines how often to refresh the HPKE configs cache, in milliseconds. This
+# affects how often an aggregator becomes aware of key state changes. (optional,
+# defaults to 30 minutes)
+hpke_configs_refresh_interval: 1800000
 
 # Defines how long to cache tasks for, in seconds. This affects how soon the
 # aggregator becomes aware of task parameter changes. (optional, defaults to 10
@@ -219,7 +228,7 @@ task_cache_capacity: 10000
 helper_aggregation_request_queue:
   # The number of requests that can be processed concurrently.
   concurrency: 1
-  # The maximum number of requests that can be left waiting in the queue for
-  # a concurrency slot to become available. Excess requests are rejected with
-  # HTTP status 429 Too Many Requests.
+  # The maximum number of requests that can be left waiting in the queue for a
+  # concurrency slot to become available. Excess requests are rejected with HTTP
+  # status 429 Too Many Requests.
   depth: 24

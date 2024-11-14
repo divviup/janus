@@ -83,14 +83,13 @@ async fn http_metrics() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let mut aggregator_config = default_aggregator_config();
-    aggregator_config.require_global_hpke_keys = false;
+    datastore.put_hpke_key().await.unwrap();
     let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
         &meter,
-        aggregator_config,
+        default_aggregator_config(),
     )
     .await
     .unwrap()
@@ -143,7 +142,7 @@ async fn http_metrics() {
     );
     assert_eq!(
         janus_aggregator_responses_total_metric_labels["error_code"],
-        "missing_task_id"
+        ""
     );
     assert_eq!(
         janus_aggregator_responses_total_metric_labels["otel_scope_name"],
@@ -165,10 +164,6 @@ async fn http_metrics() {
     let http_server_request_duration_seconds_metric_labels =
         labels_to_map(&metric_families["http_server_request_duration_seconds"].get_metric()[0]);
     assert_eq!(
-        http_server_request_duration_seconds_metric_labels["error_type"],
-        "missing_task_id"
-    );
-    assert_eq!(
         http_server_request_duration_seconds_metric_labels["http_route"],
         "hpke_config"
     );
@@ -178,7 +173,7 @@ async fn http_metrics() {
     );
     assert_eq!(
         http_server_request_duration_seconds_metric_labels["http_response_status_code"],
-        "400"
+        "200"
     );
 
     // http.server.request.body_size from OpenTelemetry Semantic Conventions.

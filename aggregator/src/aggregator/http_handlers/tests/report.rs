@@ -144,10 +144,8 @@ async fn upload_handler() {
 
     // Should reject a report using the wrong HPKE config for the leader, and reply with
     // the error type outdatedConfig.
-    let unused_hpke_config_id = (0..)
-        .map(HpkeConfigId::from)
-        .find(|id| !leader_task.hpke_keys().contains_key(id))
-        .unwrap();
+    let unused_hpke_config_id =
+        HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
     let bad_report = Report::new(
         report.metadata().clone(),
         report.public_share().to_vec(),
@@ -267,7 +265,7 @@ async fn upload_handler() {
         clock.now(),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
-        &HpkeKeypair::test_with_id((*hpke_keypair.config().id()).into()),
+        &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -415,7 +413,7 @@ async fn upload_handler_error_fanout() {
         .build()
         .await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
+    let hpke_keypair = datastore.put_hpke_key().await.unwrap();
     let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
@@ -528,7 +526,7 @@ async fn upload_client_early_disconnect() {
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-    let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
+    let hpke_keypair = datastore.put_hpke_key().await.unwrap();
     let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),

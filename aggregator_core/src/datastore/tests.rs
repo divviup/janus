@@ -4,7 +4,7 @@ use crate::{
         models::{
             AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
             AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-            CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
+            CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
             SqlInterval, TaskAggregationCounter, TaskUploadCounter,
@@ -275,8 +275,6 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 tx.check_timestamp_columns("tasks", "test-put-task", false)
-                    .await;
-                tx.check_timestamp_columns("task_hpke_keys", "test-put-task", false)
                     .await;
                 tx.get_aggregator_tasks().await
             })
@@ -7156,30 +7154,28 @@ SELECT (lower(interval) = '2021-10-05 00:00:00' AND
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
-    use janus_core::hpke::HpkeKeypair;
-
+async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
     let clock = datastore.clock.clone();
-    let keypair = HpkeKeypair::test();
+    let keypair = hpke::HpkeKeypair::test();
 
     datastore
         .run_tx("test-put-keys", |tx| {
             let keypair = keypair.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                assert_eq!(tx.get_global_hpke_keypairs().await.unwrap(), Vec::new());
-                tx.put_global_hpke_keypair(&keypair).await.unwrap();
+                assert_eq!(tx.get_hpke_keypairs().await.unwrap(), Vec::new());
+                tx.put_hpke_keypair(&keypair).await.unwrap();
 
                 let expected_keypair =
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Pending, clock.now());
+                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Pending, clock.now());
                 assert_eq!(
-                    tx.get_global_hpke_keypairs().await.unwrap(),
+                    tx.get_hpke_keypairs().await.unwrap(),
                     Vec::from([expected_keypair.clone()])
                 );
                 assert_eq!(
-                    tx.get_global_hpke_keypair(keypair.config().id())
+                    tx.get_hpke_keypair(keypair.config().id())
                         .await
                         .unwrap()
                         .unwrap(),
@@ -7188,27 +7184,27 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
 
                 // Try modifying state.
                 clock.advance(&Duration::from_seconds(100));
-                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                     .await
                     .unwrap();
                 assert_eq!(
-                    tx.get_global_hpke_keypair(keypair.config().id())
+                    tx.get_hpke_keypair(keypair.config().id())
                         .await
                         .unwrap()
                         .unwrap(),
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now())
+                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now())
                 );
 
                 clock.advance(&Duration::from_seconds(100));
-                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
+                tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
                     .await
                     .unwrap();
                 assert_eq!(
-                    tx.get_global_hpke_keypair(keypair.config().id())
+                    tx.get_hpke_keypair(keypair.config().id())
                         .await
                         .unwrap()
                         .unwrap(),
-                    GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Expired, clock.now())
+                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Expired, clock.now())
                 );
 
                 Ok(())
@@ -7222,7 +7218,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
         datastore
             .run_unnamed_tx(|tx| {
                 let keypair = keypair.clone();
-                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+                Box::pin(async move { tx.put_hpke_keypair(&keypair).await })
             })
             .await,
         Err(Error::Db(_))
@@ -7232,18 +7228,14 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
         .run_unnamed_tx(|tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
-                tx.delete_global_hpke_keypair(keypair.config().id())
-                    .await
-                    .unwrap();
-                assert_eq!(tx.get_global_hpke_keypairs().await.unwrap(), Vec::new());
+                tx.delete_hpke_keypair(keypair.config().id()).await.unwrap();
+                assert_eq!(tx.get_hpke_keypairs().await.unwrap(), Vec::new());
                 assert_matches!(
-                    tx.get_global_hpke_keypair(keypair.config().id())
-                        .await
-                        .unwrap(),
+                    tx.get_hpke_keypair(keypair.config().id()).await.unwrap(),
                     None
                 );
 
-                tx.check_timestamp_columns("global_hpke_keys", "test-put-keys", true)
+                tx.check_timestamp_columns("hpke_keys", "test-put-keys", true)
                     .await;
 
                 Ok(())

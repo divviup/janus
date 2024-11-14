@@ -1,25 +1,18 @@
-# Global HPKE Keypairs
+# HPKE Keys
 
-Janus has support for HPKE key advertisement on `/hpke_configs` that are not
-tied to tasks.
-
-If a global key is configured, requests to `/hpke_configs` that don't provide
-the task ID will provide the list of active global HPKE keys.
-
-If global keys are to be used exclusively, use the feature flag
-`require_global_hpke_keys`. This will cause Janus to ignore the `?task_id`
-parameter of `/hpke_configs` entirely and serve only global HPKE keys. This
-will become the default behavior in the next major version of Janus.
-
-This document describes the operational considerations of managing global HPKE
-keys.
+Janus, as part of implementing DAP, advertises HPKE keys via the `/hpke_configs`
+endpoint. This document describes considerations for managing HPKE keys in a
+Janus deployment.
 
 ## Key Rotator
 
-It is strongly recommended to use the `key_rotator` component to manage global
-HPKE key provisioning and lifecycle.
+It is strongly recommended to use the `key_rotator` component to manage HPKE key
+provisioning and lifecycle.
 
-### Binary Key Rotator
+### Separate process
+
+The recommended method to run the key rotator is as a separate process alongside
+the main aggregator processes.
 
 Use the `key_rotator` subcommand of the `janus_aggregator` binary to invoke
 the key rotator once. 
@@ -40,18 +33,15 @@ key_rotator:
 ```
 
 This will create a single key and rotate it through a reasonable lifecycle. See
-the [advanced sample](./samples/advanced_config/key_rotator.yaml) to see
-defaults and what options are available.
+the [advanced sample](./samples/advanced_config/key_rotator.yaml) to see the
+full set of configuration options and their default values.
 
-Run this command on a cronjob, using your cron scheduling daemon of choice
-(e.g. normal `cron`, systemd timers, Kubernetes CronJobs) on some reasonable
-cadence.
+Run this command on a cronjob, using your cron scheduling daemon of choice (e.g.
+normal `cron`, systemd timers, Kubernetes CronJobs) on some reasonable cadence.
 
-This is the recommended way to run the key rotator.
+### In-process
 
-### In-process Key Rotator
-
-A less recommended, but simpler way to run the key rotator is to run it as part
+A simpler, but less-recommended, way to run the key rotator is to run it as part
 of the normal Janus aggregator.
 
 In your aggregator configuration file, write.
@@ -60,25 +50,28 @@ key_rotator:
   hpke: {}
 ```
 
-Then restart the aggregator. This will create a single key and rotate it
-through a reasonable lifecycle. See the
-[advanced sample](./samples/advanced_config/aggregator.yaml) to see defaults
-and what options are available.
+Then restart the aggregator. This will create a single key and rotate it through
+a reasonable lifecycle. See the [advanced
+sample](./samples/advanced_config/aggregator.yaml) to see the full set of
+configuration options and their default values.
 
 Note that each aggregator replica will run the key rotator. This isn't harmful,
-since the key rotator is safe to run concurrently, but this is wasteful. For
-high scale deployments, run the [key rotator separately](#binary-key-rotator).
+since the key rotator is safe to run concurrently, but it is wasteful. For high
+scale deployments, run the [key rotator in a separate
+process](#separate-process).
 
-This is useful for bring-your-own-helper deployments that want a simpler single
-binary deployment strategy.
+This is useful for Helper deployments that want a simple single-binary
+deployment strategy.
 
 ## Key Lifecycle
 
-A global keypair has three states:
-- `pending`: The key is in the database, but is not being advertised to clients.
-- `active`: The key is being advertised to clients, and clients should use it
-  to encrypt reports.
-- `expired`: The key is not advertised to clients and will eventually be deleted.
+An HPKE key is in one of three states:
+- `pending`: The key is in the database, but is not yet being advertised to
+  clients.
+- `active`: The key is being advertised to clients, and clients should use it to
+  encrypt reports.
+- `expired`: The key is not advertised to clients, and will eventually be
+  deleted.
 
 These states are to facilitate key caching and rotation. The lifecycle of a key
 is as follows:
@@ -86,10 +79,11 @@ is as follows:
 1. The in-memory caches of all Janus replicas must pick up the new key. This can
    be done by waiting or restarting the replicas.
 1. The key is moved to the `active` state.
-1. Caches must reload or the application can be restarted. The pending key already
-   being in-memory ensures that replicas that haven't had their advertisement
-   cache reloaded can still use the pending key to decrypt reports.
-1. The key operates dutifully for however long the key rotation interval is.
+1. Caches must reload or the application can be restarted. The pending key
+   already being in-memory ensures that replicas that haven't had their
+   advertisement cache reloaded can still use the pending key to decrypt
+   reports.
+1. The key remains active for the key rotation interval.
 1. When the key is due for expiry, a new key is introduced using the same steps
    as above.
 1. The old key is moved to the `expired` state so that it's no longer advertised
@@ -130,8 +124,8 @@ Example response:
 }
 ```
 
-The keypair and ID will be generated for you, and stored in the database. If
-you need to change the ciphers used, provide the `kem_id`, `kdf_id`, `aead_id`
+The keypair and ID will be generated for you, and stored in the database. If you
+need to change the ciphers used, provide the `kem_id`, `kdf_id`, `aead_id`
 parameters in the request body.
 
 The key is created in the pending state. To move it into the active state:
@@ -151,9 +145,9 @@ This should return `200 OK` on success. If you need to mark it expired, change
 the request body.
 
 Other helpful methods are as follows:
-- `GET /hpke_configs`: retrieve the details about all global keys.
+- `GET /hpke_configs`: retrieve the details about all HPKE keys.
 - `GET /hpke_configs/{:id}`: retrieve the details about a single key.
-- `DELETE /hpke_configs/{:id}`: fully delete a key from the database, this is
+- `DELETE /hpke_configs/{:id}`: fully delete a key from the database; this is
   dangerous!
 
 Note that the aggregator API will never directly expose the private key to you.

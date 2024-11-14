@@ -1,9 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_aggregator_core::{
-    datastore::models::{
-        GlobalHpkeKeypair, HpkeKeyState, TaskAggregationCounter, TaskUploadCounter,
-    },
+    datastore::models::{HpkeKeyState, HpkeKeypair, TaskAggregationCounter, TaskUploadCounter},
     task::{AggregatorTask, BatchMode},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
@@ -134,21 +132,12 @@ pub(crate) struct TaskResp {
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
     /// HPKE configuration used by the collector to decrypt aggregate shares.
     pub(crate) collector_hpke_config: HpkeConfig,
-    /// HPKE configuration(s) used by this aggregator to decrypt report shares.
-    pub(crate) aggregator_hpke_configs: Vec<HpkeConfig>,
 }
 
 impl TryFrom<&AggregatorTask> for TaskResp {
     type Error = &'static str;
 
     fn try_from(task: &AggregatorTask) -> Result<Self, Self::Error> {
-        let mut aggregator_hpke_configs: Vec<_> = task
-            .hpke_keys()
-            .values()
-            .map(|keypair| keypair.config().clone())
-            .collect();
-        aggregator_hpke_configs.sort_by_key(|config| *config.id());
-
         Ok(Self {
             task_id: *task.id(),
             peer_aggregator_endpoint: task.peer_aggregator_endpoint().clone(),
@@ -166,7 +155,6 @@ impl TryFrom<&AggregatorTask> for TaskResp {
                 .collector_hpke_config()
                 .ok_or("collector_hpke_config is required")?
                 .clone(),
-            aggregator_hpke_configs,
         })
     }
 }
@@ -178,13 +166,13 @@ pub(crate) struct GetTaskUploadMetricsResp(pub(crate) TaskUploadCounter);
 pub(crate) struct GetTaskAggregationMetricsResp(pub(crate) TaskAggregationCounter);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct GlobalHpkeConfigResp {
+pub(crate) struct HpkeConfigResp {
     pub(crate) config: HpkeConfig,
     pub(crate) state: HpkeKeyState,
 }
 
-impl From<GlobalHpkeKeypair> for GlobalHpkeConfigResp {
-    fn from(value: GlobalHpkeKeypair) -> Self {
+impl From<HpkeKeypair> for HpkeConfigResp {
+    fn from(value: HpkeKeypair) -> Self {
         Self {
             config: value.hpke_keypair().config().clone(),
             state: *value.state(),
@@ -193,14 +181,14 @@ impl From<GlobalHpkeKeypair> for GlobalHpkeConfigResp {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct PutGlobalHpkeConfigReq {
+pub(crate) struct PutHpkeConfigReq {
     pub(crate) kem_id: Option<HpkeKemId>,
     pub(crate) kdf_id: Option<HpkeKdfId>,
     pub(crate) aead_id: Option<HpkeAeadId>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct PatchGlobalHpkeConfigReq {
+pub(crate) struct PatchHpkeConfigReq {
     pub(crate) state: HpkeKeyState,
 }
 

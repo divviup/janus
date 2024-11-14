@@ -3,5 +3,5 @@ database:
   url: "postgres://postgres:postgres@localhost:5432/postgres"
 
 key_rotator:
-  # Rotation policy for global HPKE keys
+  # Rotation policy for HPKE keys.
   hpke: {}
