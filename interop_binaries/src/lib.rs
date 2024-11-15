@@ -297,7 +297,6 @@ pub struct AggregatorAddTaskRequest {
     pub vdaf_verify_key: String, // in unpadded base64url
     pub batch_mode: u8,
     pub min_batch_size: u64,
-    pub max_batch_size: Option<u64>,
     pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
     pub task_expiration: Option<u64>,  // in seconds since the epoch
@@ -305,11 +304,9 @@ pub struct AggregatorAddTaskRequest {
 
 impl AggregatorAddTaskRequest {
     pub fn from_task(task: Task, role: Role) -> Self {
-        let (batch_mode, max_batch_size) = match task.batch_mode() {
-            BatchMode::TimeInterval => (TimeInterval::CODE as u8, None),
-            BatchMode::LeaderSelected { max_batch_size, .. } => {
-                (LeaderSelected::CODE as u8, *max_batch_size)
-            }
+        let batch_mode = match task.batch_mode() {
+            BatchMode::TimeInterval => TimeInterval::CODE as u8,
+            BatchMode::LeaderSelected { .. } => LeaderSelected::CODE as u8,
         };
         Self {
             task_id: *task.id(),
@@ -329,7 +326,6 @@ impl AggregatorAddTaskRequest {
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
             batch_mode,
             min_batch_size: task.min_batch_size(),
-            max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: URL_SAFE_NO_PAD.encode(
                 task.collector_hpke_keypair()

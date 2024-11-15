@@ -41,10 +41,6 @@ pub enum BatchMode {
     /// latency of waiting for batch time intervals to pass, and with direct control over the number
     /// of reports per batch.
     LeaderSelected {
-        /// If present, the maximum number of reports in a batch to allow it to be collected. If
-        /// absent, then there is no limit to the number of reports that Janus will include in a
-        /// batch, but we generally try to make batches close to the task's `min_batch_size`.
-        max_batch_size: Option<u64>,
         /// If present, reports will be separated into different batches by timestamp, such that
         /// the client timestamp interval duration will not exceed this value. The minimum and
         /// maximum allowed report timestamps for each batch will be multiples of this value as
@@ -62,16 +58,7 @@ impl TryFrom<&taskprov::Query> for BatchMode {
     fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
         match value {
             taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
-            taskprov::Query::LeaderSelected { max_batch_size } => Ok(Self::LeaderSelected {
-                // taskprov's QueryConfig always sets a max_batch_size value (if batch mode is fixed
-                // size), but in the forthcoming draft 6, a value of 0 will mean "no maximum".
-                //
-                // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/blob/1ddcb35830923d2a770bb737b95e19033fa44a83/draft-wang-ppm-dap-taskprov.md?plain=1#L197
-                max_batch_size: if *max_batch_size == 0 {
-                    None
-                } else {
-                    Some(*max_batch_size as u64)
-                },
+            taskprov::Query::LeaderSelected => Ok(Self::LeaderSelected {
                 batch_time_window_size: None,
             }),
             _ => Err(Error::InvalidParameter("unknown batch mode")),
@@ -156,13 +143,9 @@ impl CommonTaskParameters {
         }
 
         if let BatchMode::LeaderSelected {
-            max_batch_size: Some(max_batch_size),
             batch_time_window_size: Some(batch_time_window_size),
         } = batch_mode
         {
-            if max_batch_size < min_batch_size {
-                return Err(Error::InvalidParameter("max_batch_size"));
-            }
             if batch_time_window_size.as_seconds() == 0 {
                 return Err(Error::InvalidParameter("batch_time_window_size is zero"));
             }
@@ -370,17 +353,7 @@ impl AggregatorTask {
     /// parameters, per
     /// <https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#name-batch-validation>
     pub fn validate_batch_size(&self, batch_size: u64) -> bool {
-        match self.common_parameters.batch_mode {
-            BatchMode::TimeInterval => {
-                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.1.2
-                batch_size >= self.common_parameters.min_batch_size
-            }
-            BatchMode::LeaderSelected { max_batch_size, .. } => {
-                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.6.5.2.2
-                batch_size >= self.common_parameters.min_batch_size
-                    && max_batch_size.map_or(true, |max_batch_size| batch_size <= max_batch_size)
-            }
-        }
+        batch_size >= self.common_parameters.min_batch_size
     }
 
     /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
@@ -1612,7 +1585,6 @@ mod tests {
                 TaskId::from([255; 32]),
                 "https://example.com/".parse().unwrap(),
                 BatchMode::LeaderSelected {
-                    max_batch_size: Some(10),
                     batch_time_window_size: None,
                 },
                 VdafInstance::Prio3SumVec {
@@ -1668,11 +1640,8 @@ mod tests {
                 Token::StructVariant {
                     name: "BatchMode",
                     variant: "LeaderSelected",
-                    len: 2,
+                    len: 1,
                 },
-                Token::Str("max_batch_size"),
-                Token::Some,
-                Token::U64(10),
                 Token::Str("batch_time_window_size"),
                 Token::None,
                 Token::StructVariantEnd,
@@ -1819,18 +1788,14 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
                     variant: "LeaderSelected",
-                    len: 2,
+                    len: 1,
                 },
-                Token::Str("max_batch_size"),
-                Token::Some,
-                Token::U64(10),
                 Token::Str("batch_time_window_size"),
                 Token::None,
                 Token::StructVariantEnd,
@@ -1838,18 +1803,14 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
                     variant: "LeaderSelected",
-                    len: 2,
+                    len: 1,
                 },
-                Token::Str("max_batch_size"),
-                Token::Some,
-                Token::U64(10),
                 Token::Str("batch_time_window_size"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Duration" },
@@ -1859,17 +1820,14 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                max_batch_size: None,
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
                     variant: "LeaderSelected",
-                    len: 2,
+                    len: 1,
                 },
-                Token::Str("max_batch_size"),
-                Token::None,
                 Token::Str("batch_time_window_size"),
                 Token::None,
                 Token::StructVariantEnd,
@@ -1879,32 +1837,26 @@ mod tests {
         // Backwards compatibility cases:
         assert_de_tokens(
             &BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             &[
                 Token::StructVariant {
                     name: "BatchMode",
                     variant: "LeaderSelected",
-                    len: 2,
+                    len: 1,
                 },
-                Token::Str("max_batch_size"),
-                Token::Some,
-                Token::U64(10),
                 Token::StructVariantEnd,
             ],
         );
         assert_matches!(
-            serde_json::from_value(json!({ "LeaderSelected": { "max_batch_size": 10 } })),
+            serde_json::from_value(json!({ "LeaderSelected": {} })),
             Ok(BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
         );
         assert_matches!(
-            serde_yaml::from_str("!LeaderSelected { max_batch_size: 10 }"),
+            serde_yaml::from_str("!LeaderSelected {}"),
             Ok(BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: None,
             })
         );
@@ -1912,11 +1864,9 @@ mod tests {
             serde_yaml::from_str(
                 "---
 !LeaderSelected
-  max_batch_size: 10
   batch_time_window_size: 3600"
             ),
             Ok(BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: Some(duration),
             }) => assert_eq!(duration, Duration::from_seconds(3600))
         );

@@ -35,7 +35,6 @@ async fn helper_aggregation_report_share_replay() {
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: None,
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },

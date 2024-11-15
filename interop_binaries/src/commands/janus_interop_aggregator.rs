@@ -90,7 +90,6 @@ async fn handle_add_task(
     let batch_mode = match request.batch_mode {
         1 => task::BatchMode::TimeInterval,
         2 => task::BatchMode::LeaderSelected {
-            max_batch_size: request.max_batch_size,
             batch_time_window_size: None,
         },
         _ => {

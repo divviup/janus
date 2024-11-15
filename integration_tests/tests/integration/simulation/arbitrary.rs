@@ -18,9 +18,6 @@ use crate::simulation::{
 
 impl Arbitrary for Config {
     fn arbitrary(g: &mut Gen) -> Self {
-        let mut batch_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
-        batch_size_limits.sort();
-
         let mut aggregation_job_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
         aggregation_job_size_limits.sort();
 
@@ -28,8 +25,7 @@ impl Arbitrary for Config {
 
         Self {
             time_precision,
-            min_batch_size: batch_size_limits[0].into(),
-            max_batch_size: bool::arbitrary(g).then_some(batch_size_limits[1].into()),
+            min_batch_size: max(u8::arbitrary(g), 1).into(),
             batch_time_window_size: bool::arbitrary(g).then_some(Duration::from_seconds(
                 u64::from(max(u8::arbitrary(g), 1)) * time_precision.as_seconds(),
             )),
@@ -42,12 +38,6 @@ impl Arbitrary for Config {
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         let mut choices = Vec::with_capacity(3);
-        if self.max_batch_size.is_some() {
-            choices.push(Self {
-                max_batch_size: None,
-                ..self.clone()
-            });
-        }
         if self.batch_time_window_size.is_some() {
             choices.push(Self {
                 batch_time_window_size: None,

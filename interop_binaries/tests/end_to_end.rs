@@ -47,14 +47,12 @@ async fn run(
 ) -> serde_json::Value {
     install_test_trace_subscriber();
 
-    let (batch_mode_json, max_batch_size) = match query_kind {
+    let batch_mode_json = match query_kind {
         QueryKind::TimeInterval => {
-            let batch_mode = json!(TimeInterval::CODE as u8);
-            (batch_mode, None)
+            json!(TimeInterval::CODE as u8)
         }
         QueryKind::LeaderSelected => {
-            let batch_mode = json!(LeaderSelected::CODE as u8);
-            (batch_mode, Some(json!(measurements.len())))
+            json!(LeaderSelected::CODE as u8)
         }
     };
 
@@ -282,7 +280,7 @@ async fn run(
         .expect("\"collector_hpke_config\" value is not a string");
 
     // Send a /internal/test/add_task request to the leader.
-    let mut leader_add_task_request_body = json!({
+    let leader_add_task_request_body = json!({
         "task_id": task_id_encoded,
         "leader": internal_leader_endpoint,
         "helper": internal_helper_endpoint,
@@ -296,12 +294,6 @@ async fn run(
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
-    if let Some(max_batch_size) = &max_batch_size {
-        leader_add_task_request_body
-            .as_object_mut()
-            .unwrap()
-            .insert("max_batch_size".to_string(), max_batch_size.clone());
-    }
     let leader_add_task_response = http_client
         .post(
             local_leader_endpoint
@@ -334,7 +326,7 @@ async fn run(
     );
 
     // Send a /internal/test/add_task request to the helper.
-    let mut helper_add_task_request_body = json!({
+    let helper_add_task_request_body = json!({
         "task_id": task_id_encoded,
         "leader": internal_leader_endpoint,
         "helper": internal_helper_endpoint,
@@ -347,12 +339,6 @@ async fn run(
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
-    if let Some(max_batch_size) = &max_batch_size {
-        helper_add_task_request_body
-            .as_object_mut()
-            .unwrap()
-            .insert("max_batch_size".to_string(), max_batch_size.clone());
-    }
     let helper_add_task_response = http_client
         .post(
             local_helper_endpoint

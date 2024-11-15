@@ -1289,7 +1289,6 @@ mod tests {
         // Construct a "new" task with a previously existing ID.
         let replacement_task = TaskBuilder::new(
             BatchMode::LeaderSelected {
-                max_batch_size: Some(100),
                 batch_time_window_size: None,
             },
             VdafInstance::Prio3SumVec {

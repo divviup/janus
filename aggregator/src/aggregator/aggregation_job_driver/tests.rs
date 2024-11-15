@@ -1294,7 +1294,6 @@ async fn step_leader_selected_aggregation_job_init_single_step() {
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Prio3Count,
@@ -1580,7 +1579,6 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 2 },
@@ -2154,7 +2152,6 @@ async fn step_leader_selected_aggregation_job_continue() {
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 2 },

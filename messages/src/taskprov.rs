@@ -202,7 +202,7 @@ impl Decode for QueryConfig {
 pub enum Query {
     Reserved,
     TimeInterval,
-    LeaderSelected { max_batch_size: u32 },
+    LeaderSelected,
 }
 
 impl Query {
@@ -214,21 +214,14 @@ impl Query {
 impl Encode for Query {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
-            Query::Reserved => Query::RESERVED.encode(bytes)?,
-            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
-            Query::LeaderSelected { max_batch_size } => {
-                Query::LEADER_SELECTED.encode(bytes)?;
-                max_batch_size.encode(bytes)?;
-            }
-        };
-        Ok(())
+            Query::Reserved => Query::RESERVED.encode(bytes),
+            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes),
+            Query::LeaderSelected => Query::LEADER_SELECTED.encode(bytes),
+        }
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(match self {
-            Query::Reserved | Query::TimeInterval => 1,
-            Query::LeaderSelected { .. } => 5,
-        })
+        Some(1)
     }
 }
 
@@ -238,9 +231,7 @@ impl Decode for Query {
         Ok(match batch_mode {
             Query::RESERVED => Query::Reserved,
             Query::TIME_INTERVAL => Query::TimeInterval,
-            Query::LEADER_SELECTED => Query::LeaderSelected {
-                max_batch_size: u32::decode(bytes)?,
-            },
+            Query::LEADER_SELECTED => Query::LeaderSelected,
             val => {
                 return Err(CodecError::Other(
                     anyhow!("unexpected BatchMode value {}", val).into(),
@@ -823,45 +814,32 @@ mod tests {
                 QueryConfig::new(
                     Duration::from_seconds(u64::MIN),
                     u32::MIN,
-                    Query::LeaderSelected {
-                        max_batch_size: u32::MIN,
-                    },
+                    Query::LeaderSelected,
                 ),
                 concat!(
                     "0000000000000000", // time_precision
                     "00000000",         // min_batch_size
                     "02",               // batch_mode
-                    "00000000",         // max_batch_size
                 ),
             ),
             (
-                QueryConfig::new(
-                    Duration::from_seconds(0x3C),
-                    0x24,
-                    Query::LeaderSelected {
-                        max_batch_size: 0xFAFA,
-                    },
-                ),
+                QueryConfig::new(Duration::from_seconds(0x3C), 0x24, Query::LeaderSelected),
                 concat!(
                     "000000000000003C", // time_precision
                     "00000024",         // min_batch_size
                     "02",               // batch_mode
-                    "0000FAFA",         // max_batch_size
                 ),
             ),
             (
                 QueryConfig::new(
                     Duration::from_seconds(u64::MAX),
                     u32::MAX,
-                    Query::LeaderSelected {
-                        max_batch_size: u32::MAX,
-                    },
+                    Query::LeaderSelected,
                 ),
                 concat!(
                     "FFFFFFFFFFFFFFFF", // time_precision
                     "FFFFFFFF",         // min_batch_size
                     "02",               // batch_mode
-                    "FFFFFFFF",         // max_batch_size
                 ),
             ),
         ])
@@ -877,30 +855,9 @@ mod tests {
                 ),
             ),
             (
-                Query::LeaderSelected {
-                    max_batch_size: u32::MIN,
-                },
+                Query::LeaderSelected,
                 concat!(
                     "02",       // batch_mode
-                    "00000000", // max_batch_size
-                ),
-            ),
-            (
-                Query::LeaderSelected {
-                    max_batch_size: 0xFAFA,
-                },
-                concat!(
-                    "02",       // batch_mode
-                    "0000FAFA", // max_batch_size
-                ),
-            ),
-            (
-                Query::LeaderSelected {
-                    max_batch_size: u32::MAX,
-                },
-                concat!(
-                    "02",       // batch_mode
-                    "FFFFFFFF", // max_batch_size
                 ),
             ),
         ])
@@ -917,9 +874,7 @@ mod tests {
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xCCCC,
-                        Query::LeaderSelected {
-                            max_batch_size: 0xDDDD,
-                        },
+                        Query::LeaderSelected,
                     ),
                     Time::from_seconds_since_epoch(0xEEEE),
                     VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count)
@@ -944,11 +899,10 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "0011",             // query_config length
+                        "000D",             // query_config length
                         "000000000000AAAA", // time_precision
                         "0000CCCC",         // min_batch_size
                         "02",               // batch_mode
-                        "0000DDDD",         // max_batch_size
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(

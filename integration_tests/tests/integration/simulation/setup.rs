@@ -170,7 +170,6 @@ impl Components {
 
         let batch_mode = if input.is_leader_selected {
             BatchMode::LeaderSelected {
-                max_batch_size: input.config.max_batch_size,
                 batch_time_window_size: input.config.batch_time_window_size,
             }
         } else {
