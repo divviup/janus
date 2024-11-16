@@ -261,7 +261,7 @@ impl<C: Clock> Aggregator<C> {
     ///
     /// Fails on general datastore errors.
     ///
-    /// If  there is not at least one HPKE keypair in the database in the [`HpkeKeyState::Active`]
+    /// If there is not at least one HPKE keypair in the database in the [`HpkeKeyState::Active`]
     /// state then this function will fail.
     async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,

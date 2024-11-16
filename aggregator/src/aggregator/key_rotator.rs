@@ -417,7 +417,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
             ),
         )?;
 
-        // Defensive assertion: Check our transaction snapshot for at least one active keypair in in
+        // Defensive assertion: Check our transaction snapshot for at least one active keypair in
         // the table. If one is absent, committing the transaction would leave Janus unstartable, so
         // we should rollback.
         let keypairs = tx.get_hpke_keypairs().await?;
