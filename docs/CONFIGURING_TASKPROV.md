@@ -2,13 +2,15 @@
 
 Janus has limited support for the Taskprov extension, as defined in
 [draft-wang-ppm-dap-taskprov][1]. We support it largely to facilitiate
-integrations with Divvi Up partners who have requested support for the extension.
+integrations with Divvi Up partners who have requested support for the
+extension.
 
 Taskprov defines a mechanism for provisioning tasks into a DAP aggregator. Task
-configuration is performed in-band as clients submit reports. Clients will submit
-reports containing the task configuration, and the aggregator will respond by
-validating and provisioning the task. The exact mechanism of how the task
-configuration is provided depends on the version of the implemented spec draft.
+configuration is performed in-band as clients submit reports. Clients will
+submit reports containing the task configuration, and the aggregator will
+respond by validating and provisioning the task. The exact mechanism of how the
+task configuration is provided depends on the version of the implemented spec
+draft.
 
 [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
@@ -27,22 +29,14 @@ implemented on any branches missing from this list.
 
 ## Operational Considerations
 
-Our implementation of Taskprov defines two new database entities that aren't
-otherwise used in Janus.
+Taskprov can be enabled in the aggregator configuration like so:
 
-- Global HPKE Keypair: A non-task-specific HPKE configuration advertised on
-  `/hpke_config` which is used by Taskprov clients to encrypt their reports.
-- Peer Aggregator: Another aggregator operated by a partner organization that
-  supports the Taskprov extension.
-
-Once these entities are present in the database, we can enable Taskprov in
-the aggregator configuration like so:
 ```yaml
 taskprov_config:
   enabled: true
 ```
 
-Once this flag is enabled, it must not be disabled. You cannot go from a Taskprov
+Once Taskprov is enabled, it must not be disabled. You cannot go from a Taskprov
 aggregator back to a non-Taskprov aggregator.
 
 ### Peer Aggregators
@@ -61,12 +55,12 @@ We must agree upon and share the following parameters with peer aggregators
 out-of-band:
 
 Sensitive values:
-- `verify_key_init`: A random 32-byte string used for deriving task-specific VDAF
-  verify keys.
-- `aggregator_auth_tokens`: A list of bearer tokens used by leader peer aggregator
-  to authenticate to a helper peer aggregator.
-- `collector_auth_tokens`: Unused in Janus, since it cannot operate as a Taskprov
-  leader.
+- `verify_key_init`: A random 32-byte string used for deriving task-specific
+  VDAF verify keys.
+- `aggregator_auth_tokens`: A list of bearer tokens used by leader peer
+  aggregator to authenticate to a helper peer aggregator.
+- `collector_auth_tokens`: Unused in Janus, since it cannot operate as a
+  Taskprov leader.
 
 Non-sensitive values:
 - `collector_hpke_config`: The single HPKE configuration of a collector that
@@ -134,10 +128,3 @@ Other helpful methods are as follows:
 Note that the aggregator API will not report sensitive values.
 
 ** To be fixed in [#1685](https://github.com/divviup/janus/issues/1685).
-
-### Global HPKE Keys
-
-Taskprov requires that at least one active global HPKE key is configured.
-
-See [CONFIGURING_GLOBAL_HPKE_KEYS](CONFIGURING_GLOBAL_HPKE_KEYS.md) for how this
-is configured.

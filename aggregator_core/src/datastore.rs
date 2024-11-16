@@ -4,7 +4,7 @@ use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskAggregationCounter,
     TaskUploadCounter,
@@ -21,7 +21,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::{HpkeKeypair, HpkePrivateKey},
+    hpke::{self, HpkePrivateKey},
     time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
@@ -406,17 +406,17 @@ impl<C: Clock> Datastore<C> {
         .await
     }
 
-    /// Write an arbitrary global HPKE key to the datastore and place it in the
-    /// [`HpkeKeyState::Active`] state.
+    /// Write an arbitrary HPKE key to the datastore and place it in the [`HpkeKeyState::Active`]
+    /// state.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    pub async fn put_global_hpke_key(&self) -> Result<HpkeKeypair, Error> {
-        let keypair = HpkeKeypair::test();
-        self.run_tx("test-put-global-hpke-key", |tx| {
+    pub async fn put_hpke_key(&self) -> Result<hpke::HpkeKeypair, Error> {
+        let keypair = hpke::HpkeKeypair::test();
+        self.run_tx("test-put-hpke-key", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
-                tx.put_global_hpke_keypair(&keypair).await?;
-                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                tx.put_hpke_keypair(&keypair).await?;
+                tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                     .await
             })
         })
@@ -739,49 +739,6 @@ ON CONFLICT DO NOTHING",
             .await?,
         )?;
 
-        // HPKE keys.
-        let mut hpke_config_ids: Vec<i16> = Vec::new();
-        let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
-        let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
-
-        for hpke_keypair in task.hpke_keys().values() {
-            let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..]
-                .copy_from_slice(&u8::from(*hpke_keypair.config().id()).to_be_bytes());
-
-            let encrypted_hpke_private_key = self.crypter.encrypt(
-                "task_hpke_keys",
-                &row_id,
-                "private_key",
-                hpke_keypair.private_key().as_ref(),
-            )?;
-
-            hpke_config_ids.push(u8::from(*hpke_keypair.config().id()) as i16);
-            hpke_configs.push(hpke_keypair.config().get_encoded()?);
-            hpke_private_keys.push(encrypted_hpke_private_key);
-        }
-        let stmt = self
-            .prepare_cached(
-                "-- put_aggregator_task()
-INSERT INTO task_hpke_keys (
-    task_id, created_at, updated_by, config_id, config, private_key
-)
-SELECT
-    (SELECT id FROM tasks WHERE task_id = $1), $2, $3,
-    * FROM UNNEST($4::SMALLINT[], $5::BYTEA[], $6::BYTEA[])",
-            )
-            .await?;
-        let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
-            /* created_at */ &self.clock.now().as_naive_date_time()?,
-            /* updated_by */ &self.name,
-            /* config_id */ &hpke_config_ids,
-            /* configs */ &hpke_configs,
-            /* private_keys */ &hpke_private_keys,
-        ];
-        self.execute(&stmt, hpke_configs_params).await?;
-
         Ok(())
     }
 
@@ -850,20 +807,10 @@ SELECT aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
 FROM tasks WHERE task_id = $1",
             )
             .await?;
-        let task_row = self.query_opt(&stmt, params);
+        let task_row = self.query_opt(&stmt, params).await?;
 
-        let stmt = self
-            .prepare_cached(
-                "-- get_aggregator_task()
-SELECT config_id, config, private_key FROM task_hpke_keys
-WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
-            )
-            .await?;
-        let hpke_key_rows = self.query(&stmt, params);
-
-        let (task_row, hpke_key_rows) = try_join!(task_row, hpke_key_rows,)?;
         task_row
-            .map(|task_row| self.task_from_rows(task_id, &task_row, &hpke_key_rows))
+            .map(|task_row| self.task_from_row(task_id, &task_row))
             .transpose()
     }
 
@@ -881,56 +828,16 @@ SELECT task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
 FROM tasks",
             )
             .await?;
-        let task_rows = self.query(&stmt, &[]);
+        let task_rows = self.query(&stmt, &[]).await?;
 
-        let stmt = self
-            .prepare_cached(
-                "-- get_aggregator_tasks()
-SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_hpke_keys.task_id),
-config_id, config, private_key FROM task_hpke_keys",
-            )
-            .await?;
-        let hpke_config_rows = self.query(&stmt, &[]);
-
-        let (task_rows, hpke_config_rows) = try_join!(task_rows, hpke_config_rows,)?;
-
-        let mut task_row_by_id = Vec::new();
-        for row in task_rows {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            task_row_by_id.push((task_id, row));
-        }
-
-        let mut hpke_config_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
-        for row in hpke_config_rows {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            hpke_config_rows_by_task_id
-                .entry(task_id)
-                .or_default()
-                .push(row);
-        }
-
-        task_row_by_id
+        task_rows
             .into_iter()
-            .map(|(task_id, row)| {
-                self.task_from_rows(
-                    &task_id,
-                    &row,
-                    &hpke_config_rows_by_task_id
-                        .remove(&task_id)
-                        .unwrap_or_default(),
-                )
-            })
+            .map(|row| self.task_from_row(&TaskId::get_decoded(row.get("task_id"))?, &row))
             .collect::<Result<_, _>>()
     }
 
-    /// Construct an [`AggregatorTask`] from the contents of the provided (tasks) `Row` and
-    /// `task_hpke_keys` rows.
-    fn task_from_rows(
-        &self,
-        task_id: &TaskId,
-        row: &Row,
-        hpke_key_rows: &[Row],
-    ) -> Result<AggregatorTask, Error> {
+    /// Construct an [`AggregatorTask`] from the contents of the provided (tasks) `Row`.
+    fn task_from_row(&self, task_id: &TaskId, row: &Row) -> Result<AggregatorTask, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
@@ -991,27 +898,6 @@ config_id, config, private_key FROM task_hpke_keys",
             .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
-        // HPKE keys.
-        let mut hpke_keys = Vec::new();
-        for row in hpke_key_rows {
-            let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
-            let config = HpkeConfig::get_decoded(row.get("config"))?;
-            let encrypted_private_key: Vec<u8> = row.get("private_key");
-
-            let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
-            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&config_id.to_be_bytes());
-
-            let private_key = HpkePrivateKey::new(self.crypter.decrypt(
-                "task_hpke_keys",
-                &row_id,
-                "private_key",
-                &encrypted_private_key,
-            )?);
-
-            hpke_keys.push(HpkeKeypair::new(config, private_key));
-        }
-
         let aggregator_parameters = match (
             aggregator_role,
             aggregator_auth_token,
@@ -1061,7 +947,6 @@ config_id, config, private_key FROM task_hpke_keys",
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-            hpke_keys,
             aggregator_parameters,
         )?;
         if let Some(taskprov_task_info) = taskprov_task_info {
@@ -4910,77 +4795,77 @@ SELECT COUNT(1) AS batch_count FROM batches_to_delete",
         row.get_bigint_and_convert("batch_count")
     }
 
-    /// Take an ExclusiveLock on the global_hpke_keys table.
+    /// Take an ExclusiveLock on the hpke_keys table.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn lock_global_hpke_keypairs(&self) -> Result<(), Error> {
+    pub async fn lock_hpke_keypairs(&self) -> Result<(), Error> {
         self.raw_tx
-            .batch_execute("LOCK TABLE global_hpke_keys IN EXCLUSIVE MODE")
+            .batch_execute("LOCK TABLE hpke_keys IN EXCLUSIVE MODE")
             .await
             .map_err(|err| err.into())
     }
 
-    /// Retrieve all global HPKE keypairs.
+    /// Retrieve all HPKE keypairs.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<GlobalHpkeKeypair>, Error> {
+    pub async fn get_hpke_keypairs(&self) -> Result<Vec<HpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
-                "-- get_global_hpke_keypairs()
-SELECT config_id, config, private_key, state, last_state_change_at FROM global_hpke_keys",
+                "-- get_hpke_keypairs()
+SELECT config_id, config, private_key, state, last_state_change_at FROM hpke_keys",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
 
         hpke_key_rows
             .iter()
-            .map(|row| self.global_hpke_keypair_from_row(row))
+            .map(|row| self.hpke_keypair_from_row(row))
             .collect()
     }
 
-    /// Retrieve a global HPKE keypair by config ID.
+    /// Retrieve an HPKE keypair by config ID.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_global_hpke_keypair(
+    pub async fn get_hpke_keypair(
         &self,
         config_id: &HpkeConfigId,
-    ) -> Result<Option<GlobalHpkeKeypair>, Error> {
+    ) -> Result<Option<HpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
-                "-- get_global_hpke_keypair()
-SELECT config_id, config, private_key, state, last_state_change_at FROM global_hpke_keys
+                "-- get_hpke_keypair()
+SELECT config_id, config, private_key, state, last_state_change_at FROM hpke_keys
     WHERE config_id = $1",
             )
             .await?;
         self.query_opt(&stmt, &[&(u8::from(*config_id) as i16)])
             .await?
-            .map(|row| self.global_hpke_keypair_from_row(&row))
+            .map(|row| self.hpke_keypair_from_row(&row))
             .transpose()
     }
 
-    fn global_hpke_keypair_from_row(&self, row: &Row) -> Result<GlobalHpkeKeypair, Error> {
+    fn hpke_keypair_from_row(&self, row: &Row) -> Result<HpkeKeypair, Error> {
         let config = HpkeConfig::get_decoded(row.get("config"))?;
         let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
 
         let encrypted_private_key: Vec<u8> = row.get("private_key");
         let private_key = HpkePrivateKey::new(self.crypter.decrypt(
-            "global_hpke_keys",
+            "hpke_keys",
             &config_id.to_be_bytes(),
             "private_key",
             &encrypted_private_key,
         )?);
-        Ok(GlobalHpkeKeypair::new(
-            HpkeKeypair::new(config, private_key),
+        Ok(HpkeKeypair::new(
+            hpke::HpkeKeypair::new(config, private_key),
             row.get("state"),
             Time::from_naive_date_time(&row.get("last_state_change_at")),
         ))
     }
 
-    /// Unconditionally and fully drop a keypair. This is a dangerous operation,
-    /// since report shares encrypted with this key will no longer be decryptable.
+    /// Unconditionally and fully drop a keypair. This is a dangerous operation, since report shares
+    /// encrypted with this key will no longer be decryptable.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn delete_global_hpke_keypair(&self, config_id: &HpkeConfigId) -> Result<(), Error> {
+    pub async fn delete_hpke_keypair(&self, config_id: &HpkeConfigId) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "-- delete_global_hpke_keypair()
-DELETE FROM global_hpke_keys WHERE config_id = $1",
+                "-- delete_hpke_keypair()
+DELETE FROM hpke_keys WHERE config_id = $1",
             )
             .await?;
         check_single_row_mutation(
@@ -4990,15 +4875,15 @@ DELETE FROM global_hpke_keys WHERE config_id = $1",
     }
 
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn set_global_hpke_keypair_state(
+    pub async fn set_hpke_keypair_state(
         &self,
         config_id: &HpkeConfigId,
         state: &HpkeKeyState,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "-- set_global_hpke_keypair_state()
-UPDATE global_hpke_keys
+                "-- set_hpke_keypair_state()
+UPDATE hpke_keys
     SET state = $1, last_state_change_at = $2, updated_at = $3, updated_by = $4
     WHERE config_id = $5",
             )
@@ -5019,13 +4904,13 @@ UPDATE global_hpke_keys
         )
     }
 
-    /// Inserts a new global HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
+    /// Inserts a new HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
+    pub async fn put_hpke_keypair(&self, hpke_keypair: &hpke::HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
         let hpke_config = hpke_keypair.config().get_encoded()?;
         let encrypted_hpke_private_key = self.crypter.encrypt(
-            "global_hpke_keys",
+            "hpke_keys",
             &u8::from(*hpke_keypair.config().id()).to_be_bytes(),
             "private_key",
             hpke_keypair.private_key().as_ref(),
@@ -5033,8 +4918,8 @@ UPDATE global_hpke_keys
 
         let stmt = self
             .prepare_cached(
-                "-- put_global_hpke_keypair()
-INSERT INTO global_hpke_keys
+                "-- put_hpke_keypair()
+INSERT INTO hpke_keys
     (config_id, config, private_key, last_state_change_at, created_at, updated_at, updated_by)
     VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )

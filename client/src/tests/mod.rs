@@ -229,10 +229,7 @@ async fn aggregator_hpke() {
     let keypair = HpkeKeypair::test();
     let hpke_config_list = HpkeConfigList::new(Vec::from([keypair.config().clone()]));
     let mock = server
-        .mock(
-            "GET",
-            format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
-        )
+        .mock("GET", "/hpke_config")
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
         .with_body(hpke_config_list.get_encoded().unwrap())
@@ -297,10 +294,7 @@ async fn unsupported_hpke_algorithms() {
     encoded_hpke_config_list.extend_from_slice(&encoded_good_hpke_config);
 
     let mock = server
-        .mock(
-            "GET",
-            format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
-        )
+        .mock("GET", "/hpke_config")
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
         .with_body(encoded_hpke_config_list)

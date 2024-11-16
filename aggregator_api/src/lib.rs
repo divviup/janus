@@ -103,25 +103,19 @@ pub fn aggregator_api_handler<C: Clock>(
                 "/tasks/:task_id/metrics/aggregations",
                 instrumented(api(get_task_aggregation_metrics::<C>)),
             )
-            .get(
-                "/hpke_configs",
-                instrumented(api(get_global_hpke_configs::<C>)),
-            )
+            .get("/hpke_configs", instrumented(api(get_hpke_configs::<C>)))
             .get(
                 "/hpke_configs/:config_id",
-                instrumented(api(get_global_hpke_config::<C>)),
+                instrumented(api(get_hpke_config::<C>)),
             )
-            .put(
-                "/hpke_configs",
-                instrumented(api(put_global_hpke_config::<C>)),
-            )
+            .put("/hpke_configs", instrumented(api(put_hpke_config::<C>)))
             .patch(
                 "/hpke_configs/:config_id",
-                instrumented(api(patch_global_hpke_config::<C>)),
+                instrumented(api(patch_hpke_config::<C>)),
             )
             .delete(
                 "/hpke_configs/:config_id",
-                instrumented(api(delete_global_hpke_config::<C>)),
+                instrumented(api(delete_hpke_config::<C>)),
             )
             .get(
                 "/taskprov/peer_aggregators",

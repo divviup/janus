@@ -5,17 +5,13 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::HpkeKeypair,
     time::TimeExt,
     vdaf::VdafInstance,
 };
-use janus_messages::{
-    taskprov, AggregationJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
-    HpkeKemId, Role, TaskId, Time,
-};
+use janus_messages::{taskprov, AggregationJobId, Duration, HpkeConfig, Role, TaskId, Time};
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::{array::TryFromSliceError, collections::HashMap};
+use std::array::TryFromSliceError;
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -223,14 +219,12 @@ pub struct AggregatorTask {
     peer_aggregator_endpoint: Url,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
-    /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
 }
 
 impl AggregatorTask {
     /// Create a new [`AggregatorTask`] with the provided values.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
+    pub fn new(
         task_id: TaskId,
         peer_aggregator_endpoint: Url,
         batch_mode: BatchMode,
@@ -241,7 +235,6 @@ impl AggregatorTask {
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
-        hpke_keys: I,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
         let common_parameters = CommonTaskParameters::new(
@@ -258,31 +251,15 @@ impl AggregatorTask {
         Self::new_with_common_parameters(
             common_parameters,
             peer_aggregator_endpoint,
-            hpke_keys,
             aggregator_parameters,
         )
     }
 
-    fn new_with_common_parameters<I: IntoIterator<Item = HpkeKeypair>>(
+    fn new_with_common_parameters(
         common_parameters: CommonTaskParameters,
         peer_aggregator_endpoint: Url,
-        hpke_keys: I,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
-        // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = hpke_keys
-            .into_iter()
-            .map(|keypair| (*keypair.config().id(), keypair))
-            .collect();
-
-        if !matches!(
-            aggregator_parameters,
-            AggregatorTaskParameters::TaskprovHelper
-        ) && hpke_keys.is_empty()
-        {
-            return Err(Error::InvalidParameter("hpke_keys"));
-        }
-
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
             ..
@@ -306,7 +283,6 @@ impl AggregatorTask {
         Ok(Self {
             common_parameters,
             peer_aggregator_endpoint,
-            hpke_keys,
             aggregator_parameters,
         })
     }
@@ -463,21 +439,6 @@ impl AggregatorTask {
         self.aggregator_parameters.collector_auth_token_hash()
     }
 
-    /// Return the HPKE keypairs used by this aggregator to decrypt client reports, or an empty map
-    /// for taskprov tasks.
-    pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, HpkeKeypair> {
-        &self.hpke_keys
-    }
-
-    /// Retrieve the "current" HPKE in use for this task.
-    #[cfg(feature = "test-util")]
-    pub fn current_hpke_key(&self) -> &HpkeKeypair {
-        self.hpke_keys
-            .values()
-            .max_by_key(|keypair| u8::from(*keypair.config().id()))
-            .unwrap()
-    }
-
     /// Checks if the given aggregator authentication token is valid (i.e. matches with the
     /// authentication token recognized by this task).
     pub fn check_aggregator_auth_token(
@@ -624,7 +585,6 @@ pub struct SerializedAggregatorTask {
     aggregator_auth_token: Option<AuthenticationToken>,
     aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
     collector_auth_token_hash: Option<AuthenticationTokenHash>,
-    hpke_keys: Vec<HpkeKeypair>, // uses unpadded base64url
 }
 
 impl SerializedAggregatorTask {
@@ -660,26 +620,11 @@ impl SerializedAggregatorTask {
         if self.aggregator_auth_token.is_none() && self.role == Role::Helper {
             self.aggregator_auth_token = Some(random());
         }
-
-        if self.hpke_keys.is_empty() {
-            // Unwrap safety: we always use a supported KEM.
-            let hpke_keypair = HpkeKeypair::generate(
-                random(),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-            )
-            .unwrap();
-
-            self.hpke_keys = Vec::from([hpke_keypair]);
-        }
     }
 }
 
 impl Serialize for AggregatorTask {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let hpke_keys = self.hpke_keys().values().cloned().collect();
-
         SerializedAggregatorTask {
             task_id: Some(*self.id()),
             peer_aggregator_endpoint: self.peer_aggregator_endpoint().clone(),
@@ -706,7 +651,6 @@ impl Serialize for AggregatorTask {
                 .aggregator_parameters
                 .collector_auth_token_hash()
                 .cloned(),
-            hpke_keys,
         }
         .serialize(serializer)
     }
@@ -756,7 +700,6 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
-            serialized_task.hpke_keys,
             aggregator_parameters,
         )
     }
@@ -1010,7 +953,6 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 self.helper_aggregator_endpoint.clone(),
-                self.leader_hpke_keys.values().cloned().collect::<Vec<_>>(),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
                     collector_auth_token_hash: AuthenticationTokenHash::from(
@@ -1026,7 +968,6 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 self.leader_aggregator_endpoint.clone(),
-                self.helper_hpke_keys.values().cloned().collect::<Vec<_>>(),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &self.aggregator_auth_token,
@@ -1041,7 +982,6 @@ pub mod test_util {
             AggregatorTask::new_with_common_parameters(
                 self.common_parameters.clone(),
                 self.leader_aggregator_endpoint.clone(),
-                [],
                 AggregatorTaskParameters::TaskprovHelper,
             )
         }
@@ -1071,8 +1011,14 @@ pub mod test_util {
         pub fn new(batch_mode: BatchMode, vdaf: VdafInstance) -> Self {
             let task_id = random();
 
-            let leader_hpke_keypairs = [HpkeKeypair::test(), HpkeKeypair::test_with_id(1)];
-            let helper_hpke_keypairs = [HpkeKeypair::test(), HpkeKeypair::test_with_id(1)];
+            let leader_hpke_keypairs = [
+                HpkeKeypair::test(),
+                HpkeKeypair::test_with_id(HpkeConfigId::from(1)),
+            ];
+            let helper_hpke_keypairs = [
+                HpkeKeypair::test(),
+                HpkeKeypair::test_with_id(HpkeConfigId::from(1)),
+            ];
 
             let vdaf_verify_key = SecretBytes::new(
                 thread_rng()
@@ -1307,7 +1253,6 @@ mod tests {
     use assert_matches::assert_matches;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-        hpke::{HpkeKeypair, HpkePrivateKey},
         test_util::roundtrip_encoding,
         time::DurationExt,
         vdaf::vdaf_dp_strategies,
@@ -1438,16 +1383,6 @@ mod tests {
                 10,
                 Duration::from_seconds(3600),
                 Duration::from_seconds(60),
-                [HpkeKeypair::new(
-                    HpkeConfig::new(
-                        HpkeConfigId::from(255),
-                        HpkeKemId::X25519HkdfSha256,
-                        HpkeKdfId::HkdfSha256,
-                        HpkeAeadId::Aes128Gcm,
-                        HpkePublicKey::from(b"leader hpke public key".to_vec()),
-                    ),
-                    HpkePrivateKey::new(b"leader hpke private key".to_vec()),
-                )],
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                         "YWdncmVnYXRvciB0b2tlbg",
@@ -1470,7 +1405,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 16,
+                    len: 15,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1565,44 +1500,6 @@ mod tests {
                 Token::Str("hash"),
                 Token::Str("LdjsTjGZXsaitZonqNIi2LcDLce3OLP6SeWv2eUx4rY"),
                 Token::StructEnd,
-                Token::Str("hpke_keys"),
-                Token::Seq { len: Some(1) },
-                Token::Struct {
-                    name: "HpkeKeypair",
-                    len: 2,
-                },
-                Token::Str("config"),
-                Token::Struct {
-                    name: "HpkeConfig",
-                    len: 5,
-                },
-                Token::Str("id"),
-                Token::NewtypeStruct {
-                    name: "HpkeConfigId",
-                },
-                Token::U8(255),
-                Token::Str("kem_id"),
-                Token::UnitVariant {
-                    name: "HpkeKemId",
-                    variant: "X25519HkdfSha256",
-                },
-                Token::Str("kdf_id"),
-                Token::UnitVariant {
-                    name: "HpkeKdfId",
-                    variant: "HkdfSha256",
-                },
-                Token::Str("aead_id"),
-                Token::UnitVariant {
-                    name: "HpkeAeadId",
-                    variant: "Aes128Gcm",
-                },
-                Token::Str("public_key"),
-                Token::Str("bGVhZGVyIGhwa2UgcHVibGljIGtleQ"),
-                Token::StructEnd,
-                Token::Str("private_key"),
-                Token::Str("bGVhZGVyIGhwa2UgcHJpdmF0ZSBrZXk"),
-                Token::StructEnd,
-                Token::SeqEnd,
                 Token::StructEnd,
             ],
         );
@@ -1627,16 +1524,6 @@ mod tests {
                 10,
                 Duration::from_seconds(3600),
                 Duration::from_seconds(60),
-                [HpkeKeypair::new(
-                    HpkeConfig::new(
-                        HpkeConfigId::from(255),
-                        HpkeKemId::X25519HkdfSha256,
-                        HpkeKdfId::HkdfSha256,
-                        HpkeAeadId::Aes128Gcm,
-                        HpkePublicKey::from(b"helper hpke public key".to_vec()),
-                    ),
-                    HpkePrivateKey::new(b"helper hpke private key".to_vec()),
-                )],
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &AuthenticationToken::new_bearer_token_from_string(
@@ -1657,7 +1544,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 16,
+                    len: 15,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1765,44 +1652,6 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("collector_auth_token_hash"),
                 Token::None,
-                Token::Str("hpke_keys"),
-                Token::Seq { len: Some(1) },
-                Token::Struct {
-                    name: "HpkeKeypair",
-                    len: 2,
-                },
-                Token::Str("config"),
-                Token::Struct {
-                    name: "HpkeConfig",
-                    len: 5,
-                },
-                Token::Str("id"),
-                Token::NewtypeStruct {
-                    name: "HpkeConfigId",
-                },
-                Token::U8(255),
-                Token::Str("kem_id"),
-                Token::UnitVariant {
-                    name: "HpkeKemId",
-                    variant: "X25519HkdfSha256",
-                },
-                Token::Str("kdf_id"),
-                Token::UnitVariant {
-                    name: "HpkeKdfId",
-                    variant: "HkdfSha256",
-                },
-                Token::Str("aead_id"),
-                Token::UnitVariant {
-                    name: "HpkeAeadId",
-                    variant: "Aes128Gcm",
-                },
-                Token::Str("public_key"),
-                Token::Str("aGVscGVyIGhwa2UgcHVibGljIGtleQ"),
-                Token::StructEnd,
-                Token::Str("private_key"),
-                Token::Str("aGVscGVyIGhwa2UgcHJpdmF0ZSBrZXk"),
-                Token::StructEnd,
-                Token::SeqEnd,
                 Token::StructEnd,
             ],
         );

@@ -2,10 +2,9 @@ use crate::{
     git_revision,
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
-        GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp,
-        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PatchTaskReq, PostTaskReq,
-        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
-        TaskprovPeerAggregatorResp,
+        GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, HpkeConfigResp,
+        PatchHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
@@ -180,15 +179,6 @@ pub(super) async fn post_task<C: Clock>(
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
             Duration::from_seconds(60), // 1 minute,
-            // hpke_keys
-            // Unwrap safety: we always use a supported KEM.
-            [HpkeKeypair::generate(
-                random(),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-            )
-            .unwrap()],
             aggregator_parameters,
         )
         .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
@@ -319,42 +309,42 @@ pub(super) async fn get_task_aggregation_metrics<C: Clock>(
     )))
 }
 
-pub(super) async fn get_global_hpke_configs<C: Clock>(
+pub(super) async fn get_hpke_configs<C: Clock>(
     _: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Error> {
+) -> Result<Json<Vec<HpkeConfigResp>>, Error> {
     Ok(Json(
-        ds.run_tx("get_global_hpke_configs", |tx| {
-            Box::pin(async move { tx.get_global_hpke_keypairs().await })
+        ds.run_tx("get_hpke_configs", |tx| {
+            Box::pin(async move { tx.get_hpke_keypairs().await })
         })
         .await?
         .into_iter()
-        .map(GlobalHpkeConfigResp::from)
+        .map(HpkeConfigResp::from)
         .collect::<Vec<_>>(),
     ))
 }
 
-pub(super) async fn get_global_hpke_config<C: Clock>(
+pub(super) async fn get_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GlobalHpkeConfigResp>, Error> {
+) -> Result<Json<HpkeConfigResp>, Error> {
     let config_id = conn.hpke_config_id_param()?;
-    Ok(Json(GlobalHpkeConfigResp::from(
-        ds.run_tx("get_global_hpke_config", |tx| {
-            Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
+    Ok(Json(HpkeConfigResp::from(
+        ds.run_tx("get_hpke_config", |tx| {
+            Box::pin(async move { tx.get_hpke_keypair(&config_id).await })
         })
         .await?
         .ok_or(Error::NotFound)?,
     )))
 }
 
-pub(super) async fn put_global_hpke_config<C: Clock>(
+pub(super) async fn put_hpke_config<C: Clock>(
     _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
-) -> Result<(Status, Json<GlobalHpkeConfigResp>), Error> {
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutHpkeConfigReq>),
+) -> Result<(Status, Json<HpkeConfigResp>), Error> {
     let existing_keypairs = ds
-        .run_tx("put_global_hpke_config_determine_id", |tx| {
-            Box::pin(async move { tx.get_global_hpke_keypairs().await })
+        .run_tx("put_hpke_config_determine_id", |tx| {
+            Box::pin(async move { tx.get_hpke_keypairs().await })
         })
         .await?
         .iter()
@@ -365,7 +355,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
         (0..=u8::MAX)
             .find(|i| !existing_keypairs.contains(i))
             .ok_or_else(|| {
-                Error::Conflict("All possible IDs for global HPKE key have been taken".to_string())
+                Error::Conflict("All possible IDs for HPKE keys have been taken".to_string())
             })?,
     );
     let keypair = HpkeKeypair::generate(
@@ -376,11 +366,11 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
     )?;
 
     let inserted_keypair = ds
-        .run_tx("put_global_hpke_config", |tx| {
+        .run_tx("put_hpke_config", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
-                tx.put_global_hpke_keypair(&keypair).await?;
-                tx.get_global_hpke_keypair(&config_id).await
+                tx.put_hpke_keypair(&keypair).await?;
+                tx.get_hpke_keypair(&config_id).await
             })
         })
         .await?
@@ -388,35 +378,32 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
 
     Ok((
         Status::Created,
-        Json(GlobalHpkeConfigResp::from(inserted_keypair)),
+        Json(HpkeConfigResp::from(inserted_keypair)),
     ))
 }
 
-pub(super) async fn patch_global_hpke_config<C: Clock>(
+pub(super) async fn patch_hpke_config<C: Clock>(
     conn: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeConfigReq>),
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchHpkeConfigReq>),
 ) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
 
-    ds.run_tx("patch_hpke_global_keypair", |tx| {
-        Box::pin(async move {
-            tx.set_global_hpke_keypair_state(&config_id, &req.state)
-                .await
-        })
+    ds.run_tx("patch_hpke_keypair", |tx| {
+        Box::pin(async move { tx.set_hpke_keypair_state(&config_id, &req.state).await })
     })
     .await?;
 
     Ok(Status::Ok)
 }
 
-pub(super) async fn delete_global_hpke_config<C: Clock>(
+pub(super) async fn delete_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
     match ds
-        .run_tx("delete_global_hpke_config", |tx| {
-            Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
+        .run_tx("delete_hpke_config", |tx| {
+            Box::pin(async move { tx.delete_hpke_keypair(&config_id).await })
         })
         .await
     {

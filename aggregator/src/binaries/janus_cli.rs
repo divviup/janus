@@ -76,8 +76,8 @@ pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
 #[derive(Debug, Parser)]
 #[allow(clippy::large_enum_variant)]
 enum Command {
-    /// Generates & writes a new global HPKE key.
-    GenerateGlobalHpkeKey {
+    /// Generates & writes a new HPKE key.
+    GenerateHpkeKey {
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
 
@@ -102,8 +102,8 @@ enum Command {
         hpke_config_out_file: Option<PathBuf>,
     },
 
-    /// Sets the state of a global HPKE key.
-    SetGlobalHpkeKeyState {
+    /// Sets the state of an HPKE key.
+    SetHpkeKeyState {
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
 
@@ -193,7 +193,7 @@ impl Command {
         // function with the main command logic.
         let kube_client = LazyKubeClient::new();
         match self {
-            Command::GenerateGlobalHpkeKey {
+            Command::GenerateHpkeKey {
                 kubernetes_secret_options,
                 id,
                 kem,
@@ -209,7 +209,7 @@ impl Command {
                 )
                 .await?;
 
-                generate_global_hpke_key(
+                generate_hpke_key(
                     &datastore,
                     command_line_options.dry_run,
                     (*id).into(),
@@ -221,7 +221,7 @@ impl Command {
                 .await
             }
 
-            Command::SetGlobalHpkeKeyState {
+            Command::SetHpkeKeyState {
                 kubernetes_secret_options,
                 id,
                 state,
@@ -234,7 +234,7 @@ impl Command {
                 )
                 .await?;
 
-                set_global_hpke_key_state(
+                set_hpke_key_state(
                     &datastore,
                     command_line_options.dry_run,
                     (*id).into(),
@@ -346,7 +346,7 @@ async fn install_tracing_and_metrics_handlers(
     Ok((trace_guard, metrics_guard))
 }
 
-async fn generate_global_hpke_key<C: Clock>(
+async fn generate_hpke_key<C: Clock>(
     datastore: &Datastore<C>,
     dry_run: bool,
     id: HpkeConfigId,
@@ -359,10 +359,10 @@ async fn generate_global_hpke_key<C: Clock>(
 
     if !dry_run {
         datastore
-            .run_tx("generate_global_hpke_key", |tx| {
+            .run_tx("generate_hpke_key", |tx| {
                 let hpke_keypair = Arc::clone(&hpke_keypair);
 
-                Box::pin(async move { tx.put_global_hpke_keypair(&hpke_keypair).await })
+                Box::pin(async move { tx.put_hpke_keypair(&hpke_keypair).await })
             })
             .await?;
     }
@@ -374,7 +374,7 @@ async fn generate_global_hpke_key<C: Clock>(
     Ok(())
 }
 
-async fn set_global_hpke_key_state<C: Clock>(
+async fn set_hpke_key_state<C: Clock>(
     datastore: &Datastore<C>,
     dry_run: bool,
     id: HpkeConfigId,
@@ -382,8 +382,8 @@ async fn set_global_hpke_key_state<C: Clock>(
 ) -> Result<()> {
     if !dry_run {
         datastore
-            .run_tx("set_global_hpke_key_state", |tx| {
-                Box::pin(async move { tx.set_global_hpke_keypair_state(&id, &state).await })
+            .run_tx("set_hpke_key_state", |tx| {
+                Box::pin(async move { tx.set_hpke_keypair_state(&id, &state).await })
             })
             .await?;
     }
@@ -861,7 +861,7 @@ mod tests {
     }
 
     // Returns the HPKE config written to disk.
-    async fn run_generate_global_hpke_key_testcase(
+    async fn run_generate_hpke_key_testcase(
         ds: &Datastore<RealClock>,
         dry_run: bool,
         id: HpkeConfigId,
@@ -872,23 +872,15 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let hpke_config_out_file = temp_dir.path().join("hpke_config");
 
-        super::generate_global_hpke_key(
-            ds,
-            dry_run,
-            id,
-            kem,
-            kdf,
-            aead,
-            Some(&hpke_config_out_file),
-        )
-        .await
-        .unwrap();
+        super::generate_hpke_key(ds, dry_run, id, kem, kdf, aead, Some(&hpke_config_out_file))
+            .await
+            .unwrap();
 
         HpkeConfig::get_decoded(&fs::read(hpke_config_out_file).await.unwrap()).unwrap()
     }
 
     #[tokio::test]
-    async fn generate_global_hpke_key() {
+    async fn generate_hpke_key() {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
@@ -897,25 +889,20 @@ mod tests {
         let kdf = HpkeKdfId::HkdfSha256;
         let aead = HpkeAeadId::Aes128Gcm;
 
-        let disk_hpke_config = run_generate_global_hpke_key_testcase(
-            &ds, /* dry_run */ false, id, kem, kdf, aead,
-        )
-        .await;
+        let disk_hpke_config =
+            run_generate_hpke_key_testcase(&ds, /* dry_run */ false, id, kem, kdf, aead).await;
 
-        let global_hpke_keypair = ds
+        let hpke_keypair = ds
             .run_unnamed_tx(|tx| {
-                Box::pin(async move { Ok(tx.get_global_hpke_keypair(&id).await.unwrap()) })
+                Box::pin(async move { Ok(tx.get_hpke_keypair(&id).await.unwrap()) })
             })
             .await
             .unwrap()
             .unwrap();
 
         // Verify datastore state matches what was written to disk.
-        assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
-        assert_eq!(
-            global_hpke_keypair.hpke_keypair().config(),
-            &disk_hpke_config
-        );
+        assert_eq!(hpke_keypair.state(), &HpkeKeyState::Pending);
+        assert_eq!(hpke_keypair.hpke_keypair().config(), &disk_hpke_config);
 
         // Verify HPKE configuration matches what was expected.
         assert_eq!(disk_hpke_config.id(), &id);
@@ -925,7 +912,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_global_hpke_key_dry_run() {
+    async fn generate_hpke_key_dry_run() {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
@@ -935,18 +922,15 @@ mod tests {
         let aead = HpkeAeadId::ChaCha20Poly1305;
 
         let disk_hpke_config =
-            run_generate_global_hpke_key_testcase(&ds, /* dry_run */ true, id, kem, kdf, aead)
-                .await;
+            run_generate_hpke_key_testcase(&ds, /* dry_run */ true, id, kem, kdf, aead).await;
 
-        let global_hpke_keypairs = ds
-            .run_unnamed_tx(|tx| {
-                Box::pin(async move { Ok(tx.get_global_hpke_keypairs().await.unwrap()) })
-            })
+        let hpke_keypairs = ds
+            .run_unnamed_tx(|tx| Box::pin(async move { Ok(tx.get_hpke_keypairs().await.unwrap()) }))
             .await
             .unwrap();
 
         // Verify that nothing was written to the datastore.
-        assert!(global_hpke_keypairs.is_empty());
+        assert!(hpke_keypairs.is_empty());
 
         // Verify HPKE configuration written to disk matches what was expected.
         assert_eq!(disk_hpke_config.id(), &id);
@@ -956,15 +940,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_global_hpke_key_state() {
+    async fn set_hpke_key_state() {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
-        // Insert a global HPKE key for the command to modify.
+        // Insert an HPKE key for the command to modify.
         let id = HpkeConfigId::from(26);
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
-                tx.put_global_hpke_keypair(
+                tx.put_hpke_keypair(
                     &HpkeKeypair::generate(
                         id,
                         HpkeKemId::P256HkdfSha256,
@@ -976,8 +960,8 @@ mod tests {
                 .await
                 .unwrap();
 
-                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
-                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+                let hpke_keypair = tx.get_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(hpke_keypair.state(), &HpkeKeyState::Pending);
 
                 Ok(())
             })
@@ -986,15 +970,15 @@ mod tests {
         .unwrap();
 
         // Run command.
-        super::set_global_hpke_key_state(&ds, /* dry_run */ false, id, HpkeKeyState::Active)
+        super::set_hpke_key_state(&ds, /* dry_run */ false, id, HpkeKeyState::Active)
             .await
             .unwrap();
 
-        // Verify the global HPKE key was updated appropriately.
+        // Verify the HPKE key was updated appropriately.
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
-                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Active);
+                let hpke_keypair = tx.get_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(hpke_keypair.state(), &HpkeKeyState::Active);
 
                 Ok(())
             })
@@ -1004,15 +988,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_global_hpke_key_state_dry_run() {
+    async fn set_hpke_key_state_dry_run() {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
-        // Insert a global HPKE key for the command to modify.
+        // Insert a HPKE key for the command to modify.
         let id = HpkeConfigId::from(26);
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
-                tx.put_global_hpke_keypair(
+                tx.put_hpke_keypair(
                     &HpkeKeypair::generate(
                         id,
                         HpkeKemId::P256HkdfSha256,
@@ -1024,8 +1008,8 @@ mod tests {
                 .await
                 .unwrap();
 
-                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
-                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+                let hpke_keypair = tx.get_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(hpke_keypair.state(), &HpkeKeyState::Pending);
 
                 Ok(())
             })
@@ -1034,15 +1018,15 @@ mod tests {
         .unwrap();
 
         // Run command.
-        super::set_global_hpke_key_state(&ds, /* dry_run */ true, id, HpkeKeyState::Active)
+        super::set_hpke_key_state(&ds, /* dry_run */ true, id, HpkeKeyState::Active)
             .await
             .unwrap();
 
-        // Verify the global HPKE key was not updated.
+        // Verify the HPKE key was not updated.
         ds.run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
-                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+                let hpke_keypair = tx.get_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(hpke_keypair.state(), &HpkeKeyState::Pending);
 
                 Ok(())
             })

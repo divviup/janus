@@ -2,9 +2,8 @@ use crate::{
     aggregator_api_handler,
     models::{
         DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp,
-        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
-        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
-        TaskprovPeerAggregatorResp,
+        GetTaskUploadMetricsResp, HpkeConfigResp, PatchHpkeConfigReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -24,7 +23,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::{HpkeKeypair, HpkePrivateKey},
+    hpke::HpkeKeypair,
     test_util::install_test_trace_subscriber,
     time::MockClock,
     vdaf::{vdaf_dp_strategies, VdafInstance},
@@ -961,7 +960,7 @@ async fn get_task_aggregation_metrics() {
 }
 
 #[tokio::test]
-async fn get_global_hpke_configs() {
+async fn get_hpke_configs() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let mut conn = get("/hpke_configs")
@@ -971,7 +970,7 @@ async fn get_global_hpke_configs() {
         .run_async(&handler)
         .await;
     assert_response!(conn, Status::Ok);
-    let resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
+    let resp: Vec<HpkeConfigResp> = serde_json::from_slice(
         &conn
             .take_response_body()
             .unwrap()
@@ -982,8 +981,8 @@ async fn get_global_hpke_configs() {
     .unwrap();
     assert_eq!(resp, vec![]);
 
-    let keypair1_id = random();
-    let keypair1 = HpkeKeypair::test_with_id(keypair1_id);
+    let keypair1_id: u8 = random();
+    let keypair1 = HpkeKeypair::test_with_id(HpkeConfigId::from(keypair1_id));
     let keypair2 = HpkeKeypair::generate(
         HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
@@ -995,9 +994,9 @@ async fn get_global_hpke_configs() {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();
         Box::pin(async move {
-            tx.put_global_hpke_keypair(&keypair1).await?;
-            tx.put_global_hpke_keypair(&keypair2).await?;
-            tx.set_global_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
+            tx.put_hpke_keypair(&keypair1).await?;
+            tx.put_hpke_keypair(&keypair2).await?;
+            tx.set_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
                 .await?;
             Ok(())
         })
@@ -1012,7 +1011,7 @@ async fn get_global_hpke_configs() {
         .run_async(&handler)
         .await;
     assert_response!(conn, Status::Ok);
-    let mut resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
+    let mut resp: Vec<HpkeConfigResp> = serde_json::from_slice(
         &conn
             .take_response_body()
             .unwrap()
@@ -1024,11 +1023,11 @@ async fn get_global_hpke_configs() {
     resp.sort_by(|a, b| a.config.id().cmp(b.config.id()));
 
     let mut expected = vec![
-        GlobalHpkeConfigResp {
+        HpkeConfigResp {
             config: keypair1.config().clone(),
             state: HpkeKeyState::Pending,
         },
-        GlobalHpkeConfigResp {
+        HpkeConfigResp {
             config: keypair2.config().clone(),
             state: HpkeKeyState::Active,
         },
@@ -1049,7 +1048,7 @@ async fn get_global_hpke_configs() {
 }
 
 #[tokio::test]
-async fn get_global_hpke_config() {
+async fn get_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     // Verify: non-existent key.
@@ -1084,8 +1083,8 @@ async fn get_global_hpke_config() {
         "",
     );
 
-    let keypair1_id = random();
-    let keypair1 = HpkeKeypair::test_with_id(keypair1_id);
+    let keypair1_id: u8 = random();
+    let keypair1 = HpkeKeypair::test_with_id(HpkeConfigId::from(keypair1_id));
     let keypair2 = HpkeKeypair::generate(
         HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
@@ -1097,9 +1096,9 @@ async fn get_global_hpke_config() {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();
         Box::pin(async move {
-            tx.put_global_hpke_keypair(&keypair1).await?;
-            tx.put_global_hpke_keypair(&keypair2).await?;
-            tx.set_global_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
+            tx.put_hpke_keypair(&keypair1).await?;
+            tx.put_hpke_keypair(&keypair2).await?;
+            tx.set_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
                 .await?;
             Ok(())
         })
@@ -1118,7 +1117,7 @@ async fn get_global_hpke_config() {
             .run_async(&handler)
             .await;
         assert_response!(conn, Status::Ok);
-        let resp: GlobalHpkeConfigResp = serde_json::from_slice(
+        let resp: HpkeConfigResp = serde_json::from_slice(
             &conn
                 .take_response_body()
                 .unwrap()
@@ -1129,7 +1128,7 @@ async fn get_global_hpke_config() {
         .unwrap();
         assert_eq!(
             resp,
-            GlobalHpkeConfigResp {
+            HpkeConfigResp {
                 config: key.config().clone(),
                 state,
             },
@@ -1138,7 +1137,7 @@ async fn get_global_hpke_config() {
 }
 
 #[tokio::test]
-async fn put_global_hpke_config() {
+async fn put_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     // No custom parameters.
@@ -1151,7 +1150,7 @@ async fn put_global_hpke_config() {
         .await;
 
     assert_response!(key1_resp, Status::Created);
-    let key1: GlobalHpkeConfigResp = serde_json::from_slice(
+    let key1: HpkeConfigResp = serde_json::from_slice(
         &key1_resp
             .take_response_body()
             .unwrap()
@@ -1162,7 +1161,7 @@ async fn put_global_hpke_config() {
     .unwrap();
 
     // Choose some custom non-default ciphers.
-    let key2_req = PutGlobalHpkeConfigReq {
+    let key2_req = PutHpkeConfigReq {
         kem_id: Some(HpkeKemId::X25519HkdfSha256),
         kdf_id: Some(HpkeKdfId::HkdfSha512),
         aead_id: Some(HpkeAeadId::ChaCha20Poly1305),
@@ -1176,7 +1175,7 @@ async fn put_global_hpke_config() {
         .await;
 
     assert_response!(key1_resp, Status::Created);
-    let key2: GlobalHpkeConfigResp = serde_json::from_slice(
+    let key2: HpkeConfigResp = serde_json::from_slice(
         &key2_resp
             .take_response_body()
             .unwrap()
@@ -1192,8 +1191,8 @@ async fn put_global_hpke_config() {
             let key2 = key2.config.clone();
             Box::pin(async move {
                 Ok((
-                    tx.get_global_hpke_keypair(key1.id()).await?,
-                    tx.get_global_hpke_keypair(key2.id()).await?,
+                    tx.get_hpke_keypair(key1.id()).await?,
+                    tx.get_hpke_keypair(key2.id()).await?,
                 ))
             })
         })
@@ -1202,7 +1201,7 @@ async fn put_global_hpke_config() {
 
     assert_eq!(
         key1,
-        GlobalHpkeConfigResp {
+        HpkeConfigResp {
             config: got_key1.unwrap().hpke_keypair().config().clone(),
             state: HpkeKeyState::Pending,
         }
@@ -1210,7 +1209,7 @@ async fn put_global_hpke_config() {
 
     assert_eq!(
         key2,
-        GlobalHpkeConfigResp {
+        HpkeConfigResp {
             config: got_key2.unwrap().hpke_keypair().config().clone(),
             state: HpkeKeyState::Pending,
         }
@@ -1228,10 +1227,10 @@ async fn put_global_hpke_config() {
 }
 
 #[tokio::test]
-async fn patch_global_hpke_config() {
+async fn patch_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let req = PatchGlobalHpkeConfigReq {
+    let req = PatchHpkeConfigReq {
         state: HpkeKeyState::Active,
     };
 
@@ -1285,7 +1284,7 @@ async fn patch_global_hpke_config() {
     let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
-        Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+        Box::pin(async move { tx.put_hpke_keypair(&keypair).await })
     })
     .await
     .unwrap();
@@ -1302,7 +1301,7 @@ async fn patch_global_hpke_config() {
     let got_key = ds
         .run_unnamed_tx(|tx| {
             let keypair = keypair.clone();
-            Box::pin(async move { tx.get_global_hpke_keypair(keypair.config().id()).await })
+            Box::pin(async move { tx.get_hpke_keypair(keypair.config().id()).await })
         })
         .await
         .unwrap()
@@ -1311,10 +1310,10 @@ async fn patch_global_hpke_config() {
 }
 
 #[tokio::test]
-async fn delete_global_hpke_config() {
+async fn delete_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let req = PatchGlobalHpkeConfigReq {
+    let req = PatchHpkeConfigReq {
         state: HpkeKeyState::Active,
     };
 
@@ -1356,7 +1355,7 @@ async fn delete_global_hpke_config() {
     let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
-        Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+        Box::pin(async move { tx.put_hpke_keypair(&keypair).await })
     })
     .await
     .unwrap();
@@ -1370,7 +1369,7 @@ async fn delete_global_hpke_config() {
     assert_response!(conn, Status::NoContent);
 
     assert_eq!(
-        ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypairs().await }))
+        ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_hpke_keypairs().await }))
             .await
             .unwrap(),
         vec![]
@@ -1932,16 +1931,6 @@ fn task_resp_serialization() {
         100,
         Duration::from_seconds(3600),
         Duration::from_seconds(60),
-        [(HpkeKeypair::new(
-            HpkeConfig::new(
-                HpkeConfigId::from(13),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-                HpkePublicKey::from([0u8; 32].to_vec()),
-            ),
-            HpkePrivateKey::new(b"unused".to_vec()),
-        ))],
         AggregatorTaskParameters::Leader {
             aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                 "Y29sbGVjdG9yLWFiY2RlZjAw",
@@ -1966,7 +1955,7 @@ fn task_resp_serialization() {
         &[
             Token::Struct {
                 name: "TaskResp",
-                len: 14,
+                len: 13,
             },
             Token::Str("task_id"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -2054,36 +2043,6 @@ fn task_resp_serialization() {
             Token::Str("public_key"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
             Token::StructEnd,
-            Token::Str("aggregator_hpke_configs"),
-            Token::Seq { len: Some(1) },
-            Token::Struct {
-                name: "HpkeConfig",
-                len: 5,
-            },
-            Token::Str("id"),
-            Token::NewtypeStruct {
-                name: "HpkeConfigId",
-            },
-            Token::U8(13),
-            Token::Str("kem_id"),
-            Token::UnitVariant {
-                name: "HpkeKemId",
-                variant: "X25519HkdfSha256",
-            },
-            Token::Str("kdf_id"),
-            Token::UnitVariant {
-                name: "HpkeKdfId",
-                variant: "HkdfSha256",
-            },
-            Token::Str("aead_id"),
-            Token::UnitVariant {
-                name: "HpkeAeadId",
-                variant: "Aes128Gcm",
-            },
-            Token::Str("public_key"),
-            Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-            Token::StructEnd,
-            Token::SeqEnd,
             Token::StructEnd,
         ],
     );

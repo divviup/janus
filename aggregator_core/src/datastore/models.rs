@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    hpke::{HpkeCiphersuite, HpkeKeypair},
+    hpke::{self, HpkeCiphersuite},
     report_id::ReportIdChecksumExt,
     time::{DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
@@ -187,7 +187,7 @@ where
     pub fn eq_report(
         &self,
         vdaf: &A,
-        leader_hpke_keypair: &HpkeKeypair,
+        leader_hpke_keypair: &hpke::HpkeKeypair,
         report: &janus_messages::Report,
     ) -> bool
     where
@@ -2209,14 +2209,18 @@ pub enum HpkeKeyState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GlobalHpkeKeypair {
-    hpke_keypair: HpkeKeypair,
+pub struct HpkeKeypair {
+    hpke_keypair: hpke::HpkeKeypair,
     state: HpkeKeyState,
     last_state_change_at: Time,
 }
 
-impl GlobalHpkeKeypair {
-    pub fn new(hpke_keypair: HpkeKeypair, state: HpkeKeyState, last_state_change_at: Time) -> Self {
+impl HpkeKeypair {
+    pub fn new(
+        hpke_keypair: hpke::HpkeKeypair,
+        state: HpkeKeyState,
+        last_state_change_at: Time,
+    ) -> Self {
         Self {
             hpke_keypair,
             state,
@@ -2224,7 +2228,7 @@ impl GlobalHpkeKeypair {
         }
     }
 
-    pub fn hpke_keypair(&self) -> &HpkeKeypair {
+    pub fn hpke_keypair(&self) -> &hpke::HpkeKeypair {
         &self.hpke_keypair
     }
 

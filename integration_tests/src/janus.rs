@@ -171,11 +171,10 @@ impl JanusInProcess {
             max_upload_batch_write_delay_ms: 100,
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
-            global_hpke_configs_refresh_interval: None,
+            hpke_configs_refresh_interval: None,
             task_cache_ttl_s: None,
             task_cache_capacity: None,
             log_forbidden_mutations: None,
-            require_global_hpke_keys: true,
             helper_aggregation_request_queue: None,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {

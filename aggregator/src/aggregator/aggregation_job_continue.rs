@@ -469,7 +469,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let keypair = datastore.put_global_hpke_key().await.unwrap();
+        let keypair = datastore.put_hpke_key().await.unwrap();
 
         let aggregation_parameter = dummy::AggregationParam(7);
         let prepare_init_generator = PrepareInitGenerator::new(

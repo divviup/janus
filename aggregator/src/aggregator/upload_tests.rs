@@ -64,7 +64,7 @@ impl UploadTest {
 
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let hpke_keypair = datastore.put_global_hpke_key().await.unwrap();
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
         let aggregator = Aggregator::new(
@@ -253,12 +253,8 @@ async fn upload_wrong_hpke_config_id() {
     let leader_task = task.leader_view().unwrap();
     let report = create_report(&leader_task, &hpke_keypair, clock.now());
 
-    let mut hpke_keys = leader_task.hpke_keys().clone();
-    hpke_keys.insert(*hpke_keypair.config().id(), hpke_keypair);
-    let unused_hpke_config_id = (0..)
-        .map(HpkeConfigId::from)
-        .find(|id| !hpke_keys.contains_key(id))
-        .unwrap();
+    let unused_hpke_config_id =
+        HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
 
     let report = Report::new(
         report.metadata().clone(),
@@ -490,63 +486,6 @@ async fn upload_report_for_collected_batch() {
 }
 
 #[tokio::test]
-async fn upload_report_encrypted_with_task_specific_key() {
-    let UploadTest {
-        vdaf,
-        aggregator,
-        clock,
-        task,
-        datastore,
-        ephemeral_datastore: _ephemeral_datastore,
-        hpke_keypair,
-        ..
-    } = UploadTest::new(Config {
-        max_upload_batch_size: 1000,
-        max_upload_batch_write_delay: StdDuration::from_millis(500),
-        ..Default::default()
-    })
-    .await;
-    let leader_task = task.leader_view().unwrap();
-
-    // Insert a global keypair with the same ID as the task to test having both keys to choose
-    // from. (skip if there is already a global keypair with the same ID set up by the fixture)
-    if leader_task.current_hpke_key().config().id() != hpke_keypair.config().id() {
-        let global_hpke_keypair_same_id =
-            HpkeKeypair::test_with_id((*leader_task.current_hpke_key().config().id()).into());
-
-        datastore
-            .run_unnamed_tx(|tx| {
-                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-                Box::pin(async move {
-                    // Leave these in the PENDING state--they should still be decryptable.
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                        .await
-                })
-            })
-            .await
-            .unwrap();
-        aggregator.refresh_caches().await.unwrap();
-    }
-
-    let report = create_report(&leader_task, leader_task.current_hpke_key(), clock.now());
-    aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
-        .await
-        .unwrap();
-
-    let got_report = datastore
-        .run_unnamed_tx(|tx| {
-            let (vdaf, task_id, report_id) = (vdaf.clone(), *task.id(), *report.metadata().id());
-            Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(task.id(), got_report.task_id());
-    assert_eq!(report.metadata(), got_report.metadata());
-}
-
-#[tokio::test]
 async fn upload_report_task_expired() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {
@@ -691,7 +630,7 @@ async fn upload_report_faulty_encryption() {
         &task,
         clock.now(),
         random(),
-        &HpkeKeypair::test_with_id((*hpke_keypair.config().id()).into()),
+        &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
     );
 
     // Try to upload the report, verify that we get the expected error.

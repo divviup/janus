@@ -1,12 +1,9 @@
 use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
     empty_batch_aggregations,
-    http_handlers::{
-        test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
-        AggregatorHandlerBuilder,
-    },
+    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
     test_util::{
-        assert_task_aggregation_counter, default_aggregator_config, generate_helper_report_share,
+        assert_task_aggregation_counter, generate_helper_report_share,
         generate_helper_report_share_for_plaintext, BATCH_AGGREGATION_SHARD_COUNT,
     },
 };
@@ -18,20 +15,19 @@ use janus_aggregator_core::{
         ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
     task::{test_util::TaskBuilder, BatchMode, VerifyKey},
-    test_util::noop_meter,
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
-    test_util::{run_vdaf, runtime::TestRuntime},
+    test_util::run_vdaf,
     time::{Clock, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, HpkeCiphertext, InputShareAad, Interval,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
     PartialBatchSelector, PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum,
     ReportMetadata, ReportShare, Time,
 };
@@ -257,16 +253,11 @@ async fn aggregate_init() {
     // prepare_init_3 has an unknown HPKE config ID.
     let (prepare_init_3, transcript_3) = prep_init_generator.next(&measurement);
 
-    let wrong_hpke_config = loop {
-        let hpke_config = HpkeKeypair::test().config().clone();
-        if helper_task.hpke_keys().contains_key(hpke_config.id()) {
-            continue;
-        }
-        if hpke_keypair.config().id() == hpke_config.id() {
-            continue;
-        }
-        break hpke_config;
-    };
+    let unused_hpke_config_id =
+        HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
+    let wrong_hpke_config = HpkeKeypair::test_with_id(unused_hpke_config_id)
+        .config()
+        .clone();
 
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
@@ -720,95 +711,6 @@ async fn aggregate_init_batch_already_collected() {
         &datastore,
         *task.id(),
         TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
-}
-
-#[tokio::test]
-#[allow(clippy::unit_arg)]
-async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
-    let HttpHandlerTest {
-        clock,
-        ephemeral_datastore: _ephemeral_datastore,
-        datastore,
-        hpke_keypair,
-        ..
-    } = HttpHandlerTest::new().await;
-
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
-
-    let helper_task = task.helper_view().unwrap();
-    datastore.put_aggregator_task(&helper_task).await.unwrap();
-    let vdaf = dummy::Vdaf::new(1);
-    let aggregation_param = dummy::AggregationParam(0);
-    let prep_init_generator = PrepareInitGenerator::new(
-        clock.clone(),
-        helper_task.clone(),
-        helper_task.current_hpke_key().config().clone(),
-        vdaf.clone(),
-        aggregation_param,
-    );
-
-    // Same ID as the task to test having both keys to choose from. (skip if there is already a
-    // global keypair with the same ID set up by the fixture)
-    if helper_task.current_hpke_key().config().id() != hpke_keypair.config().id() {
-        let global_hpke_keypair_same_id =
-            HpkeKeypair::test_with_id((*helper_task.current_hpke_key().config().id()).into());
-        datastore
-            .run_unnamed_tx(|tx| {
-                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-                Box::pin(async move {
-                    // Leave these in the PENDING state--they should still be decryptable.
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                        .await
-                })
-            })
-            .await
-            .unwrap();
-    }
-
-    // Create new handler _after_ the keys have been inserted so that they come pre-cached.
-    let handler = AggregatorHandlerBuilder::new(
-        datastore.clone(),
-        clock.clone(),
-        TestRuntime::default(),
-        &noop_meter(),
-        default_aggregator_config(),
-    )
-    .await
-    .unwrap()
-    .build()
-    .unwrap();
-
-    let (prepare_init, transcript) = prep_init_generator.next(&0);
-
-    let aggregation_job_id: AggregationJobId = random();
-    let request = AggregationJobInitializeReq::new(
-        dummy::AggregationParam(0).get_encoded().unwrap(),
-        PartialBatchSelector::new_time_interval(),
-        Vec::from([prepare_init.clone()]),
-    );
-
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-
-    // Validate response.
-    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
-
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
-    assert_eq!(
-        prepare_step.report_id(),
-        prepare_init.report_share().metadata().id()
-    );
-    assert_matches!(prepare_step.result(), PrepareStepResult::Continue { message } => {
-        assert_eq!(message, &transcript.helper_prepare_transitions[0].message);
-    });
-
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(1),
     )
     .await;
 }

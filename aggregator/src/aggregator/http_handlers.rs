@@ -427,14 +427,6 @@ where
     }
 }
 
-/// Deserialization helper struct to extract a "task_id" parameter from a query string.
-#[derive(Deserialize)]
-struct HpkeConfigQuery {
-    /// The optional "task_id" parameter, in base64url-encoded form.
-    #[serde(default)]
-    task_id: Option<String>,
-}
-
 const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";
 
 /// API handler for the "/hpke_config" GET endpoint.
@@ -442,12 +434,8 @@ async fn hpke_config<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(), Error> {
-    let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
-        .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
     let (encoded_hpke_config_list, signature) = conn
-        .cancel_on_disconnect(
-            aggregator.handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref)),
-        )
+        .cancel_on_disconnect(aggregator.handle_hpke_config())
         .await
         .ok_or(Error::ClientDisconnected)??;
 
@@ -828,7 +816,6 @@ pub mod test_util {
     use crate::aggregator::test_util::default_aggregator_config;
     use janus_aggregator_core::{
         datastore::{
-            models::HpkeKeyState,
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
@@ -883,21 +870,7 @@ pub mod test_util {
             let ephemeral_datastore = ephemeral_datastore().await;
             let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-            let hpke_keypair = HpkeKeypair::test();
-            datastore
-                .run_unnamed_tx(|tx| {
-                    let hpke_keypair = hpke_keypair.clone();
-                    Box::pin(async move {
-                        tx.put_global_hpke_keypair(&hpke_keypair).await?;
-                        tx.set_global_hpke_keypair_state(
-                            hpke_keypair.config().id(),
-                            &HpkeKeyState::Active,
-                        )
-                        .await
-                    })
-                })
-                .await
-                .unwrap();
+            let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
             let handler = AggregatorHandlerBuilder::new(
                 datastore.clone(),
