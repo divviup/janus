@@ -640,7 +640,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "496ccaebbc6d40ce3e15469d4e75e9c43d65f8df68725acec50239258126cffd"
 dependencies = [
- "thiserror",
+ "thiserror 1.0.69",
  "url",
 ]
 
@@ -759,7 +759,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_urlencoded",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tower-service",
@@ -1426,13 +1426,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a772c2e83be0b9f2d4f4fa2949dd5c5c53b36b82afbbdb1745ac8c4306f9ef9"
+checksum = "727b25cf64c6c37be7823a79ffe619b1739828c4099ed38f14d516bc88d13e8a"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.40",
+ "janus_messages 0.7.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "log",
  "num-bigint",
  "num-rational",
@@ -1440,7 +1440,7 @@ dependencies = [
  "prio",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.3",
  "time",
  "trillium-client",
  "trillium-http",
@@ -2591,7 +2591,7 @@ dependencies = [
  "signal-hook-tokio",
  "tempfile",
  "testcontainers",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
@@ -2639,7 +2639,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "trillium",
@@ -2693,7 +2693,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "testcontainers",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -2722,7 +2722,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-log",
@@ -2751,7 +2751,7 @@ dependencies = [
  "retry-after",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "url",
@@ -2795,7 +2795,7 @@ dependencies = [
  "stopper",
  "tempfile",
  "testcontainers",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -2893,24 +2893,6 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.40"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc39085a6e19faf258c7100934b0576e5f6a18fa754c8944357f6f39431baf2a"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "derivative",
- "hex",
- "num_enum",
- "prio",
- "rand",
- "serde",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "janus_messages"
 version = "0.7.42"
 dependencies = [
  "anyhow",
@@ -2924,7 +2906,25 @@ dependencies = [
  "rand",
  "serde",
  "serde_test",
- "thiserror",
+ "thiserror 1.0.69",
+ "url",
+]
+
+[[package]]
+name = "janus_messages"
+version = "0.7.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b26cd6f744dfee0f29a00c669ab3ca975f13e33db70311ec0a759c4c2229808f"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "derivative",
+ "hex",
+ "num_enum",
+ "prio",
+ "rand",
+ "serde",
+ "thiserror 1.0.69",
  "url",
 ]
 
@@ -2966,7 +2966,7 @@ dependencies = [
  "combine",
  "jni-sys",
  "log",
- "thiserror",
+ "thiserror 1.0.69",
  "walkdir",
 ]
 
@@ -3006,7 +3006,7 @@ dependencies = [
  "pest_derive",
  "regex",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3073,7 +3073,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -3095,7 +3095,7 @@ dependencies = [
  "serde",
  "serde-value",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3309,7 +3309,7 @@ dependencies = [
  "rustc_version",
  "smallvec",
  "tagptr",
- "thiserror",
+ "thiserror 1.0.69",
  "triomphe",
  "uuid",
 ]
@@ -3476,7 +3476,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2 0.9.9",
- "thiserror",
+ "thiserror 1.0.69",
  "toml",
 ]
 
@@ -3509,7 +3509,7 @@ dependencies = [
  "js-sys",
  "once_cell",
  "pin-project-lite",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3525,7 +3525,7 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tonic",
 ]
@@ -3578,7 +3578,7 @@ dependencies = [
  "percent-encoding",
  "rand",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
 ]
@@ -3743,7 +3743,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f8023d0fb78c8e03784ea1c7f3fa36e68a723138990b8d5a47d916b651e7a8"
 dependencies = [
  "memchr",
- "thiserror",
+ "thiserror 1.0.69",
  "ucd-trie",
 ]
 
@@ -4071,7 +4071,7 @@ dependencies = [
  "sha2 0.10.8",
  "sha3",
  "subtle",
- "thiserror",
+ "thiserror 1.0.69",
  "zipf",
 ]
 
@@ -4105,7 +4105,7 @@ dependencies = [
  "memchr",
  "parking_lot",
  "protobuf",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4199,7 +4199,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 1.1.0",
  "rustls",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -4216,7 +4216,7 @@ dependencies = [
  "rustc-hash 2.0.0",
  "rustls",
  "slab",
- "thiserror",
+ "thiserror 1.0.69",
  "tinyvec",
  "tracing",
 ]
@@ -4325,7 +4325,7 @@ checksum = "bd283d9651eeda4b2a83a43c1c91b266c40fd76ecd39a50a8c630ae69dc72891"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4428,7 +4428,7 @@ checksum = "f0a2a3fe45c9b89f416bc92174669d954594e152d158df845e6df173a9b7aed4"
 dependencies = [
  "chrono",
  "http",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5204,7 +5204,7 @@ dependencies = [
  "sha2 0.10.8",
  "smallvec",
  "sqlformat",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -5288,7 +5288,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror",
+ "thiserror 1.0.69",
  "tracing",
  "whoami",
 ]
@@ -5326,7 +5326,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror",
+ "thiserror 1.0.69",
  "tracing",
  "whoami",
 ]
@@ -5512,7 +5512,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -5525,7 +5525,16 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c006c85c7651b3cf2ada4584faa36773bd07bac24acfb39f3c431b36d7e667aa"
+dependencies = [
+ "thiserror-impl 2.0.3",
 ]
 
 [[package]]
@@ -5533,6 +5542,17 @@ name = "thiserror-impl"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5928,7 +5948,7 @@ dependencies = [
  "Inflector",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "time",
  "tracing-core",
  "tracing-subscriber",
@@ -5977,7 +5997,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
- "thiserror",
+ "thiserror 1.0.69",
  "trillium",
  "trillium-macros 0.0.6",
 ]
@@ -6010,7 +6030,7 @@ dependencies = [
  "serde",
  "serde_json",
  "size",
- "thiserror",
+ "thiserror 1.0.69",
  "trillium-http",
  "trillium-server-common",
 ]
@@ -6053,7 +6073,7 @@ dependencies = [
  "smartcow",
  "smartstring",
  "stopper",
- "thiserror",
+ "thiserror 1.0.69",
  "trillium-macros 0.0.6",
 ]
 
@@ -6249,7 +6269,7 @@ dependencies = [
  "log",
  "rand",
  "sha1",
- "thiserror",
+ "thiserror 1.0.69",
  "utf-8",
 ]
 
@@ -6817,7 +6837,7 @@ dependencies = [
  "ring",
  "signature",
  "spki",
- "thiserror",
+ "thiserror 1.0.69",
  "zeroize",
 ]
 
