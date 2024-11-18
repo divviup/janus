@@ -24,8 +24,8 @@
   # determined by the task's VDAF.
   vdaf_verify_key: "1CmuYNtBLYIoXN8bU0T_XA"
 
-  # The task's expiration time, as a number of seconds after the Unix epoch.
-  task_expiration: 1704088800
+  # The task's end time, as a number of seconds after the Unix epoch.
+  task_end: 1704088800
 
   # Time in seconds after which reports expire and may be garbage collected.
   # This is a Janus-specific parameter. Garbage collection for a task may
@@ -99,7 +99,7 @@
   vdaf: Prio3Count
   role: Helper
   vdaf_verify_key: "ZXtE4kLqtsCOr8h_pNUeoQ"
-  task_expiration: 1704088800
+  task_end: 1704088800
   report_expiry_age: null
   min_batch_size: 100
   time_precision: 300

@@ -24,7 +24,7 @@ pub struct TaskConfig {
     /// Determines the properties that all batches for this task must have.
     query_config: QueryConfig,
     /// Time up to which Clients are expected to upload to this task.
-    task_expiration: Time,
+    task_end: Time,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
 }
@@ -35,7 +35,7 @@ impl TaskConfig {
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
         query_config: QueryConfig,
-        task_expiration: Time,
+        task_end: Time,
         vdaf_config: VdafConfig,
     ) -> Result<Self, Error> {
         if task_info.is_empty() {
@@ -47,7 +47,7 @@ impl TaskConfig {
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             query_config,
-            task_expiration,
+            task_end,
             vdaf_config,
         })
     }
@@ -68,8 +68,8 @@ impl TaskConfig {
         &self.query_config
     }
 
-    pub fn task_expiration(&self) -> &Time {
-        &self.task_expiration
+    pub fn task_end(&self) -> &Time {
+        &self.task_end
     }
 
     pub fn vdaf_config(&self) -> &VdafConfig {
@@ -83,7 +83,7 @@ impl Encode for TaskConfig {
         self.leader_aggregator_endpoint.encode(bytes)?;
         self.helper_aggregator_endpoint.encode(bytes)?;
         encode_u16_items(bytes, &(), &self.query_config.get_encoded()?)?;
-        self.task_expiration.encode(bytes)?;
+        self.task_end.encode(bytes)?;
         encode_u16_items(bytes, &(), &self.vdaf_config.get_encoded()?)?;
         Ok(())
     }
@@ -94,7 +94,7 @@ impl Encode for TaskConfig {
                 + self.leader_aggregator_endpoint.encoded_len()?
                 + self.helper_aggregator_endpoint.encoded_len()?
                 + (2 + self.query_config.encoded_len()?)
-                + self.task_expiration.encoded_len()?
+                + self.task_end.encoded_len()?
                 + (2 + self.vdaf_config.encoded_len()?),
         )
     }
@@ -111,7 +111,7 @@ impl Decode for TaskConfig {
         let leader_aggregator_endpoint = Url::decode(bytes)?;
         let helper_aggregator_endpoint = Url::decode(bytes)?;
         let query_config = QueryConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
-        let task_expiration = Time::decode(bytes)?;
+        let task_end = Time::decode(bytes)?;
         let vdaf_config = VdafConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
 
         Ok(Self {
@@ -119,7 +119,7 @@ impl Decode for TaskConfig {
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             query_config,
-            task_expiration,
+            task_end,
             vdaf_config,
         })
     }
@@ -904,7 +904,7 @@ mod tests {
                         "0000CCCC",         // min_batch_size
                         "02",               // batch_mode
                     ),
-                    "000000000000EEEE", // task_expiration
+                    "000000000000EEEE", // task_end
                     concat!(
                         // vdaf_config
                         "0007", // vdaf_config length
@@ -960,7 +960,7 @@ mod tests {
                         "0000CCCC",         // min_batch_size
                         "01",               // batch_mode
                     ),
-                    "000000000000EEEE", // task_expiration
+                    "000000000000EEEE", // task_end
                     concat!(
                         // vdaf_config
                         "000F", // vdaf_config length
@@ -1005,7 +1005,7 @@ mod tests {
                         "0000CCCC",         // min_batch_size
                         "01",               // batch_mode
                     ),
-                    "000000000000EEEE", // task_expiration
+                    "000000000000EEEE", // task_end
                     concat!(
                         // vdaf_config
                         "0007", // vdaf_config length

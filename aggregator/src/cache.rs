@@ -367,14 +367,12 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_expiration = Time::from_seconds_since_epoch(100);
+        let new_end = Time::from_seconds_since_epoch(100);
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
                 Box::pin(async move {
-                    tx.update_task_expiration(&task_id, Some(&new_expiration))
-                        .await
-                        .unwrap();
+                    tx.update_task_end(&task_id, Some(&new_end)).await.unwrap();
                     Ok(())
                 })
             })
@@ -385,8 +383,8 @@ mod tests {
         // previous task.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
-            (task_aggregator.task.task_expiration() == task.task_expiration())
-                || (task_aggregator.task.task_expiration() == Some(&new_expiration))
+            (task_aggregator.task.task_end() == task.task_end())
+                || (task_aggregator.task.task_end() == Some(&new_end))
         );
 
         // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
@@ -394,10 +392,7 @@ mod tests {
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(
-            task_aggregator.task.task_expiration(),
-            Some(&new_expiration)
-        );
+        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
     }
 
     #[tokio::test]
@@ -441,14 +436,12 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_expiration = Time::from_seconds_since_epoch(100);
+        let new_end = Time::from_seconds_since_epoch(100);
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
                 Box::pin(async move {
-                    tx.update_task_expiration(&task_id, Some(&new_expiration))
-                        .await
-                        .unwrap();
+                    tx.update_task_end(&task_id, Some(&new_end)).await.unwrap();
                     Ok(())
                 })
             })
@@ -459,16 +452,13 @@ mod tests {
         // previous value.
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
         assert!(
-            (task_aggregator.task.task_expiration() == task.task_expiration())
-                || (task_aggregator.task.task_expiration() == Some(&new_expiration))
+            (task_aggregator.task.task_end() == task.task_end())
+                || (task_aggregator.task.task_end() == Some(&new_end))
         );
 
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
-        assert_eq!(
-            task_aggregator.task.task_expiration(),
-            Some(&new_expiration)
-        );
+        assert_eq!(task_aggregator.task.task_end(), Some(&new_end));
     }
 }

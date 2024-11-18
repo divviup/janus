@@ -203,7 +203,10 @@ pub trait TimeExt: Sized {
     /// `self` is before `other`, the result is zero.
     fn saturating_difference(&self, other: &Self) -> Duration;
 
-    /// Returns true if this [`Time`] occurs after `time`.
+    /// Returns true if and only if this [`Time`] occurs before `time`.
+    fn is_before(&self, time: &Time) -> bool;
+
+    /// Returns true if and only if this [`Time`] occurs after `time`.
     fn is_after(&self, time: &Time) -> bool;
 }
 
@@ -270,6 +273,10 @@ impl TimeExt for Time {
             self.as_seconds_since_epoch()
                 .saturating_sub(other.as_seconds_since_epoch()),
         )
+    }
+
+    fn is_before(&self, time: &Time) -> bool {
+        self.as_seconds_since_epoch() < time.as_seconds_since_epoch()
     }
 
     fn is_after(&self, time: &Time) -> bool {

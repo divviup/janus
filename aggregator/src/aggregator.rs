@@ -724,7 +724,8 @@ impl<C: Clock> Aggregator<C> {
                 task_config.query_config().query().try_into()?,
                 vdaf_instance,
                 vdaf_verify_key,
-                Some(*task_config.task_expiration()),
+                None, // TODO(#3636): update taskprov implementation to specify task start
+                Some(*task_config.task_end()),
                 peer_aggregator.report_expiry_age().cloned(),
                 task_config.query_config().min_batch_size() as u64,
                 *task_config.query_config().time_precision(),
@@ -763,7 +764,7 @@ impl<C: Clock> Aggregator<C> {
 
     /// Validate and authorize a taskprov request. Returns values necessary for determining whether
     /// we can opt into the task. This function might return an opt-out error for conditions that
-    /// are relevant for all DAP workflows (e.g. task expiration).
+    /// are relevant for all DAP workflows (e.g. task end).
     #[tracing::instrument(skip(self, aggregator_auth_token), err(level = Level::DEBUG))]
     async fn taskprov_authorize_request(
         &self,
@@ -794,8 +795,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        if self.clock.now() > *task_config.task_expiration() {
-            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskExpired));
+        if self.clock.now() > *task_config.task_end() {
+            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskEnded));
         }
 
         debug!(
@@ -1608,11 +1609,18 @@ impl VdafOps {
             return Err(reject_report(ReportRejectionReason::TooEarly).await?);
         }
 
-        // Reject reports after a task has expired.
+        // Reject reports before a task has started.
+        if let Some(task_start) = task.task_start() {
+            if report.metadata().time().is_before(task_start) {
+                return Err(reject_report(ReportRejectionReason::TaskNotStarted).await?);
+            }
+        }
+
+        // Reject reports after a task has ended.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
-        if let Some(task_expiration) = task.task_expiration() {
-            if report.metadata().time().is_after(task_expiration) {
-                return Err(reject_report(ReportRejectionReason::TaskExpired).await?);
+        if let Some(task_end) = task.task_end() {
+            if report.metadata().time().is_after(task_end) {
+                return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
             }
         }
 

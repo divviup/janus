@@ -207,7 +207,7 @@ mod tests {
                             random(),
                             random(),
                             RealClock::default().now(),
-                            ReportRejectionReason::TaskExpired
+                            ReportRejectionReason::TaskEnded
                         ))
                     }),
                     Some(DapProblemType::ReportRejected),

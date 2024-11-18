@@ -2283,8 +2283,10 @@ pub struct TaskUploadCounter {
     pub(crate) report_success: u64,
     /// Reports that contain a timestamp too far in the future.
     pub(crate) report_too_early: u64,
-    /// Reports that were submitted to the task after the task's expiry.
-    pub(crate) task_expired: u64,
+    /// Reports that were submitted to the task before the task's start time.
+    pub(crate) task_not_started: u64,
+    /// Reports that were submitted to the task after the task's end time.
+    pub(crate) task_ended: u64,
 }
 
 impl TaskUploadCounter {
@@ -2298,7 +2300,8 @@ impl TaskUploadCounter {
         report_outdated_key: u64,
         report_success: u64,
         report_too_early: u64,
-        task_expired: u64,
+        task_not_started: u64,
+        task_ended: u64,
     ) -> Self {
         Self {
             interval_collected,
@@ -2308,7 +2311,8 @@ impl TaskUploadCounter {
             report_outdated_key,
             report_success,
             report_too_early,
-            task_expired,
+            task_not_started,
+            task_ended,
         }
     }
 
@@ -2340,8 +2344,12 @@ impl TaskUploadCounter {
         self.report_too_early += 1
     }
 
-    pub fn increment_task_expired(&mut self) {
-        self.task_expired += 1
+    pub fn increment_task_not_started(&mut self) {
+        self.task_not_started += 1
+    }
+
+    pub fn increment_task_ended(&mut self) {
+        self.task_ended += 1
     }
 
     pub fn interval_collected(&self) -> u64 {
@@ -2372,8 +2380,12 @@ impl TaskUploadCounter {
         self.report_too_early
     }
 
-    pub fn task_expired(&self) -> u64 {
-        self.task_expired
+    pub fn task_not_started(&self) -> u64 {
+        self.task_not_started
+    }
+
+    pub fn task_ended(&self) -> u64 {
+        self.task_ended
     }
 }
 

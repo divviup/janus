@@ -647,14 +647,14 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
                 "-- put_aggregator_task()
 INSERT INTO tasks (
     task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    task_expiration, report_expiry_age, min_batch_size, time_precision,
+    task_start, task_end, report_expiry_age, min_batch_size, time_precision,
     tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type,
     collector_auth_token_hash, created_at, updated_at, updated_by)
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20, $21
+    $19, $20, $21, $22
 )
 ON CONFLICT DO NOTHING",
             )
@@ -669,11 +669,13 @@ ON CONFLICT DO NOTHING",
                     &task.peer_aggregator_endpoint().as_str(),
                     /* batch_mode */ &Json(task.batch_mode()),
                     /* vdaf */ &Json(task.vdaf()),
-                    /* task_expiration */
+                    /* task_start */
                     &task
-                        .task_expiration()
+                        .task_start()
                         .map(Time::as_naive_date_time)
                         .transpose()?,
+                    /* task_end */
+                    &task.task_end().map(Time::as_naive_date_time).transpose()?,
                     /* report_expiry_age */
                     &task
                         .report_expiry_age()
@@ -760,17 +762,17 @@ DELETE FROM tasks WHERE task_id = $1",
         Ok(())
     }
 
-    /// Sets or unsets the expiration date of a task.
+    /// Sets or unsets the end date of a task.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn update_task_expiration(
+    pub async fn update_task_end(
         &self,
         task_id: &TaskId,
-        task_expiration: Option<&Time>,
+        task_end: Option<&Time>,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "-- update_task_expiration()
-UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
+                "-- update_task_end()
+UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
    WHERE task_id = $4",
             )
             .await?;
@@ -778,8 +780,8 @@ UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
             self.execute(
                 &stmt,
                 &[
-                    /* task_expiration */
-                    &task_expiration.map(Time::as_naive_date_time).transpose()?,
+                    /* task_end */
+                    &task_end.map(Time::as_naive_date_time).transpose()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* task_id */ &task_id.as_ref(),
@@ -799,8 +801,9 @@ UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_task()
-SELECT aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    task_expiration, report_expiry_age, min_batch_size, time_precision,
+SELECT
+    aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf, task_start,
+    task_end, report_expiry_age, min_batch_size, time_precision,
     tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
@@ -820,8 +823,9 @@ FROM tasks WHERE task_id = $1",
         let stmt = self
             .prepare_cached(
                 "-- get_aggregator_tasks()
-SELECT task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf,
-    task_expiration, report_expiry_age, min_batch_size, time_precision,
+SELECT
+    task_id, aggregator_role, peer_aggregator_endpoint, batch_mode, vdaf, task_start,
+    task_end, report_expiry_age, min_batch_size, time_precision,
     tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
     aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
@@ -843,8 +847,12 @@ FROM tasks",
         let peer_aggregator_endpoint = row.get::<_, String>("peer_aggregator_endpoint").parse()?;
         let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-        let task_expiration = row
-            .get::<_, Option<NaiveDateTime>>("task_expiration")
+        let task_start = row
+            .get::<_, Option<NaiveDateTime>>("task_start")
+            .as_ref()
+            .map(Time::from_naive_date_time);
+        let task_end = row
+            .get::<_, Option<NaiveDateTime>>("task_end")
             .as_ref()
             .map(Time::from_naive_date_time);
         let report_expiry_age = row
@@ -942,7 +950,8 @@ FROM tasks",
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_expiration,
+            task_start,
+            task_end,
             report_expiry_age,
             min_batch_size,
             time_precision,
@@ -5312,7 +5321,8 @@ SELECT
     COALESCE(SUM(report_outdated_key)::BIGINT, 0) AS report_outdated_key,
     COALESCE(SUM(report_success)::BIGINT, 0) AS report_success,
     COALESCE(SUM(report_too_early)::BIGINT, 0) AS report_too_early,
-    COALESCE(SUM(task_expired)::BIGINT, 0) AS task_expired
+    COALESCE(SUM(task_not_started)::BIGINT, 0) AS task_not_started,
+    COALESCE(SUM(task_ended)::BIGINT, 0) AS task_ended
 FROM task_upload_counters
 RIGHT JOIN tasks on tasks.id = task_upload_counters.task_id
 WHERE tasks.task_id = $1
@@ -5331,7 +5341,8 @@ GROUP BY tasks.id",
                     report_outdated_key: row.get_bigint_and_convert("report_outdated_key")?,
                     report_success: row.get_bigint_and_convert("report_success")?,
                     report_too_early: row.get_bigint_and_convert("report_too_early")?,
-                    task_expired: row.get_bigint_and_convert("task_expired")?,
+                    task_not_started: row.get_bigint_and_convert("task_not_started")?,
+                    task_ended: row.get_bigint_and_convert("task_ended")?,
                 })
             })
             .transpose()
@@ -5347,12 +5358,13 @@ GROUP BY tasks.id",
         ord: u64,
         counter: &TaskUploadCounter,
     ) -> Result<(), Error> {
-        let stmt =
-            "-- increment_task_upload_counter()
-INSERT INTO task_upload_counters (task_id, ord, interval_collected, report_decode_failure,
-        report_decrypt_failure, report_expired, report_outdated_key, report_success, report_too_early,
-        task_expired)
-VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        let stmt = "-- increment_task_upload_counter()
+INSERT INTO task_upload_counters (
+    task_id, ord, interval_collected, report_decode_failure,
+    report_decrypt_failure, report_expired, report_outdated_key, report_success, report_too_early,
+    task_not_started, task_ended
+)
+VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (task_id, ord) DO UPDATE SET
     interval_collected = task_upload_counters.interval_collected + $3,
     report_decode_failure = task_upload_counters.report_decode_failure + $4,
@@ -5361,7 +5373,8 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     report_outdated_key = task_upload_counters.report_outdated_key + $7,
     report_success = task_upload_counters.report_success + $8,
     report_too_early = task_upload_counters.report_too_early + $9,
-    task_expired = task_upload_counters.task_expired + $10";
+    task_not_started = task_upload_counters.task_not_started + $10,
+    task_ended = task_upload_counters.task_ended + $11";
 
         let stmt = self.prepare_cached(stmt).await?;
         check_single_row_mutation(
@@ -5377,7 +5390,8 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     &i64::try_from(counter.report_outdated_key)?,
                     &i64::try_from(counter.report_success)?,
                     &i64::try_from(counter.report_too_early)?,
-                    &i64::try_from(counter.task_expired)?,
+                    &i64::try_from(counter.task_not_started)?,
+                    &i64::try_from(counter.task_ended)?,
                 ],
             )
             .await?,
