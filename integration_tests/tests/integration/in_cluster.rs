@@ -446,10 +446,8 @@ impl InClusterJanusPair {
                 other => panic!("unsupported vdaf {other:?}"),
             },
             min_batch_size: task.min_batch_size(),
-            max_batch_size: match task.batch_mode() {
-                BatchMode::TimeInterval => None,
-                BatchMode::LeaderSelected { max_batch_size, .. } => *max_batch_size,
-            },
+            // TODO(#3436): once divviup-api is updated for DAP-13, drop max_batch_size entirely.
+            max_batch_size: None,
             batch_time_window_size_seconds: match task.batch_mode() {
                 BatchMode::TimeInterval => None,
                 BatchMode::LeaderSelected {
@@ -614,7 +612,6 @@ async fn in_cluster_leader_selected() {
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
         BatchMode::LeaderSelected {
-            max_batch_size: Some(110),
             batch_time_window_size: None,
         },
     )
@@ -639,7 +636,6 @@ async fn in_cluster_time_bucketed_leader_selected() {
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
         BatchMode::LeaderSelected {
-            max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
     )
@@ -939,7 +935,6 @@ async fn in_cluster_histogram_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
     )
@@ -1006,7 +1001,6 @@ async fn in_cluster_sumvec_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            max_batch_size: Some(110),
             batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
         },
     )

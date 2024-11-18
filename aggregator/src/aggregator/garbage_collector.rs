@@ -541,7 +541,6 @@ mod tests {
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::BatchMode::LeaderSelected {
-                            max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake { rounds: 1 },
@@ -710,7 +709,6 @@ mod tests {
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::BatchMode::LeaderSelected {
-                            max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake { rounds: 1 },

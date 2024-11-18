@@ -615,7 +615,6 @@ async fn aggregate_init_batch_already_collected() {
 
     let task = TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: Some(100),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },

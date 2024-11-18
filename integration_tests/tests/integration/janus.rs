@@ -270,7 +270,6 @@ async fn janus_janus_leader_selected() {
         TEST_NAME,
         VdafInstance::Prio3Count,
         BatchMode::LeaderSelected {
-            max_batch_size: Some(50),
             batch_time_window_size: None,
         },
     )
@@ -295,7 +294,6 @@ async fn janus_in_process_leader_selected() {
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::LeaderSelected {
-            max_batch_size: Some(50),
             batch_time_window_size: None,
         },
         VdafInstance::Prio3Count,

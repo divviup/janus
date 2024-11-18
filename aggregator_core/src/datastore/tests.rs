@@ -1288,7 +1288,6 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 
     let task = TaskBuilder::new(
         task::BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },
@@ -1299,7 +1298,6 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
     .unwrap();
     let unrelated_task = TaskBuilder::new(
         task::BatchMode::LeaderSelected {
-            max_batch_size: None,
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },
@@ -1546,7 +1544,6 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
         task::BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },
@@ -2155,7 +2152,6 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
         task::BatchMode::LeaderSelected {
-            max_batch_size: None,
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },
@@ -2211,7 +2207,6 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
             // is not returned.
             let unrelated_task = TaskBuilder::new(
                 task::BatchMode::LeaderSelected {
-                    max_batch_size: None,
                     batch_time_window_size: None,
                 },
                 VdafInstance::Fake { rounds: 1 },
@@ -3659,7 +3654,6 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
         CollectionJobAcquireTestCase {
             task_ids: Vec::from([task_id]),
             batch_mode: task::BatchMode::LeaderSelected {
-                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             reports,
@@ -4502,7 +4496,6 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
 
     let task = TaskBuilder::new(
         task::BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake { rounds: 1 },
@@ -4520,7 +4513,6 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
             Box::pin(async move {
                 let other_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -4886,7 +4878,6 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
             Box::pin(async move {
                 let task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: None,
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -5042,7 +5033,6 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             Box::pin(async move {
                 let task_1 = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -5096,7 +5086,6 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
                 let task_2 = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: Some(batch_time_window_size),
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -5674,7 +5663,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 .unwrap();
                 let leader_leader_selected_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -5685,7 +5673,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 .unwrap();
                 let helper_leader_selected_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -6215,7 +6202,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .unwrap();
                 let leader_leader_selected_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -6226,7 +6212,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .unwrap();
                 let helper_leader_selected_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -6237,7 +6222,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .unwrap();
                 let leader_leader_selected_time_bucketed_task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: Some(10),
                         batch_time_window_size: Some(Duration::from_hours(24).unwrap()),
                     },
                     VdafInstance::Fake { rounds: 1 },
@@ -7546,7 +7530,6 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 // Put a task for us to increment counters for.
                 let task = TaskBuilder::new(
                     task::BatchMode::LeaderSelected {
-                        max_batch_size: None,
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake { rounds: 1 },

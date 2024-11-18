@@ -1646,7 +1646,6 @@ fn post_task_req_serialization() {
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
             batch_mode: BatchMode::LeaderSelected {
-                max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
             vdaf: VdafInstance::Prio3SumVec {
@@ -1681,11 +1680,8 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "BatchMode",
                 variant: "LeaderSelected",
-                len: 2,
+                len: 1,
             },
-            Token::Str("max_batch_size"),
-            Token::Some,
-            Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,
             Token::StructVariantEnd,
@@ -1765,7 +1761,6 @@ fn post_task_req_serialization() {
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
             batch_mode: BatchMode::LeaderSelected {
-                max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
             vdaf: VdafInstance::Prio3SumVec {
@@ -1804,11 +1799,8 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "BatchMode",
                 variant: "LeaderSelected",
-                len: 2,
+                len: 1,
             },
-            Token::Str("max_batch_size"),
-            Token::Some,
-            Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,
             Token::StructVariantEnd,
@@ -1916,7 +1908,6 @@ fn task_resp_serialization() {
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
         BatchMode::LeaderSelected {
-            max_batch_size: Some(999),
             batch_time_window_size: None,
         },
         VdafInstance::Prio3SumVec {
@@ -1965,11 +1956,8 @@ fn task_resp_serialization() {
             Token::StructVariant {
                 name: "BatchMode",
                 variant: "LeaderSelected",
-                len: 2,
+                len: 1,
             },
-            Token::Str("max_batch_size"),
-            Token::Some,
-            Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,
             Token::StructVariantEnd,

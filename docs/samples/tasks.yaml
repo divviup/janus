@@ -94,10 +94,7 @@
 
 - task_id: "D-hCKPuqL2oTf7ZVRVyMP5VGt43EAEA8q34mDf6p1JE"
   peer_aggregator_endpoint: "https://example.org/"
-  # For tasks using the leader-selected batch mode, an additional `max_batch_size`
-  # parameter must be provided.
   batch_mode: !LeaderSelected
-    max_batch_size: 100
     batch_time_window_size: null
   vdaf: Prio3Count
   role: Helper

@@ -296,7 +296,6 @@ async fn setup_leader_selected_current_batch_collection_job_test_case(
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         BatchMode::LeaderSelected {
-            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
     )

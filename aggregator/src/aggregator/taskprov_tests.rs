@@ -154,7 +154,6 @@ where
 
         let time_precision = Duration::from_seconds(1);
         let min_batch_size = 1;
-        let max_batch_size = 1;
         let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
@@ -163,7 +162,7 @@ where
             QueryConfig::new(
                 time_precision,
                 min_batch_size,
-                TaskprovQuery::LeaderSelected { max_batch_size },
+                TaskprovQuery::LeaderSelected,
             ),
             task_expiration,
             vdaf_config,
@@ -178,7 +177,6 @@ where
 
         let task = TaskBuilder::new(
             BatchMode::LeaderSelected {
-                max_batch_size: Some(max_batch_size as u64),
                 batch_time_window_size: None,
             },
             vdaf_instance,
@@ -646,9 +644,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
-            TaskprovQuery::LeaderSelected {
-                max_batch_size: 100,
-            },
+            TaskprovQuery::LeaderSelected,
         ),
         task_expiration,
         VdafConfig::new(
@@ -725,9 +721,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
-            TaskprovQuery::LeaderSelected {
-                max_batch_size: 100,
-            },
+            TaskprovQuery::LeaderSelected,
         ),
         task_expiration,
         VdafConfig::new(
@@ -805,9 +799,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
-            TaskprovQuery::LeaderSelected {
-                max_batch_size: 100,
-            },
+            TaskprovQuery::LeaderSelected,
         ),
         task_expiration,
         VdafConfig::new(
