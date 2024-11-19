@@ -37,9 +37,10 @@ fn roundtrip_query() {
                 .unwrap(),
             },
             concat!(
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0010", // length
                 concat!(
-                    // query_body
+                    // opaque data
                     "000000000000D431", // start
                     "0000000000003039", // duration
                 ),
@@ -54,9 +55,10 @@ fn roundtrip_query() {
                 .unwrap(),
             },
             concat!(
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0010", // length
                 concat!(
-                    // query_body
+                    // opaque data
                     "000000000000BF11", // start
                     "000000000000AEB1", // duration
                 ),
@@ -68,8 +70,10 @@ fn roundtrip_query() {
     roundtrip_encoding(&[(
         Query::<LeaderSelected> { query_body: () },
         concat!(
-                "02", // batch_mode
-            ),
+            "02",   // batch_mode
+            "0000", // length
+            "",     // opaque data
+        ),
     )])
 }
 
