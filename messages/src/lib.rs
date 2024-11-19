@@ -2135,13 +2135,13 @@ impl Decode for PrepareStepResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum ReportError {
-    BatchCollected = 0,
-    ReportReplayed = 1,
-    ReportDropped = 2,
-    HpkeUnknownConfigId = 3,
-    HpkeDecryptError = 4,
-    VdafPrepError = 5,
-    BatchSaturated = 6,
+    Reserved = 0,
+    BatchCollected = 1,
+    ReportReplayed = 2,
+    ReportDropped = 3,
+    HpkeUnknownConfigId = 4,
+    HpkeDecryptError = 5,
+    VdafPrepError = 6,
     TaskExpired = 7,
     InvalidMessage = 8,
     ReportTooEarly = 9,

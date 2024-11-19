@@ -261,7 +261,7 @@ fn roundtrip_prepare_resp() {
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
                 "02",                               // prepare_step_result
-                "05",                               // report_share_error
+                "06",                               // report_share_error
             ),
         ),
     ])
@@ -270,13 +270,13 @@ fn roundtrip_prepare_resp() {
 #[test]
 fn roundtrip_report_share_error() {
     roundtrip_encoding(&[
-        (ReportError::BatchCollected, "00"),
-        (ReportError::ReportReplayed, "01"),
-        (ReportError::ReportDropped, "02"),
-        (ReportError::HpkeUnknownConfigId, "03"),
-        (ReportError::HpkeDecryptError, "04"),
-        (ReportError::VdafPrepError, "05"),
-        (ReportError::BatchSaturated, "06"),
+        (ReportError::Reserved, "00"),
+        (ReportError::BatchCollected, "01"),
+        (ReportError::ReportReplayed, "02"),
+        (ReportError::ReportDropped, "03"),
+        (ReportError::HpkeUnknownConfigId, "04"),
+        (ReportError::HpkeDecryptError, "05"),
+        (ReportError::VdafPrepError, "06"),
         (ReportError::TaskExpired, "07"),
         (ReportError::InvalidMessage, "08"),
         (ReportError::ReportTooEarly, "09"),
