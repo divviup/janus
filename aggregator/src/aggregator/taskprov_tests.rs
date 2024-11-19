@@ -217,15 +217,15 @@ where
         ReportShare,
         V::AggregationParam,
     ) {
-        self.next_report_share_with_extensions(Vec::from([Extension::new(
+        self.next_report_share_with_private_extensions(Vec::from([Extension::new(
             ExtensionType::Taskprov,
             Vec::new(),
         )]))
     }
 
-    fn next_report_share_with_extensions(
+    fn next_report_share_with_private_extensions(
         &self,
-        extensions: Vec<Extension>,
+        private_extensions: Vec<Extension>,
     ) -> (
         VdafTranscript<VERIFY_KEY_SIZE, V>,
         ReportShare,
@@ -238,7 +238,7 @@ where
             self.vdaf.clone(),
             self.aggregation_param.clone(),
         )
-        .with_extensions(extensions)
+        .with_private_extensions(private_extensions)
         .next_report_share(&self.measurement);
         (transcript, report_share, self.aggregation_param.clone())
     }
@@ -398,7 +398,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     let test = TaskprovTestCase::new().await;
 
     let (transcript, report_share, aggregation_param) =
-        test.next_report_share_with_extensions(Vec::new());
+        test.next_report_share_with_private_extensions(Vec::new());
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
@@ -481,7 +481,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     let test = TaskprovTestCase::new().await;
 
     let (transcript, report_share, aggregation_param) =
-        test.next_report_share_with_extensions(Vec::new());
+        test.next_report_share_with_private_extensions(Vec::new());
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),

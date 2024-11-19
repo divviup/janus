@@ -181,15 +181,21 @@ CREATE TABLE task_aggregation_counters(
 ) WITH (fillfactor = 50);
 
 -- Individual reports received from clients.
+--
+-- Reports might be "scrubbed"; this will null out many fields (noted in the individual fields' 
+-- comments), keeping the row itself & some basic metadata for use in report replay protection.
 CREATE TABLE client_reports(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                         BIGINT NOT NULL,                 -- task ID the report is associated with
     report_id                       BYTEA NOT NULL,                  -- 16-byte ReportID as defined by the DAP specification
     client_timestamp                TIMESTAMP NOT NULL,              -- report timestamp, from client
-    extensions                      BYTEA,                           -- encoded sequence of Extension messages (populated for leader only)
-    public_share                    BYTEA,                           -- encoded public share (opaque VDAF message, populated for leader only)
-    leader_input_share              BYTEA,                           -- encoded, decrypted leader input share (populated for leader only)
-    helper_encrypted_input_share    BYTEA,                           -- encoded HpkeCiphertext message containing the helper's input share (populated for leader only)
+
+    public_extensions               BYTEA,                           -- encoded sequence of public Extension messages (opaque DAP messages, populated for unscrubbed reports only)
+    public_share                    BYTEA,                           -- encoded public share (opaque VDAF message, populated for unscrubbed reports only)
+    leader_private_extensions       BYTEA,                           -- encoded sequence of leader's private Extension messages (opaque DAP messages, populated for unscrubbed reports only)
+    leader_input_share              BYTEA,                           -- encoded, decrypted leader input share (opaque VDAF message, populated for unscrubbed reports only)
+    helper_encrypted_input_share    BYTEA,                           -- encoded HpkeCiphertext message containing the helper's input share (opaque DAP message, populated for unscrubbed reports only)
+
     aggregation_started             BOOLEAN NOT NULL DEFAULT FALSE,  -- has this client report been associated with an aggregation job?
 
     -- creation/update records
@@ -261,8 +267,9 @@ CREATE TABLE report_aggregations(
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
 
     -- Additional data for state StartLeader.
+    public_extensions             BYTEA,  -- encoded sequence of public Extension messages (opaque DAP messages)
     public_share                  BYTEA,  -- the public share for the report (opaque VDAF message)
-    leader_extensions             BYTEA,  -- encoded sequence of Extension messages from Leader input share (opaque DAP messages)
+    leader_private_extensions     BYTEA,  -- encoded sequence of leader's private Extension messages (opaque DAP messages)
     leader_input_share            BYTEA,  -- encoded leader input share (opaque VDAF message)
     helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
 

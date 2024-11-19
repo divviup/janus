@@ -82,7 +82,7 @@ async fn aggregation_job_driver() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
     let measurement = 13;
     let aggregation_param = dummy::AggregationParam(7);
@@ -361,7 +361,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
     let transcript = run_vdaf(
@@ -381,14 +381,39 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         Vec::new(),
         &transcript,
     );
-    let repeated_extension_report = LeaderStoredReport::generate(
+    let repeated_public_extension_report = LeaderStoredReport::generate(
         *task.id(),
-        ReportMetadata::new(random(), time),
+        ReportMetadata::new(
+            random(),
+            time,
+            Vec::from([
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+            ]),
+        ),
+        helper_hpke_keypair.config(),
+        Vec::new(),
+        &transcript,
+    );
+    let repeated_private_extension_report = LeaderStoredReport::generate(
+        *task.id(),
+        ReportMetadata::new(random(), time, Vec::new()),
         helper_hpke_keypair.config(),
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
             Extension::new(ExtensionType::Tbd, Vec::new()),
         ]),
+        &transcript,
+    );
+    let repeated_public_private_extension_report = LeaderStoredReport::generate(
+        *task.id(),
+        ReportMetadata::new(
+            random(),
+            time,
+            Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        ),
+        helper_hpke_keypair.config(),
+        Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
         &transcript,
     );
     let aggregation_job_id = random();
@@ -397,23 +422,25 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let repeated_extension_report = repeated_extension_report.clone();
+            let repeated_public_extension_report = repeated_public_extension_report.clone();
+            let repeated_private_extension_report = repeated_private_extension_report.clone();
+            let repeated_public_private_extension_report =
+                repeated_public_private_extension_report.clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_client_report(&report).await.unwrap();
-                tx.put_client_report(&repeated_extension_report)
-                    .await
-                    .unwrap();
-                tx.scrub_client_report(report.task_id(), report.metadata().id())
-                    .await
-                    .unwrap();
-                tx.scrub_client_report(
-                    repeated_extension_report.task_id(),
-                    repeated_extension_report.metadata().id(),
-                )
-                .await
-                .unwrap();
+
+                for report in [
+                    &report,
+                    &repeated_public_extension_report,
+                    &repeated_private_extension_report,
+                    &repeated_public_private_extension_report,
+                ] {
+                    tx.put_client_report(report).await.unwrap();
+                    tx.scrub_client_report(report.task_id(), report.metadata().id())
+                        .await
+                        .unwrap();
+                }
 
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
@@ -431,17 +458,22 @@ async fn step_time_interval_aggregation_job_init_single_step() {
                 ))
                 .await
                 .unwrap();
-                tx.put_report_aggregation(
-                    &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
-                )
-                .await
-                .unwrap();
-                tx.put_report_aggregation(
-                    &repeated_extension_report
-                        .as_start_leader_report_aggregation(aggregation_job_id, 1),
-                )
-                .await
-                .unwrap();
+
+                for (ord, report) in [
+                    &report,
+                    &repeated_public_extension_report,
+                    &repeated_private_extension_report,
+                    &repeated_public_private_extension_report,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    tx.put_report_aggregation(
+                        &report.as_start_leader_report_aggregation(aggregation_job_id, ord as u64),
+                    )
+                    .await
+                    .unwrap();
+                }
 
                 tx.put_batch_aggregation(&BatchAggregation::<
                     VERIFY_KEY_LENGTH,
@@ -556,6 +588,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     );
+
     let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
         *task.id(),
         aggregation_job_id,
@@ -565,18 +598,43 @@ async fn step_time_interval_aggregation_job_init_single_step() {
         None,
         ReportAggregationState::Finished,
     );
-    let want_repeated_extension_report_aggregation =
+    let want_repeated_public_extension_report_aggregation =
         ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
-            *repeated_extension_report.metadata().id(),
-            *repeated_extension_report.metadata().time(),
+            *repeated_public_extension_report.metadata().id(),
+            *repeated_public_extension_report.metadata().time(),
             1,
             None,
             ReportAggregationState::Failed {
                 report_error: ReportError::InvalidMessage,
             },
         );
+    let want_repeated_private_extension_report_aggregation =
+        ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            *repeated_private_extension_report.metadata().id(),
+            *repeated_private_extension_report.metadata().time(),
+            2,
+            None,
+            ReportAggregationState::Failed {
+                report_error: ReportError::InvalidMessage,
+            },
+        );
+    let want_repeated_public_private_extension_report_aggregation =
+        ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            *repeated_public_private_extension_report.metadata().id(),
+            *repeated_public_private_extension_report.metadata().time(),
+            3,
+            None,
+            ReportAggregationState::Failed {
+                report_error: ReportError::InvalidMessage,
+            },
+        );
+
     let want_batch_aggregations = Vec::from([BatchAggregation::<
         VERIFY_KEY_LENGTH,
         TimeInterval,
@@ -599,16 +657,19 @@ async fn step_time_interval_aggregation_job_init_single_step() {
     let (
         got_aggregation_job,
         got_report_aggregation,
-        got_repeated_extension_report_aggregation,
+        got_repeated_public_extension_report_aggregation,
+        got_repeated_private_extension_report_aggregation,
+        got_repeated_public_private_extension_report_aggregation,
         got_batch_aggregations,
     ) = ds
         .run_unnamed_tx(|tx| {
-            let (vdaf, task, report_id, repeated_extension_report_id) = (
-                Arc::clone(&vdaf),
-                task.clone(),
-                *report.metadata().id(),
-                *repeated_extension_report.metadata().id(),
-            );
+            let vdaf = Arc::clone(&vdaf);
+            let task = task.clone();
+            let report_id = *report.metadata().id();
+            let repeated_public_extension_report_id = *repeated_public_extension_report.metadata().id();
+            let repeated_private_extension_report_id = *repeated_private_extension_report.metadata().id();
+            let repeated_public_private_extension_report_id = *repeated_public_private_extension_report.metadata().id();
+
             Box::pin(async move {
                 let aggregation_job = tx
                     .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
@@ -629,13 +690,35 @@ async fn step_time_interval_aggregation_job_init_single_step() {
                     .await
                     .unwrap()
                     .unwrap();
-                let repeated_extension_report_aggregation = tx
+                let repeated_public_extension_report_aggregation = tx
                     .get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &Role::Leader,
                         task.id(),
                         &aggregation_job_id,
-                        &repeated_extension_report_id,
+                        &repeated_public_extension_report_id,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let repeated_private_extension_report_aggregation = tx
+                    .get_report_aggregation_by_report_id(
+                        vdaf.as_ref(),
+                        &Role::Leader,
+                        task.id(),
+                        &aggregation_job_id,
+                        &repeated_private_extension_report_id,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let repeated_public_private_extension_report_aggregation = tx
+                    .get_report_aggregation_by_report_id(
+                        vdaf.as_ref(),
+                        &Role::Leader,
+                        task.id(),
+                        &aggregation_job_id,
+                        &repeated_public_private_extension_report_id,
                     )
                     .await
                     .unwrap()
@@ -649,7 +732,9 @@ async fn step_time_interval_aggregation_job_init_single_step() {
                 Ok((
                     aggregation_job,
                     report_aggregation,
-                    repeated_extension_report_aggregation,
+                    repeated_public_extension_report_aggregation,
+                    repeated_private_extension_report_aggregation,
+                    repeated_public_private_extension_report_aggregation,
                     batch_aggregations,
                 ))
             })
@@ -660,8 +745,16 @@ async fn step_time_interval_aggregation_job_init_single_step() {
     assert_eq!(want_aggregation_job, got_aggregation_job);
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(
-        want_repeated_extension_report_aggregation,
-        got_repeated_extension_report_aggregation
+        want_repeated_public_extension_report_aggregation,
+        got_repeated_public_extension_report_aggregation
+    );
+    assert_eq!(
+        want_repeated_private_extension_report_aggregation,
+        got_repeated_private_extension_report_aggregation
+    );
+    assert_eq!(
+        want_repeated_public_private_extension_report_aggregation,
+        got_repeated_public_private_extension_report_aggregation,
     );
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
@@ -690,7 +783,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
     let measurement = 13;
     let aggregation_param = dummy::AggregationParam(7);
@@ -947,7 +1040,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
         .unwrap();
     let gc_eligible_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &gc_eligible_time).unwrap();
-    let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time);
+    let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time, Vec::new());
 
     let gc_ineligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
         .add(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
@@ -956,7 +1049,8 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
         .unwrap();
     let gc_ineligible_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &gc_ineligible_time).unwrap();
-    let gc_ineligible_report_metadata = ReportMetadata::new(random(), gc_ineligible_time);
+    let gc_ineligible_report_metadata =
+        ReportMetadata::new(random(), gc_ineligible_time, Vec::new());
 
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -1309,6 +1403,7 @@ async fn step_leader_selected_aggregation_job_init_single_step() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -1594,6 +1689,7 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
     let measurement = 13;
@@ -1850,7 +1946,7 @@ async fn step_time_interval_aggregation_job_continue() {
         *task.time_precision(),
     )
     .unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
 
     let aggregation_param = dummy::AggregationParam(7);
@@ -2166,6 +2262,7 @@ async fn step_leader_selected_aggregation_job_continue() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
 
@@ -2453,7 +2550,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
     let transcript = run_vdaf(
@@ -2598,7 +2695,7 @@ async fn cancel_aggregation_job() {
         test_case.batch_identifier,
         (),
         0,
-        Interval::from_time(test_case.report_aggregation.report_metadata().time()).unwrap(),
+        Interval::from_time(test_case.report_aggregation.time()).unwrap(),
         BatchAggregationState::Aggregating {
             aggregate_share: None,
             report_count: 0,
@@ -2614,7 +2711,7 @@ async fn cancel_aggregation_job() {
             let (vdaf, task, report_id, aggregation_job) = (
                 Arc::clone(&test_case.vdaf),
                 test_case.task.clone(),
-                *test_case.report_aggregation.report_metadata().id(),
+                *test_case.report_aggregation.report_id(),
                 want_aggregation_job.clone(),
             );
             Box::pin(async move {
@@ -2723,7 +2820,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let transcript = run_vdaf(
         &vdaf,
         verify_key.as_bytes(),
@@ -2965,7 +3062,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
+    let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let transcript = run_vdaf(
         &vdaf,
         verify_key.as_bytes(),

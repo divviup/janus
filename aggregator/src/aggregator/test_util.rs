@@ -72,7 +72,7 @@ pub fn create_report_custom(
     assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
 
     let vdaf = Prio3Count::new_count(2).unwrap();
-    let report_metadata = ReportMetadata::new(id, report_timestamp);
+    let report_metadata = ReportMetadata::new(id, report_timestamp, Vec::new());
 
     let (public_share, measurements) = vdaf.shard(&true, id.as_ref()).unwrap();
 
@@ -122,14 +122,14 @@ pub fn generate_helper_report_share<V: vdaf::Client<16>>(
     report_metadata: ReportMetadata,
     cfg: &HpkeConfig,
     public_share: &V::PublicShare,
-    extensions: Vec<Extension>,
+    private_extensions: Vec<Extension>,
     input_share: &V::InputShare,
 ) -> ReportShare {
     generate_helper_report_share_for_plaintext(
         report_metadata.clone(),
         cfg,
         public_share.get_encoded().unwrap(),
-        &PlaintextInputShare::new(extensions, input_share.get_encoded().unwrap())
+        &PlaintextInputShare::new(private_extensions, input_share.get_encoded().unwrap())
             .get_encoded()
             .unwrap(),
         &InputShareAad::new(

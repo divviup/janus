@@ -38,7 +38,7 @@ use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareStepResult, ReportError,
-    ReportShare, Role,
+    ReportMetadata, ReportShare, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -352,19 +352,22 @@ where
 
                     // Extract report data from the report aggregation state.
                     let (
+                        public_extensions,
                         public_share,
-                        leader_extensions,
+                        leader_private_extensions,
                         leader_input_share,
                         helper_encrypted_input_share,
                     ) = match report_aggregation.state() {
                         ReportAggregationState::StartLeader {
+                            public_extensions,
                             public_share,
-                            leader_extensions,
+                            leader_private_extensions,
                             leader_input_share,
                             helper_encrypted_input_share,
                         } => (
+                            public_extensions,
                             public_share,
-                            leader_extensions,
+                            leader_private_extensions,
                             leader_input_share,
                             helper_encrypted_input_share,
                         ),
@@ -379,8 +382,9 @@ where
 
                     // Check for repeated extensions.
                     let mut extension_types = HashSet::new();
-                    if !leader_extensions
+                    if !leader_private_extensions
                         .iter()
+                        .chain(public_extensions)
                         .all(|extension| extension_types.insert(extension.extension_type()))
                     {
                         debug!(
@@ -437,7 +441,11 @@ where
                                 report_aggregation.ord(),
                                 PrepareInit::new(
                                     ReportShare::new(
-                                        report_aggregation.report_metadata(),
+                                        ReportMetadata::new(
+                                            *report_aggregation.report_id(),
+                                            *report_aggregation.time(),
+                                            public_extensions.clone(),
+                                        ),
                                         public_share_bytes,
                                         helper_encrypted_input_share.clone(),
                                     ),

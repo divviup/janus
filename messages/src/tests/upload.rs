@@ -47,7 +47,10 @@ fn roundtrip_extension() {
 
 #[test]
 fn roundtrip_extension_type() {
-    roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
+    roundtrip_encoding(&[
+        (ExtensionType::Tbd, "0000"),
+        (ExtensionType::Taskprov, "FF00"),
+    ])
 }
 
 #[test]
@@ -57,20 +60,38 @@ fn roundtrip_report_metadata() {
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(12345),
+                Vec::new(),
             ),
             concat!(
                 "0102030405060708090A0B0C0D0E0F10", // report_id
                 "0000000000003039",                 // time
+                concat!(
+                    // public_extensions
+                    "0000", // length
+                ),
             ),
         ),
         (
             ReportMetadata::new(
                 ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                 Time::from_seconds_since_epoch(54321),
+                Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
             ),
             concat!(
                 "100F0E0D0C0B0A090807060504030201", // report_id
                 "000000000000D431",                 // time
+                concat!(
+                    // public_extensions
+                    "0008", // length
+                    concat!(
+                        "0000", // extension_type
+                        concat!(
+                            // extension_data
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                    ),
+                ),
             ),
         ),
     ])
@@ -83,7 +104,7 @@ fn roundtrip_plaintext_input_share() {
             PlaintextInputShare::new(Vec::new(), Vec::from("0123")),
             concat!(
                 concat!(
-                    // extensions
+                    // private_extensions
                     "0000", // length
                 ),
                 concat!(
@@ -100,7 +121,7 @@ fn roundtrip_plaintext_input_share() {
             ),
             concat!(
                 concat!(
-                    // extensions
+                    // private_extensions
                     "0008", // length
                     concat!(
                         "0000", // extension_type
@@ -129,6 +150,7 @@ fn roundtrip_report() {
                 ReportMetadata::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Time::from_seconds_since_epoch(12345),
+                    Vec::new(),
                 ),
                 Vec::new(),
                 HpkeCiphertext::new(
@@ -143,6 +165,10 @@ fn roundtrip_report() {
                     // metadata
                     "0102030405060708090A0B0C0D0E0F10", // report_id
                     "0000000000003039",                 // time
+                    concat!(
+                        // public_extensions
+                        "0000", // length
+                    ),
                 ),
                 concat!(
                     // public_share
@@ -183,6 +209,7 @@ fn roundtrip_report() {
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321),
+                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 Vec::from("3210"),
                 HpkeCiphertext::new(
@@ -197,6 +224,18 @@ fn roundtrip_report() {
                     // metadata
                     "100F0E0D0C0B0A090807060504030201", // report_id
                     "000000000000D431",                 // time
+                    concat!(
+                        // public_extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        ),
+                    ),
                 ),
                 concat!(
                     // public_share
@@ -244,6 +283,7 @@ fn roundtrip_input_share_aad() {
             metadata: ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(54321),
+                Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
             ),
             public_share: Vec::from("0123"),
         },
@@ -253,6 +293,18 @@ fn roundtrip_input_share_aad() {
                 // metadata
                 "0102030405060708090A0B0C0D0E0F10", // report_id
                 "000000000000D431",                 // time
+                concat!(
+                    // public_extensions
+                    "0008", // length
+                    concat!(
+                        "0000", // extension_type
+                        concat!(
+                            // extension_data
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                    ),
+                ),
             ),
             concat!(
                 // public_share

@@ -264,7 +264,7 @@ async fn prepare_report(
     report_time: Time,
 ) -> Result<Report, janus_client::Error> {
     let task_id = *task.id();
-    let report_metadata = ReportMetadata::new(report_id, report_time);
+    let report_metadata = ReportMetadata::new(report_id, report_time, Vec::new());
     let encoded_public_share = public_share.get_encoded().unwrap();
 
     let leader_hpke_config =

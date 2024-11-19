@@ -95,9 +95,8 @@ impl From<&AuthenticationTokenHash> for AuthenticationTokenType {
     }
 }
 
-/// Represents a report as it is stored in the leader's database, corresponding to a row in
-/// `client_reports`, where `leader_input_share` and `helper_encrypted_input_share` are required
-/// to be populated.
+/// Represents a report as it is stored in the Leader's database, corresponding to an unscrubbed row
+/// in `client_reports`.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct LeaderStoredReport<const SEED_SIZE: usize, A>
@@ -108,7 +107,7 @@ where
     metadata: ReportMetadata,
     #[derivative(Debug = "ignore")]
     public_share: A::PublicShare,
-    leader_extensions: Vec<Extension>,
+    leader_private_extensions: Vec<Extension>,
     #[derivative(Debug = "ignore")]
     leader_input_share: A::InputShare,
     #[derivative(Debug = "ignore")]
@@ -123,7 +122,7 @@ where
         task_id: TaskId,
         metadata: ReportMetadata,
         public_share: A::PublicShare,
-        leader_extensions: Vec<Extension>,
+        leader_private_extensions: Vec<Extension>,
         leader_input_share: A::InputShare,
         helper_encrypted_input_share: HpkeCiphertext,
     ) -> Self {
@@ -131,7 +130,7 @@ where
             task_id,
             metadata,
             public_share,
-            leader_extensions,
+            leader_private_extensions,
             leader_input_share,
             helper_encrypted_input_share,
         }
@@ -149,8 +148,8 @@ where
         &self.public_share
     }
 
-    pub fn leader_extensions(&self) -> &[Extension] {
-        &self.leader_extensions
+    pub fn leader_private_extensions(&self) -> &[Extension] {
+        &self.leader_private_extensions
     }
 
     pub fn leader_input_share(&self) -> &A::InputShare {
@@ -175,8 +174,9 @@ where
             ord,
             None,
             ReportAggregationState::StartLeader {
+                public_extensions: self.metadata().public_extensions().to_vec(),
                 public_share: self.public_share().clone(),
-                leader_extensions: self.leader_extensions().to_vec(),
+                leader_private_extensions: self.leader_private_extensions().to_vec(),
                 leader_input_share: self.leader_input_share().clone(),
                 helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
             },
@@ -228,7 +228,7 @@ where
         // Check equality of all relevant fields.
         self.metadata() == report.metadata()
             && self.public_share() == &public_share
-            && self.leader_extensions() == leader_plaintext_input_share.extensions()
+            && self.leader_private_extensions() == leader_plaintext_input_share.private_extensions()
             && self.leader_input_share() == &leader_input_share
     }
 
@@ -237,7 +237,7 @@ where
         task_id: TaskId,
         report_metadata: ReportMetadata,
         helper_hpke_config: &janus_messages::HpkeConfig,
-        extensions: Vec<Extension>,
+        leader_private_extensions: Vec<Extension>,
         transcript: &janus_core::test_util::VdafTranscript<SEED_SIZE, A>,
     ) -> Self
     where
@@ -269,7 +269,7 @@ where
             task_id,
             report_metadata,
             transcript.public_share.clone(),
-            extensions,
+            leader_private_extensions,
             transcript.leader_input_share.clone(),
             encrypted_helper_input_share,
         )
@@ -286,7 +286,7 @@ where
         self.task_id == other.task_id
             && self.metadata == other.metadata
             && self.public_share == other.public_share
-            && self.leader_extensions == other.leader_extensions
+            && self.leader_private_extensions == other.leader_private_extensions
             && self.leader_input_share == other.leader_input_share
             && self.helper_encrypted_input_share == other.helper_encrypted_input_share
     }
@@ -307,7 +307,7 @@ impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
 
         Self::new(
             task_id,
-            ReportMetadata::new(random(), when),
+            ReportMetadata::new(random(), when, Vec::new()),
             (),
             Vec::new(),
             prio::vdaf::dummy::InputShare::default(),
@@ -317,6 +317,33 @@ impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
                 Vec::from("payload_0"),
             ),
         )
+    }
+}
+
+/// A message providing information about an unaggregated client reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnaggregatedReport {
+    report_id: ReportId,
+    client_timestamp: Time,
+}
+
+impl UnaggregatedReport {
+    /// Creates a new [`UnaggregatedReport`].
+    pub fn new(report_id: ReportId, client_timestamp: Time) -> Self {
+        Self {
+            report_id,
+            client_timestamp,
+        }
+    }
+
+    /// Returns the ID of the unaggregated report.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
+    }
+
+    /// Returns the timestamp of the unaggregated report.
+    pub fn client_timestamp(&self) -> &Time {
+        &self.client_timestamp
     }
 }
 
@@ -818,11 +845,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         &self.time
     }
 
-    /// Returns a [`ReportMetadata`] corresponding to this report.
-    pub fn report_metadata(&self) -> ReportMetadata {
-        ReportMetadata::new(self.report_id, self.time)
-    }
-
     /// Returns the order of this report aggregation in its aggregation job.
     pub fn ord(&self) -> u64 {
         self.ord
@@ -897,12 +919,14 @@ where
 #[derivative(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     StartLeader {
+        /// The sequence of public extensions from this report's metadata.
+        public_extensions: Vec<Extension>,
         /// Public share for this report.
         #[derivative(Debug = "ignore")]
         public_share: A::PublicShare,
         /// The sequence of extensions from the Leader's input share for this report.
         #[derivative(Debug = "ignore")]
-        leader_extensions: Vec<Extension>,
+        leader_private_extensions: Vec<Extension>,
         /// The Leader's input share for this report.
         #[derivative(Debug = "ignore")]
         leader_input_share: A::InputShare,
@@ -950,17 +974,26 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     {
         Ok(match self {
             ReportAggregationState::StartLeader {
+                public_extensions,
                 public_share,
-                leader_extensions,
+                leader_private_extensions,
                 leader_input_share,
                 helper_encrypted_input_share,
             } => {
-                let mut encoded_extensions = Vec::new();
-                encode_u16_items(&mut encoded_extensions, &(), leader_extensions).unwrap();
+                let mut encoded_public_extensions = Vec::new();
+                encode_u16_items(&mut encoded_public_extensions, &(), public_extensions)?;
+
+                let mut encoded_leader_private_extensions = Vec::new();
+                encode_u16_items(
+                    &mut encoded_leader_private_extensions,
+                    &(),
+                    leader_private_extensions,
+                )?;
 
                 EncodedReportAggregationStateValues {
+                    public_extensions: Some(encoded_public_extensions),
                     public_share: Some(public_share.get_encoded()?),
-                    leader_extensions: Some(encoded_extensions),
+                    leader_private_extensions: Some(encoded_leader_private_extensions),
                     leader_input_share: Some(leader_input_share.get_encoded()?),
                     helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()?),
                     ..Default::default()
@@ -992,8 +1025,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 #[derive(Default)]
 pub(super) struct EncodedReportAggregationStateValues {
     // State for StartLeader.
+    pub(super) public_extensions: Option<Vec<u8>>,
     pub(super) public_share: Option<Vec<u8>>,
-    pub(super) leader_extensions: Option<Vec<u8>>,
+    pub(super) leader_private_extensions: Option<Vec<u8>>,
     pub(super) leader_input_share: Option<Vec<u8>>,
     pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
 
@@ -1039,20 +1073,23 @@ where
         match (self, other) {
             (
                 Self::StartLeader {
+                    public_extensions: lhs_public_extensions,
                     public_share: lhs_public_share,
-                    leader_extensions: lhs_leader_extensions,
+                    leader_private_extensions: lhs_leader_private_extensions,
                     leader_input_share: lhs_leader_input_share,
                     helper_encrypted_input_share: lhs_helper_encrypted_input_share,
                 },
                 Self::StartLeader {
+                    public_extensions: rhs_public_extensions,
                     public_share: rhs_public_share,
-                    leader_extensions: rhs_leader_extensions,
+                    leader_private_extensions: rhs_leader_private_extensions,
                     leader_input_share: rhs_leader_input_share,
                     helper_encrypted_input_share: rhs_helper_encrypted_input_share,
                 },
             ) => {
-                lhs_public_share == rhs_public_share
-                    && lhs_leader_extensions == rhs_leader_extensions
+                lhs_public_extensions == rhs_public_extensions
+                    && lhs_public_share == rhs_public_share
+                    && lhs_leader_private_extensions == rhs_leader_private_extensions
                     && lhs_leader_input_share == rhs_leader_input_share
                     && lhs_helper_encrypted_input_share == rhs_helper_encrypted_input_share
             }
@@ -1160,11 +1197,6 @@ impl ReportAggregationMetadata {
     /// Returns the client timestamp associated with this report aggregation.
     pub fn time(&self) -> &Time {
         &self.time
-    }
-
-    /// Returns a [`ReportMetadata`] corresponding to this report.
-    pub fn report_metadata(&self) -> ReportMetadata {
-        ReportMetadata::new(self.report_id, self.time)
     }
 
     /// Returns the order of this report aggregation in its aggregation job.

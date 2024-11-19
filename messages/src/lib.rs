@@ -1257,12 +1257,17 @@ impl Decode for HpkeConfigList {
 pub struct ReportMetadata {
     report_id: ReportId,
     time: Time,
+    public_extensions: Vec<Extension>,
 }
 
 impl ReportMetadata {
     /// Construct a report's metadata from its components.
-    pub fn new(report_id: ReportId, time: Time) -> Self {
-        Self { report_id, time }
+    pub fn new(report_id: ReportId, time: Time, public_extensions: Vec<Extension>) -> Self {
+        Self {
+            report_id,
+            time,
+            public_extensions,
+        }
     }
 
     /// Retrieve the report ID from this report metadata.
@@ -1274,16 +1279,26 @@ impl ReportMetadata {
     pub fn time(&self) -> &Time {
         &self.time
     }
+
+    /// Retrieve the public extensions from this report metadata.
+    pub fn public_extensions(&self) -> &[Extension] {
+        &self.public_extensions
+    }
 }
 
 impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.report_id.encode(bytes)?;
-        self.time.encode(bytes)
+        self.time.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.public_extensions)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.report_id.encoded_len()? + self.time.encoded_len()?)
+        let mut len = self.report_id.encoded_len()? + self.time.encoded_len()? + 2;
+        for extension in &self.public_extensions {
+            len += extension.encoded_len()?;
+        }
+        Some(len)
     }
 }
 
@@ -1291,30 +1306,35 @@ impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
         let time = Time::decode(bytes)?;
+        let public_extensions = decode_u16_items(&(), bytes)?;
 
-        Ok(Self { report_id, time })
+        Ok(Self {
+            report_id,
+            time,
+            public_extensions,
+        })
     }
 }
 
 /// DAP protocol message representing the plaintext of an input share.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaintextInputShare {
-    extensions: Vec<Extension>,
+    private_extensions: Vec<Extension>,
     payload: Vec<u8>,
 }
 
 impl PlaintextInputShare {
     /// Construct a plaintext input share from its components.
-    pub fn new(extensions: Vec<Extension>, payload: Vec<u8>) -> Self {
+    pub fn new(private_extensions: Vec<Extension>, payload: Vec<u8>) -> Self {
         Self {
-            extensions,
+            private_extensions,
             payload,
         }
     }
 
-    /// Retrieve the extensions from this plaintext input share.
-    pub fn extensions(&self) -> &[Extension] {
-        &self.extensions
+    /// Retrieve the private extensions from this plaintext input share.
+    pub fn private_extensions(&self) -> &[Extension] {
+        &self.private_extensions
     }
 
     /// Retrieve the payload from this plaintext input share.
@@ -1325,28 +1345,28 @@ impl PlaintextInputShare {
 
 impl Encode for PlaintextInputShare {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        encode_u16_items(bytes, &(), &self.extensions)?;
+        encode_u16_items(bytes, &(), &self.private_extensions)?;
         encode_u32_items(bytes, &(), &self.payload)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut length = 2;
-        for extension in self.extensions.iter() {
-            length += extension.encoded_len()?;
+        let mut len = 2;
+        for extension in &self.private_extensions {
+            len += extension.encoded_len()?;
         }
-        length += 4;
-        length += self.payload.len();
-        Some(length)
+        len += 4;
+        len += self.payload.len();
+        Some(len)
     }
 }
 
 impl Decode for PlaintextInputShare {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let extensions = decode_u16_items(&(), bytes)?;
+        let private_extensions = decode_u16_items(&(), bytes)?;
         let payload = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
-            extensions,
+            private_extensions,
             payload,
         })
     }

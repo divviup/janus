@@ -489,11 +489,23 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     let report_id = random();
     let report: LeaderStoredReport<0, dummy::Vdaf> = LeaderStoredReport::new(
         *task.id(),
-        ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
+        ReportMetadata::new(
+            report_id,
+            OLDEST_ALLOWED_REPORT_TIMESTAMP,
+            Vec::from([
+                // public extensions
+                Extension::new(ExtensionType::Tbd, "public_extension_tbd".into()),
+                Extension::new(ExtensionType::Taskprov, "public_extension_taskprov".into()),
+            ]),
+        ),
         (), // public share
         Vec::from([
-            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
+            // leader private extensions
+            Extension::new(ExtensionType::Tbd, "leader_private_extension_tbd".into()),
+            Extension::new(
+                ExtensionType::Taskprov,
+                "leader_private_extension_taskprov".into(),
+            ),
         ]),
         dummy::InputShare::default(), // leader input share
         /* Dummy ciphertext for the helper share */
@@ -537,12 +549,13 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             Box::pin(async move {
                 tx.put_client_report(&LeaderStoredReport::<0, dummy::Vdaf>::new(
                     task_id,
-                    ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
+                    ReportMetadata::new(
+                        report_id,
+                        Time::from_seconds_since_epoch(54321),
+                        Vec::new(),
+                    ),
                     (), // public share
-                    Vec::from([
-                        Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
-                        Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
-                    ]),
+                    Vec::new(),
                     dummy::InputShare::default(), // leader input share
                     /* Dummy ciphertext for the helper share */
                     HpkeCiphertext::new(
@@ -634,6 +647,8 @@ async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: EphemeralDatastore) {
+    use crate::datastore::models::UnaggregatedReport;
+
     install_test_trace_subscriber();
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -714,7 +729,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Verify that we can acquire both unaggregated reports.
-    let mut got_reports = ds
+    let got_reports_ids: HashSet<_> = ds
         .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -732,19 +747,21 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             })
         })
         .await
-        .unwrap();
-    got_reports.sort_by_key(|report_metadata| *report_metadata.id());
+        .unwrap()
+        .iter()
+        .map(UnaggregatedReport::report_id)
+        .copied()
+        .collect();
 
-    let mut want_reports = Vec::from([
-        first_unaggregated_report.metadata().clone(),
-        second_unaggregated_report.metadata().clone(),
+    let want_report_ids = HashSet::from([
+        *first_unaggregated_report.metadata().id(),
+        *second_unaggregated_report.metadata().id(),
     ]);
-    want_reports.sort_by_key(|report_metadata| *report_metadata.id());
 
-    assert_eq!(got_reports, want_reports);
+    assert_eq!(got_reports_ids, want_report_ids);
 
     // Verify that attempting to acquire again does not return the reports.
-    let got_reports = ds
+    let got_report_ids: HashSet<_> = ds
         .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -761,9 +778,13 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             })
         })
         .await
-        .unwrap();
+        .unwrap()
+        .iter()
+        .map(UnaggregatedReport::report_id)
+        .copied()
+        .collect();
 
-    assert!(got_reports.is_empty());
+    assert!(got_report_ids.is_empty());
 
     // Mark one report un-aggregated.
     ds.run_tx("test-unaggregated-reports", |tx| {
@@ -777,7 +798,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .unwrap();
 
     // Verify that we can retrieve the un-aggregated report again.
-    let got_reports = ds
+    let got_report_ids: HashSet<_> = ds
         .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -794,11 +815,15 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             })
         })
         .await
-        .unwrap();
+        .unwrap()
+        .iter()
+        .map(UnaggregatedReport::report_id)
+        .copied()
+        .collect();
 
     assert_eq!(
-        got_reports,
-        Vec::from([first_unaggregated_report.metadata().clone()])
+        got_report_ids,
+        HashSet::from([*first_unaggregated_report.metadata().id()])
     );
 
     ds.run_unnamed_tx(|tx| {
@@ -1037,7 +1062,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
 
     // Run query & verify results. We should have two unaggregated reports with one parameter,
     // and three with another.
-    let mut got_reports = ds
+    let mut got_reports: Vec<_> = ds
         .run_unnamed_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -1049,33 +1074,36 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             })
         })
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|(agg_param, report)| (agg_param, *report.report_id()))
+        .collect();
 
-    let mut expected_reports = Vec::from([
+    let mut want_reports = Vec::from([
         (
             dummy::AggregationParam(0),
-            first_unaggregated_report.metadata().clone(),
+            *first_unaggregated_report.metadata().id(),
         ),
         (
             dummy::AggregationParam(1),
-            first_unaggregated_report.metadata().clone(),
+            *first_unaggregated_report.metadata().id(),
         ),
         (
             dummy::AggregationParam(0),
-            second_unaggregated_report.metadata().clone(),
+            *second_unaggregated_report.metadata().id(),
         ),
         (
             dummy::AggregationParam(1),
-            second_unaggregated_report.metadata().clone(),
+            *second_unaggregated_report.metadata().id(),
         ),
         (
             dummy::AggregationParam(1),
-            aggregated_report.metadata().clone(),
+            *aggregated_report.metadata().id(),
         ),
     ]);
-    got_reports.sort_by_key(|v| *v.1.time());
-    expected_reports.sort_by_key(|v| *v.1.time());
-    assert_eq!(got_reports, expected_reports);
+    got_reports.sort();
+    want_reports.sort();
+    assert_eq!(got_reports, want_reports);
 
     // Add overlapping collection jobs with repeated aggregation parameters. Make sure we don't
     // repeat result tuples, which could lead to double counting in batch aggregations.
@@ -1127,7 +1155,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
     .unwrap();
 
     // Verify that we get the same result.
-    let mut got_reports = ds
+    let mut got_reports: Vec<_> = ds
         .run_unnamed_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -1139,9 +1167,12 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
             })
         })
         .await
-        .unwrap();
-    got_reports.sort_by_key(|v| *v.1.time());
-    assert_eq!(got_reports, expected_reports);
+        .unwrap()
+        .into_iter()
+        .map(|(agg_param, report)| (agg_param, *report.report_id()))
+        .collect();
+    got_reports.sort();
+    assert_eq!(got_reports, want_reports);
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -1444,6 +1475,10 @@ async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
         ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(12345),
+            Vec::from([Extension::new(
+                ExtensionType::Tbd,
+                "public_extension_tbd".into(),
+            )]),
         ),
         Vec::from("public_share"),
         HpkeCiphertext::new(
@@ -1470,7 +1505,14 @@ async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
     .await
     .unwrap();
 
-    let (got_task_id, got_extensions, got_leader_input_share, got_helper_input_share) = ds
+    let (
+        got_task_id,
+        got_public_extensions,
+        got_public_share,
+        got_leader_private_extensions,
+        got_leader_input_share,
+        got_helper_input_share,
+    ) = ds
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
             let report_id = *report_share.metadata().id();
@@ -1495,7 +1537,9 @@ SELECT
     tasks.task_id,
     client_reports.report_id,
     client_reports.client_timestamp,
-    client_reports.extensions,
+    client_reports.public_extensions,
+    client_reports.public_share,
+    client_reports.leader_private_extensions,
     client_reports.leader_input_share,
     client_reports.helper_encrypted_input_share
 FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
@@ -1510,14 +1554,19 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
 
                 let task_id = TaskId::get_decoded(row.get("task_id")).unwrap();
 
-                let maybe_extensions: Option<Vec<u8>> = row.get("extensions");
+                let maybe_public_extensions: Option<Vec<u8>> = row.get("public_extensions");
+                let maybe_public_share: Option<Vec<u8>> = row.get("public_share");
+                let maybe_leader_private_extensions: Option<Vec<u8>> =
+                    row.get("leader_private_extensions");
                 let maybe_leader_input_share: Option<Vec<u8>> = row.get("leader_input_share");
                 let maybe_helper_input_share: Option<Vec<u8>> =
                     row.get("helper_encrypted_input_share");
 
                 Ok((
                     task_id,
-                    maybe_extensions,
+                    maybe_public_extensions,
+                    maybe_public_share,
+                    maybe_leader_private_extensions,
                     maybe_leader_input_share,
                     maybe_helper_input_share,
                 ))
@@ -1527,7 +1576,9 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
         .unwrap();
 
     assert_eq!(task.id(), &got_task_id);
-    assert!(got_extensions.is_none());
+    assert!(got_public_extensions.is_none());
+    assert!(got_public_share.is_none());
+    assert!(got_leader_private_extensions.is_none());
     assert!(got_leader_input_share.is_none());
     assert!(got_helper_input_share.is_none());
 }
@@ -2260,11 +2311,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::StartLeader {
+                public_extensions: Vec::from([Extension::new(
+                    ExtensionType::Tbd,
+                    "public_extension_tbd".into(),
+                )]),
                 public_share: vdaf_transcript.public_share,
-                leader_extensions: Vec::from([
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-                ]),
+                leader_private_extensions: Vec::from([Extension::new(
+                    ExtensionType::Taskprov,
+                    "leader_private_extension_taskprov".into(),
+                )]),
                 leader_input_share: vdaf_transcript.leader_input_share,
                 helper_encrypted_input_share: HpkeCiphertext::new(
                     HpkeConfigId::from(13),
@@ -2341,7 +2396,11 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                     tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
-                            ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
+                            ReportMetadata::new(
+                                report_id,
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                                Vec::new(),
+                            ),
                             Vec::from("public_share"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(12),
@@ -2606,8 +2665,9 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
                     ReportAggregationState::StartLeader {
+                        public_extensions: Vec::new(),
                         public_share: vdaf_transcript.public_share,
-                        leader_extensions: Vec::new(),
+                        leader_private_extensions: Vec::new(),
                         leader_input_share: vdaf_transcript.leader_input_share,
                         helper_encrypted_input_share: HpkeCiphertext::new(
                             HpkeConfigId::from(13),
@@ -2631,7 +2691,11 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
-                            ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
+                            ReportMetadata::new(
+                                report_id,
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                                Vec::new(),
+                            ),
                             Vec::from("public_share"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(12),
@@ -2754,9 +2818,19 @@ async fn create_report_aggregation_from_client_reports_table(
                 let timestamp = clock.now();
                 let leader_stored_report = LeaderStoredReport::<0, dummy::Vdaf>::new(
                     *task.id(),
-                    ReportMetadata::new(report_id, timestamp),
+                    ReportMetadata::new(
+                        report_id,
+                        timestamp,
+                        Vec::from([Extension::new(
+                            ExtensionType::Tbd,
+                            "public_extension_tbd".into(),
+                        )]),
+                    ),
                     (),
-                    Vec::new(),
+                    Vec::from([Extension::new(
+                        ExtensionType::Taskprov,
+                        "leader_private_extension_taskprov".into(),
+                    )]),
                     vdaf_transcript.leader_input_share,
                     HpkeCiphertext::new(
                         HpkeConfigId::from(9),
@@ -2786,8 +2860,14 @@ async fn create_report_aggregation_from_client_reports_table(
                     0,
                     None,
                     ReportAggregationState::<0, dummy::Vdaf>::StartLeader {
+                        public_extensions: leader_stored_report
+                            .metadata()
+                            .public_extensions()
+                            .to_vec(),
                         public_share: *leader_stored_report.public_share(),
-                        leader_extensions: leader_stored_report.leader_extensions().to_owned(),
+                        leader_private_extensions: leader_stored_report
+                            .leader_private_extensions()
+                            .to_vec(),
                         leader_input_share: *leader_stored_report.leader_input_share(),
                         helper_encrypted_input_share: leader_stored_report
                             .helper_encrypted_input_share()
@@ -5241,6 +5321,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         ReportMetadata::new(
                             *report_aggregation.report_id(),
                             *report_aggregation.time(),
+                            Vec::new(),
                         ),
                         (), // Dummy public share
                         Vec::new(),
@@ -7377,7 +7458,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
     // Use same ID for each report.
     let report = LeaderStoredReport::<0, dummy::Vdaf>::new(
         *task.id(),
-        ReportMetadata::new(random(), clock.now()),
+        ReportMetadata::new(random(), clock.now(), Vec::new()),
         (),
         Vec::new(),
         dummy::InputShare::default(),

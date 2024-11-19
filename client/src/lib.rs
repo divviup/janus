@@ -582,7 +582,11 @@ impl<V: vdaf::Client<16>> Client<V> {
         let time = time
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
-        let report_metadata = ReportMetadata::new(report_id, time);
+        let report_metadata = ReportMetadata::new(
+            report_id,
+            time,
+            Vec::new(), // No extensions supported yet.
+        );
         let encoded_public_share = public_share.get_encoded()?;
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
