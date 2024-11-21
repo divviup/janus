@@ -915,7 +915,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
         let (auth_header, auth_value) = collector.authentication.request_authentication();
 
@@ -1016,7 +1016,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_sum(2, 8).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &144);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &144);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
@@ -1084,7 +1084,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_histogram(2, 4, 2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &3);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &3);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
@@ -1159,6 +1159,7 @@ mod tests {
         let transcript = run_vdaf(
             &vdaf,
             &random(),
+            &random(),
             &(),
             &random(),
             &vec![FP32_16_INV, FP32_8_INV, FP32_4_INV],
@@ -1231,7 +1232,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
@@ -1294,7 +1295,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::builder(
@@ -1955,7 +1956,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
+        let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
         let (auth_header, auth_value) = collector.authentication.request_authentication();
 

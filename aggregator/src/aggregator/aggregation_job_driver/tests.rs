@@ -89,6 +89,7 @@ async fn aggregation_job_driver() {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
@@ -366,6 +367,7 @@ async fn step_time_interval_aggregation_job_init_single_step() {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &(),
         report_metadata.id(),
@@ -697,6 +699,7 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
@@ -962,6 +965,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
 
     let gc_eligible_transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &(),
         gc_eligible_report_metadata.id(),
@@ -969,6 +973,7 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
     );
     let gc_ineligible_transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &(),
         gc_ineligible_report_metadata.id(),
@@ -1314,6 +1319,7 @@ async fn step_leader_selected_aggregation_job_init_single_step() {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &(),
         report_metadata.id(),
@@ -1601,6 +1607,7 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
@@ -1856,6 +1863,7 @@ async fn step_time_interval_aggregation_job_continue() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
@@ -2172,6 +2180,7 @@ async fn step_leader_selected_aggregation_job_continue() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata.id(),
@@ -2458,6 +2467,7 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
 
     let transcript = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &(),
         report_metadata.id(),
@@ -2726,6 +2736,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     let report_metadata = ReportMetadata::new(random(), time);
     let transcript = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &(),
         report_metadata.id(),
@@ -2968,6 +2979,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     let report_metadata = ReportMetadata::new(random(), time);
     let transcript = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &(),
         report_metadata.id(),

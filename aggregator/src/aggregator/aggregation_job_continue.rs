@@ -16,7 +16,7 @@ use janus_aggregator_core::{
     },
     task::AggregatorTask,
 };
-use janus_core::time::Clock;
+use janus_core::{time::Clock, vdaf::vdaf_application_context};
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobResp, PrepareResp, PrepareStepResult, ReportError,
     Role,
@@ -159,10 +159,10 @@ impl VdafOps {
 
             move || {
                 let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
+                let ctx = vdaf_application_context(task.id());
 
-                prep_steps_and_ras.into_par_iter().try_for_each_with(
-                    (sender, span),
-                    |(sender, span), (prep_step, report_aggregation, prep_state)| {
+                prep_steps_and_ras.into_par_iter().try_for_each(
+                    |(prep_step, report_aggregation, prep_state)| {
                         let _entered = span.enter();
 
                         let (report_aggregation_state, prepare_step_result, output_share) =
@@ -170,6 +170,7 @@ impl VdafOps {
                                 .in_scope(|| {
                                     // Continue with the incoming message.
                                     vdaf.helper_continued(
+                                        &ctx,
                                         PingPongState::Continued(prep_state.clone()),
                                         aggregation_job.aggregation_parameter(),
                                         prep_step.message(),
@@ -181,7 +182,7 @@ impl VdafOps {
                                                     transition,
                                                 } => {
                                                     let (new_state, message) =
-                                                        transition.evaluate(vdaf.as_ref())?;
+                                                        transition.evaluate(&ctx, vdaf.as_ref())?;
                                                     let (report_aggregation_state, output_share) =
                                                         match new_state {
                                                             // Helper did not finish. Store the new

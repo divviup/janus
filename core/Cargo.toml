@@ -41,6 +41,7 @@ base64.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 clap.workspace = true
+constcat.workspace = true
 derivative.workspace = true
 fixed = { workspace = true, optional = true }
 futures = { workspace = true }

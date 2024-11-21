@@ -68,6 +68,7 @@ async fn aggregate_continue() {
     );
     let transcript_0 = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_0.id(),
@@ -94,6 +95,7 @@ async fn aggregate_continue() {
     );
     let transcript_1 = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_1.id(),
@@ -123,6 +125,7 @@ async fn aggregate_continue() {
     );
     let transcript_2 = run_vdaf(
         vdaf.as_ref(),
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_2.id(),
@@ -398,6 +401,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_metadata_0 = ReportMetadata::new(random(), report_time_0);
     let transcript_0 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_0.id(),
@@ -423,6 +427,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_metadata_1 = ReportMetadata::new(random(), report_time_1);
     let transcript_1 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_1.id(),
@@ -450,6 +455,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
     let transcript_2 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_2.id(),
@@ -745,6 +751,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_metadata_3 = ReportMetadata::new(random(), report_time_3);
     let transcript_3 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_3.id(),
@@ -772,6 +779,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
     let transcript_4 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_4.id(),
@@ -799,6 +807,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
     let transcript_5 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &aggregation_param,
         report_metadata_5.id(),
@@ -1036,6 +1045,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         &dummy::Vdaf::new(2),
+        task.id(),
         task.vdaf_verify_key().unwrap().as_bytes(),
         &aggregation_param,
         &report_id,
@@ -1151,6 +1161,7 @@ async fn aggregate_continue_prep_step_fails() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         &vdaf,
+        task.id(),
         task.vdaf_verify_key().unwrap().as_bytes(),
         &aggregation_param,
         &report_id,
@@ -1320,6 +1331,7 @@ async fn aggregate_continue_unexpected_transition() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript = run_vdaf(
         &dummy::Vdaf::new(2),
+        task.id(),
         task.vdaf_verify_key().unwrap().as_bytes(),
         &aggregation_param,
         &report_id,
@@ -1433,6 +1445,7 @@ async fn aggregate_continue_out_of_order_transition() {
     let aggregation_param = dummy::AggregationParam(7);
     let transcript_0 = run_vdaf(
         &dummy::Vdaf::new(2),
+        task.id(),
         task.vdaf_verify_key().unwrap().as_bytes(),
         &aggregation_param,
         &report_id_0,
@@ -1442,6 +1455,7 @@ async fn aggregate_continue_out_of_order_transition() {
     let report_id_1 = random();
     let transcript_1 = run_vdaf(
         &dummy::Vdaf::new(2),
+        task.id(),
         task.vdaf_verify_key().unwrap().as_bytes(),
         &aggregation_param,
         &report_id_1,

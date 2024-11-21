@@ -32,6 +32,7 @@ use janus_aggregator_core::{
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
     time::Clock,
+    vdaf::vdaf_application_context,
     vdaf_dispatch,
 };
 use janus_messages::{
@@ -326,8 +327,8 @@ where
         //
         // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
         // This will cause any attempts to send on `sender` to return a `SendError`, which will be
-        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
-        // terminate early on receiving an error.
+        // returned from the function passed to `try_for_each`; `try_for_each` will terminate early
+        // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
         let (pi_and_sa_sender, mut pi_and_sa_receiver) = mpsc::unbounded_channel();
         let producer_task = tokio::task::spawn_blocking({
@@ -342,12 +343,12 @@ where
                     parent: parent_span,
                     "step_aggregation_job_aggregate_init threadpool task"
                 );
+                let ctx = vdaf_application_context(&task_id);
 
                 // Compute report shares to send to helper, and decrypt our input shares &
                 // initialize preparation state.
-                report_aggregations.into_par_iter().try_for_each_with(
-                    (span, ra_sender, pi_and_sa_sender),
-                    |(span, ra_sender, pi_and_sa_sender), report_aggregation| {
+                report_aggregations.into_par_iter().try_for_each(
+                    |report_aggregation| {
                         let _entered = span.enter();
 
                     // Extract report data from the report aggregation state.
@@ -416,6 +417,7 @@ where
                     match trace_span!("VDAF preparation (leader initialization)").in_scope(|| {
                         vdaf.leader_initialized(
                             verify_key.as_bytes(),
+                            &ctx,
                             aggregation_job.aggregation_parameter(),
                             // DAP report ID is used as VDAF nonce
                             report_aggregation.report_id().as_ref(),
@@ -591,8 +593,8 @@ where
         //
         // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
         // This will cause any attempts to send on `sender` to return a `SendError`, which will be
-        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
-        // terminate early on receiving an error.
+        // returned from the function passed to `try_for_each`; `try_for_each` will terminate early
+        // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
         let (pc_and_sa_sender, mut pc_and_sa_receiver) = mpsc::unbounded_channel();
         let producer_task = tokio::task::spawn_blocking({
@@ -606,10 +608,11 @@ where
                     parent: parent_span,
                     "step_aggregation_job_aggregate_continue threadpool task"
                 );
+                let ctx = vdaf_application_context(&task_id);
 
-                report_aggregations.into_par_iter().try_for_each_with(
-                    (span, ra_sender, pc_and_sa_sender),
-                    |(span, ra_sender, pc_and_sa_sender), report_aggregation| {
+                report_aggregations
+                    .into_par_iter()
+                    .try_for_each(|report_aggregation| {
                         let _entered = span.enter();
 
                         let transition = match report_aggregation.state() {
@@ -623,7 +626,7 @@ where
                         };
 
                         let result = trace_span!("VDAF preparation (leader transition evaluation)")
-                            .in_scope(|| transition.evaluate(vdaf.as_ref()));
+                            .in_scope(|| transition.evaluate(&ctx, vdaf.as_ref()));
                         let (prep_state, message) = match result {
                             Ok((state, message)) => (state, message),
                             Err(error) => {
@@ -655,8 +658,7 @@ where
                                 },
                             ))
                             .map_err(|_| ())
-                    },
-                )
+                    })
             }
         });
 
@@ -782,8 +784,8 @@ where
 
         // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
         // This will cause any attempts to send on `sender` to return a `SendError`, which will be
-        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
-        // terminate early on receiving an error.
+        // returned from the function passed to `try_for_each`; `try_for_each` will terminate early
+        // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
         let aggregation_job = Arc::new(aggregation_job);
         let producer_task = tokio::task::spawn_blocking({
@@ -798,10 +800,10 @@ where
                     parent: parent_span,
                     "process_Response_from_helper threadpool task"
                 );
+                let ctx = vdaf_application_context(&task_id);
 
-                stepped_aggregations.into_par_iter().zip(helper_resp.prepare_resps()).try_for_each_with(
-                    (span, ra_sender),
-                    |(span, ra_sender), (stepped_aggregation, helper_prep_resp)| {
+                stepped_aggregations.into_par_iter().zip(helper_resp.prepare_resps()).try_for_each(
+                    |(stepped_aggregation, helper_prep_resp)| {
                         let _entered = span.enter();
 
                         let (new_state, output_share) = match helper_prep_resp.result() {
@@ -811,6 +813,7 @@ where
                                 let state_and_message = trace_span!("VDAF preparation (leader continuation)")
                                     .in_scope(|| {
                                         vdaf.leader_continued(
+                                            &ctx,
                                             stepped_aggregation.leader_state.clone(),
                                             aggregation_job.aggregation_parameter(),
                                             helper_prep_msg,

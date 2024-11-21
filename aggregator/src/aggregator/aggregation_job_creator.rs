@@ -976,6 +976,7 @@ mod tests {
         let leader_report_metadata = ReportMetadata::new(random(), report_time);
         let leader_transcript = run_vdaf(
             vdaf.as_ref(),
+            leader_task.id(),
             leader_task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             leader_report_metadata.id(),
@@ -1166,6 +1167,7 @@ mod tests {
                     let report_metadata = ReportMetadata::new(random(), report_time);
                     let transcript = run_vdaf(
                         vdaf.as_ref(),
+                        task.id(),
                         task.vdaf_verify_key().unwrap().as_bytes(),
                         &(),
                         report_metadata.id(),
@@ -1344,6 +1346,7 @@ mod tests {
         let first_report_metadata = ReportMetadata::new(random(), report_time);
         let first_transcript = run_vdaf(
             vdaf.as_ref(),
+            task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             first_report_metadata.id(),
@@ -1360,6 +1363,7 @@ mod tests {
         let second_report_metadata = ReportMetadata::new(random(), report_time);
         let second_transcript = run_vdaf(
             vdaf.as_ref(),
+            task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             second_report_metadata.id(),
@@ -1556,6 +1560,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -1740,6 +1745,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -1937,6 +1943,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -2098,6 +2105,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -2211,6 +2219,7 @@ mod tests {
         let last_report_metadata = ReportMetadata::new(random(), report_time);
         let last_transcript = run_vdaf(
             vdaf.as_ref(),
+            task.id(),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             last_report_metadata.id(),
@@ -2358,6 +2367,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -2474,6 +2484,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -2629,6 +2640,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time_1);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
@@ -2649,6 +2661,7 @@ mod tests {
                 let report_metadata = ReportMetadata::new(random(), report_time_2);
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
+                    task.id(),
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
