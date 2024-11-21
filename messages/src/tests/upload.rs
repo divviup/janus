@@ -32,7 +32,7 @@ fn roundtrip_extension() {
             ),
         ),
         (
-            Extension::new(ExtensionType::Taskprov, Vec::from("0123")),
+            Extension::new(ExtensionType::Taskbind, Vec::from("0123")),
             concat!(
                 "FF00", // extension_type
                 concat!(
@@ -49,7 +49,7 @@ fn roundtrip_extension() {
 fn roundtrip_extension_type() {
     roundtrip_encoding(&[
         (ExtensionType::Tbd, "0000"),
-        (ExtensionType::Taskprov, "FF00"),
+        (ExtensionType::Taskbind, "FF00"),
     ])
 }
 

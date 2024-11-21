@@ -65,7 +65,7 @@ url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-janus_aggregator_core = { path = ".", features = ["test-util"] }
+janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 rstest_reuse = { workspace = true }

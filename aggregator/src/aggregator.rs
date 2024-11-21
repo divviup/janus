@@ -47,7 +47,7 @@ use janus_aggregator_core::{
         },
         Datastore, Error as DatastoreError, Transaction,
     },
-    task::{self, AggregatorTask, VerifyKey},
+    task::{self, AggregatorTask, BatchMode, VerifyKey},
     taskprov::PeerAggregator,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -65,7 +65,7 @@ use janus_core::{
 };
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
-    taskprov::{DpMechanism, TaskConfig},
+    taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, ExtensionType, HpkeConfig,
@@ -691,44 +691,26 @@ impl<C: Clock> Aggregator<C> {
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
 
-        if let DpMechanism::Unrecognized { .. } =
-            task_config.vdaf_config().dp_config().dp_mechanism()
-        {
-            if !self
-                .cfg
-                .taskprov_config
-                .ignore_unknown_differential_privacy_mechanism
-            {
-                return Err(Error::InvalidTask(
-                    *task_id,
-                    OptOutReason::InvalidParameter("unrecognized DP mechanism".into()),
-                ));
-            }
-        }
-
-        let vdaf_instance =
-            task_config
-                .vdaf_config()
-                .vdaf_type()
-                .try_into()
-                .map_err(|err: &str| {
-                    Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))
-                })?;
+        let vdaf_instance = task_config.vdaf_config().try_into().map_err(|err: &str| {
+            Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))
+        })?;
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
+
+        let task_end = task_config.task_start().add(task_config.task_duration())?;
 
         let task = Arc::new(
             AggregatorTask::new(
                 *task_id,
                 leader_url,
-                task_config.query_config().query().try_into()?,
+                BatchMode::try_from(*task_config.batch_mode())?,
                 vdaf_instance,
                 vdaf_verify_key,
-                None, // TODO(#3636): update taskprov implementation to specify task start
-                Some(*task_config.task_end()),
+                Some(*task_config.task_start()),
+                Some(task_end),
                 peer_aggregator.report_expiry_age().cloned(),
-                task_config.query_config().min_batch_size() as u64,
-                *task_config.query_config().time_precision(),
+                u64::from(*task_config.min_batch_size()),
+                *task_config.time_precision(),
                 *peer_aggregator.tolerable_clock_skew(),
                 task::AggregatorTaskParameters::TaskprovHelper,
             )
@@ -795,7 +777,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        if self.clock.now() > *task_config.task_end() {
+        let task_end = task_config.task_start().add(task_config.task_duration())?;
+        if self.clock.now() > task_end {
             return Err(Error::InvalidTask(*task_id, OptOutReason::TaskEnded));
         }
 
@@ -2098,7 +2081,7 @@ impl VdafOps {
 
                             if require_taskprov_extension {
                                 let valid_taskprov_extension_present = extensions
-                                    .get(&ExtensionType::Taskprov)
+                                    .get(&ExtensionType::Taskbind)
                                     .map(|data| data.is_empty())
                                     .unwrap_or(false);
                                 if !valid_taskprov_extension_present {
@@ -2117,7 +2100,7 @@ impl VdafOps {
                                     );
                                     return Err(ReportError::InvalidMessage);
                                 }
-                            } else if extensions.contains_key(&ExtensionType::Taskprov) {
+                            } else if extensions.contains_key(&ExtensionType::Taskbind) {
                                 // taskprov not enabled, but the taskprov extension is present.
                                 debug!(
                                     task_id = %task.id(),

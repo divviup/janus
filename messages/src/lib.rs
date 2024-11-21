@@ -928,7 +928,7 @@ impl Decode for Extension {
 #[non_exhaustive]
 pub enum ExtensionType {
     Tbd = 0,
-    Taskprov = 0xFF00,
+    Taskbind = 0xFF00,
 }
 
 impl Encode for ExtensionType {

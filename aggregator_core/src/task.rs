@@ -8,7 +8,7 @@ use janus_core::{
     time::TimeExt,
     vdaf::VdafInstance,
 };
-use janus_messages::{taskprov, AggregationJobId, Duration, HpkeConfig, Role, TaskId, Time};
+use janus_messages::{batch_mode, AggregationJobId, Duration, HpkeConfig, Role, TaskId, Time};
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::array::TryFromSliceError;
@@ -48,13 +48,13 @@ pub enum BatchMode {
     },
 }
 
-impl TryFrom<&taskprov::Query> for BatchMode {
+impl TryFrom<batch_mode::Code> for BatchMode {
     type Error = Error;
 
-    fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
+    fn try_from(value: batch_mode::Code) -> Result<Self, Self::Error> {
         match value {
-            taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
-            taskprov::Query::LeaderSelected => Ok(Self::LeaderSelected {
+            batch_mode::Code::TimeInterval => Ok(Self::TimeInterval),
+            batch_mode::Code::LeaderSelected => Ok(Self::LeaderSelected {
                 batch_time_window_size: None,
             }),
             _ => Err(Error::InvalidParameter("unknown batch mode")),

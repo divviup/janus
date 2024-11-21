@@ -21,7 +21,7 @@ use janus_aggregator_core::{
         test_util::{Task, TaskBuilder},
         BatchMode,
     },
-    taskprov::{test_util::PeerAggregatorBuilder, PeerAggregator},
+    taskprov::{taskprov_task_id, test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -33,12 +33,9 @@ use janus_core::{
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
-    batch_mode::LeaderSelected,
+    batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
-    taskprov::{
-        DpConfig, DpMechanism, Query as TaskprovQuery, QueryConfig, TaskConfig, VdafConfig,
-        VdafType,
-    },
+    taskprov::{TaskConfig, VdafConfig},
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
@@ -50,7 +47,6 @@ use prio::{
     vdaf::{dummy, Aggregator, Client, Vdaf},
 };
 use rand::random;
-use ring::digest::{digest, SHA256};
 use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
@@ -81,11 +77,7 @@ pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
 impl TaskprovTestCase<0, dummy::Vdaf> {
     async fn new() -> Self {
         let vdaf = dummy::Vdaf::new(2);
-        let vdaf_config = VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Fake { rounds: 2 },
-        )
-        .unwrap();
+        let vdaf_config = VdafConfig::Fake { rounds: 2 };
         let measurement = 13;
         let aggregation_param = dummy::AggregationParam(7);
         Self::with_vdaf(vdaf_config, vdaf, measurement, aggregation_param).await
@@ -140,10 +132,7 @@ where
             TestRuntime::default(),
             &noop_meter(),
             Config {
-                taskprov_config: TaskprovConfig {
-                    enabled: true,
-                    ignore_unknown_differential_privacy_mechanism: false,
-                },
+                taskprov_config: TaskprovConfig { enabled: true },
                 ..Default::default()
             },
         )
@@ -154,25 +143,26 @@ where
 
         let time_precision = Duration::from_seconds(1);
         let min_batch_size = 1;
-        let task_end = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
+        let task_start = clock.now();
+        let task_duration = Duration::from_hours(24).unwrap();
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
             "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            QueryConfig::new(
-                time_precision,
-                min_batch_size,
-                TaskprovQuery::LeaderSelected,
-            ),
-            task_end,
+            time_precision,
+            min_batch_size,
+            batch_mode::Code::LeaderSelected,
+            task_start,
+            task_duration,
             vdaf_config,
+            Vec::new(),
         )
         .unwrap();
 
         let task_config_encoded = task_config.get_encoded().unwrap();
 
-        let task_id = TaskId::try_from(digest(&SHA256, &task_config_encoded).as_ref()).unwrap();
-        let vdaf_instance = task_config.vdaf_config().vdaf_type().try_into().unwrap();
+        let task_id = taskprov_task_id(&task_config_encoded);
+        let vdaf_instance = task_config.vdaf_config().try_into().unwrap();
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
         let task = TaskBuilder::new(
@@ -185,7 +175,8 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_end(Some(task_end))
+        .with_task_start(Some(task_start))
+        .with_task_end(Some(task_start.add(&task_duration).unwrap()))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(Duration::from_seconds(1))
@@ -218,7 +209,7 @@ where
         V::AggregationParam,
     ) {
         self.next_report_share_with_private_extensions(Vec::from([Extension::new(
-            ExtensionType::Taskprov,
+            ExtensionType::Taskbind,
             Vec::new(),
         )]))
     }
@@ -631,27 +622,17 @@ async fn taskprov_opt_out_mismatched_task_id() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_end = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
-        // Query configuration is different from the normal test case.
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            TaskprovQuery::LeaderSelected,
-        ),
-        task_end,
-        VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Fake { rounds: 2 },
-        )
-        .unwrap(),
+        Duration::from_seconds(1),
+        100,
+        batch_mode::Code::LeaderSelected,
+        test.clock.now(),
+        Duration::from_hours(24).unwrap(),
+        VdafConfig::Fake { rounds: 2 },
+        Vec::new(),
     )
     .unwrap();
 
@@ -708,34 +689,22 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_end = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            TaskprovQuery::LeaderSelected,
-        ),
-        task_end,
-        VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Fake { rounds: 2 },
-        )
-        .unwrap(),
+        Duration::from_seconds(1),
+        100,
+        batch_mode::Code::LeaderSelected,
+        test.clock.now(),
+        Duration::from_hours(24).unwrap(),
+        VdafConfig::Fake { rounds: 2 },
+        Vec::new(),
     )
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
+    let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
     let auth = test
         .peer_aggregator
@@ -786,34 +755,22 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_end = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
         // Some non-existent aggregator.
         "https://foobar.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            TaskprovQuery::LeaderSelected,
-        ),
-        task_end,
-        VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Fake { rounds: 2 },
-        )
-        .unwrap(),
+        Duration::from_seconds(1),
+        100,
+        batch_mode::Code::LeaderSelected,
+        test.clock.now(),
+        Duration::from_hours(24).unwrap(),
+        VdafConfig::Fake { rounds: 2 },
+        Vec::new(),
     )
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
+    let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
     let auth = test
         .peer_aggregator
@@ -1240,16 +1197,12 @@ async fn end_to_end_sumvec_hmac() {
         ParallelSumMultithreaded<_, _>,
     >(2, 8, 12, 14)
     .unwrap();
-    let vdaf_config = VdafConfig::new(
-        DpConfig::new(DpMechanism::None),
-        VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
-            length: 12,
-            bits: 8,
-            chunk_length: 14,
-            proofs: 2,
-        },
-    )
-    .unwrap();
+    let vdaf_config = VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+        length: 12,
+        bits: 8,
+        chunk_length: 14,
+        proofs: 2,
+    };
     let measurement = Vec::from([255, 1, 10, 20, 30, 0, 99, 100, 0, 0, 0, 0]);
     let test = TaskprovTestCase::with_vdaf(vdaf_config, vdaf, measurement, ()).await;
     let (auth_header_name, auth_header_value) = test

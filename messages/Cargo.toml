@@ -28,5 +28,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
+janus_messages = { workspace = true, features = ["test-util"] }
 pretty_assertions.workspace = true
 serde_test.workspace = true
