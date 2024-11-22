@@ -1,5 +1,7 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
+use crate::DAP_VERSION_IDENTIFIER;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use constcat::concat;
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
@@ -63,8 +65,8 @@ impl Label {
     /// Get the message-specific portion of the application info string for this label.
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            Self::InputShare => b"dap-09 input share",
-            Self::AggregateShare => b"dap-09 aggregate share",
+            Self::InputShare => concat!(DAP_VERSION_IDENTIFIER, " input share").as_bytes(),
+            Self::AggregateShare => concat!(DAP_VERSION_IDENTIFIER, " aggregate share").as_bytes(),
         }
     }
 }

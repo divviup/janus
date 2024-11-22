@@ -1,5 +1,3 @@
-use std::{net::Ipv4Addr, sync::Arc};
-
 use assert_matches::assert_matches;
 use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
@@ -14,11 +12,11 @@ use janus_core::{
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, RealClock, TimeExt},
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{vdaf_application_context, vdaf_dp_strategies, VdafInstance},
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, Time,
+    ReportMetadata, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -31,6 +29,7 @@ use prio::{
     },
 };
 use rand::{distributions::Standard, random, Rng};
+use std::{net::Ipv4Addr, sync::Arc};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;
 use url::Url;
@@ -49,7 +48,11 @@ pub(super) async fn upload_replay_report(
     let report_id = ReportId::from([
         173, 234, 101, 107, 42, 222, 166, 86, 178, 173, 234, 101, 107, 42, 222, 166,
     ]);
-    let (public_share, input_shares) = vdaf.shard(&measurement, report_id.as_ref())?;
+    let (public_share, input_shares) = vdaf.shard(
+        &vdaf_application_context(task.id()),
+        &measurement,
+        report_id.as_ref(),
+    )?;
     let rounded_time = report_time
         .to_batch_interval_start(task.time_precision())
         .unwrap();
@@ -75,7 +78,11 @@ pub(super) async fn upload_report_not_rounded(
     http_client: &reqwest::Client,
 ) -> Result<(), janus_client::Error> {
     let report_id: ReportId = random();
-    let (public_share, input_shares) = vdaf.shard(&measurement, report_id.as_ref())?;
+    let (public_share, input_shares) = vdaf.shard(
+        &vdaf_application_context(task.id()),
+        &measurement,
+        report_id.as_ref(),
+    )?;
 
     let report = prepare_report(
         http_client,
@@ -99,9 +106,10 @@ pub(super) async fn upload_report_invalid_measurement(
     let mut encoded_measurement = Vec::from([Field128::zero(); MAX_REPORTS]);
     encoded_measurement[0] = Field128::one();
     encoded_measurement[1] = Field128::one();
-    let report_id: ReportId = random();
+    let task_id = random();
+    let report_id = random();
     let (public_share, input_shares) =
-        shard_encoded_measurement(vdaf, encoded_measurement, report_id);
+        shard_encoded_measurement(vdaf, &task_id, encoded_measurement, report_id);
 
     let report = prepare_report(
         http_client,
@@ -119,6 +127,7 @@ pub(super) async fn upload_report_invalid_measurement(
 /// algorithm on it to produce a public share and a set of input shares.
 fn shard_encoded_measurement(
     vdaf: &Prio3Histogram,
+    task_id: &TaskId,
     encoded_measurement: Vec<Field128>,
     report_id: ReportId,
 ) -> (Prio3PublicShare<16>, Vec<Prio3InputShare<Field128, 16>>) {
@@ -133,6 +142,8 @@ fn shard_encoded_measurement(
 
     const NUM_PROOFS: u8 = 1;
 
+    let ctx = vdaf_application_context(task_id);
+
     assert_eq!(encoded_measurement.len(), MAX_REPORTS);
     let chunk_length = optimal_chunk_length(MAX_REPORTS);
     let circuit: Histogram<Field128, ParallelSum<_, _>> =
@@ -142,7 +153,7 @@ fn shard_encoded_measurement(
     let helper_measurement_share_seed = Seed::<16>::generate().unwrap();
     let mut helper_measurement_share_rng = XofTurboShake128::seed_stream(
         &helper_measurement_share_seed,
-        &vdaf.domain_separation_tag(DST_MEASUREMENT_SHARE),
+        &vdaf.domain_separation_tag(DST_MEASUREMENT_SHARE, &ctx),
         &[HELPER_AGGREGATOR_ID],
     );
     let mut expanded_helper_measurement_share: Vec<Field128> =
@@ -158,7 +169,7 @@ fn shard_encoded_measurement(
     let helper_joint_rand_blind = Seed::<16>::generate().unwrap();
     let mut helper_joint_rand_part_xof = XofTurboShake128::init(
         helper_joint_rand_blind.as_ref(),
-        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART),
+        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART, &ctx),
     );
     helper_joint_rand_part_xof.update(&[HELPER_AGGREGATOR_ID]);
     helper_joint_rand_part_xof.update(report_id.as_ref());
@@ -170,7 +181,7 @@ fn shard_encoded_measurement(
     let leader_joint_rand_blind = Seed::<16>::generate().unwrap();
     let mut leader_joint_rand_part_xof = XofTurboShake128::init(
         leader_joint_rand_blind.as_ref(),
-        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART),
+        &vdaf.domain_separation_tag(DST_JOINT_RAND_PART, &ctx),
     );
     leader_joint_rand_part_xof.update(&[LEADER_AGGREGATOR_ID]);
     leader_joint_rand_part_xof.update(report_id.as_ref());
@@ -179,15 +190,17 @@ fn shard_encoded_measurement(
     }
     let leader_joint_rand_seed_part = leader_joint_rand_part_xof.into_seed();
 
-    let mut joint_rand_seed_xof =
-        XofTurboShake128::init(&[0; 16], &vdaf.domain_separation_tag(DST_JOINT_RAND_SEED));
+    let mut joint_rand_seed_xof = XofTurboShake128::init(
+        &[0; 16],
+        &vdaf.domain_separation_tag(DST_JOINT_RAND_SEED, &ctx),
+    );
     joint_rand_seed_xof.update(leader_joint_rand_seed_part.as_ref());
     joint_rand_seed_xof.update(helper_joint_rand_seed_part.as_ref());
     let joint_rand_seed = joint_rand_seed_xof.into_seed();
     let mut joint_rand: Vec<Field128> = Vec::with_capacity(circuit.joint_rand_len());
     let mut joint_rand_xof = XofTurboShake128::seed_stream(
         &joint_rand_seed,
-        &vdaf.domain_separation_tag(DST_JOINT_RANDOMNESS),
+        &vdaf.domain_separation_tag(DST_JOINT_RANDOMNESS, &ctx),
         &[NUM_PROOFS],
     );
     for _ in 0..circuit.joint_rand_len() {
@@ -205,7 +218,7 @@ fn shard_encoded_measurement(
     let helper_proof_share_seed = Seed::<16>::generate().unwrap();
     let mut helper_proof_share_xof = XofTurboShake128::seed_stream(
         &helper_proof_share_seed,
-        &vdaf.domain_separation_tag(DST_PROOF_SHARE),
+        &vdaf.domain_separation_tag(DST_PROOF_SHARE, &ctx),
         &[NUM_PROOFS, HELPER_AGGREGATOR_ID],
     );
     for leader_elem in leader_proof_share.iter_mut() {
@@ -439,14 +452,17 @@ fn shard_encoded_measurement_correct() {
 
     let mut encoded_measurement = Vec::from([Field128::zero(); MAX_REPORTS]);
     encoded_measurement[0] = Field128::one();
-    let report_id: ReportId = random();
+    let task_id = random();
+    let report_id = random();
     let (public_share, input_shares) =
-        shard_encoded_measurement(&vdaf, encoded_measurement, report_id);
+        shard_encoded_measurement(&vdaf, &task_id, encoded_measurement, report_id);
 
     let verify_key: [u8; 16] = random();
+    let ctx = vdaf_application_context(&task_id);
     let (leader_prepare_state, leader_prepare_share) = vdaf
         .prepare_init(
             &verify_key,
+            &ctx,
             0,
             &(),
             report_id.as_ref(),
@@ -457,6 +473,7 @@ fn shard_encoded_measurement_correct() {
     let (helper_prepare_state, helper_prepare_share) = vdaf
         .prepare_init(
             &verify_key,
+            &ctx,
             1,
             &(),
             report_id.as_ref(),
@@ -465,13 +482,13 @@ fn shard_encoded_measurement_correct() {
         )
         .unwrap();
     let prepare_message = vdaf
-        .prepare_shares_to_prepare_message(&(), [leader_prepare_share, helper_prepare_share])
+        .prepare_shares_to_prepare_message(&ctx, &(), [leader_prepare_share, helper_prepare_share])
         .unwrap();
     let leader_transition = vdaf
-        .prepare_next(leader_prepare_state, prepare_message.clone())
+        .prepare_next(&ctx, leader_prepare_state, prepare_message.clone())
         .unwrap();
     let helper_transition = vdaf
-        .prepare_next(helper_prepare_state, prepare_message)
+        .prepare_next(&ctx, helper_prepare_state, prepare_message)
         .unwrap();
     let leader_output_share =
         assert_matches!(leader_transition, PrepareTransition::Finish(output_share) => output_share);

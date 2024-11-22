@@ -2253,10 +2253,18 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
 async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
+    let task_id = random();
     let report_id = random();
     let vdaf = Arc::new(dummy::Vdaf::new(2));
     let aggregation_param = dummy::AggregationParam(5);
-    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &task_id,
+        &[],
+        &aggregation_param,
+        &report_id,
+        &13,
+    );
 
     for (ord, (role, state)) in [
         (
@@ -2569,11 +2577,19 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
+    let task_id = random();
     let report_id = random();
     let vdaf = Arc::new(dummy::Vdaf::new(2));
     let aggregation_param = dummy::AggregationParam(7);
 
-    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &task_id,
+        &[],
+        &aggregation_param,
+        &report_id,
+        &13,
+    );
 
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
@@ -2716,11 +2732,19 @@ async fn create_report_aggregation_from_client_reports_table(
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
+    let task_id = random();
     let report_id = random();
     let vdaf = Arc::new(dummy::Vdaf::new(2));
     let aggregation_param = dummy::AggregationParam(7);
 
-    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &[], &aggregation_param, &report_id, &13);
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &task_id,
+        &[],
+        &aggregation_param,
+        &report_id,
+        &13,
+    );
 
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
@@ -5143,6 +5167,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_id_0_1 = random();
                 let transcript = run_vdaf(
                     &dummy::Vdaf::default(),
+                    task_1.id(),
                     task_1.vdaf_verify_key().unwrap().as_bytes(),
                     &dummy::AggregationParam(0),
                     &report_id_0_1,

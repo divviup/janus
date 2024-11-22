@@ -44,6 +44,10 @@ pub mod taskprov {
     pub const TASKPROV_HEADER: &str = "dap-taskprov";
 }
 
+/// This value is used in a few places throughout the protocol to identify the draft of DAP being
+/// implemented.
+const DAP_VERSION_IDENTIFIER: &str = "dap-13";
+
 /// Returns the given [`Url`], possibly modified to end with a slash.
 ///
 /// Aggregator endpoint URLs should end with a slash if they will be used with [`Url::join`],

@@ -6,7 +6,7 @@ use janus_aggregator_core::{
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     time::MockClock,
-    vdaf::VdafInstance,
+    vdaf::{vdaf_application_context, VdafInstance},
 };
 use janus_messages::{
     Extension, HpkeConfig, InputShareAad, PlaintextInputShare, Report, ReportId, ReportMetadata,
@@ -74,7 +74,9 @@ pub fn create_report_custom(
     let vdaf = Prio3Count::new_count(2).unwrap();
     let report_metadata = ReportMetadata::new(id, report_timestamp);
 
-    let (public_share, measurements) = vdaf.shard(&true, id.as_ref()).unwrap();
+    let (public_share, measurements) = vdaf
+        .shard(&vdaf_application_context(task.id()), &true, id.as_ref())
+        .unwrap();
 
     let associated_data = InputShareAad::new(
         *task.id(),

@@ -1,5 +1,6 @@
+use crate::vdaf::vdaf_application_context;
 use assert_matches::assert_matches;
-use janus_messages::{ReportId, Role};
+use janus_messages::{ReportId, Role, TaskId};
 use prio::{
     topology::ping_pong::{
         PingPongContinuedValue, PingPongMessage, PingPongState, PingPongTopology,
@@ -88,20 +89,24 @@ pub fn run_vdaf<
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16> + vdaf::Client<16>,
 >(
     vdaf: &V,
+    task_id: &TaskId,
     verify_key: &[u8; VERIFY_KEY_LENGTH],
     aggregation_param: &V::AggregationParam,
     report_id: &ReportId,
     measurement: &V::Measurement,
 ) -> VdafTranscript<VERIFY_KEY_LENGTH, V> {
+    let ctx = vdaf_application_context(task_id);
+
     let mut leader_prepare_transitions = Vec::new();
     let mut helper_prepare_transitions = Vec::new();
 
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-    let (public_share, input_shares) = vdaf.shard(measurement, report_id.as_ref()).unwrap();
+    let (public_share, input_shares) = vdaf.shard(&ctx, measurement, report_id.as_ref()).unwrap();
 
     let (leader_state, leader_message) = vdaf
         .leader_initialized(
             verify_key,
+            &ctx,
             aggregation_param,
             report_id.as_ref(),
             &public_share,
@@ -118,6 +123,7 @@ pub fn run_vdaf<
     let helper_transition = vdaf
         .helper_initialized(
             verify_key,
+            &ctx,
             aggregation_param,
             report_id.as_ref(),
             &public_share,
@@ -125,7 +131,7 @@ pub fn run_vdaf<
             &leader_message,
         )
         .unwrap();
-    let (helper_state, helper_message) = helper_transition.evaluate(vdaf).unwrap();
+    let (helper_state, helper_message) = helper_transition.evaluate(&ctx, vdaf).unwrap();
 
     helper_prepare_transitions.push(HelperPrepareTransition {
         transition: helper_transition,
@@ -155,6 +161,7 @@ pub fn run_vdaf<
                     let state_and_message = match role {
                         Role::Leader => vdaf
                             .leader_continued(
+                                &ctx,
                                 curr_state.clone(),
                                 aggregation_param,
                                 last_peer_message,
@@ -162,6 +169,7 @@ pub fn run_vdaf<
                             .unwrap(),
                         Role::Helper => vdaf
                             .helper_continued(
+                                &ctx,
                                 curr_state.clone(),
                                 aggregation_param,
                                 last_peer_message,
@@ -172,7 +180,7 @@ pub fn run_vdaf<
 
                     match state_and_message {
                         PingPongContinuedValue::WithMessage { transition } => {
-                            let (state, message) = transition.clone().evaluate(vdaf).unwrap();
+                            let (state, message) = transition.clone().evaluate(&ctx, vdaf).unwrap();
                             match role {
                                 Role::Leader => {
                                     leader_prepare_transitions.push(LeaderPrepareTransition {

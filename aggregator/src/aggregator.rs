@@ -58,7 +58,7 @@ use janus_core::{
     retries::retry_http_request_notify,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{
-        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, vdaf_application_context,
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH,
     },
     Runtime,
@@ -1986,12 +1986,13 @@ impl VdafOps {
 
             move || {
                 let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
+                let ctx = vdaf_application_context(task.id());
 
                 req
                     .prepare_inits()
                     .par_iter()
                     .enumerate()
-                    .try_for_each_with((sender, span), |(sender, span), (ord, prepare_init)| {
+                    .try_for_each(|(ord, prepare_init)| {
                         let _entered = span.enter();
 
                         // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
@@ -2190,6 +2191,7 @@ impl VdafOps {
                             trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
                                 vdaf.helper_initialized(
                                     verify_key.as_bytes(),
+                                    &ctx,
                                     &agg_param,
                                     /* report ID is used as VDAF nonce */
                                     prepare_init.report_share().metadata().id().as_ref(),
@@ -2197,7 +2199,7 @@ impl VdafOps {
                                     &input_share,
                                     prepare_init.message(),
                                 )
-                                .and_then(|transition| transition.evaluate(&vdaf))
+                                .and_then(|transition| transition.evaluate(&ctx, &vdaf))
                                 .map_err(|error| {
                                     handle_ping_pong_error(
                                         task.id(),

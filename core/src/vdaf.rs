@@ -1,5 +1,6 @@
+use crate::DAP_VERSION_IDENTIFIER;
 use derivative::Derivative;
-use janus_messages::taskprov;
+use janus_messages::{taskprov, TaskId};
 use prio::{
     field::Field64,
     flp::{
@@ -22,6 +23,18 @@ const ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128: u32 = 0xF
 /// The length of the verify key parameter when using [`XofHmacSha256Aes128`]. This XOF is not part
 /// of the VDAF specification.
 pub const VERIFY_KEY_LENGTH_HMACSHA256_AES128: usize = 32;
+
+/// Computes the VDAF "application context", which is an opaque byte string used by many VDAF
+/// operations for domain-separation purposes. In DAP, this is the DAP draft number concatenated
+/// with the task ID.
+pub fn vdaf_application_context(
+    task_id: &TaskId,
+) -> [u8; DAP_VERSION_IDENTIFIER.len() + TaskId::LEN] {
+    let mut ctx = [0u8; DAP_VERSION_IDENTIFIER.len() + TaskId::LEN];
+    ctx[..DAP_VERSION_IDENTIFIER.len()].copy_from_slice(DAP_VERSION_IDENTIFIER.as_bytes());
+    ctx[DAP_VERSION_IDENTIFIER.len()..].copy_from_slice(task_id.as_ref());
+    ctx
+}
 
 /// Bitsize parameter for the `Prio3FixedPointBoundedL2VecSum` VDAF.
 #[cfg(feature = "fpvec_bounded_l2")]

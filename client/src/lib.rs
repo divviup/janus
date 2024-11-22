@@ -53,6 +53,7 @@ use janus_core::{
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
+    vdaf::vdaf_application_context,
 };
 use janus_messages::{
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
@@ -576,7 +577,11 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// uploaded.
     fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
-        let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
+        let (public_share, input_shares) = self.vdaf.shard(
+            &vdaf_application_context(&self.parameters.task_id),
+            measurement,
+            report_id.as_ref(),
+        )?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let time = time

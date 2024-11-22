@@ -37,6 +37,7 @@ cfg-if = "1.0.0"
 chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.5.21", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.4.1"
+constcat = "0.5"
 deadpool = "0.12.1"
 deadpool-postgres = "0.14.0"
 derivative = "2.2.0"
@@ -73,7 +74,9 @@ postgres-types = "0.2.8"
 pretty_assertions = "1.4.1"
 # Disable default features so that individual workspace crates can choose to
 # re-enable them
-prio = { version = "0.16.7", default-features = false, features = ["experimental"] }
+# TODO(#3436): switch to a released version of libprio, once there is a released version implementing VDAF-13
+# prio = { version = "0.16.7", default-features = false, features = ["experimental"] }
+prio = { git = "https://github.com/divviup/libprio-rs", rev = "c85e537682a7932edc0c44c80049df0429d6fa4c", default-features = false, features = ["experimental"] }
 prometheus = "0.13.4"
 querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }

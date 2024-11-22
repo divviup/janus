@@ -287,6 +287,7 @@ async fn aggregate_init() {
     );
     let transcript_5 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &dummy::AggregationParam(0),
         report_metadata_5.id(),
@@ -317,6 +318,7 @@ async fn aggregate_init() {
     );
     let transcript_6 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &dummy::AggregationParam(0),
         report_metadata_6.id(),
@@ -347,6 +349,7 @@ async fn aggregate_init() {
     );
     let transcript_7 = run_vdaf(
         &vdaf,
+        task.id(),
         verify_key.as_bytes(),
         &dummy::AggregationParam(0),
         report_metadata_7.id(),
