@@ -31,6 +31,7 @@ use janus_messages::{
     HpkeConfigId, Interval, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, TaskId, Time,
 };
+use models::UnaggregatedReport;
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
     KeyValue,
@@ -1009,8 +1010,8 @@ LIMIT 5000",
             .prepare_cached(
                 "-- get_client_report()
 SELECT
-    client_timestamp, extensions, public_share, leader_input_share,
-    helper_encrypted_input_share
+    client_timestamp, public_extensions, public_share,
+    leader_private_extensions, leader_input_share, helper_encrypted_input_share
 FROM client_reports
 WHERE client_reports.task_id = $1
   AND client_reports.report_id = $2
@@ -1029,44 +1030,6 @@ WHERE client_reports.task_id = $1
         .await?
         .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
         .transpose()
-    }
-
-    #[cfg(feature = "test-util")]
-    pub async fn get_report_metadatas_for_task(
-        &self,
-        task_id: &TaskId,
-    ) -> Result<Vec<ReportMetadata>, Error> {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Ok(Vec::new()),
-        };
-
-        let stmt = self
-            .prepare_cached(
-                "-- get_report_metadatas_for_task()
-SELECT report_id, client_timestamp
-FROM client_reports
-WHERE client_reports.task_id = $1
-  AND client_reports.client_timestamp >= $2",
-            )
-            .await?;
-        self.query(
-            &stmt,
-            &[
-                /* task_id */ &task_info.pkey,
-                /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
-            ],
-        )
-        .await?
-        .into_iter()
-        .map(|row| {
-            Ok(ReportMetadata::new(
-                row.get_bytea_and_convert::<ReportId>("report_id")?,
-                Time::from_naive_date_time(&row.get("client_timestamp")),
-            ))
-        })
-        .collect()
     }
 
     #[cfg(feature = "test-util")]
@@ -1091,8 +1054,8 @@ WHERE client_reports.task_id = $1
             .prepare_cached(
                 "-- get_client_reports_for_task()
 SELECT
-    report_id, client_timestamp, extensions, public_share, leader_input_share,
-    helper_encrypted_input_share
+    report_id, client_timestamp, public_extensions, public_share,
+    leader_private_extensions, leader_input_share, helper_encrypted_input_share
 FROM client_reports
 WHERE client_reports.task_id = $1
   AND client_reports.client_timestamp >= $2",
@@ -1131,16 +1094,22 @@ WHERE client_reports.task_id = $1
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
 
-        let encoded_extensions: Vec<u8> = row
-            .get::<_, Option<_>>("extensions")
+        let encoded_public_extensions: Vec<u8> = row
+            .get::<_, Option<_>>("public_extensions")
             .ok_or_else(|| Error::Scrubbed)?;
-        let extensions: Vec<Extension> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
+        let public_extensions: Vec<Extension> =
+            decode_u16_items(&(), &mut Cursor::new(&encoded_public_extensions))?;
 
         let encoded_public_share: Vec<u8> = row
             .get::<_, Option<_>>("public_share")
             .ok_or_else(|| Error::Scrubbed)?;
         let public_share = A::PublicShare::get_decoded_with_param(vdaf, &encoded_public_share)?;
+
+        let encoded_leader_private_extensions: Vec<u8> = row
+            .get::<_, Option<_>>("leader_private_extensions")
+            .ok_or_else(|| Error::Scrubbed)?;
+        let leader_private_extensions: Vec<Extension> =
+            decode_u16_items(&(), &mut Cursor::new(&encoded_leader_private_extensions))?;
 
         let encoded_leader_input_share: Vec<u8> = row
             .get::<_, Option<_>>("leader_input_share")
@@ -1158,9 +1127,9 @@ WHERE client_reports.task_id = $1
 
         Ok(LeaderStoredReport::new(
             task_id,
-            ReportMetadata::new(report_id, time),
+            ReportMetadata::new(report_id, time, public_extensions),
             public_share,
-            extensions,
+            leader_private_extensions,
             leader_input_share,
             helper_encrypted_input_share,
         ))
@@ -1180,7 +1149,7 @@ WHERE client_reports.task_id = $1
         &self,
         task_id: &TaskId,
         limit: usize,
-    ) -> Result<Vec<ReportMetadata>, Error> {
+    ) -> Result<Vec<UnaggregatedReport>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -1220,7 +1189,7 @@ RETURNING report_id, client_timestamp",
 
         rows.into_iter()
             .map(|row| {
-                Ok(ReportMetadata::new(
+                Ok(UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
                     Time::from_naive_date_time(&row.get("client_timestamp")),
                 ))
@@ -1248,7 +1217,7 @@ RETURNING report_id, client_timestamp",
         &self,
         task_id: &TaskId,
         limit: usize,
-    ) -> Result<Vec<(A::AggregationParam, ReportMetadata)>, Error>
+    ) -> Result<Vec<(A::AggregationParam, UnaggregatedReport)>, Error>
     where
         A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter,
     {
@@ -1302,12 +1271,12 @@ FROM unaggregated_client_report_ids",
 
         rows.into_iter()
             .map(|row| {
-                let report_metadata = ReportMetadata::new(
+                let unaggregated_report = UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
                     Time::from_naive_date_time(&row.get("client_timestamp")),
                 );
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Ok((agg_param, report_metadata))
+                Ok((agg_param, unaggregated_report))
             })
             .collect::<Result<Vec<_>, Error>>()
     }
@@ -1534,33 +1503,45 @@ WHERE report_aggregations.task_id = $1
         };
         let now = self.clock.now().as_naive_date_time()?;
 
+        let mut encoded_public_extensions = Vec::new();
+        encode_u16_items(
+            &mut encoded_public_extensions,
+            &(),
+            report.metadata().public_extensions(),
+        )?;
         let encoded_public_share = report.public_share().get_encoded()?;
         let encoded_leader_share = report.leader_input_share().get_encoded()?;
         let encoded_helper_share = report.helper_encrypted_input_share().get_encoded()?;
-        let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), report.leader_extensions())?;
+        let mut encoded_leader_private_extensions = Vec::new();
+        encode_u16_items(
+            &mut encoded_leader_private_extensions,
+            &(),
+            report.leader_private_extensions(),
+        )?;
 
         let stmt = self
             .prepare_cached(
                 "-- put_client_report()
 INSERT INTO client_reports (
-    task_id, report_id, client_timestamp, extensions, public_share,
-    leader_input_share, helper_encrypted_input_share, created_at, updated_at,
-    updated_by
+    task_id, report_id, client_timestamp, public_extensions, public_share,
+    leader_private_extensions, leader_input_share,
+    helper_encrypted_input_share, created_at, updated_at, updated_by
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT(task_id, report_id) DO UPDATE
     SET (
-        client_timestamp, extensions, public_share, leader_input_share,
+        client_timestamp, public_extensions, public_share,
+        leader_private_extensions, leader_input_share,
         helper_encrypted_input_share, created_at, updated_at, updated_by
     ) = (
-        excluded.client_timestamp, excluded.extensions, excluded.public_share,
+        excluded.client_timestamp, excluded.public_extensions,
+        excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
         excluded.created_at, excluded.updated_at, excluded.updated_by
     )
-    WHERE client_reports.client_timestamp < $11",
+    WHERE client_reports.client_timestamp < $12",
             )
             .await?;
         check_insert(
@@ -1571,8 +1552,9 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* report_id */ report.metadata().id().as_ref(),
                     /* client_timestamp */
                     &report.metadata().time().as_naive_date_time()?,
-                    /* extensions */ &encoded_extensions,
+                    /* public_extensions */ &encoded_public_extensions,
                     /* public_share */ &encoded_public_share,
+                    /* leader_private_extensions */ &encoded_leader_private_extensions,
                     /* leader_input_share */ &encoded_leader_share,
                     /* helper_encrypted_input_share */ &encoded_helper_share,
                     /* created_at */ &now,
@@ -1608,8 +1590,9 @@ ON CONFLICT(task_id, report_id) DO UPDATE
             .prepare_cached(
                 "-- scrub_client_report()
 UPDATE client_reports SET
-    extensions = NULL,
+    public_extensions = NULL,
     public_share = NULL,
+    leader_private_extensions = NULL,
     leader_input_share = NULL,
     helper_encrypted_input_share = NULL,
     updated_at = $1,
@@ -1646,7 +1629,8 @@ WHERE task_id = $3
             .query_one(
                 "-- verify_client_report_scrubbed()
 SELECT
-    extensions, public_share, leader_input_share, helper_encrypted_input_share
+    public_extensions, public_share, leader_private_extensions,
+    leader_input_share, helper_encrypted_input_share
 FROM client_reports
 WHERE task_id = $1
   AND report_id = $2
@@ -1663,8 +1647,12 @@ WHERE task_id = $1
             .await
             .unwrap();
 
-        assert_eq!(row.get::<_, Option<Vec<u8>>>("extensions"), None);
+        assert_eq!(row.get::<_, Option<Vec<u8>>>("public_extensions"), None);
         assert_eq!(row.get::<_, Option<Vec<u8>>>("public_share"), None);
+        assert_eq!(
+            row.get::<_, Option<Vec<u8>>>("leader_private_extensions"),
+            None
+        );
         assert_eq!(row.get::<_, Option<Vec<u8>>>("leader_input_share"), None);
         assert_eq!(
             row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"),
@@ -1697,10 +1685,12 @@ INSERT INTO client_reports (
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT(task_id, report_id) DO UPDATE
 SET (
-    client_timestamp, extensions, public_share, leader_input_share,
+    client_timestamp, public_extensions, public_share,
+    leader_private_extensions, leader_input_share,
     helper_encrypted_input_share, created_at, updated_at, updated_by
 ) = (
-    excluded.client_timestamp, excluded.extensions, excluded.public_share,
+    excluded.client_timestamp, excluded.public_extensions,
+    excluded.public_share, excluded.leader_private_extensions,
     excluded.leader_input_share, excluded.helper_encrypted_input_share,
     excluded.created_at, excluded.updated_at, excluded.updated_by
 )
@@ -2106,7 +2096,8 @@ WHERE aggregation_jobs.task_id = $6
                 "-- get_report_aggregations_for_aggregation_job()
 SELECT
     ord, client_report_id, client_timestamp, last_prep_resp,
-    report_aggregations.state, public_share, leader_extensions, leader_input_share,
+    report_aggregations.state, public_extensions, public_share,
+    leader_private_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
     error_code
 FROM report_aggregations
@@ -2168,9 +2159,9 @@ ORDER BY ord ASC",
                 "-- get_report_aggregation_by_report_id()
 SELECT
     ord, client_timestamp, last_prep_resp, report_aggregations.state,
-    public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code
+    public_extensions, public_share, leader_private_extensions,
+    leader_input_share, helper_encrypted_input_share, leader_prep_transition,
+    helper_prep_state, error_code
 FROM report_aggregations
 JOIN aggregation_jobs
     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -2229,8 +2220,9 @@ WHERE report_aggregations.task_id = $1
             .prepare_cached(
                 "-- get_report_aggregations_for_task()
 SELECT
-    aggregation_jobs.aggregation_job_id, ord, client_report_id, client_timestamp,
-    last_prep_resp, report_aggregations.state, public_share, leader_extensions,
+    aggregation_jobs.aggregation_job_id, ord, client_report_id,
+    client_timestamp, last_prep_resp, report_aggregations.state,
+    public_extensions, public_share, leader_private_extensions,
     leader_input_share, helper_encrypted_input_share, leader_prep_transition,
     helper_prep_state, error_code
 FROM report_aggregations
@@ -2286,6 +2278,14 @@ WHERE report_aggregations.task_id = $1
 
         let agg_state = match state {
             ReportAggregationStateCode::Start => {
+                let public_extensions_bytes = row
+                    .get::<_, Option<Vec<u8>>>("public_extensions")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state START but public_extensions is NULL"
+                                .to_string(),
+                        )
+                    })?;
                 let public_share_bytes =
                     row.get::<_, Option<Vec<u8>>>("public_share")
                         .ok_or_else(|| {
@@ -2294,11 +2294,11 @@ WHERE report_aggregations.task_id = $1
                                     .to_string(),
                             )
                         })?;
-                let leader_extensions_bytes = row
-                    .get::<_, Option<Vec<u8>>>("leader_extensions")
+                let leader_private_extensions_bytes = row
+                    .get::<_, Option<Vec<u8>>>("leader_private_extensions")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state START but leader_extensions is NULL"
+                            "report aggregation in state START but leader_private_extensions is NULL"
                                 .to_string(),
                         )
                     })?;
@@ -2319,10 +2319,12 @@ WHERE report_aggregations.task_id = $1
                         )
                         })?;
 
+                let public_extensions =
+                    decode_u16_items(&(), &mut Cursor::new(&public_extensions_bytes))?;
                 let public_share =
                     A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
-                let leader_extensions =
-                    decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))?;
+                let leader_private_extensions =
+                    decode_u16_items(&(), &mut Cursor::new(&leader_private_extensions_bytes))?;
                 let leader_input_share = A::InputShare::get_decoded_with_param(
                     &(vdaf, Role::Leader.index().unwrap()),
                     &leader_input_share_bytes,
@@ -2331,8 +2333,9 @@ WHERE report_aggregations.task_id = $1
                     HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
 
                 ReportAggregationState::StartLeader {
+                    public_extensions,
                     public_share,
-                    leader_extensions,
+                    leader_private_extensions,
                     leader_input_share,
                     helper_encrypted_input_share,
                 }
@@ -2442,32 +2445,35 @@ WHERE report_aggregations.task_id = $1
                 "-- put_report_aggregation()
 INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    last_prep_resp, state, public_share, leader_extensions, leader_input_share,
+    last_prep_resp, state, public_extensions, public_share,
+    leader_private_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
     error_code, created_at, updated_at, updated_by)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17
+    $15, $16, $17, $18
 FROM aggregation_jobs
 WHERE task_id = $1
   AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
+        client_report_id, client_timestamp, last_prep_resp, state,
+        public_extensions, public_share, leader_private_extensions,
+        leader_input_share, helper_encrypted_input_share,
         leader_prep_transition, helper_prep_state, error_code, created_at,
         updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.public_share, excluded.leader_private_extensions,
+        excluded.leader_input_share, excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition, excluded.helper_prep_state,
+        excluded.error_code, excluded.created_at, excluded.updated_at,
+        excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $18",
+           WHERE id = report_aggregations.aggregation_job_id) >= $19",
             )
             .await?;
         check_insert(
@@ -2482,8 +2488,10 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
                     /* last_prep_resp */ &encoded_last_prep_resp,
                     /* state */ &report_aggregation.state().state_code(),
+                    /* public_extensions */ &encoded_state_values.public_extensions,
                     /* public_share */ &encoded_state_values.public_share,
-                    /* leader_extensions */ &encoded_state_values.leader_extensions,
+                    /* leader_private_extensions */
+                    &encoded_state_values.leader_private_extensions,
                     /* leader_input_share */ &encoded_state_values.leader_input_share,
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,
@@ -2525,11 +2533,13 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                         "-- put_leader_report_aggregation()
 INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-    state, public_share, leader_extensions, leader_input_share,
-    helper_encrypted_input_share, created_at, updated_at, updated_by)
+    state, public_extensions, public_share, leader_private_extensions,
+    leader_input_share, helper_encrypted_input_share, created_at, updated_at,
+    updated_by)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
-    client_reports.public_share, client_reports.extensions,
+    client_reports.public_extensions, client_reports.public_share,
+    client_reports.leader_private_extensions,
     client_reports.leader_input_share,
     client_reports.helper_encrypted_input_share, $6, $7, $8
 FROM aggregation_jobs
@@ -2540,17 +2550,19 @@ WHERE aggregation_jobs.task_id = $1
 AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
+        client_report_id, client_timestamp, last_prep_resp, state,
+        public_extensions, public_share, leader_private_extensions,
+        leader_input_share, helper_encrypted_input_share,
         leader_prep_transition, helper_prep_state, error_code, created_at,
         updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.public_share, excluded.leader_private_extensions,
+        excluded.leader_input_share, excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition, excluded.helper_prep_state,
+        excluded.error_code, excluded.created_at, excluded.updated_at,
+        excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
         FROM aggregation_jobs
@@ -2597,17 +2609,19 @@ WHERE aggregation_jobs.task_id = $1
 AND aggregation_job_id = $2
 ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     SET (
-        client_report_id, client_timestamp, last_prep_resp, state, public_share,
-        leader_extensions, leader_input_share, helper_encrypted_input_share,
+        client_report_id, client_timestamp, last_prep_resp, state,
+        public_extensions, public_share, leader_private_extensions,
+        leader_input_share, helper_encrypted_input_share,
         leader_prep_transition, helper_prep_state, error_code, created_at,
         updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
-        excluded.last_prep_resp, excluded.state, excluded.public_share,
-        excluded.leader_extensions, excluded.leader_input_share,
-        excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-        excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-        excluded.updated_at, excluded.updated_by
+        excluded.last_prep_resp, excluded.state, excluded.public_extensions,
+        excluded.public_share, excluded.leader_private_extensions,
+        excluded.leader_input_share, excluded.helper_encrypted_input_share,
+        excluded.leader_prep_transition, excluded.helper_prep_state,
+        excluded.error_code, excluded.created_at, excluded.updated_at,
+        excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
@@ -2668,19 +2682,19 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                 "-- update_report_aggregation()
 UPDATE report_aggregations
 SET
-    last_prep_resp = $1, state = $2, public_share = $3, leader_extensions = $4,
-    leader_input_share = $5, helper_encrypted_input_share = $6,
-    leader_prep_transition = $7, helper_prep_state = $8, error_code = $9,
-    updated_at = $10, updated_by = $11
+    last_prep_resp = $1, state = $2, public_extensions = $3, public_share = $4,
+    leader_private_extensions = $5, leader_input_share = $6,
+    helper_encrypted_input_share = $7, leader_prep_transition = $8,
+    helper_prep_state = $9, error_code = $10, updated_at = $11, updated_by = $12
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
-  AND aggregation_jobs.aggregation_job_id = $12
-  AND aggregation_jobs.task_id = $13
-  AND report_aggregations.task_id = $13
-  AND report_aggregations.client_report_id = $14
-  AND report_aggregations.client_timestamp = $15
-  AND report_aggregations.ord = $16
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $17",
+  AND aggregation_jobs.aggregation_job_id = $13
+  AND aggregation_jobs.task_id = $14
+  AND report_aggregations.task_id = $14
+  AND report_aggregations.client_report_id = $15
+  AND report_aggregations.client_timestamp = $16
+  AND report_aggregations.ord = $17
+  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $18",
             )
             .await?;
         check_single_row_mutation(
@@ -2689,8 +2703,10 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                 &[
                     /* last_prep_resp */ &encoded_last_prep_resp,
                     /* state */ &report_aggregation.state().state_code(),
+                    /* public_extensions */ &encoded_state_values.public_extensions,
                     /* public_share */ &encoded_state_values.public_share,
-                    /* leader_extensions */ &encoded_state_values.leader_extensions,
+                    /* leader_private_extensions */
+                    &encoded_state_values.leader_private_extensions,
                     /* leader_input_share */ &encoded_state_values.leader_input_share,
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,

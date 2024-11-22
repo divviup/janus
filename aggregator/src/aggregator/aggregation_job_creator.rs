@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregationJob, AggregationJobState, ReportAggregationMetadata,
-            ReportAggregationMetadataState,
+            ReportAggregationMetadataState, UnaggregatedReport,
         },
         Datastore,
     },
@@ -32,8 +32,6 @@ use janus_core::{
         VERIFY_KEY_LENGTH_HMACSHA256_AES128,
     },
 };
-#[cfg(feature = "test-util")]
-use janus_messages::ReportMetadata;
 use janus_messages::{
     batch_mode::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
 };
@@ -570,7 +568,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             aggregation_job_creation_report_window,
                         )
                         .await?;
-                    reports.sort_by_key(|report_metadata| *report_metadata.time());
+                    reports.sort_by_key(|report| *report.client_timestamp());
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     // We attempt to generate reports from touching a minimal number of batches by
@@ -588,11 +586,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
                         // point.
-                        let reports_by_batch = reports.into_iter().chunk_by(|report_metadata| {
+                        let reports_by_batch = reports.into_iter().chunk_by(|report| {
                             // Unwrap safety: task.time_precision() is nonzero, so
                             // `to_batch_interval_start` will never return an error.
-                            report_metadata
-                                .time()
+                            report
+                                .client_timestamp()
                                 .to_batch_interval_start(task.time_precision())
                                 .unwrap()
                         });
@@ -637,12 +635,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                             let min_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(|report_metadata| report_metadata.time())
+                                .map(UnaggregatedReport::client_timestamp)
                                 .min()
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
                             let max_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(|report_metadata| report_metadata.time())
+                                .map(UnaggregatedReport::client_timestamp)
                                 .max()
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
                             let client_timestamp_interval = Interval::new(
@@ -665,22 +663,19 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             let report_aggregations = agg_job_reports
                                 .iter()
                                 .enumerate()
-                                .map(|(ord, report_metadata)| {
+                                .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
                                         aggregation_job_id,
-                                        *report_metadata.id(),
-                                        *report_metadata.time(),
+                                        *report.report_id(),
+                                        *report.client_timestamp(),
                                         ord.try_into()?,
                                         ReportAggregationMetadataState::Start,
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
-                            report_ids_to_scrub.extend(
-                                agg_job_reports
-                                    .iter()
-                                    .map(|report_metadata| *report_metadata.id()),
-                            );
+                            report_ids_to_scrub
+                                .extend(agg_job_reports.iter().map(UnaggregatedReport::report_id));
 
                             aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                         }
@@ -696,8 +691,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .iter()
                                 .map(|report_id| tx.scrub_client_report(task.id(), report_id))
                         ),
-                        try_join_all(outstanding_reports.iter().map(|report_metadata| {
-                            tx.mark_report_unaggregated(task.id(), report_metadata.id())
+                        try_join_all(outstanding_reports.iter().map(|report| {
+                            tx.mark_report_unaggregated(task.id(), report.report_id())
                         })),
                     )?;
 
@@ -782,13 +777,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             // unwrap safety: agg_job_reports is non-empty
                             let min_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(ReportMetadata::time)
+                                .map(UnaggregatedReport::client_timestamp)
                                 .min()
                                 .unwrap();
                             // unwrap safety: agg_job_reports is non-empty
                             let max_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(ReportMetadata::time)
+                                .map(UnaggregatedReport::client_timestamp)
                                 .max()
                                 .unwrap();
                             let client_timestamp_interval = Interval::new(
@@ -810,12 +805,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             let report_aggregations: Vec<_> = agg_job_reports
                                 .iter()
                                 .enumerate()
-                                .map(|(ord, report_metadata)| {
+                                .map(|(ord, report)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
                                         aggregation_job_id,
-                                        *report_metadata.id(),
-                                        *report_metadata.time(),
+                                        *report.report_id(),
+                                        *report.client_timestamp(),
                                         ord.try_into()?,
                                         ReportAggregationMetadataState::Start,
                                     ))
@@ -973,7 +968,7 @@ mod tests {
             TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
-        let leader_report_metadata = ReportMetadata::new(random(), report_time);
+        let leader_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let leader_transcript = run_vdaf(
             vdaf.as_ref(),
             leader_task.id(),
@@ -1164,7 +1159,7 @@ mod tests {
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
                 .chain(iter::repeat(second_report_time).take(MIN_AGGREGATION_JOB_SIZE))
                 .map(|report_time| {
-                    let report_metadata = ReportMetadata::new(random(), report_time);
+                    let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                     let transcript = run_vdaf(
                         vdaf.as_ref(),
                         task.id(),
@@ -1343,7 +1338,7 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
-        let first_report_metadata = ReportMetadata::new(random(), report_time);
+        let first_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let first_transcript = run_vdaf(
             vdaf.as_ref(),
             task.id(),
@@ -1360,7 +1355,7 @@ mod tests {
             &first_transcript,
         ));
 
-        let second_report_metadata = ReportMetadata::new(random(), report_time);
+        let second_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let second_transcript = run_vdaf(
             vdaf.as_ref(),
             task.id(),
@@ -1557,7 +1552,7 @@ mod tests {
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -1742,7 +1737,7 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -1940,7 +1935,7 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -2051,7 +2046,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|report_metadata| *report_metadata.id())
+                        .map(|report| *report.report_id())
                         .collect::<Vec<_>>();
 
                     try_join_all(
@@ -2102,7 +2097,7 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -2216,7 +2211,7 @@ mod tests {
         assert_eq!(agg_job_sizes, [20, 60, 60, 60, 60, 60, 60]);
 
         // Add one more report.
-        let last_report_metadata = ReportMetadata::new(random(), report_time);
+        let last_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
         let last_transcript = run_vdaf(
             vdaf.as_ref(),
             task.id(),
@@ -2364,7 +2359,7 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -2481,7 +2476,7 @@ mod tests {
         // the existing outstanding batch.
         let new_reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -2637,7 +2632,7 @@ mod tests {
         let mut reports = Vec::new();
         reports.extend(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time_1);
+                let report_metadata = ReportMetadata::new(random(), report_time_1, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -2658,7 +2653,7 @@ mod tests {
         );
         reports.extend(
             iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time_2);
+                let report_metadata = ReportMetadata::new(random(), report_time_2, Vec::new());
                 let transcript = run_vdaf(
                     vdaf.as_ref(),
                     task.id(),
@@ -3068,7 +3063,7 @@ mod tests {
 
             for report_aggregation in report_aggregations {
                 seen_pairs.push((
-                    *report_aggregation.report_metadata().id(),
+                    *report_aggregation.report_id(),
                     *aggregation_job.aggregation_parameter(),
                 ));
             }

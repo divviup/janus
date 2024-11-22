@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use derivative::Derivative;
-use janus_messages::{AggregationJobId, ReportMetadata, TaskId};
+use janus_messages::{AggregationJobId, ReportId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fs::File, path::Path, time::SystemTime};
 use uuid::Uuid;
@@ -25,8 +25,8 @@ pub struct AggregationJobInitForbiddenMutationEvent {
     pub original_request_hash: Option<[u8; 32]>,
 
     /// The ordered report metadatas from the request that created the aggregation job.
-    #[serde(with = "serialize_metadata_vec")]
-    pub original_report_metadatas: Vec<ReportMetadata>,
+    #[serde(with = "serialize_report_id_vec")]
+    pub original_report_ids: Vec<ReportId>,
 
     /// The batch ID in the original request.
     pub original_batch_id: String,
@@ -40,8 +40,8 @@ pub struct AggregationJobInitForbiddenMutationEvent {
     pub mutating_request_hash: Option<[u8; 32]>,
 
     /// The ordered report metadatas from the request that attempted to mutate the aggregation job.
-    #[serde(with = "serialize_metadata_vec")]
-    pub mutating_request_report_metadatas: Vec<ReportMetadata>,
+    #[serde(with = "serialize_report_id_vec")]
+    pub mutating_request_report_ids: Vec<ReportId>,
 
     /// The batch ID of the mutating request.
     pub mutating_request_batch_id: String,
@@ -111,26 +111,14 @@ mod serialize_job_id {
     }
 }
 
-mod serialize_metadata_vec {
+mod serialize_report_id_vec {
     use super::*;
 
-    pub fn serialize<S: Serializer>(
-        value: &[ReportMetadata],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct SerializableReportMetadata {
-            report_id: String,
-            time: String,
-        }
-
-        serializer.collect_seq(value.iter().map(|rm| SerializableReportMetadata {
-            report_id: format!("{:?}", rm.id()),
-            time: format!("{:?}", rm.time()),
-        }))
+    pub fn serialize<S: Serializer>(value: &[ReportId], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(value.iter().map(|report_id| format!("{report_id:?}")))
     }
 
-    pub fn deserialize<'de, D>(_deserializer: D) -> Result<Vec<ReportMetadata>, D::Error>
+    pub fn deserialize<'de, D>(_deserializer: D) -> Result<Vec<ReportId>, D::Error>
     where
         D: Deserializer<'de>,
     {

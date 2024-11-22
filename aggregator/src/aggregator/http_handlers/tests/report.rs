@@ -122,6 +122,7 @@ async fn upload_handler() {
                 .now()
                 .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
                 .unwrap(),
+            report.metadata().public_extensions().to_vec(),
         ),
         report.public_share().to_vec(),
         report.leader_encrypted_input_share().clone(),
@@ -182,7 +183,11 @@ async fn upload_handler() {
         .add(&Duration::from_seconds(1))
         .unwrap();
     let bad_report = Report::new(
-        ReportMetadata::new(*report.metadata().id(), bad_report_time),
+        ReportMetadata::new(
+            *report.metadata().id(),
+            bad_report_time,
+            report.metadata().public_extensions().to_vec(),
+        ),
         report.public_share().to_vec(),
         report.leader_encrypted_input_share().clone(),
         report.helper_encrypted_input_share().clone(),

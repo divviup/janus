@@ -380,7 +380,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
                     let report_share = ReportShare::new(
-                        ReportMetadata::new(random(), client_timestamp),
+                        ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
                         HpkeCiphertext::new(
                             HpkeConfigId::from(13),
@@ -727,7 +727,7 @@ mod tests {
                         .sub(&Duration::from_seconds(2))
                         .unwrap();
                     let report_share = ReportShare::new(
-                        ReportMetadata::new(random(), client_timestamp),
+                        ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
                         HpkeCiphertext::new(
                             HpkeConfigId::from(13),

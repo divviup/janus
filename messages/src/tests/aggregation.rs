@@ -1,8 +1,8 @@
 use crate::{
     roundtrip_encoding, AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchId, HpkeCiphertext, HpkeConfigId, LeaderSelected,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportError, ReportId, ReportMetadata, ReportShare, Time,
+    AggregationJobStep, BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
+    LeaderSelected, PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportError, ReportId, ReportMetadata, ReportShare, Time,
 };
 use prio::topology::ping_pong::PingPongMessage;
 
@@ -14,6 +14,7 @@ fn roundtrip_report_share() {
                 metadata: ReportMetadata::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Time::from_seconds_since_epoch(54321),
+                    Vec::new(),
                 ),
                 public_share: Vec::new(),
                 encrypted_input_share: HpkeCiphertext::new(
@@ -27,6 +28,10 @@ fn roundtrip_report_share() {
                     // metadata
                     "0102030405060708090A0B0C0D0E0F10", // report_id
                     "000000000000D431",                 // time
+                    concat!(
+                        // public_extensions
+                        "0000", // length
+                    ),
                 ),
                 concat!(
                     // public_share
@@ -54,6 +59,7 @@ fn roundtrip_report_share() {
                 metadata: ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(73542),
+                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 public_share: Vec::from("0123"),
                 encrypted_input_share: HpkeCiphertext::new(
@@ -67,6 +73,18 @@ fn roundtrip_report_share() {
                     // metadata
                     "100F0E0D0C0B0A090807060504030201", // report_id
                     "0000000000011F46",                 // time
+                    concat!(
+                        // public_extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        ),
+                    ),
                 ),
                 concat!(
                     // public_share
@@ -101,6 +119,7 @@ fn roundtrip_prepare_init() {
                     metadata: ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Time::from_seconds_since_epoch(54321),
+                        Vec::new(),
                     ),
                     public_share: Vec::new(),
                     encrypted_input_share: HpkeCiphertext::new(
@@ -120,6 +139,10 @@ fn roundtrip_prepare_init() {
                         // metadata
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         "000000000000D431",                 // time
+                        concat!(
+                            // public_extensions
+                            "0000", // length
+                        ),
                     ),
                     concat!(
                         // public_share
@@ -158,6 +181,7 @@ fn roundtrip_prepare_init() {
                     metadata: ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Time::from_seconds_since_epoch(73542),
+                        Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
                     public_share: Vec::from("0123"),
                     encrypted_input_share: HpkeCiphertext::new(
@@ -177,6 +201,18 @@ fn roundtrip_prepare_init() {
                         // metadata
                         "100F0E0D0C0B0A090807060504030201", // report_id
                         "0000000000011F46",                 // time
+                        concat!(
+                            // public_extensions
+                            "0008", // length
+                            concat!(
+                                "0000", // extension_type
+                                concat!(
+                                    // extension_data
+                                    "0004",     // length
+                                    "30313233", // opaque data
+                                ),
+                            ),
+                        ),
                     ),
                     concat!(
                         // public_share
@@ -297,6 +333,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
+                            Vec::new(),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -314,6 +351,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -342,7 +380,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // prepare_inits
-                "00000076", // length
+                "00000082", // length
                 concat!(
                     concat!(
                         // report_share
@@ -350,6 +388,10 @@ fn roundtrip_aggregation_job_initialize_req() {
                             // metadata
                             "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
+                            concat!(
+                                // public_extensions
+                                "0000", // length
+                            ),
                         ),
                         concat!(
                             // public_share
@@ -387,6 +429,18 @@ fn roundtrip_aggregation_job_initialize_req() {
                             // metadata
                             "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
+                            concat!(
+                                // public_extensions
+                                "0008", // length
+                                concat!(
+                                    "0000", // extension_type
+                                    concat!(
+                                        // extension_data
+                                        "0004",     // length
+                                        "30313233", // opaque data
+                                    ),
+                                ),
+                            ),
                         ),
                         concat!(
                             // public_share
@@ -435,6 +489,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
+                            Vec::new(),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -452,6 +507,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -480,7 +536,7 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // prepare_inits
-                "00000076", // length
+                "00000082", // length
                 concat!(
                     concat!(
                         // report_share
@@ -488,6 +544,10 @@ fn roundtrip_aggregation_job_initialize_req() {
                             // metadata
                             "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
+                            concat!(
+                                // public_extensions
+                                "0000", // length
+                            ),
                         ),
                         concat!(
                             // public_share
@@ -525,6 +585,18 @@ fn roundtrip_aggregation_job_initialize_req() {
                             // metadata
                             "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
+                            concat!(
+                                // public_extensions
+                                "0008", // length
+                                concat!(
+                                    "0000", // extension_type
+                                    concat!(
+                                        // extension_data
+                                        "0004",     // length
+                                        "30313233", // opaque data
+                                    ),
+                                ),
+                            ),
                         ),
                         concat!(
                             // public_share

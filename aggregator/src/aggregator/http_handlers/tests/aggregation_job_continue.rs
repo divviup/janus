@@ -65,6 +65,7 @@ async fn aggregate_continue() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_0 = run_vdaf(
         vdaf.as_ref(),
@@ -92,6 +93,7 @@ async fn aggregate_continue() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_1 = run_vdaf(
         vdaf.as_ref(),
@@ -122,6 +124,7 @@ async fn aggregate_continue() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_2 = run_vdaf(
         vdaf.as_ref(),
@@ -398,7 +401,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let report_metadata_0 = ReportMetadata::new(random(), report_time_0);
+    let report_metadata_0 = ReportMetadata::new(random(), report_time_0, Vec::new());
     let transcript_0 = run_vdaf(
         &vdaf,
         task.id(),
@@ -424,7 +427,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let report_metadata_1 = ReportMetadata::new(random(), report_time_1);
+    let report_metadata_1 = ReportMetadata::new(random(), report_time_1, Vec::new());
     let transcript_1 = run_vdaf(
         &vdaf,
         task.id(),
@@ -452,6 +455,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_2 = run_vdaf(
         &vdaf,
@@ -748,7 +752,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let report_metadata_3 = ReportMetadata::new(random(), report_time_3);
+    let report_metadata_3 = ReportMetadata::new(random(), report_time_3, Vec::new());
     let transcript_3 = run_vdaf(
         &vdaf,
         task.id(),
@@ -776,6 +780,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_4 = run_vdaf(
         &vdaf,
@@ -804,6 +809,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_5 = run_vdaf(
         &vdaf,
@@ -1055,6 +1061,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
         Time::from_seconds_since_epoch(54321),
+        Vec::new(),
     );
 
     // Setup datastore.
@@ -1168,7 +1175,8 @@ async fn aggregate_continue_prep_step_fails() {
         &13,
     );
     let aggregation_job_id = random();
-    let report_metadata = ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321));
+    let report_metadata =
+        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321), Vec::new());
     let helper_report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata.clone(),
@@ -1338,7 +1346,8 @@ async fn aggregate_continue_unexpected_transition() {
         &13,
     );
     let aggregation_job_id = random();
-    let report_metadata = ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321));
+    let report_metadata =
+        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321), Vec::new());
 
     // Setup datastore.
     datastore
@@ -1451,7 +1460,11 @@ async fn aggregate_continue_out_of_order_transition() {
         &report_id_0,
         &13,
     );
-    let report_metadata_0 = ReportMetadata::new(report_id_0, Time::from_seconds_since_epoch(54321));
+    let report_metadata_0 = ReportMetadata::new(
+        report_id_0,
+        Time::from_seconds_since_epoch(54321),
+        Vec::new(),
+    );
     let report_id_1 = random();
     let transcript_1 = run_vdaf(
         &dummy::Vdaf::new(2),
@@ -1461,7 +1474,11 @@ async fn aggregate_continue_out_of_order_transition() {
         &report_id_1,
         &13,
     );
-    let report_metadata_1 = ReportMetadata::new(report_id_1, Time::from_seconds_since_epoch(54321));
+    let report_metadata_1 = ReportMetadata::new(
+        report_id_1,
+        Time::from_seconds_since_epoch(54321),
+        Vec::new(),
+    );
     let aggregation_job_id = random();
 
     // Setup datastore.
@@ -1615,6 +1632,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
         Time::from_seconds_since_epoch(54321),
+        Vec::new(),
     );
 
     // Setup datastore.

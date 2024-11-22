@@ -48,7 +48,7 @@ where
     vdaf: V,
     aggregation_param: V::AggregationParam,
     hpke_config: HpkeConfig,
-    extensions: Vec<Extension>,
+    private_extensions: Vec<Extension>,
 }
 
 impl<const VERIFY_KEY_SIZE: usize, V> PrepareInitGenerator<VERIFY_KEY_SIZE, V>
@@ -68,12 +68,12 @@ where
             vdaf,
             aggregation_param,
             hpke_config,
-            extensions: Vec::new(),
+            private_extensions: Vec::new(),
         }
     }
 
-    pub(super) fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
-        self.extensions = extensions;
+    pub(super) fn with_private_extensions(mut self, extensions: Vec<Extension>) -> Self {
+        self.private_extensions = extensions;
         self
     }
 
@@ -88,6 +88,7 @@ where
                     .now()
                     .to_batch_interval_start(self.task.time_precision())
                     .unwrap(),
+                Vec::new(),
             ),
             measurement,
         )
@@ -120,6 +121,7 @@ where
                     .now()
                     .to_batch_interval_start(self.task.time_precision())
                     .unwrap(),
+                Vec::new(),
             ),
             measurement,
         )
@@ -143,7 +145,7 @@ where
             report_metadata,
             &self.hpke_config,
             &transcript.public_share,
-            self.extensions.clone(),
+            self.private_extensions.clone(),
             &transcript.helper_input_share,
         );
         (report_share, transcript)
@@ -398,7 +400,7 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
     let prepare_init = test_case
         .prepare_init_generator
         .clone()
-        .with_extensions(Vec::from([Extension::new(
+        .with_private_extensions(Vec::from([Extension::new(
             ExtensionType::Taskprov,
             Vec::new(),
         )]))
@@ -554,6 +556,7 @@ async fn aggregation_job_intolerable_clock_skew() {
                             .now()
                             .add(test_case.task.tolerable_clock_skew())
                             .unwrap(),
+                        Vec::new(),
                     ),
                     &0,
                 )
@@ -571,6 +574,7 @@ async fn aggregation_job_intolerable_clock_skew() {
                             .unwrap()
                             .add(&Duration::from_seconds(1))
                             .unwrap(),
+                        Vec::new(),
                     ),
                     &0,
                 )

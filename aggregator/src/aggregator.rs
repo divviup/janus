@@ -1647,7 +1647,7 @@ impl VdafOps {
                 Err(err) => {
                     debug!(
                         report.task_id = %task.id(),
-                        report.metadata = ?report.metadata(),
+                        report.id = ?report.metadata().id(),
                         ?err,
                         "public share decoding failed",
                     );
@@ -1689,7 +1689,7 @@ impl VdafOps {
             Err(error) => {
                 debug!(
                     report.task_id = %task.id(),
-                    report.metadata = ?report.metadata(),
+                    report.id = ?report.metadata().id(),
                     ?error,
                     "Report decryption failed",
                 );
@@ -1703,7 +1703,7 @@ impl VdafOps {
         )
         .and_then(|plaintext_input_share| {
             Ok((
-                plaintext_input_share.extensions().to_vec(),
+                plaintext_input_share.private_extensions().to_vec(),
                 A::InputShare::get_decoded_with_param(
                     &(&vdaf, Role::Leader.index().unwrap()),
                     plaintext_input_share.payload(),
@@ -1711,12 +1711,12 @@ impl VdafOps {
             ))
         });
 
-        let (extensions, leader_input_share) = match decoded_leader_input_share {
+        let (leader_private_extensions, leader_input_share) = match decoded_leader_input_share {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
                 debug!(
                     report.task_id = %task.id(),
-                    report.metadata = ?report.metadata(),
+                    report.id = ?report.metadata().id(),
                     ?err,
                     "Leader input share decoding failed",
                 );
@@ -1729,7 +1729,7 @@ impl VdafOps {
             *task.id(),
             report.metadata().clone(),
             public_share,
-            extensions,
+            leader_private_extensions,
             leader_input_share,
             report.helper_encrypted_input_share().clone(),
         );
@@ -1781,7 +1781,7 @@ impl VdafOps {
 
             if existing_aggregation_job.last_request_hash() != Some(request_hash) {
                 if let Some(log_forbidden_mutations) = log_forbidden_mutations {
-                    let original_report_metadatas: Vec<_> = tx
+                    let original_report_ids: Vec<_> = tx
                         .get_report_aggregations_for_aggregation_job(
                             vdaf,
                             &Role::Helper,
@@ -1790,18 +1790,18 @@ impl VdafOps {
                         )
                         .await?
                         .iter()
-                        .map(|ra| ra.report_metadata())
+                        .map(|ra| *ra.report_id())
                         .collect();
-                    let mutating_request_report_metadatas: Vec<_> = req
+                    let mutating_request_report_ids: Vec<_> = req
                         .prepare_inits()
                         .iter()
-                        .map(|pi| pi.report_share().metadata().clone())
+                        .map(|pi| *pi.report_share().metadata().id())
                         .collect();
                     let event = AggregationJobInitForbiddenMutationEvent {
                         task_id: *task_id,
                         aggregation_job_id: *aggregation_job_id,
                         original_request_hash: existing_aggregation_job.last_request_hash(),
-                        original_report_metadatas,
+                        original_report_ids,
                         original_batch_id: format!(
                             "{:?}",
                             existing_aggregation_job.partial_batch_identifier()
@@ -1811,7 +1811,7 @@ impl VdafOps {
                             .get_encoded()
                             .map_err(|e| datastore::Error::User(e.into()))?,
                         mutating_request_hash: Some(request_hash),
-                        mutating_request_report_metadatas,
+                        mutating_request_report_ids,
                         mutating_request_batch_id: format!(
                             "{:?}",
                             req.batch_selector().batch_identifier()
@@ -2022,7 +2022,7 @@ impl VdafOps {
                             .map_err(|err| {
                                 debug!(
                                     task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
+                                    report_id = ?prepare_init.report_share().metadata().id(),
                                     ?err,
                                     "Couldn't encode input share AAD"
                                 );
@@ -2049,7 +2049,7 @@ impl VdafOps {
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
+                                    report_id = ?prepare_init.report_share().metadata().id(),
                                     ?error,
                                     "Couldn't decrypt helper's report share"
                                 );
@@ -2065,7 +2065,7 @@ impl VdafOps {
                                 .map_err(|error| {
                                     debug!(
                                         task_id = %task.id(),
-                                        metadata = ?prepare_init.report_share().metadata(),
+                                        report_id = ?prepare_init.report_share().metadata().id(),
                                         ?error, "Couldn't decode helper's plaintext input share",
                                     );
                                     metrics.aggregate_step_failure_counter.add(
@@ -2080,14 +2080,14 @@ impl VdafOps {
 
                             // Build map of extension type to extension data, checking for duplicates.
                             let mut extensions = HashMap::new();
-                            if !plaintext_input_share.extensions().iter().all(|extension| {
+                            if !plaintext_input_share.private_extensions().iter().chain(prepare_init.report_share().metadata().public_extensions()).all(|extension| {
                                 extensions
                                     .insert(*extension.extension_type(), extension.extension_data())
                                     .is_none()
                             }) {
                                 debug!(
                                     task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
+                                    report_id = ?prepare_init.report_share().metadata().id(),
                                     "Received report share with duplicate extensions",
                                 );
                                 metrics
@@ -2104,7 +2104,7 @@ impl VdafOps {
                                 if !valid_taskprov_extension_present {
                                     debug!(
                                         task_id = %task.id(),
-                                        metadata = ?prepare_init.report_share().metadata(),
+                                        report_id = ?prepare_init.report_share().metadata().id(),
                                         "Taskprov task received report with missing or malformed \
                                         taskprov extension",
                                     );
@@ -2121,7 +2121,7 @@ impl VdafOps {
                                 // taskprov not enabled, but the taskprov extension is present.
                                 debug!(
                                     task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
+                                    report_id = ?prepare_init.report_share().metadata().id(),
                                     "Non-taskprov task received report with unexpected taskprov \
                                     extension",
                                 );
@@ -2142,7 +2142,7 @@ impl VdafOps {
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),
-                                    metadata = ?prepare_init.report_share().metadata(),
+                                    report_id = ?prepare_init.report_share().metadata().id(),
                                     ?error, "Couldn't decode helper's input share",
                                 );
                                 metrics
@@ -2159,7 +2159,7 @@ impl VdafOps {
                         .map_err(|error| {
                             debug!(
                                 task_id = %task.id(),
-                                metadata = ?prepare_init.report_share().metadata(),
+                                report_id = ?prepare_init.report_share().metadata().id(),
                                 ?error, "Couldn't decode public share",
                             );
                             metrics

@@ -5,14 +5,14 @@ use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
     models::{
         AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
-        ReportAggregationMetadataState,
+        ReportAggregationMetadataState, UnaggregatedReport,
     },
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    batch_mode::LeaderSelected, AggregationJobStep, BatchId, Duration, Interval, ReportId,
-    ReportMetadata, TaskId, Time,
+    batch_mode::LeaderSelected, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId,
+    Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
@@ -97,7 +97,7 @@ where
     pub async fn add_report<C>(
         &mut self,
         tx: &Transaction<'_, C>,
-        report_metadata: ReportMetadata,
+        report: UnaggregatedReport,
     ) -> Result<(), Error>
     where
         C: Clock,
@@ -106,8 +106,8 @@ where
             .properties
             .task_batch_time_window_size
             .map(|batch_time_window_size| {
-                report_metadata
-                    .time()
+                report
+                    .client_timestamp()
                     .to_batch_interval_start(&batch_time_window_size)
             })
             .transpose()?;
@@ -143,7 +143,7 @@ where
         };
 
         // Add to the list of unaggregated reports for this combination of task and time bucket.
-        bucket.unaggregated_reports.push_back(report_metadata);
+        bucket.unaggregated_reports.push_back(report);
 
         Self::process_batches(
             &self.properties,
@@ -311,7 +311,7 @@ where
         task_id: TaskId,
         batch_id: BatchId,
         aggregation_job_size: usize,
-        unaggregated_reports: &mut VecDeque<ReportMetadata>,
+        unaggregated_reports: &mut VecDeque<UnaggregatedReport>,
         aggregation_job_writer: &mut AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
@@ -334,8 +334,8 @@ where
 
         let report_aggregations: Vec<_> = (0u64..)
             .zip(unaggregated_reports.drain(..aggregation_job_size))
-            .map(|(ord, report_metadata)| {
-                let client_timestamp = *report_metadata.time();
+            .map(|(ord, report)| {
+                let client_timestamp = *report.client_timestamp();
                 min_client_timestamp = Some(
                     min_client_timestamp.map_or(client_timestamp, |ts| min(ts, client_timestamp)),
                 );
@@ -346,7 +346,7 @@ where
                 ReportAggregationMetadata::new(
                     task_id,
                     aggregation_job_id,
-                    *report_metadata.id(),
+                    *report.report_id(),
                     client_timestamp,
                     ord,
                     ReportAggregationMetadataState::Start,
@@ -403,7 +403,7 @@ where
                 bucket
                     .unaggregated_reports
                     .into_iter()
-                    .map(|report_metadata| *report_metadata.id()),
+                    .map(|report| *report.report_id()),
             );
         }
 
@@ -443,7 +443,7 @@ where
 /// Tracks reports and batches for one partition of a task.
 struct Bucket {
     outstanding_batches: BinaryHeap<UpdatedOutstandingBatch>,
-    unaggregated_reports: VecDeque<ReportMetadata>,
+    unaggregated_reports: VecDeque<UnaggregatedReport>,
 }
 
 impl Bucket {

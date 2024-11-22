@@ -284,6 +284,7 @@ async fn aggregate_init() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_5 = run_vdaf(
         &vdaf,
@@ -315,6 +316,7 @@ async fn aggregate_init() {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::new(),
     );
     let transcript_6 = run_vdaf(
         &vdaf,
@@ -339,13 +341,17 @@ async fn aggregate_init() {
         transcript_6.leader_prepare_transitions[0].message.clone(),
     );
 
-    // prepare_init_7 fails due to having repeated extensions.
+    // prepare_init_7 fails due to having repeated public extensions.
     let report_metadata_7 = ReportMetadata::new(
         random(),
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
+        Vec::from([
+            Extension::new(ExtensionType::Tbd, Vec::new()),
+            Extension::new(ExtensionType::Tbd, Vec::new()),
+        ]),
     );
     let transcript_7 = run_vdaf(
         &vdaf,
@@ -360,16 +366,77 @@ async fn aggregate_init() {
         report_metadata_7,
         hpke_keypair.config(),
         &transcript_7.public_share,
-        Vec::from([
-            Extension::new(ExtensionType::Tbd, Vec::new()),
-            Extension::new(ExtensionType::Tbd, Vec::new()),
-        ]),
+        Vec::new(),
         &transcript_7.helper_input_share,
     );
 
     let prepare_init_7 = PrepareInit::new(
         report_share_7,
         transcript_7.leader_prepare_transitions[0].message.clone(),
+    );
+
+    // prepare_init_8 fails due to having repeated private extensions.
+    let report_metadata_8 = ReportMetadata::new(
+        random(),
+        clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap(),
+        Vec::new(),
+    );
+    let transcript_8 = run_vdaf(
+        &vdaf,
+        verify_key.as_bytes(),
+        &dummy::AggregationParam(0),
+        report_metadata_8.id(),
+        &measurement,
+    );
+    let report_share_8 = generate_helper_report_share::<dummy::Vdaf>(
+        *task.id(),
+        report_metadata_8,
+        hpke_keypair.config(),
+        &transcript_8.public_share,
+        Vec::from([
+            Extension::new(ExtensionType::Tbd, Vec::new()),
+            Extension::new(ExtensionType::Tbd, Vec::new()),
+        ]),
+        &transcript_8.helper_input_share,
+    );
+
+    let prepare_init_8 = PrepareInit::new(
+        report_share_8,
+        transcript_8.leader_prepare_transitions[0].message.clone(),
+    );
+
+    // prepare_init_9 fails due to having repeated extensions between the public & private
+    // extensions.
+    let report_metadata_9 = ReportMetadata::new(
+        random(),
+        clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap(),
+        Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+    );
+    let transcript_9 = run_vdaf(
+        &vdaf,
+        verify_key.as_bytes(),
+        &dummy::AggregationParam(0),
+        report_metadata_9.id(),
+        &measurement,
+    );
+    let report_share_9 = generate_helper_report_share::<dummy::Vdaf>(
+        *task.id(),
+        report_metadata_9,
+        hpke_keypair.config(),
+        &transcript_9.public_share,
+        Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        &transcript_9.helper_input_share,
+    );
+
+    let prepare_init_9 = PrepareInit::new(
+        report_share_9,
+        transcript_9.leader_prepare_transitions[0].message.clone(),
     );
 
     let mut batch_aggregations_results = Vec::new();
@@ -454,6 +521,8 @@ async fn aggregate_init() {
             prepare_init_5.clone(),
             prepare_init_6.clone(),
             prepare_init_7.clone(),
+            prepare_init_8.clone(),
+            prepare_init_9.clone(),
         ]),
     );
 
@@ -470,7 +539,7 @@ async fn aggregate_init() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_resps().len(), 8);
+        assert_eq!(aggregate_resp.prepare_resps().len(), 10);
 
         let prepare_step_0 = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
@@ -548,6 +617,26 @@ async fn aggregate_init() {
         );
         assert_eq!(
             prepare_step_7.result(),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let prepare_step_8 = aggregate_resp.prepare_resps().get(8).unwrap();
+        assert_eq!(
+            prepare_step_8.report_id(),
+            prepare_init_8.report_share().metadata().id()
+        );
+        assert_eq!(
+            prepare_step_8.result(),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let prepare_step_9 = aggregate_resp.prepare_resps().get(9).unwrap();
+        assert_eq!(
+            prepare_step_9.report_id(),
+            prepare_init_9.report_share().metadata().id()
+        );
+        assert_eq!(
+            prepare_step_9.result(),
             &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
