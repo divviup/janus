@@ -6,6 +6,7 @@
 use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use core::slice;
 use derivative::Derivative;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
@@ -1482,11 +1483,8 @@ impl Query<LeaderSelected> {
 
 impl<B: BatchMode> Encode for Query<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        let mut buf = Vec::new();
-        self.query_body.encode(&mut buf)?;
-
         B::CODE.encode(bytes)?;
-        encode_u16_items(bytes, &(), &buf)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.query_body))
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -1608,11 +1606,8 @@ impl PartialBatchSelector<LeaderSelected> {
 
 impl<B: BatchMode> Encode for PartialBatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        let mut buf = Vec::new();
-        self.batch_identifier.encode(&mut buf)?;
-
         B::CODE.encode(bytes)?;
-        encode_u16_items(bytes, &(), &buf)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.batch_identifier))
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -2567,11 +2562,8 @@ impl BatchSelector<LeaderSelected> {
 
 impl<B: BatchMode> Encode for BatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        let mut buf = Vec::new();
-        self.batch_identifier.encode(&mut buf)?;
-
         B::CODE.encode(bytes)?;
-        encode_u16_items(bytes, &(), &buf)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.batch_identifier))
     }
 
     fn encoded_len(&self) -> Option<usize> {
