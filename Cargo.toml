@@ -146,3 +146,6 @@ inherits = "dev"
 opt-level = "z"   # Optimize for size.
 debug = false     # Do not generate debug info.
 strip = true      # Strip symbols from binary.
+
+[patch.crates-io]
+instant = { path = "instant" }
