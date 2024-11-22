@@ -2,7 +2,7 @@
 use std::time::Duration;
 use std::time::SystemTime;
 
-use derivative::Derivative;
+use educe::Educe;
 use opentelemetry::{metrics::MetricsError, InstrumentationLibrary, KeyValue};
 #[cfg(tokio_unstable)]
 use opentelemetry_sdk::metrics::data::{Histogram, HistogramDataPoint, Sum, Temporality};
@@ -62,20 +62,20 @@ pub(crate) fn configure_runtime(
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub(super) struct TokioRuntimeMetrics {
     runtime_metrics: RuntimeMetrics,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     scope: InstrumentationLibrary,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     start_time: SystemTime,
 
     num_workers: usize,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_global_queue: Vec<KeyValue>,
 
     #[cfg(tokio_unstable)]
@@ -83,26 +83,26 @@ pub(super) struct TokioRuntimeMetrics {
 }
 
 #[cfg(tokio_unstable)]
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 struct UnstableTokioRuntimeMetrics {
     poll_time_histogram_num_buckets: usize,
 
     poll_time_histogram_bucket_bounds: Vec<f64>,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_local: Vec<KeyValue>,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_local_overflow: Vec<KeyValue>,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_remote: Vec<KeyValue>,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_local_queue_worker: Vec<Vec<KeyValue>>,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     attributes_blocking_queue: Vec<KeyValue>,
 }
 

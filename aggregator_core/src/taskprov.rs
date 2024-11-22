@@ -1,6 +1,6 @@
 use crate::{task::Error, SecretBytes};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId};
 use rand::{distributions::Standard, prelude::Distribution};
@@ -12,9 +12,9 @@ use serde::{
 use std::{fmt, str::FromStr, sync::OnceLock};
 use url::Url;
 
-#[derive(Derivative, Clone, Copy, PartialEq, Eq)]
-#[derivative(Debug)]
-pub struct VerifyKeyInit(#[derivative(Debug = "ignore")] [u8; Self::LEN]);
+#[derive(Educe, Clone, Copy, PartialEq, Eq)]
+#[educe(Debug)]
+pub struct VerifyKeyInit(#[educe(Debug(ignore))] [u8; Self::LEN]);
 
 impl VerifyKeyInit {
     pub const LEN: usize = 32;
@@ -92,12 +92,12 @@ impl FromStr for VerifyKeyInit {
 
 /// Represents another aggregator that is peered with our aggregator for taskprov purposes. Contains
 /// data that needs to be identical between both aggregators for the taskprov flow to work.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct PeerAggregator {
     /// The URL at which the peer aggregator can be reached. This, along with `role`, is used to
     /// uniquely represent the peer aggregator.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     endpoint: Url,
 
     /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or [`Role::Helper`].

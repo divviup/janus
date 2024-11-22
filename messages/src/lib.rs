@@ -7,7 +7,7 @@ use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use core::slice;
-use derivative::Derivative;
+use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
     codec::{
@@ -951,16 +951,16 @@ impl Decode for ExtensionType {
 }
 
 /// DAP protocol message representing an HPKE ciphertext.
-#[derive(Clone, Derivative, Eq, PartialEq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, Eq, PartialEq)]
+#[educe(Debug)]
 pub struct HpkeCiphertext {
     /// An identifier of the HPKE configuration used to seal the message.
     config_id: HpkeConfigId,
     /// An encapsulated HPKE key.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     encapsulated_key: Vec<u8>,
     /// An HPKE ciphertext.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     payload: Vec<u8>,
 }
 
@@ -1525,11 +1525,11 @@ impl<B: BatchMode> Decode for Query<B> {
 
 /// DAP protocol message representing a request from the collector to the leader to provide
 /// aggregate shares for a given batch.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct CollectionReq<B: BatchMode> {
     query: Query<B>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
 }
 
@@ -1933,11 +1933,11 @@ impl<B: BatchMode> Decode for AggregateShareAad<B> {
 }
 
 /// DAP protocol message representing one aggregator's share of a single client report.
-#[derive(Derivative, Clone, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Educe, Clone, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct ReportShare {
     metadata: ReportMetadata,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     public_share: Vec<u8>,
     encrypted_input_share: HpkeCiphertext,
 }
@@ -2102,11 +2102,11 @@ impl Decode for PrepareResp {
 
 /// DAP protocol message representing result-type-specific data associated with a preparation step
 /// in a VDAF evaluation. Included in a PrepareResp message.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub enum PrepareStepResult {
     Continue {
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         message: PingPongMessage,
     },
     Finished,
@@ -2302,10 +2302,10 @@ impl Distribution<AggregationJobId> for Standard {
 
 /// DAP protocol message representing an aggregation job initialization request from leader to
 /// helper.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct AggregationJobInitializeReq<B: BatchMode> {
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
     partial_batch_selector: PartialBatchSelector<B>,
     prepare_inits: Vec<PrepareInit>,
@@ -2605,11 +2605,11 @@ impl<B: BatchMode> Decode for BatchSelector<B> {
 
 /// DAP protocol message representing a request from the leader to a helper to provide an
 /// encrypted aggregate of its share of data for a given batch interval.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct AggregateShareReq<B: BatchMode> {
     batch_selector: BatchSelector<B>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
     report_count: u64,
     checksum: ReportIdChecksum,

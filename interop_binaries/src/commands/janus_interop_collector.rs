@@ -7,7 +7,7 @@ use anyhow::Context;
 use backoff::ExponentialBackoffBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
-use derivative::Derivative;
+use educe::Educe;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -42,11 +42,11 @@ use trillium::{Conn, Handler};
 use trillium_api::{api, Json, State};
 use trillium_router::Router;
 
-#[derive(Derivative, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, Deserialize)]
+#[educe(Debug)]
 struct AddTaskRequest {
     task_id: String,
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader: Url,
     vdaf: VdafObject,
     collector_authentication_token: String,

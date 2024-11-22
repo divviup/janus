@@ -42,7 +42,7 @@
 use backoff::ExponentialBackoff;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
-use derivative::Derivative;
+use educe::Educe;
 #[cfg(feature = "ohttp")]
 use http::{header::ACCEPT, HeaderValue};
 use http::{header::CONTENT_TYPE, StatusCode};
@@ -136,16 +136,16 @@ const OHTTP_REQUEST_MEDIA_TYPE: &str = "message/ohttp-req";
 const OHTTP_RESPONSE_MEDIA_TYPE: &str = "message/ohttp-res";
 
 /// The DAP client's view of task parameters.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 struct ClientParameters {
     /// Unique identifier for the task.
     task_id: TaskId,
     /// URL relative to which the Leader's API endpoints are found.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader_aggregator_endpoint: Url,
     /// URL relative to which the Helper's API endpoints are found.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     helper_aggregator_endpoint: Url,
     /// The time precision of the task. This value is shared by all parties in the protocol, and is
     /// used to compute report timestamps.

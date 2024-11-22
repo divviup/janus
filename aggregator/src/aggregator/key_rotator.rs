@@ -2,7 +2,7 @@
 use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
 use crate::cache::HpkeKeypairCache;
 use anyhow::{anyhow, Error};
-use derivative::Derivative;
+use educe::Educe;
 use futures::{future::try_join_all, FutureExt};
 use janus_aggregator_core::datastore::{
     models::{HpkeKeyState, HpkeKeypair},
@@ -153,14 +153,14 @@ fn duration_since<C: Clock>(clock: &C, time: &Time) -> Duration {
 }
 
 /// In-memory representation of the `hpke_keys` table.
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 struct HpkeKeyRotator<'a, C: Clock> {
     clock: C,
     config: &'a HpkeKeyRotatorConfig,
 
     // Data structures for intermediate state.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     available_ids: Box<dyn Iterator<Item = HpkeConfigId> + Send + Sync>,
     keypairs: HashMap<HpkeConfigId, HpkeKeypair>,
     initially_empty: bool,
