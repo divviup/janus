@@ -14,7 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use derivative::Derivative;
+use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
@@ -240,9 +240,9 @@ impl BinaryOptions for Options {
 }
 
 /// Options for serving the aggregator API.
-#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Educe, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[derivative(Debug)]
+#[educe(Debug)]
 pub struct AggregatorApi {
     /// Address on which this server should listen for connections to the Janus aggregator API
     /// and serve its API endpoints, independently from the address on which the DAP API is
@@ -256,7 +256,7 @@ pub struct AggregatorApi {
     pub path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub public_dap_url: Url,
 }
 

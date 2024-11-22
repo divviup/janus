@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
-use derivative::Derivative;
+use educe::Educe;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     types::extra::{U15, U31},
@@ -54,13 +54,13 @@ where
     )
 }
 
-#[derive(Derivative, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, Deserialize)]
+#[educe(Debug)]
 struct UploadRequest {
     task_id: String,
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader: Url,
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     helper: Url,
     vdaf: VdafObject,
     measurement: serde_json::Value,

@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use janus_aggregator_core::task::{test_util::Task, QueryType};
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -281,13 +281,13 @@ impl From<AggregatorRole> for Role {
     }
 }
 
-#[derive(Derivative, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, Serialize, Deserialize)]
+#[educe(Debug)]
 pub struct AggregatorAddTaskRequest {
     pub task_id: TaskId, // uses unpadded base64url
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub leader: Url,
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub helper: Url,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,

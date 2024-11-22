@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use janus_aggregator_core::{
     datastore::models::{
         GlobalHpkeKeypair, HpkeKeyState, TaskAggregationCounter, TaskUploadCounter,
@@ -27,11 +27,11 @@ pub(crate) enum AggregatorRole {
     Helper,
 }
 
-#[derive(Serialize, PartialEq, Eq, Derivative)]
-#[derivative(Debug)]
+#[derive(Serialize, PartialEq, Eq, Educe)]
+#[educe(Debug)]
 pub(crate) struct AggregatorApiConfig {
     pub protocol: &'static str,
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub dap_url: Url,
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
@@ -58,12 +58,12 @@ pub(crate) struct GetTaskIdsResp {
     pub(crate) pagination_token: Option<TaskId>,
 }
 
-#[derive(Derivative, PartialEq, Eq, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, PartialEq, Eq, Serialize, Deserialize)]
+#[educe(Debug)]
 pub(crate) struct PostTaskReq {
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub(crate) peer_aggregator_endpoint: Url,
     /// DAP query type for this task.
     pub(crate) query_type: QueryType,
@@ -100,14 +100,14 @@ pub(crate) struct PatchTaskReq {
     pub(crate) task_expiration: Option<Option<Time>>,
 }
 
-#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq, Serialize, Deserialize)]
+#[educe(Debug)]
 pub(crate) struct TaskResp {
     /// ID of the DAP Task.
     pub(crate) task_id: TaskId,
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub(crate) peer_aggregator_endpoint: Url,
     /// DAP query type for this task.
     pub(crate) query_type: QueryType,
@@ -209,10 +209,10 @@ pub(crate) struct PatchGlobalHpkeConfigReq {
     pub(crate) state: HpkeKeyState,
 }
 
-#[derive(Derivative, PartialEq, Eq, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, PartialEq, Eq, Serialize, Deserialize)]
+#[educe(Debug)]
 pub(crate) struct TaskprovPeerAggregatorResp {
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     pub(crate) endpoint: Url,
     pub(crate) role: Role,
     pub(crate) collector_hpke_config: HpkeConfig,

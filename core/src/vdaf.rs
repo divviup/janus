@@ -1,4 +1,3 @@
-use derivative::Derivative;
 use janus_messages::taskprov;
 use prio::{
     field::Field64,
@@ -25,7 +24,7 @@ pub const VERIFY_KEY_LENGTH_HMACSHA256_AES128: usize = 32;
 
 /// Bitsize parameter for the `Prio3FixedPointBoundedL2VecSum` VDAF.
 #[cfg(feature = "fpvec_bounded_l2")]
-#[derive(Debug, Derivative, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Prio3FixedPointBoundedL2VecSumBitSize {
     BitSize16,
     BitSize32,
@@ -91,8 +90,7 @@ pub mod vdaf_dp_strategies {
 /// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
-#[derive(Derivative, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum VdafInstance {
     /// A `Prio3` counter.

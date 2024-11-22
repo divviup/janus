@@ -1,6 +1,6 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
     HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
@@ -90,9 +90,9 @@ impl HpkeApplicationInfo {
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as
 /// described in RFC 9180, §4 and §7.1.2.
 // TODO(#230): refactor HpkePrivateKey to simplify usage
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
-pub struct HpkePrivateKey(#[derivative(Debug = "ignore")] Vec<u8>);
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
+pub struct HpkePrivateKey(#[educe(Debug(ignore))] Vec<u8>);
 
 impl HpkePrivateKey {
     /// Construct a private key from its serialized form.

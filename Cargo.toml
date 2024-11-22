@@ -39,8 +39,8 @@ clap = { version = "4.5.21", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.4.1"
 deadpool = "0.12.1"
 deadpool-postgres = "0.14.0"
-derivative = "2.2.0"
 divviup-client = "0.4"
+educe = { version = "0.6.0", default-features = false, features = ["Debug"] }
 fixed = "1.28"
 futures = "0.3.31"
 git-version = "0.3.9"
