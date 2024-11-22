@@ -8,7 +8,7 @@ use crate::aggregator::{
 use anyhow::bail;
 use backoff::backoff::Backoff;
 use bytes::Bytes;
-use derivative::Derivative;
+use educe::Educe;
 use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
     datastore::{
@@ -42,13 +42,13 @@ use tokio::try_join;
 use tracing::{error, info, warn};
 
 /// Drives a collection job.
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct CollectionJobDriver<B> {
     // Dependencies.
     http_client: reqwest::Client,
     backoff: B,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     metrics: CollectionJobDriverMetrics,
 
     // Configuration.

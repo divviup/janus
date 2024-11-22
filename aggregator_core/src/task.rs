@@ -2,7 +2,7 @@
 
 use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::TimeExt,
@@ -64,9 +64,9 @@ impl TryFrom<&taskprov::Query> for BatchMode {
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
 /// maintain robustness, and it must be shared between aggregators.
-#[derive(Derivative, Clone, Copy)]
-#[derivative(Debug)]
-pub struct VerifyKey<const SEED_SIZE: usize>(#[derivative(Debug = "ignore")] [u8; SEED_SIZE]);
+#[derive(Educe, Clone, Copy)]
+#[educe(Debug)]
+pub struct VerifyKey<const SEED_SIZE: usize>(#[educe(Debug(ignore))] [u8; SEED_SIZE]);
 
 impl<const SEED_SIZE: usize> VerifyKey<SEED_SIZE> {
     pub fn new(array: [u8; SEED_SIZE]) -> VerifyKey<SEED_SIZE> {
@@ -88,8 +88,7 @@ impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
 }
 
 /// Task parameters common to all views of a DAP task.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CommonTaskParameters {
     /// Unique identifier for the task.
     task_id: TaskId,
@@ -206,13 +205,13 @@ impl CommonTaskParameters {
 }
 
 /// An aggregator's view of the task's parameters.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub struct AggregatorTask {
     /// Common task parameters
     common_parameters: CommonTaskParameters,
     /// URL relative to which the peer aggregator's API endpoints are found.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     peer_aggregator_endpoint: Url,
     /// Parameters specific to either aggregator role
     aggregator_parameters: AggregatorTaskParameters,
@@ -470,8 +469,8 @@ impl AggregatorTask {
 }
 
 /// Role-specific task parameters for the aggregator DAP roles.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq)]
+#[educe(Debug)]
 pub enum AggregatorTaskParameters {
     /// Task parameters held exclusively by the DAP leader.
     Leader {
@@ -720,7 +719,7 @@ pub mod test_util {
         },
         SecretBytes,
     };
-    use derivative::Derivative;
+    use educe::Educe;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::HpkeKeypair,
@@ -736,16 +735,16 @@ pub mod test_util {
     use url::Url;
 
     /// All parameters and secrets for a task, for all participants.
-    #[derive(Clone, Derivative, PartialEq, Eq)]
-    #[derivative(Debug)]
+    #[derive(Clone, Educe, PartialEq, Eq)]
+    #[educe(Debug)]
     pub struct Task {
         /// Common task parameters
         common_parameters: CommonTaskParameters,
         /// URL relative to which the leader aggregator's API endpoints are found.
-        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+        #[educe(Debug(method(std::fmt::Display::fmt)))]
         leader_aggregator_endpoint: Url,
         /// URL relative to which the leader aggregator's API endpoints are found.
-        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+        #[educe(Debug(method(std::fmt::Display::fmt)))]
         helper_aggregator_endpoint: Url,
         /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
         collector_hpke_keypair: HpkeKeypair,

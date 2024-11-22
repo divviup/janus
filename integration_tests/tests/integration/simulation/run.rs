@@ -6,7 +6,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
-use derivative::Derivative;
+use educe::Educe;
 use futures::future::join_all;
 use janus_aggregator::aggregator;
 use janus_aggregator_core::{
@@ -498,13 +498,13 @@ impl Simulation {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub(super) struct State {
     pub(super) stopper: Stopper,
     pub(super) clock: MockClock,
     pub(super) meter: Meter,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     pub(super) runtime_manager: TestRuntimeManager<&'static str>,
     pub(super) vdaf_instance: VdafInstance,
     pub(super) vdaf: Prio3Histogram,

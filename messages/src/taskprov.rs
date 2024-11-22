@@ -4,7 +4,6 @@
 
 use crate::{Duration, Error, Time, Url};
 use anyhow::anyhow;
-use derivative::Derivative;
 use prio::codec::{
     decode_u16_items, decode_u8_items, encode_u16_items, encode_u8_items, CodecError, Decode,
     Encode,
@@ -288,8 +287,7 @@ impl Decode for VdafConfig {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Derivative)]
-#[derivative(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u32)]
 #[non_exhaustive]
 pub enum VdafType {

@@ -46,8 +46,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
-derivative.workspace = true
 divviup-client = { workspace = true, features = ["admin"] }
+educe.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 opentelemetry.workspace = true
 quickcheck.workspace = true

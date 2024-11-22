@@ -1478,6 +1478,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56ce8c6da7551ec6c462cbaf3bfbc75131ebbfa1c944aeaa9dab51ca1c5f0c3b"
 
 [[package]]
+name = "educe"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d7bc049e1bd8cdeb31b68bbd586a9464ecf9f3944af3958a7a9d0f8b9799417"
+dependencies = [
+ "enum-ordinalize",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
 name = "either"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1521,6 +1533,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7268b386296a025e474d5140678f75d6de9493ae55a5d709eeb9dd08149945e1"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "enum-ordinalize"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fea0dcfa4e54eeb516fe454635a95753ddd39acda650ce703031c6973e315dd5"
+dependencies = [
+ "enum-ordinalize-derive",
+]
+
+[[package]]
+name = "enum-ordinalize-derive"
+version = "4.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d28318a75d4aead5c4db25382e8ef717932d0346600cacae6357eb5941bc5ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -2552,7 +2584,7 @@ dependencies = [
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
- "derivative",
+ "educe",
  "fixed",
  "futures",
  "hex",
@@ -2631,7 +2663,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64 0.22.1",
- "derivative",
+ "educe",
  "futures",
  "git-version",
  "janus_aggregator_core",
@@ -2670,7 +2702,7 @@ dependencies = [
  "clap",
  "deadpool",
  "deadpool-postgres",
- "derivative",
+ "educe",
  "futures",
  "hex",
  "http",
@@ -2717,7 +2749,7 @@ dependencies = [
  "assert_matches",
  "backoff",
  "bhttp",
- "derivative",
+ "educe",
  "hex-literal",
  "http",
  "itertools 0.13.0",
@@ -2744,7 +2776,7 @@ dependencies = [
  "backoff",
  "base64 0.22.1",
  "chrono",
- "derivative",
+ "educe",
  "fixed",
  "hpke-dispatch",
  "janus_collector",
@@ -2775,7 +2807,7 @@ dependencies = [
  "chrono",
  "clap",
  "constcat",
- "derivative",
+ "educe",
  "fixed",
  "futures",
  "hex",
@@ -2823,8 +2855,8 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "derivative",
  "divviup-client",
+ "educe",
  "futures",
  "hex",
  "http",
@@ -2867,7 +2899,7 @@ dependencies = [
  "backoff",
  "base64 0.22.1",
  "clap",
- "derivative",
+ "educe",
  "fixed",
  "futures",
  "hex",
@@ -2923,7 +2955,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base64 0.22.1",
- "derivative",
+ "educe",
  "hex",
  "num_enum",
  "pretty_assertions",
@@ -2944,7 +2976,6 @@ dependencies = [
  "base64 0.22.1",
  "cfg-if",
  "clap",
- "derivative",
  "fixed",
  "janus_collector",
  "janus_core",

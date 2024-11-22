@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use derivative::Derivative;
+use educe::Educe;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
 use regex::Regex;
@@ -19,8 +19,7 @@ pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 /// Different modes of authentication supported by Janus for either sending requests (e.g., leader
 /// to helper) or receiving them (e.g., collector to leader).
-#[derive(Clone, Derivative, Serialize, Deserialize, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "token")]
 #[non_exhaustive]
 pub enum AuthenticationToken {
@@ -129,10 +128,10 @@ impl Distribution<AuthenticationToken> for Standard {
 ///
 /// This opaque type ensures it's impossible to construct an [`AuthenticationToken`] whose contents
 /// are invalid.
-#[derive(Clone, Derivative, Serialize)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, Serialize)]
+#[educe(Debug)]
 #[serde(transparent)]
-pub struct DapAuthToken(#[derivative(Debug = "ignore")] String);
+pub struct DapAuthToken(#[educe(Debug(ignore))] String);
 
 impl DapAuthToken {
     /// Returns the token as a string.
@@ -228,10 +227,10 @@ impl Distribution<DapAuthToken> for Standard {
 ///
 /// This opaque type ensures it's impossible to construct an [`AuthenticationToken`] whose contents
 /// are invalid.
-#[derive(Clone, Derivative, Serialize)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, Serialize)]
+#[educe(Debug)]
 #[serde(transparent)]
-pub struct BearerToken(#[derivative(Debug = "ignore")] String);
+pub struct BearerToken(#[educe(Debug(ignore))] String);
 
 impl BearerToken {
     /// Returns the token as a string.
@@ -328,8 +327,8 @@ impl Distribution<BearerToken> for Standard {
 
 /// The hash of an authentication token, which may be used to validate tokens in incoming requests
 /// but not to authenticate outgoing requests.
-#[derive(Clone, Derivative, Deserialize, Serialize, Eq)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, Deserialize, Serialize, Eq)]
+#[educe(Debug)]
 #[serde(tag = "type", content = "hash")]
 #[non_exhaustive]
 pub enum AuthenticationTokenHash {
@@ -340,7 +339,7 @@ pub enum AuthenticationTokenHash {
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
     Bearer(
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         #[serde(
             serialize_with = "AuthenticationTokenHash::serialize_contents",
             deserialize_with = "AuthenticationTokenHash::deserialize_contents"
@@ -357,7 +356,7 @@ pub enum AuthenticationTokenHash {
     /// [3]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.4.2
     /// [4]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
     DapAuth(
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         #[serde(
             serialize_with = "AuthenticationTokenHash::serialize_contents",
             deserialize_with = "AuthenticationTokenHash::deserialize_contents"

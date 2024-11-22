@@ -19,7 +19,7 @@ ohttp = ["dep:ohttp", "dep:bhttp"]
 [dependencies]
 backoff = { workspace = true, features = ["tokio"] }
 bhttp = { workspace = true, features = ["bhttp", "http"], optional = true }
-derivative.workspace = true
+educe.workspace = true
 http.workspace = true
 itertools.workspace = true
 janus_core.workspace = true

@@ -1,4 +1,3 @@
-use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::traits::Fixed;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -33,7 +32,7 @@ impl DifferentialPrivacyDistribution for NoDistribution {}
 
 /// A "no-op" differential privacy strategy. Tasks which don't require differential privacy should
 /// use this type as their `DifferentialPrivacyStrategy`.
-#[derive(Debug, Derivative, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NoDifferentialPrivacy;
 impl DifferentialPrivacyStrategy for NoDifferentialPrivacy {
     type Budget = NoBudget;

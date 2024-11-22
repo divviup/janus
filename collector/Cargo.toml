@@ -20,7 +20,7 @@ test-util = []
 [dependencies]
 backoff = { workspace = true, features = ["tokio"] }
 chrono.workspace = true
-derivative.workspace = true
+educe.workspace = true
 fixed = { workspace = true, optional = true }
 hpke-dispatch = { workspace = true, features = ["serde"] }
 janus_core.workspace = true

@@ -2,7 +2,7 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
-use derivative::Derivative;
+use educe::Educe;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
@@ -77,12 +77,12 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 }
 
 /// Configuration for a Janus server using a database.
-#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Clone, Educe, PartialEq, Eq, Serialize, Deserialize)]
+#[educe(Debug)]
 #[serde(deny_unknown_fields)]
 pub struct DbConfig {
     /// URL at which to connect to the database.
-    #[derivative(Debug(format_with = "format_database_url"))]
+    #[educe(Debug(method(format_database_url)))]
     pub url: Url,
 
     /// Timeout in seconds to apply when creating, waiting for, or recycling

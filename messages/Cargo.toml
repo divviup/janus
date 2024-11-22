@@ -15,7 +15,7 @@ test-util = []
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-derivative.workspace = true
+educe.workspace = true
 hex = { workspace = true }
 num_enum = { workspace = true }
 # Make sure not to enable default-features on prio, as we want clients to be
