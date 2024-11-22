@@ -154,7 +154,7 @@ where
 
         let time_precision = Duration::from_seconds(1);
         let min_batch_size = 1;
-        let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
+        let task_end = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -164,7 +164,7 @@ where
                 min_batch_size,
                 TaskprovQuery::LeaderSelected,
             ),
-            task_expiration,
+            task_end,
             vdaf_config,
         )
         .unwrap();
@@ -185,7 +185,7 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_expiration(Some(task_expiration))
+        .with_task_end(Some(task_end))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(Duration::from_seconds(1))
@@ -560,7 +560,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
 }
 
 #[tokio::test]
-async fn taskprov_opt_out_task_expired() {
+async fn taskprov_opt_out_task_ended() {
     let test = TaskprovTestCase::new().await;
 
     let (transcript, report_share, _) = test.next_report_share();
@@ -582,7 +582,7 @@ async fn taskprov_opt_out_task_expired() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
-    // Advance clock past task expiry.
+    // Advance clock past task end time.
     test.clock.advance(&Duration::from_hours(48).unwrap());
 
     let mut test_conn = put(test
@@ -631,7 +631,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_expiration = test
+    let task_end = test
         .clock
         .now()
         .add(&Duration::from_hours(24).unwrap())
@@ -646,7 +646,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
             100,
             TaskprovQuery::LeaderSelected,
         ),
-        task_expiration,
+        task_end,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
             VdafType::Fake { rounds: 2 },
@@ -708,7 +708,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_expiration = test
+    let task_end = test
         .clock
         .now()
         .add(&Duration::from_hours(24).unwrap())
@@ -723,7 +723,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
             100,
             TaskprovQuery::LeaderSelected,
         ),
-        task_expiration,
+        task_end,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
             VdafType::Fake { rounds: 2 },
@@ -786,7 +786,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let task_expiration = test
+    let task_end = test
         .clock
         .now()
         .add(&Duration::from_hours(24).unwrap())
@@ -801,7 +801,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             100,
             TaskprovQuery::LeaderSelected,
         ),
-        task_expiration,
+        task_end,
         VdafConfig::new(
             DpConfig::new(DpMechanism::None),
             VdafType::Fake { rounds: 2 },

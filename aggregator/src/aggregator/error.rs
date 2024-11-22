@@ -225,10 +225,11 @@ pub enum ReportRejectionReason {
     IntervalCollected,
     DecryptFailure,
     DecodeFailure,
-    TaskExpired,
+    TaskEnded,
     Expired,
     TooEarly,
     OutdatedHpkeConfig(HpkeConfigId),
+    TaskNotStarted,
 }
 
 impl ReportRejectionReason {
@@ -239,12 +240,13 @@ impl ReportRejectionReason {
             }
             ReportRejectionReason::DecryptFailure => "Report share could not be decrypted.",
             ReportRejectionReason::DecodeFailure => "Report could not be decoded.",
-            ReportRejectionReason::TaskExpired => "Task has expired.",
+            ReportRejectionReason::TaskEnded => "Task has ended.",
             ReportRejectionReason::Expired => "Report timestamp is too old.",
             ReportRejectionReason::TooEarly => "Report timestamp is too far in the future.",
             ReportRejectionReason::OutdatedHpkeConfig(_) => {
                 "Report is using an outdated HPKE configuration."
             }
+            ReportRejectionReason::TaskNotStarted => "Task has not started.",
         }
     }
 }
@@ -260,8 +262,8 @@ impl Display for ReportRejectionReason {
 pub enum OptOutReason {
     #[error("this aggregator is not peered with the given {0} aggregator")]
     NoSuchPeer(Role),
-    #[error("task has expired")]
-    TaskExpired,
+    #[error("task has ended")]
+    TaskEnded,
     #[error("invalid task: {0}")]
     TaskParameters(#[from] task::Error),
     #[error("URL parse error: {0}")]

@@ -167,7 +167,9 @@ async fn upload() {
 
     assert_eq!(
         got_counter,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 1, 0, 0, 0
+        ))
     )
 }
 
@@ -230,7 +232,9 @@ async fn upload_batch() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 100, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 100, 0, 0, 0
+        ))
     );
 }
 
@@ -297,7 +301,9 @@ async fn upload_wrong_hpke_config_id() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 1, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 1, 0, 0, 0, 0
+        ))
     )
 }
 
@@ -344,7 +350,9 @@ async fn upload_report_in_the_future_boundary_condition() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 1, 0, 0, 0
+        ))
     )
 }
 
@@ -400,7 +408,9 @@ async fn upload_report_in_the_future_past_clock_skew() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 1, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 1, 0, 0
+        ))
     )
 }
 
@@ -481,12 +491,14 @@ async fn upload_report_for_collected_batch() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(1, 0, 0, 0, 0, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            1, 0, 0, 0, 0, 0, 0, 0, 0
+        ))
     )
 }
 
 #[tokio::test]
-async fn upload_report_task_expired() {
+async fn upload_report_task_not_started() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {
         aggregator,
@@ -501,15 +513,16 @@ async fn upload_report_task_expired() {
     )
     .await;
 
+    // Set the task start time to the future, and generate & upload a report from before that time.
     let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
-        .with_task_expiration(Some(clock.now()))
+        .with_task_start(Some(
+            clock.now().add(&Duration::from_seconds(3600)).unwrap(),
+        ))
         .build()
         .leader_view()
         .unwrap();
     datastore.put_aggregator_task(&task).await.unwrap();
 
-    // Advance the clock to expire the task.
-    clock.advance(&Duration::from_seconds(1));
     let report = create_report(&task, &hpke_keypair, clock.now());
 
     // Try to upload the report, verify that we get the expected error.
@@ -523,7 +536,7 @@ async fn upload_report_task_expired() {
             assert_eq!(task.id(), rejection.task_id());
             assert_eq!(report.metadata().id(), rejection.report_id());
             assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::TaskExpired);
+            assert_matches!(rejection.reason(), ReportRejectionReason::TaskNotStarted);
         }
     );
 
@@ -541,7 +554,71 @@ async fn upload_report_task_expired() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 1))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 0, 1, 0
+        ))
+    )
+}
+
+#[tokio::test]
+async fn upload_report_task_ended() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
+        .with_task_end(Some(clock.now()))
+        .build()
+        .leader_view()
+        .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Advance the clock to end the task.
+    clock.advance(&Duration::from_seconds(1));
+    let report = create_report(&task, &hpke_keypair, clock.now());
+
+    // Try to upload the report, verify that we get the expected error.
+    let error = aggregator
+        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.as_ref(),
+        Error::ReportRejected(rejection) => {
+            assert_eq!(task.id(), rejection.task_id());
+            assert_eq!(report.metadata().id(), rejection.report_id());
+            assert_eq!(report.metadata().time(), rejection.time());
+            assert_matches!(rejection.reason(), ReportRejectionReason::TaskEnded);
+        }
+    );
+
+    // Wait for the report writer to have completed one write task.
+    runtime_manager
+        .wait_for_completed_tasks("aggregator", 1)
+        .await;
+
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 0, 0, 1
+        ))
     )
 }
 
@@ -602,7 +679,9 @@ async fn upload_report_report_expired() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 0, 1, 0, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 1, 0, 0, 0, 0, 0
+        ))
     )
 }
 
@@ -662,7 +741,9 @@ async fn upload_report_faulty_encryption() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 0, 1, 0, 0, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 1, 0, 0, 0, 0, 0, 0
+        ))
     )
 }
 
@@ -723,7 +804,9 @@ async fn upload_report_public_share_decode_failure() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 1, 0, 0, 0, 0, 0, 0, 0
+        ))
     )
 }
 
@@ -798,6 +881,8 @@ async fn upload_report_leader_input_share_decode_failure() {
         .unwrap();
     assert_eq!(
         got_counters,
-        Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
+        Some(TaskUploadCounter::new_with_values(
+            0, 1, 0, 0, 0, 0, 0, 0, 0
+        ))
     )
 }

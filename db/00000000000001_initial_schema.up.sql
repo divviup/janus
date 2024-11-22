@@ -98,7 +98,8 @@ CREATE TABLE tasks(
     peer_aggregator_endpoint    TEXT NOT NULL,             -- peer aggregator's API endpoint
     batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
-    task_expiration             TIMESTAMP,                 -- the time after which client reports are no longer accepted
+    task_start                  TIMESTAMP,                 -- the time before which client reports are not accepted
+    task_end                    TIMESTAMP,                 -- the time after which client reports are no longer accepted
     report_expiry_age           BIGINT,                    -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     min_batch_size              BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision              BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
@@ -149,17 +150,17 @@ CREATE INDEX task_id_index ON tasks(task_id);
 CREATE TABLE task_upload_counters(
     id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                BIGINT NOT NULL,
+    ord                    BIGINT NOT NULL,           -- Index of this task_upload_counters shard.s
 
-    interval_collected     BIGINT NOT NULL DEFAULT 0, -- Reports submitted for an interval that was already collected.
-    report_decode_failure  BIGINT NOT NULL DEFAULT 0, -- Reports which failed to decode.
-    report_decrypt_failure BIGINT NOT NULL DEFAULT 0, -- Reports which failed to decrypt.
-    report_expired         BIGINT NOT NULL DEFAULT 0, -- Reports that were older than the task's report_expiry_age.
-    report_outdated_key    BIGINT NOT NULL DEFAULT 0, -- Reports that were encrypted with an unknown or outdated HPKE key.
-    report_success         BIGINT NOT NULL DEFAULT 0, -- Reports that were successfully uploaded.
-    report_too_early       BIGINT NOT NULL DEFAULT 0, -- Reports whose timestamp is too far in the future.
-    task_expired           BIGINT NOT NULL DEFAULT 0, -- Reports sent to the task while it is expired.
-
-    ord                    BIGINT NOT NULL,           -- Index of this task_upload_counters shard.
+    interval_collected     BIGINT NOT NULL DEFAULT 0, -- reports submitted for an interval that was already collected.
+    report_decode_failure  BIGINT NOT NULL DEFAULT 0, -- reports which failed to decode.
+    report_decrypt_failure BIGINT NOT NULL DEFAULT 0, -- reports which failed to decrypt.
+    report_expired         BIGINT NOT NULL DEFAULT 0, -- reports that were older than the task's report_expiry_age.
+    report_outdated_key    BIGINT NOT NULL DEFAULT 0, -- reports that were encrypted with an unknown or outdated HPKE key.
+    report_success         BIGINT NOT NULL DEFAULT 0, -- reports that were successfully uploaded.
+    report_too_early       BIGINT NOT NULL DEFAULT 0, -- reports whose timestamp is too far in the future.
+    task_not_started       BIGINT NOT NULL DEFAULT 0, -- reports sent to the task before it started.
+    task_ended             BIGINT NOT NULL DEFAULT 0, -- reports sent to the task after it ended.
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT task_upload_counters_unique UNIQUE(task_id, ord)

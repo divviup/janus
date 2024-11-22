@@ -280,6 +280,7 @@ fn roundtrip_report_share_error() {
         (ReportError::TaskExpired, "07"),
         (ReportError::InvalidMessage, "08"),
         (ReportError::ReportTooEarly, "09"),
+        (ReportError::TaskNotStarted, "0A"),
     ])
 }
 

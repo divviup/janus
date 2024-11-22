@@ -196,6 +196,8 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ),
     ] {
         let task = TaskBuilder::new(task::BatchMode::TimeInterval, vdaf)
+            .with_task_start(Some(Time::from_seconds_since_epoch(1000)))
+            .with_task_end(Some(Time::from_seconds_since_epoch(4000)))
             .with_report_expiry_age(Some(Duration::from_seconds(3600)))
             .build()
             .view_for_role(role)
@@ -289,12 +291,12 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn update_task_expiration(ephemeral_datastore: EphemeralDatastore) {
+async fn update_task_end(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let task = TaskBuilder::new(task::BatchMode::TimeInterval, VdafInstance::Prio3Count)
-        .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
+        .with_task_end(Some(Time::from_seconds_since_epoch(1000)))
         .build()
         .leader_view()
         .unwrap();
@@ -305,27 +307,27 @@ async fn update_task_expiration(ephemeral_datastore: EphemeralDatastore) {
         Box::pin(async move {
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
             assert_eq!(
-                task.task_expiration().cloned(),
+                task.task_end().cloned(),
                 Some(Time::from_seconds_since_epoch(1000))
             );
 
-            tx.update_task_expiration(&task_id, Some(&Time::from_seconds_since_epoch(2000)))
+            tx.update_task_end(&task_id, Some(&Time::from_seconds_since_epoch(2000)))
                 .await
                 .unwrap();
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
             assert_eq!(
-                task.task_expiration().cloned(),
+                task.task_end().cloned(),
                 Some(Time::from_seconds_since_epoch(2000))
             );
 
-            tx.update_task_expiration(&task_id, None).await.unwrap();
+            tx.update_task_end(&task_id, None).await.unwrap();
 
             let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
-            assert_eq!(task.task_expiration().cloned(), None);
+            assert_eq!(task.task_end().cloned(), None);
 
             let result = tx
-                .update_task_expiration(&random(), Some(&Time::from_seconds_since_epoch(2000)))
+                .update_task_end(&random(), Some(&Time::from_seconds_since_epoch(2000)))
                 .await;
             assert_matches!(result, Err(Error::MutationTargetNotFound));
 
@@ -7472,7 +7474,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 tx.increment_task_upload_counter(
                     &task_id,
                     ord,
-                    &TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 12),
+                    &TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 22, 12),
                 )
                 .await
                 .unwrap();
@@ -7481,7 +7483,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 tx.increment_task_upload_counter(
                     &task_id,
                     ord,
-                    &TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 8),
+                    &TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 0, 8),
                 )
                 .await
                 .unwrap();
@@ -7502,7 +7504,8 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                         report_outdated_key: 10,
                         report_success: 100,
                         report_too_early: 25,
-                        task_expired: 20,
+                        task_not_started: 22,
+                        task_ended: 20,
                     })
                 );
 

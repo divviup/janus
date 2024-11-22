@@ -192,7 +192,8 @@ async fn post_task_bad_role() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Collector,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: Some(Time::from_seconds_since_epoch(12340)),
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -225,7 +226,8 @@ async fn post_task_unauthorized() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: None,
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -259,7 +261,8 @@ async fn post_task_helper_no_optional_fields() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: None,
+        task_end: None,
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -308,7 +311,7 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(&req.batch_mode, got_task.batch_mode());
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
-    assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
+    assert_eq!(req.task_end.as_ref(), got_task.task_end());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
     assert!(got_task.aggregator_auth_token().is_none());
@@ -339,7 +342,8 @@ async fn post_task_helper_with_aggregator_auth_token() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: None,
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -374,12 +378,12 @@ async fn post_task_idempotence() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: Some(Time::from_seconds_since_epoch(12340)),
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
-
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
 
@@ -448,7 +452,8 @@ async fn post_task_leader_all_optional_fields() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: None,
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -491,7 +496,7 @@ async fn post_task_leader_all_optional_fields() {
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
     assert_eq!(&vdaf_verify_key, got_task.opaque_vdaf_verify_key());
-    assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
+    assert_eq!(req.task_end.as_ref(), got_task.task_end());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
     assert_eq!(
@@ -526,7 +531,8 @@ async fn post_task_leader_no_aggregator_auth_token() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+        task_start: Some(Time::from_seconds_since_epoch(12340)),
+        task_end: Some(Time::from_seconds_since_epoch(12345)),
         min_batch_size: 223,
         time_precision: Duration::from_seconds(62),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -686,7 +692,7 @@ async fn patch_task(#[case] role: Role) {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 })
-        .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
+        .with_task_end(Some(Time::from_seconds_since_epoch(1000)))
         .build()
         .view_for_role(role)
         .unwrap();
@@ -718,15 +724,15 @@ async fn patch_task(#[case] role: Role) {
         .await
         .unwrap();
     assert_eq!(
-        task.unwrap().task_expiration(),
+        task.unwrap().task_end(),
         Some(&Time::from_seconds_since_epoch(1000))
     );
 
-    // Verify: patching the task with a null task expiration returns the expected result.
+    // Verify: patching the task with a null task end time returns the expected result.
     let mut conn = patch(format!("/tasks/{}", task_id))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body(r#"{"task_expiration": null}"#)
+        .with_request_body(r#"{"task_end": null}"#)
         .run_async(&handler)
         .await;
     assert_status!(conn, Status::Ok);
@@ -739,19 +745,19 @@ async fn patch_task(#[case] role: Role) {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(got_task_resp.task_expiration, None);
+    assert_eq!(got_task_resp.task_end, None);
     let task = ds
         .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
         .await
         .unwrap();
-    assert_eq!(task.unwrap().task_expiration(), None);
+    assert_eq!(task.unwrap().task_end(), None);
 
-    // Verify: patching the task with a task expiration returns the expected result.
+    // Verify: patching the task with a task end time returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000));
     let mut conn = patch(format!("/tasks/{}", task_id))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body(r#"{"task_expiration": 2000}"#)
+        .with_request_body(r#"{"task_end": 2000}"#)
         .run_async(&handler)
         .await;
     assert_status!(conn, Status::Ok);
@@ -764,12 +770,12 @@ async fn patch_task(#[case] role: Role) {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(got_task_resp.task_expiration, expected_time);
+    assert_eq!(got_task_resp.task_end, expected_time);
     let task = ds
         .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
         .await
         .unwrap();
-    assert_eq!(task.unwrap().task_expiration(), expected_time.as_ref());
+    assert_eq!(task.unwrap().task_end(), expected_time.as_ref());
 
     // Verify: patching a nonexistent task returns NotFound.
     assert_response!(
@@ -832,7 +838,7 @@ async fn get_task_upload_metrics() {
             tx.increment_task_upload_counter(
                 &task_id,
                 1,
-                &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12),
+                &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12),
             )
             .await
         })
@@ -847,7 +853,7 @@ async fn get_task_upload_metrics() {
             .await,
         Status::Ok,
         serde_json::to_string(&GetTaskUploadMetricsResp(
-            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12)
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12)
         ))
         .unwrap(),
     );
@@ -1656,7 +1662,8 @@ fn post_task_req_serialization() {
             },
             role: Role::Helper,
             vdaf_verify_key: "encoded".to_owned(),
-            task_expiration: None,
+            task_start: None,
+            task_end: None,
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),
             collector_hpke_config: HpkeConfig::new(
@@ -1672,7 +1679,7 @@ fn post_task_req_serialization() {
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 11,
+                len: 12,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1713,7 +1720,9 @@ fn post_task_req_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("encoded"),
-            Token::Str("task_expiration"),
+            Token::Str("task_start"),
+            Token::None,
+            Token::Str("task_end"),
             Token::None,
             Token::Str("min_batch_size"),
             Token::U64(100),
@@ -1771,7 +1780,8 @@ fn post_task_req_serialization() {
             },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
-            task_expiration: Some(Time::from_seconds_since_epoch(1000)),
+            task_start: Some(Time::from_seconds_since_epoch(500)),
+            task_end: Some(Time::from_seconds_since_epoch(1000)),
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),
             collector_hpke_config: HpkeConfig::new(
@@ -1791,7 +1801,7 @@ fn post_task_req_serialization() {
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 11,
+                len: 12,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1832,7 +1842,11 @@ fn post_task_req_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("encoded"),
-            Token::Str("task_expiration"),
+            Token::Str("task_start"),
+            Token::Some,
+            Token::NewtypeStruct { name: "Time" },
+            Token::U64(500),
+            Token::Str("task_end"),
             Token::Some,
             Token::NewtypeStruct { name: "Time" },
             Token::U64(1000),
@@ -1919,6 +1933,7 @@ fn task_resp_serialization() {
         SecretBytes::new(b"vdaf verify key!".to_vec()),
         None,
         None,
+        None,
         100,
         Duration::from_seconds(3600),
         Duration::from_seconds(60),
@@ -1946,7 +1961,7 @@ fn task_resp_serialization() {
         &[
             Token::Struct {
                 name: "TaskResp",
-                len: 13,
+                len: 14,
             },
             Token::Str("task_id"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -1989,7 +2004,9 @@ fn task_resp_serialization() {
             },
             Token::Str("vdaf_verify_key"),
             Token::Str("dmRhZiB2ZXJpZnkga2V5IQ"),
-            Token::Str("task_expiration"),
+            Token::Str("task_start"),
+            Token::None,
+            Token::Str("task_end"),
             Token::None,
             Token::Str("report_expiry_age"),
             Token::None,
@@ -2039,14 +2056,16 @@ fn task_resp_serialization() {
 #[test]
 fn get_task_upload_metrics_serialization() {
     assert_ser_tokens(
-        &GetTaskUploadMetricsResp(TaskUploadCounter::new_with_values(0, 1, 2, 3, 4, 5, 6, 7)),
+        &GetTaskUploadMetricsResp(TaskUploadCounter::new_with_values(
+            0, 1, 2, 3, 4, 5, 6, 7, 8,
+        )),
         &[
             Token::NewtypeStruct {
                 name: "GetTaskUploadMetricsResp",
             },
             Token::Struct {
                 name: "TaskUploadCounter",
-                len: 8,
+                len: 9,
             },
             Token::Str("interval_collected"),
             Token::U64(0),
@@ -2062,8 +2081,10 @@ fn get_task_upload_metrics_serialization() {
             Token::U64(5),
             Token::Str("report_too_early"),
             Token::U64(6),
-            Token::Str("task_expired"),
+            Token::Str("task_not_started"),
             Token::U64(7),
+            Token::Str("task_ended"),
+            Token::U64(8),
             Token::StructEnd,
         ],
     )

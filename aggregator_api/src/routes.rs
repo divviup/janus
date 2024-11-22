@@ -172,7 +172,8 @@ pub(super) async fn post_task<C: Clock>(
             /* batch_mode */ req.batch_mode,
             /* vdaf */ req.vdaf,
             vdaf_verify_key,
-            /* task_expiration */ req.task_expiration,
+            /* task_start */ req.task_start,
+            /* task_end */ req.task_end,
             /* report_expiry_age */
             Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
             /* min_batch_size */ req.min_batch_size,
@@ -195,7 +196,8 @@ pub(super) async fn post_task<C: Clock>(
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
                 && existing_task.role() == task.role()
-                && existing_task.task_expiration() == task.task_expiration()
+                && existing_task.task_start() == task.task_start()
+                && existing_task.task_end() == task.task_end()
                 && existing_task.min_batch_size() == task.min_batch_size()
                 && existing_task.time_precision() == task.time_precision()
                 && existing_task.collector_hpke_config() == task.collector_hpke_config() {
@@ -266,9 +268,8 @@ pub(super) async fn patch_task<C: Clock>(
     let task = ds
         .run_tx("patch_task", |tx| {
             Box::pin(async move {
-                if let Some(task_expiration) = req.task_expiration {
-                    tx.update_task_expiration(&task_id, task_expiration.as_ref())
-                        .await?;
+                if let Some(task_end) = req.task_end {
+                    tx.update_task_end(&task_id, task_end.as_ref()).await?;
                 }
                 tx.get_aggregator_task(&task_id).await
             })

@@ -2150,6 +2150,7 @@ pub enum ReportError {
     TaskExpired = 7,
     InvalidMessage = 8,
     ReportTooEarly = 9,
+    TaskNotStarted = 10,
 }
 
 impl Encode for ReportError {

@@ -99,8 +99,10 @@ struct CommonTaskParameters {
     vdaf: VdafInstance,
     /// Secret verification key shared by the aggregators.
     vdaf_verify_key: SecretBytes,
+    /// The time before which the task is considered invalid.
+    task_start: Option<Time>,
     /// The time after which the task is considered invalid.
-    task_expiration: Option<Time>,
+    task_end: Option<Time>,
     /// The age after which a report is considered to be "expired" and will be considered a
     /// candidate for garbage collection. A value of `None` indicates that garbage collection is
     /// disabled.
@@ -128,7 +130,8 @@ impl CommonTaskParameters {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        task_expiration: Option<Time>,
+        task_start: Option<Time>,
+        task_end: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: Duration,
@@ -155,10 +158,20 @@ impl CommonTaskParameters {
                 return Err(Error::InvalidParameter("report_expiry_age too large"));
             }
         }
-        if let Some(task_expiration) = task_expiration {
-            task_expiration
+        if let Some(task_start) = task_start {
+            task_start
                 .as_naive_date_time()
-                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+                .map_err(|_| Error::InvalidParameter("task_start out of range"))?;
+        }
+        if let Some(task_end) = task_end {
+            task_end
+                .as_naive_date_time()
+                .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
+        }
+        if let (Some(task_start), Some(task_end)) = (task_start, task_end) {
+            if task_end < task_start {
+                return Err(Error::InvalidParameter("task_end before task_start"));
+            }
         }
 
         if time_precision.as_seconds() == 0 {
@@ -170,7 +183,8 @@ impl CommonTaskParameters {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_expiration,
+            task_start,
+            task_end,
             report_expiry_age,
             min_batch_size,
             time_precision,
@@ -213,7 +227,8 @@ impl AggregatorTask {
         batch_mode: BatchMode,
         vdaf: VdafInstance,
         vdaf_verify_key: SecretBytes,
-        task_expiration: Option<Time>,
+        task_start: Option<Time>,
+        task_end: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: Duration,
@@ -225,7 +240,8 @@ impl AggregatorTask {
             batch_mode,
             vdaf,
             vdaf_verify_key,
-            task_expiration,
+            task_start,
+            task_end,
             report_expiry_age,
             min_batch_size,
             time_precision,
@@ -300,9 +316,14 @@ impl AggregatorTask {
         &self.common_parameters.vdaf_verify_key
     }
 
-    /// Retrieves the task expiration associated with this task.
-    pub fn task_expiration(&self) -> Option<&Time> {
-        self.common_parameters.task_expiration.as_ref()
+    /// Retrieves the task start time associated with this task.
+    pub fn task_start(&self) -> Option<&Time> {
+        self.common_parameters.task_start.as_ref()
+    }
+
+    /// Retrieves the task end time associated with this task.
+    pub fn task_end(&self) -> Option<&Time> {
+        self.common_parameters.task_end.as_ref()
     }
 
     /// Retrieves the report expiry age associated with this task.
@@ -549,7 +570,8 @@ pub struct SerializedAggregatorTask {
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_key: Option<String>, // in unpadded base64url
-    task_expiration: Option<Time>,
+    task_start: Option<Time>,
+    task_end: Option<Time>,
     report_expiry_age: Option<Duration>,
     min_batch_size: u64,
     time_precision: Duration,
@@ -605,7 +627,8 @@ impl Serialize for AggregatorTask {
             vdaf: self.vdaf().clone(),
             role: *self.role(),
             vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(self.opaque_vdaf_verify_key())),
-            task_expiration: self.task_expiration().copied(),
+            task_start: self.task_start().copied(),
+            task_end: self.task_end().copied(),
             report_expiry_age: self.report_expiry_age().copied(),
             min_batch_size: self.min_batch_size(),
             time_precision: *self.time_precision(),
@@ -668,7 +691,8 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
             serialized_task.batch_mode,
             serialized_task.vdaf,
             SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
-            serialized_task.task_expiration,
+            serialized_task.task_start,
+            serialized_task.task_end,
             serialized_task.report_expiry_age,
             serialized_task.min_batch_size,
             serialized_task.time_precision,
@@ -747,7 +771,8 @@ pub mod test_util {
             batch_mode: BatchMode,
             vdaf: VdafInstance,
             vdaf_verify_key: SecretBytes,
-            task_expiration: Option<Time>,
+            task_start: Option<Time>,
+            task_end: Option<Time>,
             report_expiry_age: Option<Duration>,
             min_batch_size: u64,
             time_precision: Duration,
@@ -775,7 +800,8 @@ pub mod test_util {
                     batch_mode,
                     vdaf,
                     vdaf_verify_key,
-                    task_expiration,
+                    task_start,
+                    task_end,
                     report_expiry_age,
                     min_batch_size,
                     time_precision,
@@ -825,9 +851,14 @@ pub mod test_util {
             &self.common_parameters.vdaf_verify_key
         }
 
-        /// Retrieves the task expiration associated with this task.
-        pub fn task_expiration(&self) -> Option<&Time> {
-            self.common_parameters.task_expiration.as_ref()
+        /// Retrieves the task start time associated with this task.
+        pub fn task_start(&self) -> Option<&Time> {
+            self.common_parameters.task_start.as_ref()
+        }
+
+        /// Retrieves the task end time associated with this task.
+        pub fn task_end(&self) -> Option<&Time> {
+            self.common_parameters.task_end.as_ref()
         }
 
         /// Retrieves the report expiry age associated with this task.
@@ -1009,6 +1040,7 @@ pub mod test_util {
                 vdaf_verify_key,
                 None,
                 None,
+                None,
                 1,
                 Duration::from_hours(8).unwrap(),
                 Duration::from_minutes(10).unwrap(),
@@ -1168,11 +1200,22 @@ pub mod test_util {
             })
         }
 
-        /// Sets the task expiration time.
-        pub fn with_task_expiration(self, task_expiration: Option<Time>) -> Self {
+        /// Sets the task start time.
+        pub fn with_task_start(self, task_start: Option<Time>) -> Self {
             Self(Task {
                 common_parameters: CommonTaskParameters {
-                    task_expiration,
+                    task_start,
+                    ..self.0.common_parameters
+                },
+                ..self.0
+            })
+        }
+
+        /// Sets the task end time.
+        pub fn with_task_end(self, task_end: Option<Time>) -> Self {
+            Self(Task {
+                common_parameters: CommonTaskParameters {
+                    task_end,
                     ..self.0.common_parameters
                 },
                 ..self.0
@@ -1231,7 +1274,8 @@ mod tests {
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, TaskId,
+        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+        TaskId, Time,
     };
     use rand::random;
     use serde_json::json;
@@ -1353,6 +1397,7 @@ mod tests {
                 SecretBytes::new(b"1234567812345678".to_vec()),
                 None,
                 None,
+                None,
                 10,
                 Duration::from_seconds(3600),
                 Duration::from_seconds(60),
@@ -1378,7 +1423,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 15,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1403,7 +1448,9 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::Str("task_expiration"),
+                Token::Str("task_start"),
+                Token::None,
+                Token::Str("task_end"),
                 Token::None,
                 Token::Str("report_expiry_age"),
                 Token::None,
@@ -1491,7 +1538,8 @@ mod tests {
                     dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                None,
+                Some(Time::from_seconds_since_epoch(1000)),
+                Some(Time::from_seconds_since_epoch(2000)),
                 Some(Duration::from_seconds(1800)),
                 10,
                 Duration::from_seconds(3600),
@@ -1516,7 +1564,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedAggregatorTask",
-                    len: 15,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1561,8 +1609,14 @@ mod tests {
                 Token::Str("vdaf_verify_key"),
                 Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::Str("task_expiration"),
-                Token::None,
+                Token::Str("task_start"),
+                Token::Some,
+                Token::NewtypeStruct { name: "Time" },
+                Token::U64(1000),
+                Token::Str("task_end"),
+                Token::Some,
+                Token::NewtypeStruct { name: "Time" },
+                Token::U64(2000),
                 Token::Str("report_expiry_age"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Duration" },

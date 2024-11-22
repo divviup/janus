@@ -202,21 +202,21 @@ async fn upload_handler() {
     )
     .await;
 
-    // Reports with timestamps past the task's expiration should be rejected.
-    let task_expire_soon = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
-        .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
+    // Reports with timestamps past the task's end time should be rejected.
+    let task_end_soon = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
+        .with_task_end(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
         .build();
-    let leader_task_expire_soon = task_expire_soon.leader_view().unwrap();
+    let leader_task_end_soon = task_end_soon.leader_view().unwrap();
     datastore
-        .put_aggregator_task(&leader_task_expire_soon)
+        .put_aggregator_task(&leader_task_end_soon)
         .await
         .unwrap();
     let report_2 = create_report(
-        &leader_task_expire_soon,
+        &leader_task_end_soon,
         &hpke_keypair,
         clock.now().add(&Duration::from_seconds(120)).unwrap(),
     );
-    let mut test_conn = post(task_expire_soon.report_upload_uri().unwrap().path())
+    let mut test_conn = post(task_end_soon.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
         .with_request_body(report_2.get_encoded().unwrap())
         .run_async(&handler)
@@ -226,8 +226,8 @@ async fn upload_handler() {
         Status::BadRequest,
         "reportRejected",
         "Report could not be processed.",
-        task_expire_soon.id(),
-        Some(ReportRejectionReason::TaskExpired.detail()),
+        task_end_soon.id(),
+        Some(ReportRejectionReason::TaskEnded.detail()),
     )
     .await;
 

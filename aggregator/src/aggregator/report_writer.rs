@@ -344,10 +344,11 @@ impl TaskUploadCounters {
             ReportRejectionReason::IntervalCollected => entry.increment_interval_collected(),
             ReportRejectionReason::DecryptFailure => entry.increment_report_decrypt_failure(),
             ReportRejectionReason::DecodeFailure => entry.increment_report_decode_failure(),
-            ReportRejectionReason::TaskExpired => entry.increment_task_expired(),
+            ReportRejectionReason::TaskEnded => entry.increment_task_ended(),
             ReportRejectionReason::Expired => entry.increment_report_expired(),
             ReportRejectionReason::TooEarly => entry.increment_report_too_early(),
             ReportRejectionReason::OutdatedHpkeConfig(_) => entry.increment_report_outdated_key(),
+            ReportRejectionReason::TaskNotStarted => entry.increment_task_not_started(),
         }
     }
 

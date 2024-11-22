@@ -113,11 +113,11 @@ impl Daphne {
             );
         }
 
-        // Daphne does not support unset task expiration values. Work around this by specifying an
-        // arbitrary, far-future task expiration time, instead.
-        let task = if task.task_expiration().is_none() {
+        // Daphne does not support unset task end time values. Work around this by specifying an
+        // arbitrary, far-future task end time, instead.
+        let task = if task.task_end().is_none() {
             TaskBuilder::from(task.clone())
-                .with_task_expiration(Some(Time::from_seconds_since_epoch(2000000000)))
+                .with_task_end(Some(Time::from_seconds_since_epoch(2000000000)))
                 .build()
         } else {
             task.clone()
