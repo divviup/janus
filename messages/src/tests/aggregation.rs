@@ -335,7 +335,9 @@ fn roundtrip_aggregation_job_initialize_req() {
             ),
             concat!(
                 // partial_batch_selector
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0000", // length
+                "",     // opaque data
             ),
             concat!(
                 // prepare_inits
@@ -472,7 +474,8 @@ fn roundtrip_aggregation_job_initialize_req() {
             concat!(
                 // partial_batch_selector
                 "02",                                                               // batch_mode
-                "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
+                "0020",                                                             // length
+                "0202020202020202020202020202020202020202020202020202020202020202", // opaque data
             ),
             concat!(
                 // prepare_inits

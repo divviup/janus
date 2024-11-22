@@ -23,9 +23,10 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0010", // length
                     concat!(
-                        // query_body
+                        // opaque data
                         "000000000000D431", // start
                         "0000000000003039", // duration
                     ),
@@ -51,9 +52,10 @@ fn roundtrip_collection_req() {
             concat!(
                 concat!(
                     // query
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0010", // length
                     concat!(
-                        // batch_interval
+                        // query body
                         "000000000000BF11", // start
                         "000000000000AEB1", // duration
                     ),
@@ -76,7 +78,9 @@ fn roundtrip_collection_req() {
             },
             concat!(
                 concat!(
-                    "02", // batch_mode
+                    "02",   // batch_mode
+                    "0000", // length
+                    "",     // opaque data
                 ),
                 concat!(
                     // aggregation_parameter
@@ -92,7 +96,9 @@ fn roundtrip_collection_req() {
             },
             concat!(
                 concat!(
-                    "02", // batch_mode
+                    "02",   // batch_mode
+                    "0000", // length
+                    "",     // opaque data
                 ),
                 concat!(
                     // aggregation_parameter
@@ -110,7 +116,9 @@ fn roundtrip_partial_batch_selector() {
     roundtrip_encoding(&[(
         PartialBatchSelector::new_time_interval(),
         concat!(
-            "01", // batch_mode
+            "01",   // batch_mode
+            "0000", // length
+            "",     // opaque data
         ),
     )]);
 
@@ -120,14 +128,16 @@ fn roundtrip_partial_batch_selector() {
             PartialBatchSelector::new_leader_selected(BatchId::from([3u8; 32])),
             concat!(
                 "02",                                                               // batch_mode
-                "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                "0020",                                                             // length
+                "0303030303030303030303030303030303030303030303030303030303030303", // opaque data
             ),
         ),
         (
             PartialBatchSelector::new_leader_selected(BatchId::from([4u8; 32])),
             concat!(
                 "02",                                                               // batch_mode
-                "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                "0020",                                                             // length
+                "0404040404040404040404040404040404040404040404040404040404040404", // opaque data
             ),
         ),
     ])
@@ -160,7 +170,9 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0000", // length
+                    "",     // opaque data
                 ),
                 "0000000000000000", // report_count
                 concat!(
@@ -217,7 +229,9 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0000", // length
+                    "",     // opaque data
                 ),
                 "0000000000000017", // report_count
                 concat!(
@@ -280,8 +294,9 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // batch_mode
-                    "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                    "02",   // batch_mode
+                    "0020", // length
+                    "0303030303030303030303030303030303030303030303030303030303030303", // opaque data
                 ),
                 "0000000000000000", // report_count
                 concat!(
@@ -340,8 +355,9 @@ fn roundtrip_collection() {
             concat!(
                 concat!(
                     // partial_batch_selector
-                    "02", // batch_mode
-                    "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                    "02",   // batch_mode
+                    "0020", // length
+                    "0404040404040404040404040404040404040404040404040404040404040404", // opaque data
                 ),
                 "0000000000000017", // report_count
                 concat!(
@@ -395,9 +411,10 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0010", // length
                 concat!(
-                    // batch_interval
+                    // opaque data
                     "000000000000D431", // start
                     "0000000000003039", // duration
                 ),
@@ -412,9 +429,10 @@ fn roundtrip_batch_selector() {
                 .unwrap(),
             },
             concat!(
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0010", // length
                 concat!(
-                    // batch_interval
+                    // opaque data
                     "000000000000C685", // start
                     "0000000000014982", // duration
                 ),
@@ -431,7 +449,8 @@ fn roundtrip_batch_selector() {
             concat!(
                 // batch_selector
                 "02",                                                               // batch_mode
-                "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
+                "0020",                                                             // length
+                "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // opaque data
             ),
         ),
         (
@@ -440,7 +459,8 @@ fn roundtrip_batch_selector() {
             },
             concat!(
                 "02",                                                               // batch_mode
-                "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
+                "0020",                                                             // length
+                "0707070707070707070707070707070707070707070707070707070707070707", // opaque data
             ),
         ),
     ])
@@ -466,9 +486,10 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0010", // length
                     concat!(
-                        // batch_interval
+                        // opaque data
                         "000000000000D431", // start
                         "0000000000003039", // duration
                     ),
@@ -498,9 +519,10 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "01", // batch_mode
+                    "01",   // batch_mode
+                    "0010", // length
                     concat!(
-                        // batch_interval
+                        // opaque data
                         "000000000000C685", // start
                         "0000000000014982", // duration
                     ),
@@ -530,8 +552,9 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // batch_mode
-                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
+                    "02",   // batch_mode
+                    "0020", // length
+                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // opaque data
                 ),
                 concat!(
                     // aggregation_parameter
@@ -554,8 +577,9 @@ fn roundtrip_aggregate_share_req() {
             concat!(
                 concat!(
                     // batch_selector
-                    "02", // batch_mode
-                    "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
+                    "02",   // batch_mode
+                    "0020", // length
+                    "0707070707070707070707070707070707070707070707070707070707070707", // opaque data
                 ),
                 concat!(
                     // aggregation_parameter
@@ -644,9 +668,10 @@ fn roundtrip_aggregate_share_aad() {
             ),
             concat!(
                 // batch_selector
-                "01", // batch_mode
+                "01",   // batch_mode
+                "0010", // length
                 concat!(
-                    // batch_interval
+                    // opaque data
                     "000000000000D431", // start
                     "0000000000003039", // duration
                 ),
@@ -673,7 +698,8 @@ fn roundtrip_aggregate_share_aad() {
             concat!(
                 // batch_selector
                 "02",                                                               // batch_mode
-                "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
+                "0020",                                                             // length
+                "0707070707070707070707070707070707070707070707070707070707070707", // opaque data
             ),
         ),
     )])

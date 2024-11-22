@@ -6,6 +6,7 @@
 use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use core::slice;
 use derivative::Derivative;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
@@ -1483,18 +1484,20 @@ impl Query<LeaderSelected> {
 impl<B: BatchMode> Encode for Query<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         B::CODE.encode(bytes)?;
-        self.query_body.encode(bytes)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.query_body))
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(1 + self.query_body.encoded_len()?)
+        Some(1 + 2 + self.query_body.encoded_len()?)
     }
 }
 
 impl<B: BatchMode> Decode for Query<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
-        let query_body = B::QueryBody::decode(bytes)?;
+
+        let buf = decode_u16_items(&(), bytes)?;
+        let query_body = B::QueryBody::get_decoded(&buf)?;
 
         Ok(Self { query_body })
     }
@@ -1604,18 +1607,20 @@ impl PartialBatchSelector<LeaderSelected> {
 impl<B: BatchMode> Encode for PartialBatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         B::CODE.encode(bytes)?;
-        self.batch_identifier.encode(bytes)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.batch_identifier))
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(1 + self.batch_identifier.encoded_len()?)
+        Some(1 + 2 + self.batch_identifier.encoded_len()?)
     }
 }
 
 impl<B: BatchMode> Decode for PartialBatchSelector<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
-        let batch_identifier = B::PartialBatchIdentifier::decode(bytes)?;
+
+        let buf = decode_u16_items(&(), bytes)?;
+        let batch_identifier = B::PartialBatchIdentifier::get_decoded(&buf)?;
 
         Ok(Self { batch_identifier })
     }
@@ -2558,18 +2563,20 @@ impl BatchSelector<LeaderSelected> {
 impl<B: BatchMode> Encode for BatchSelector<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         B::CODE.encode(bytes)?;
-        self.batch_identifier.encode(bytes)
+        encode_u16_items(bytes, &(), slice::from_ref(&self.batch_identifier))
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(1 + self.batch_identifier.encoded_len()?)
+        Some(1 + 2 + self.batch_identifier.encoded_len()?)
     }
 }
 
 impl<B: BatchMode> Decode for BatchSelector<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         batch_mode::Code::decode_expecting_value(bytes, B::CODE)?;
-        let batch_identifier = B::BatchIdentifier::decode(bytes)?;
+
+        let buf = decode_u16_items(&(), bytes)?;
+        let batch_identifier = B::BatchIdentifier::get_decoded(&buf)?;
 
         Ok(Self { batch_identifier })
     }
