@@ -88,8 +88,7 @@ impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
 }
 
 /// Task parameters common to all views of a DAP task.
-#[derive(Clone, Educe, PartialEq, Eq)]
-#[educe(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CommonTaskParameters {
     /// Unique identifier for the task.
     task_id: TaskId,

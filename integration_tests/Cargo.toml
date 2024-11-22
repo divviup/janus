@@ -20,7 +20,6 @@ assert_matches.workspace = true
 backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 clap.workspace = true
-educe.workspace = true
 futures = { workspace = true }
 hex = { workspace = true }
 http.workspace = true
@@ -48,6 +47,7 @@ uuid.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 divviup-client = { workspace = true, features = ["admin"] }
+educe.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 opentelemetry.workspace = true
 quickcheck.workspace = true

@@ -921,6 +921,7 @@ where
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     StartLeader {
         /// The sequence of public extensions from this report's metadata.
+        #[educe(Debug(ignore))]
         public_extensions: Vec<Extension>,
         /// Public share for this report.
         #[educe(Debug(ignore))]
