@@ -1,15 +1,15 @@
 //! Writing diagnostic files to disk.
 
 use anyhow::Context;
-use derivative::Derivative;
+use educe::Educe;
 use janus_messages::{AggregationJobId, ReportMetadata, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fs::File, path::Path, time::SystemTime};
 use uuid::Uuid;
 
 /// Represents an illegal attempt to mutate an aggregation job.
-#[derive(Derivative, Clone, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Educe, Clone, Serialize, Deserialize)]
+#[educe(Debug)]
 pub struct AggregationJobInitForbiddenMutationEvent {
     /// The ID of the task.
     #[serde(with = "serialize_task_id")]
@@ -21,7 +21,7 @@ pub struct AggregationJobInitForbiddenMutationEvent {
 
     /// The SHA-256 of the request that created the aggregation job.
     #[serde(with = "serialize_hash_option")]
-    #[derivative(Debug(format_with = "fmt_hash_option"))]
+    #[educe(Debug(method(fmt_hash_option)))]
     pub original_request_hash: Option<[u8; 32]>,
 
     /// The ordered report metadatas from the request that created the aggregation job.
@@ -36,7 +36,7 @@ pub struct AggregationJobInitForbiddenMutationEvent {
 
     /// The SHA-256 of the request that attempted to mutate the aggregation job.
     #[serde(with = "serialize_hash_option")]
-    #[derivative(Debug(format_with = "fmt_hash_option"))]
+    #[educe(Debug(method(fmt_hash_option)))]
     pub mutating_request_hash: Option<[u8; 32]>,
 
     /// The ordered report metadatas from the request that attempted to mutate the aggregation job.

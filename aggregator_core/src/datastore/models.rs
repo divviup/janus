@@ -4,7 +4,7 @@ use crate::{datastore::Error, task};
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use clap::ValueEnum;
-use derivative::Derivative;
+use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{HpkeCiphersuite, HpkeKeypair},
@@ -98,20 +98,21 @@ impl From<&AuthenticationTokenHash> for AuthenticationTokenType {
 /// Represents a report as it is stored in the leader's database, corresponding to a row in
 /// `client_reports`, where `leader_input_share` and `helper_encrypted_input_share` are required
 /// to be populated.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct LeaderStoredReport<const SEED_SIZE: usize, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
     task_id: TaskId,
     metadata: ReportMetadata,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     public_share: A::PublicShare,
+    #[educe(Debug(ignore))]
     leader_extensions: Vec<Extension>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     leader_input_share: A::InputShare,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     helper_encrypted_input_share: HpkeCiphertext,
 }
 
@@ -353,8 +354,8 @@ impl AggregatorRole {
 }
 
 /// AggregationJob represents an aggregation job from the DAP specification.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     /// The ID of the task this aggregation job belongs to.
@@ -362,7 +363,7 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     /// The ID of this aggregation job.
     aggregation_job_id: AggregationJobId,
     /// The aggregation parameter this job is run with.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The partial identifier for the batch this aggregation job contributes to (fixed size
     /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).
@@ -893,31 +894,31 @@ where
 
 /// ReportAggregationState represents the state of a single report aggregation. It corresponds
 /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     StartLeader {
         /// Public share for this report.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         public_share: A::PublicShare,
         /// The sequence of extensions from the Leader's input share for this report.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         leader_extensions: Vec<Extension>,
         /// The Leader's input share for this report.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         leader_input_share: A::InputShare,
         /// The Helper's encrypted input share for this report.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         helper_encrypted_input_share: HpkeCiphertext,
     },
     WaitingLeader {
         /// Most recent transition for this report aggregation.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         transition: PingPongTransition<SEED_SIZE, 16, A>,
     },
     WaitingHelper {
         /// Helper's current preparation state
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         prepare_state: A::PrepareState,
     },
     Finished,
@@ -1191,8 +1192,8 @@ impl ReportAggregationMetadata {
 /// `aggregation_parameter`.  This is the finest-grained possible aggregate share we can emit for
 /// this task. The aggregate share constructed to service a collect or aggregate share request
 /// consists of one or more `BatchAggregation`s merged together.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct BatchAggregation<
     const SEED_SIZE: usize,
     Q: QueryType,
@@ -1203,7 +1204,7 @@ pub struct BatchAggregation<
     /// The identifier of the batch being aggregated over.
     batch_identifier: Q::BatchIdentifier,
     /// The VDAF aggregation parameter used to prepare and accumulate input shares.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The index of this batch aggregation among all batch aggregations for
     /// this (task_id, batch_identifier, aggregation_parameter).
@@ -1417,18 +1418,18 @@ where
 }
 
 /// Represents the state of a batch aggregation.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     Aggregating {
         /// The aggregate over all the input shares that have been prepared so far by this
         /// aggregator. Will only be None if there are no reports.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         aggregate_share: Option<A::AggregateShare>,
         /// The number of reports currently included in this aggregate share.
         report_count: u64,
         /// Checksum over the aggregated report shares.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         checksum: ReportIdChecksum,
         /// The number of aggregation jobs that have been created for this batch.
         aggregation_jobs_created: u64,
@@ -1439,12 +1440,12 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
     Collected {
         /// The aggregate over all the input shares that have been prepared so far by this
         /// aggregator. Will only be None if there are no reports.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         aggregate_share: Option<A::AggregateShare>,
         /// The number of reports currently included in this aggregate share.
         report_count: u64,
         /// Checksum over the aggregated report shares.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         checksum: ReportIdChecksum,
         /// The number of aggregation jobs that have been created for this batch.
         aggregation_jobs_created: u64,
@@ -1648,8 +1649,8 @@ where
 
 /// CollectionJob represents a row in the `collection_jobs` table, used by leaders to represent
 /// running collection jobs and store the results of completed ones.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     /// The task ID for this collection job.
     task_id: TaskId,
@@ -1658,7 +1659,7 @@ pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregat
     /// The Query that was sent to create this collection job.
     query: Query<Q>,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The batch interval covered by the collection job.
     batch_identifier: Q::BatchIdentifier,
@@ -1775,8 +1776,8 @@ where
 {
 }
 
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     Start,
     Finished {
@@ -1788,7 +1789,7 @@ pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZ
         /// The helper's encrypted aggregate share over the input shares in the interval.
         encrypted_helper_aggregate_share: HpkeCiphertext,
         /// The leader's aggregate share over the input shares in the interval.
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         leader_aggregate_share: A::AggregateShare,
     },
     Abandoned,
@@ -1880,8 +1881,8 @@ pub enum CollectionJobStateCode {
 
 /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
 /// store the results of handling an AggregateShareReq from the leader.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Educe)]
+#[educe(Debug)]
 pub struct AggregateShareJob<
     const SEED_SIZE: usize,
     Q: QueryType,
@@ -1892,15 +1893,15 @@ pub struct AggregateShareJob<
     /// The batch identifier for the batch covered by the aggregate share.
     batch_identifier: Q::BatchIdentifier,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: A::AggregationParam,
     /// The aggregate share over the input shares in the interval.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     helper_aggregate_share: A::AggregateShare,
     /// The number of reports included in the aggregate share.
     report_count: u64,
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     checksum: ReportIdChecksum,
 }
 

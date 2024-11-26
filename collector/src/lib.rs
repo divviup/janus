@@ -67,7 +67,7 @@ use backoff::backoff::Backoff;
 pub use backoff::ExponentialBackoff;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use credential::PrivateCollectorCredential;
-use derivative::Derivative;
+use educe::Educe;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
@@ -159,8 +159,8 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 }
 
 /// Collector state related to a collection job that is in progress.
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct CollectionJob<P, Q>
 where
     Q: QueryType,
@@ -170,7 +170,7 @@ where
     /// The collection request's query.
     query: Query<Q>,
     /// The aggregation parameter used in this collection request.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_parameter: P,
 }
 
@@ -204,8 +204,8 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 /// The result of a collection request poll operation. This will either provide the collection
 /// result or indicate that the collection is still being processed.
 pub enum PollResult<T, Q>
@@ -213,7 +213,7 @@ where
     Q: QueryType,
 {
     /// The collection result from a completed collection request.
-    CollectionResult(#[derivative(Debug = "ignore")] Collection<T, Q>),
+    CollectionResult(#[educe(Debug(ignore))] Collection<T, Q>),
     /// The collection request is not yet ready. If present, the [`RetryAfter`] object is the time
     /// at which the leader recommends retrying the request.
     NotReady(Option<RetryAfter>),
@@ -386,24 +386,24 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
 }
 
 /// A DAP collector.
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct Collector<V: vdaf::Collector> {
     /// Unique identifier for the task.
     task_id: TaskId,
     /// The base URL of the leader's aggregator API endpoints.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[educe(Debug(method(std::fmt::Display::fmt)))]
     leader_endpoint: Url,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
     /// HPKE keypair used for decryption of aggregate shares.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     hpke_keypair: HpkeKeypair,
     /// An implementation of the task's VDAF.
     vdaf: V,
 
     /// HTTPS client.
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     http_client: reqwest::Client,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,

@@ -16,7 +16,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
 use bytes::Bytes;
-use derivative::Derivative;
+use educe::Educe;
 use futures::future::BoxFuture;
 use janus_aggregator_core::{
     datastore::{
@@ -58,8 +58,8 @@ use tracing::{debug, error, info, info_span, trace_span, warn, Span};
 #[cfg(test)]
 mod tests;
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct AggregationJobDriver<B> {
     // Configuration.
     batch_aggregation_shard_count: u64,
@@ -69,17 +69,17 @@ pub struct AggregationJobDriver<B> {
     http_client: reqwest::Client,
     backoff: B,
 
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregation_success_counter: Counter<u64>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregate_step_failure_counter: Counter<u64>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     aggregated_report_share_dimension_histogram: Histogram<u64>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     job_cancel_counter: Counter<u64>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     job_retry_counter: Counter<u64>,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     http_request_duration_histogram: Histogram<f64>,
 }
 

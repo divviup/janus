@@ -48,7 +48,7 @@ clap.workspace = true
 console-subscriber = { workspace = true, optional = true }
 deadpool = { workspace = true, features = ["rt_tokio_1"] }
 deadpool-postgres = { workspace = true }
-derivative.workspace = true
+educe.workspace = true
 fixed = { workspace = true, optional = true }
 futures = { workspace = true }
 hex = { workspace = true, features = ["serde"] }

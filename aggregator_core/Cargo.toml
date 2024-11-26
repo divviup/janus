@@ -30,7 +30,7 @@ chrono.workspace = true
 clap.workspace = true
 deadpool = { workspace = true, features = ["rt_tokio_1"] }
 deadpool-postgres = { workspace = true }
-derivative.workspace = true
+educe.workspace = true
 futures = { workspace = true }
 hex = { workspace = true, features = ["serde"], optional = true }
 http.workspace = true
