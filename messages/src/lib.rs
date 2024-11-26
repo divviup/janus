@@ -1527,15 +1527,15 @@ impl<B: BatchMode> Decode for Query<B> {
 /// aggregate shares for a given batch.
 #[derive(Clone, Educe, PartialEq, Eq)]
 #[educe(Debug)]
-pub struct CollectionReq<B: BatchMode> {
+pub struct CollectionJobReq<B: BatchMode> {
     query: Query<B>,
     #[educe(Debug(ignore))]
     aggregation_parameter: Vec<u8>,
 }
 
-impl<B: BatchMode> CollectionReq<B> {
+impl<B: BatchMode> CollectionJobReq<B> {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-collect-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-collection-job-req";
 
     /// Constructs a new collect request from its components.
     pub fn new(query: Query<B>, aggregation_parameter: Vec<u8>) -> Self {
@@ -1556,7 +1556,7 @@ impl<B: BatchMode> CollectionReq<B> {
     }
 }
 
-impl<B: BatchMode> Encode for CollectionReq<B> {
+impl<B: BatchMode> Encode for CollectionJobReq<B> {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.query.encode(bytes)?;
         encode_u32_items(bytes, &(), &self.aggregation_parameter)
@@ -1567,7 +1567,7 @@ impl<B: BatchMode> Encode for CollectionReq<B> {
     }
 }
 
-impl<B: BatchMode> Decode for CollectionReq<B> {
+impl<B: BatchMode> Decode for CollectionJobReq<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let query = Query::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
@@ -1704,95 +1704,86 @@ impl Distribution<CollectionJobId> for Standard {
 /// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given query.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Collection<B: BatchMode> {
-    partial_batch_selector: PartialBatchSelector<B>,
-    report_count: u64,
-    interval: Interval,
-    leader_encrypted_agg_share: HpkeCiphertext,
-    helper_encrypted_agg_share: HpkeCiphertext,
-}
-
-impl<B: BatchMode> Collection<B> {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-collection";
-
-    /// Constructs a new collection.
-    pub fn new(
+pub enum CollectionJobResp<B: BatchMode> {
+    Processing,
+    Finished {
         partial_batch_selector: PartialBatchSelector<B>,
         report_count: u64,
         interval: Interval,
         leader_encrypted_agg_share: HpkeCiphertext,
         helper_encrypted_agg_share: HpkeCiphertext,
-    ) -> Self {
-        Self {
-            partial_batch_selector,
-            report_count,
-            interval,
-            leader_encrypted_agg_share,
-            helper_encrypted_agg_share,
+    },
+}
+
+impl<B: BatchMode> CollectionJobResp<B> {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-collection-job-resp";
+}
+
+impl<B: BatchMode> Encode for CollectionJobResp<B> {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        // The encoding includes an implicit discriminator byte called CollectionJobStatus in the
+        // DAP specification.
+        match self {
+            Self::Processing => 0u8.encode(bytes),
+            Self::Finished {
+                partial_batch_selector,
+                report_count,
+                interval,
+                leader_encrypted_agg_share,
+                helper_encrypted_agg_share,
+            } => {
+                1u8.encode(bytes)?;
+                partial_batch_selector.encode(bytes)?;
+                report_count.encode(bytes)?;
+                interval.encode(bytes)?;
+                leader_encrypted_agg_share.encode(bytes)?;
+                helper_encrypted_agg_share.encode(bytes)
+            }
         }
     }
 
-    /// Retrieves the batch selector associated with this collection.
-    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<B> {
-        &self.partial_batch_selector
-    }
-
-    /// Retrieves the number of reports that were aggregated into this collection.
-    pub fn report_count(&self) -> u64 {
-        self.report_count
-    }
-
-    /// Retrieves the interval spanned by the reports aggregated into this collection.
-    pub fn interval(&self) -> &Interval {
-        &self.interval
-    }
-
-    /// Retrieves the leader encrypted aggregate share associated with this collection.
-    pub fn leader_encrypted_aggregate_share(&self) -> &HpkeCiphertext {
-        &self.leader_encrypted_agg_share
-    }
-
-    /// Retrieves the helper encrypted aggregate share associated with this collection.
-    pub fn helper_encrypted_aggregate_share(&self) -> &HpkeCiphertext {
-        &self.helper_encrypted_agg_share
-    }
-}
-
-impl<B: BatchMode> Encode for Collection<B> {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.partial_batch_selector.encode(bytes)?;
-        self.report_count.encode(bytes)?;
-        self.interval.encode(bytes)?;
-        self.leader_encrypted_agg_share.encode(bytes)?;
-        self.helper_encrypted_agg_share.encode(bytes)
-    }
-
     fn encoded_len(&self) -> Option<usize> {
-        Some(
-            self.partial_batch_selector.encoded_len()?
-                + self.report_count.encoded_len()?
-                + self.interval.encoded_len()?
-                + self.leader_encrypted_agg_share.encoded_len()?
-                + self.helper_encrypted_agg_share.encoded_len()?,
-        )
+        Some(match self {
+            Self::Processing => 1,
+            Self::Finished {
+                partial_batch_selector,
+                report_count,
+                interval,
+                leader_encrypted_agg_share,
+                helper_encrypted_agg_share,
+            } => {
+                1 + partial_batch_selector.encoded_len()?
+                    + report_count.encoded_len()?
+                    + interval.encoded_len()?
+                    + leader_encrypted_agg_share.encoded_len()?
+                    + helper_encrypted_agg_share.encoded_len()?
+            }
+        })
     }
 }
 
-impl<B: BatchMode> Decode for Collection<B> {
+impl<B: BatchMode> Decode for CollectionJobResp<B> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
-        let report_count = u64::decode(bytes)?;
-        let interval = Interval::decode(bytes)?;
-        let leader_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
-        let helper_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
+        let val = u8::decode(bytes)?;
+        Ok(match val {
+            0 => Self::Processing,
+            1 => {
+                let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
+                let report_count = u64::decode(bytes)?;
+                let interval = Interval::decode(bytes)?;
+                let leader_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
+                let helper_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
 
-        Ok(Self {
-            partial_batch_selector,
-            report_count,
-            interval,
-            leader_encrypted_agg_share,
-            helper_encrypted_agg_share,
+                Self::Finished {
+                    partial_batch_selector,
+                    report_count,
+                    interval,
+                    leader_encrypted_agg_share,
+                    helper_encrypted_agg_share,
+                }
+            }
+            _ => return Err(CodecError::UnexpectedValue),
         })
     }
 }
@@ -2491,43 +2482,54 @@ impl Decode for AggregationJobContinueReq {
 /// DAP protocol message representing the response to an aggregation job initialization or
 /// continuation request.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregationJobResp {
-    prepare_resps: Vec<PrepareResp>,
+pub enum AggregationJobResp {
+    Processing,
+    Finished { prepare_resps: Vec<PrepareResp> },
 }
 
 impl AggregationJobResp {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
-
-    /// Constructs a new aggregate continuation response from its components.
-    pub fn new(prepare_resps: Vec<PrepareResp>) -> Self {
-        Self { prepare_resps }
-    }
-
-    /// Gets the prepare responses associated with this aggregate continuation response.
-    pub fn prepare_resps(&self) -> &[PrepareResp] {
-        &self.prepare_resps
-    }
 }
 
 impl Encode for AggregationJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        encode_u32_items(bytes, &(), &self.prepare_resps)
+        // The encoding includes an implicit discriminator byte called AggregationJobStatus in the
+        // DAP specification.
+        match self {
+            Self::Processing => 0u8.encode(bytes),
+            Self::Finished { prepare_resps } => {
+                1u8.encode(bytes)?;
+                encode_u32_items(bytes, &(), prepare_resps)
+            }
+        }
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut length = 4;
-        for prepare_resp in self.prepare_resps.iter() {
-            length += prepare_resp.encoded_len()?;
-        }
-        Some(length)
+        Some(match self {
+            Self::Processing => 1,
+            Self::Finished { prepare_resps } => {
+                let mut len = 5;
+                for prepare_resp in prepare_resps {
+                    len += prepare_resp.encoded_len()?;
+                }
+                len
+            }
+        })
     }
 }
 
 impl Decode for AggregationJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_resps = decode_u32_items(&(), bytes)?;
-        Ok(Self { prepare_resps })
+        let val = u8::decode(bytes)?;
+        Ok(match val {
+            0 => Self::Processing,
+            1 => {
+                let prepare_resps = decode_u32_items(&(), bytes)?;
+                Self::Finished { prepare_resps }
+            }
+            _ => return Err(CodecError::UnexpectedValue),
+        })
     }
 }
 

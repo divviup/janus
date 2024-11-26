@@ -543,7 +543,9 @@ where
             // If there are no prepare inits to send (because every report aggregation was filtered
             // by the block above), don't send a request to the Helper at all and process an
             // artificial aggregation job response instead, which will finish the aggregation job.
-            AggregationJobResp::new(Vec::new())
+            AggregationJobResp::Finished {
+                prepare_resps: Vec::new(),
+            }
         };
 
         let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
@@ -770,17 +772,27 @@ where
         A::PrepareState: Send + Sync + Encode,
         A::PublicShare: Send + Sync,
     {
+        let prepare_resps = match helper_resp {
+            // TODO(#3436): implement asynchronous aggregation
+            AggregationJobResp::Processing => {
+                return Err(Error::Internal(
+                    "asynchronous aggregation not yet implemented".into(),
+                ))
+            }
+            AggregationJobResp::Finished { prepare_resps } => prepare_resps,
+        };
+
         // Handle response, computing the new report aggregations to be stored.
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
-        if stepped_aggregations.len() != helper_resp.prepare_resps().len() {
+        if stepped_aggregations.len() != prepare_resps.len() {
             return Err(Error::Internal(
                 "missing, duplicate, out-of-order, or unexpected prepare steps in response"
                     .to_string(),
             ));
         }
         for (stepped_aggregation, helper_prep_resp) in
-            stepped_aggregations.iter().zip(helper_resp.prepare_resps())
+            stepped_aggregations.iter().zip(&prepare_resps)
         {
             if stepped_aggregation.report_aggregation.report_id() != helper_prep_resp.report_id() {
                 return Err(Error::Internal(
@@ -810,7 +822,7 @@ where
                 );
                 let ctx = vdaf_application_context(&task_id);
 
-                stepped_aggregations.into_par_iter().zip(helper_resp.prepare_resps()).try_for_each(
+                stepped_aggregations.into_par_iter().zip(prepare_resps).try_for_each(
                     |(stepped_aggregation, helper_prep_resp)| {
                         let _entered = span.enter();
 

@@ -321,15 +321,19 @@ async fn taskprov_aggregate_init() {
         .run_async(&test.handler)
         .await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok), "{name}");
+        assert_eq!(test_conn.status(), Some(Status::Created), "{name}");
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+        let prepare_resps = assert_matches!(
+            aggregate_resp,
+            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        );
 
-        assert_eq!(aggregate_resp.prepare_resps().len(), 1, "{}", name);
-        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+        assert_eq!(prepare_resps.len(), 1, "{}", name);
+        let prepare_step = prepare_resps.first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             report_share.metadata().id(),
@@ -424,15 +428,19 @@ async fn taskprov_aggregate_init_missing_extension() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(
         &test_conn,
         "content-type" => (AggregationJobResp::MEDIA_TYPE)
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregate_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_resps.len(), 1);
+    let prepare_step = prepare_resps.first().unwrap();
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
@@ -507,15 +515,19 @@ async fn taskprov_aggregate_init_malformed_extension() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(
         &test_conn,
         "content-type" => (AggregationJobResp::MEDIA_TYPE)
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregate_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_resps.len(), 1);
+    let prepare_step = prepare_resps.first().unwrap();
     assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
     assert_eq!(
         prepare_step.result(),
@@ -928,7 +940,7 @@ async fn taskprov_aggregate_continue() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Accepted));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
@@ -936,10 +948,12 @@ async fn taskprov_aggregate_continue() {
     // authorization of the request.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::new(Vec::from([PrepareResp::new(
-            *report_share.metadata().id(),
-            PrepareStepResult::Finished
-        )]))
+        AggregationJobResp::Finished {
+            prepare_resps: Vec::from([PrepareResp::new(
+                *report_share.metadata().id(),
+                PrepareStepResult::Finished
+            )])
+        }
     );
 }
 
@@ -1097,12 +1111,16 @@ async fn end_to_end() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregation_job_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
-    let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
+    assert_eq!(prepare_resps.len(), 1);
+    let prepare_resp = &prepare_resps[0];
     assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     let message = assert_matches!(
         prepare_resp.result(),
@@ -1137,12 +1155,16 @@ async fn end_to_end() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Accepted));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregation_job_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
-    let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
+    assert_eq!(prepare_resps.len(), 1);
+    let prepare_resp = &prepare_resps[0];
     assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     assert_matches!(prepare_resp.result(), PrepareStepResult::Finished);
 
@@ -1239,12 +1261,16 @@ async fn end_to_end_sumvec_hmac() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregation_job_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
-    let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
+    assert_eq!(prepare_resps.len(), 1);
+    let prepare_resp = &prepare_resps[0];
     assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     let message = assert_matches!(prepare_resp.result(), PrepareStepResult::Continue { message } => message.clone());
     assert_eq!(message, transcript.helper_prepare_transitions[0].message);

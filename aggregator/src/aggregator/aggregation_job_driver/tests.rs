@@ -168,12 +168,14 @@ async fn aggregation_job_driver() {
             "PUT",
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
-            AggregationJobResp::new(Vec::from([PrepareResp::new(
-                *report.metadata().id(),
-                PrepareStepResult::Continue {
-                    message: transcript.helper_prepare_transitions[0].message.clone(),
-                },
-            )]))
+            AggregationJobResp::Finished {
+                prepare_resps: Vec::from([PrepareResp::new(
+                    *report.metadata().id(),
+                    PrepareStepResult::Continue {
+                        message: transcript.helper_prepare_transitions[0].message.clone(),
+                    },
+                )]),
+            }
             .get_encoded()
             .unwrap(),
         ),
@@ -181,10 +183,12 @@ async fn aggregation_job_driver() {
             "POST",
             AggregationJobContinueReq::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
-            AggregationJobResp::new(Vec::from([PrepareResp::new(
-                *report.metadata().id(),
-                PrepareStepResult::Finished,
-            )]))
+            AggregationJobResp::Finished {
+                prepare_resps: Vec::from([PrepareResp::new(
+                    *report.metadata().id(),
+                    PrepareStepResult::Finished,
+                )]),
+            }
             .get_encoded()
             .unwrap(),
         ),
@@ -526,12 +530,14 @@ async fn step_time_interval_aggregation_job_init_single_step() {
             transcript.leader_prepare_transitions[0].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Continue {
-            message: transcript.helper_prepare_transitions[0].message.clone(),
-        },
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continue {
+                message: transcript.helper_prepare_transitions[0].message.clone(),
+            },
+        )]),
+    };
     let mocked_aggregate_failure = server
         .mock(
             "PUT",
@@ -885,12 +891,14 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
             transcript.leader_prepare_transitions[0].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Continue {
-            message: transcript.helper_prepare_transitions[0].message.clone(),
-        },
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continue {
+                message: transcript.helper_prepare_transitions[0].message.clone(),
+            },
+        )]),
+    };
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
@@ -1229,24 +1237,26 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
             ),
         ]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([
-        PrepareResp::new(
-            *gc_eligible_report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: gc_eligible_transcript.helper_prepare_transitions[0]
-                    .message
-                    .clone(),
-            },
-        ),
-        PrepareResp::new(
-            *gc_ineligible_report.metadata().id(),
-            PrepareStepResult::Continue {
-                message: gc_ineligible_transcript.helper_prepare_transitions[0]
-                    .message
-                    .clone(),
-            },
-        ),
-    ]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([
+            PrepareResp::new(
+                *gc_eligible_report.metadata().id(),
+                PrepareStepResult::Continue {
+                    message: gc_eligible_transcript.helper_prepare_transitions[0]
+                        .message
+                        .clone(),
+                },
+            ),
+            PrepareResp::new(
+                *gc_ineligible_report.metadata().id(),
+                PrepareStepResult::Continue {
+                    message: gc_ineligible_transcript.helper_prepare_transitions[0]
+                        .message
+                        .clone(),
+                },
+            ),
+        ]),
+    };
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_init = server
         .mock(
@@ -1515,12 +1525,14 @@ async fn step_leader_selected_aggregation_job_init_single_step() {
             transcript.leader_prepare_transitions[0].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Continue {
-            message: transcript.helper_prepare_transitions[0].message.clone(),
-        },
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continue {
+                message: transcript.helper_prepare_transitions[0].message.clone(),
+            },
+        )]),
+    };
     let mocked_aggregate_failure = server
         .mock(
             "PUT",
@@ -1797,12 +1809,14 @@ async fn step_leader_selected_aggregation_job_init_two_steps() {
             transcript.leader_prepare_transitions[0].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Continue {
-            message: transcript.helper_prepare_transitions[0].message.clone(),
-        },
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continue {
+                message: transcript.helper_prepare_transitions[0].message.clone(),
+            },
+        )]),
+    };
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
@@ -2083,10 +2097,12 @@ async fn step_time_interval_aggregation_job_continue() {
             transcript.leader_prepare_transitions[1].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Finished,
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Finished,
+        )]),
+    };
     let mocked_aggregate_failure = server
         .mock(
             "POST",
@@ -2386,10 +2402,12 @@ async fn step_leader_selected_aggregation_job_continue() {
             transcript.leader_prepare_transitions[1].message.clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        *report.metadata().id(),
-        PrepareStepResult::Finished,
-    )]));
+    let helper_response = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            *report.metadata().id(),
+            PrepareStepResult::Finished,
+        )]),
+    };
     let mocked_aggregate_failure = server
         .mock(
             "POST",

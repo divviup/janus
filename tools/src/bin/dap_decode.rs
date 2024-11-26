@@ -3,7 +3,7 @@ use clap::{Parser, ValueEnum};
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
-    AggregationJobResp, Collection, CollectionReq, HpkeConfig, HpkeConfigList, Report,
+    AggregationJobResp, CollectionJobReq, CollectionJobResp, HpkeConfig, HpkeConfigList, Report,
 };
 use prio::codec::Decode;
 use std::{
@@ -82,22 +82,22 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
             Box::new(message)
         }
         MediaType::CollectionReq => {
-            if let Ok(decoded) = CollectionReq::<TimeInterval>::get_decoded(&message_buf) {
-                let message: CollectionReq<TimeInterval> = decoded;
+            if let Ok(decoded) = CollectionJobReq::<TimeInterval>::get_decoded(&message_buf) {
+                let message: CollectionJobReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: CollectionReq<LeaderSelected> =
-                    CollectionReq::<LeaderSelected>::get_decoded(&message_buf)?;
+                let message: CollectionJobReq<LeaderSelected> =
+                    CollectionJobReq::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
         MediaType::Collection => {
-            if let Ok(decoded) = Collection::<TimeInterval>::get_decoded(&message_buf) {
-                let message: Collection<TimeInterval> = decoded;
+            if let Ok(decoded) = CollectionJobResp::<TimeInterval>::get_decoded(&message_buf) {
+                let message: CollectionJobResp<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: Collection<LeaderSelected> =
-                    Collection::<LeaderSelected>::get_decoded(&message_buf)?;
+                let message: CollectionJobResp<LeaderSelected> =
+                    CollectionJobResp::<LeaderSelected>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }

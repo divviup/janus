@@ -286,11 +286,11 @@ impl VdafOps {
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let (mut prep_resps_by_agg_job, counters) = aggregation_job_writer.write(tx, vdaf).await?;
         Ok((
-            AggregationJobResp::new(
-                prep_resps_by_agg_job
+            AggregationJobResp::Finished {
+                prepare_resps: prep_resps_by_agg_job
                     .remove(&aggregation_job_id)
                     .unwrap_or_default(),
-            ),
+            },
             counters,
         ))
     }
@@ -334,7 +334,7 @@ pub mod test_util {
     ) -> AggregationJobResp {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(test_conn.status(), Some(Status::Accepted));
         assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
         decode_response_body::<AggregationJobResp>(&mut test_conn).await
     }
@@ -582,14 +582,14 @@ mod tests {
         // Validate response.
         assert_eq!(
             first_continue_response,
-            AggregationJobResp::new(
-                test_case
+            AggregationJobResp::Finished {
+                prepare_resps: test_case
                     .first_continue_request
                     .prepare_steps()
                     .iter()
                     .map(|step| PrepareResp::new(*step.report_id(), PrepareStepResult::Finished))
                     .collect()
-            )
+            }
         );
 
         test_case.first_continue_response = Some(first_continue_response);

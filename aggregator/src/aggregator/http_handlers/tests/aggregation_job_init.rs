@@ -533,17 +533,21 @@ async fn aggregate_init() {
     for _ in 0..2 {
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(test_conn.status(), Some(Status::Created));
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+        let prepare_resps = assert_matches!(
+            aggregate_resp,
+            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        );
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_resps().len(), 10);
+        assert_eq!(prepare_resps.len(), 10);
 
-        let prepare_step_0 = aggregate_resp.prepare_resps().first().unwrap();
+        let prepare_step_0 = prepare_resps.first().unwrap();
         assert_eq!(
             prepare_step_0.report_id(),
             prepare_init_0.report_share().metadata().id()
@@ -552,7 +556,7 @@ async fn aggregate_init() {
             assert_eq!(message, &transcript_0.helper_prepare_transitions[0].message);
         });
 
-        let prepare_step_1 = aggregate_resp.prepare_resps().get(1).unwrap();
+        let prepare_step_1 = prepare_resps.get(1).unwrap();
         assert_eq!(
             prepare_step_1.report_id(),
             prepare_init_1.report_share().metadata().id()
@@ -562,7 +566,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::HpkeDecryptError)
         );
 
-        let prepare_step_2 = aggregate_resp.prepare_resps().get(2).unwrap();
+        let prepare_step_2 = prepare_resps.get(2).unwrap();
         assert_eq!(
             prepare_step_2.report_id(),
             prepare_init_2.report_share().metadata().id()
@@ -572,7 +576,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::InvalidMessage)
         );
 
-        let prepare_step_3 = aggregate_resp.prepare_resps().get(3).unwrap();
+        let prepare_step_3 = prepare_resps.get(3).unwrap();
         assert_eq!(
             prepare_step_3.report_id(),
             prepare_init_3.report_share().metadata().id()
@@ -582,7 +586,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::HpkeUnknownConfigId)
         );
 
-        let prepare_step_4 = aggregate_resp.prepare_resps().get(4).unwrap();
+        let prepare_step_4 = prepare_resps.get(4).unwrap();
         assert_eq!(
             prepare_step_4.report_id(),
             prepare_init_4.report_share().metadata().id()
@@ -592,7 +596,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::ReportReplayed)
         );
 
-        let prepare_step_5 = aggregate_resp.prepare_resps().get(5).unwrap();
+        let prepare_step_5 = prepare_resps.get(5).unwrap();
         assert_eq!(
             prepare_step_5.report_id(),
             prepare_init_5.report_share().metadata().id()
@@ -602,7 +606,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::BatchCollected)
         );
 
-        let prepare_step_6 = aggregate_resp.prepare_resps().get(6).unwrap();
+        let prepare_step_6 = prepare_resps.get(6).unwrap();
         assert_eq!(
             prepare_step_6.report_id(),
             prepare_init_6.report_share().metadata().id()
@@ -612,7 +616,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let prepare_step_7 = aggregate_resp.prepare_resps().get(7).unwrap();
+        let prepare_step_7 = prepare_resps.get(7).unwrap();
         assert_eq!(
             prepare_step_7.report_id(),
             prepare_init_7.report_share().metadata().id()
@@ -622,7 +626,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let prepare_step_8 = aggregate_resp.prepare_resps().get(8).unwrap();
+        let prepare_step_8 = prepare_resps.get(8).unwrap();
         assert_eq!(
             prepare_step_8.report_id(),
             prepare_init_8.report_share().metadata().id()
@@ -632,7 +636,7 @@ async fn aggregate_init() {
             &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 
-        let prepare_step_9 = aggregate_resp.prepare_resps().get(9).unwrap();
+        let prepare_step_9 = prepare_resps.get(9).unwrap();
         assert_eq!(
             prepare_step_9.report_id(),
             prepare_init_9.report_share().metadata().id()
@@ -787,10 +791,14 @@ async fn aggregate_init_batch_already_collected() {
     .run_async(&handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregate_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    let prepare_step = prepare_resps.first().unwrap();
     assert_eq!(
         prepare_step.report_id(),
         prepare_init.report_share().metadata().id()
@@ -841,17 +849,21 @@ async fn aggregate_init_prep_init_failed() {
     // Send request, and parse response.
     let aggregation_job_id: AggregationJobId = random();
     let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(
         &test_conn,
         "content-type" => (AggregationJobResp::MEDIA_TYPE)
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregate_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
     // Validate response.
-    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    assert_eq!(prepare_resps.len(), 1);
 
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    let prepare_step = prepare_resps.first().unwrap();
     assert_eq!(
         prepare_step.report_id(),
         prepare_init.report_share().metadata().id()
@@ -901,17 +913,21 @@ async fn aggregate_init_prep_step_failed() {
 
     let aggregation_job_id: AggregationJobId = random();
     let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(test_conn.status(), Some(Status::Created));
     assert_headers!(
         &test_conn,
         "content-type" => (AggregationJobResp::MEDIA_TYPE)
     );
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let prepare_resps = assert_matches!(
+        aggregate_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
 
     // Validate response.
-    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    assert_eq!(prepare_resps.len(), 1);
 
-    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    let prepare_step = prepare_resps.first().unwrap();
     assert_eq!(
         prepare_step.report_id(),
         prepare_init.report_share().metadata().id()
