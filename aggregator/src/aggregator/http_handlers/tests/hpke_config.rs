@@ -164,10 +164,7 @@ async fn hpke_config_with_taskprov() {
         .unwrap();
 
     let cfg = Config {
-        taskprov_config: TaskprovConfig {
-            enabled: true,
-            ignore_unknown_differential_privacy_mechanism: false,
-        },
+        taskprov_config: TaskprovConfig { enabled: true },
         hpke_config_signing_key: Some(hpke_config_signing_key()),
         ..Default::default()
     };

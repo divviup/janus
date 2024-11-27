@@ -6,7 +6,7 @@ use super::{
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use janus_aggregator_core::{datastore::Datastore, instrumented};
+use janus_aggregator_core::{datastore::Datastore, instrumented, taskprov::taskprov_task_id};
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::extract_bearer_token,
@@ -25,10 +25,9 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::codec::Encode;
-use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{borrow::Cow, time::Duration as StdDuration};
-use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State, TryFromConn};
@@ -757,38 +756,37 @@ fn parse_taskprov_header<C: Clock>(
     task_id: &TaskId,
     conn: &Conn,
 ) -> Result<Option<TaskConfig>, Error> {
-    if aggregator.cfg.taskprov_config.enabled {
-        match conn.request_headers().get(TASKPROV_HEADER) {
-            Some(taskprov_header) => {
-                let task_config_encoded =
-                    &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
-                        Error::InvalidMessage(
-                            Some(*task_id),
-                            "taskprov header could not be decoded",
-                        )
-                    })?;
-
-                if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
-                    Err(Error::InvalidMessage(
-                        Some(*task_id),
-                        "derived taskprov task ID does not match task config",
-                    ))
-                } else {
-                    // TODO(#1684): Parsing the taskprov header like this before we've been able
-                    // to actually authenticate the client is undesireable. We should rework this
-                    // such that the authorization header is handled before parsing the untrusted
-                    // input.
-                    Ok(Some(
-                        TaskConfig::decode(&mut Cursor::new(task_config_encoded))
-                            .map_err(Error::MessageDecode)?,
-                    ))
-                }
-            }
-            None => Ok(None),
-        }
-    } else {
-        Ok(None)
+    if !aggregator.cfg.taskprov_config.enabled {
+        return Ok(None);
     }
+
+    let taskprov_header = match conn.request_headers().get(TASKPROV_HEADER) {
+        Some(taskprov_header) => taskprov_header,
+        None => return Ok(None),
+    };
+
+    let task_config_encoded = URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+        Error::InvalidMessage(
+            Some(*task_id),
+            "taskprov header could not be base64-decoded",
+        )
+    })?;
+
+    // Compute expected task ID & verify it matches the task ID from the request.
+    let expected_task_id = taskprov_task_id(&task_config_encoded);
+    if task_id != &expected_task_id {
+        return Err(Error::InvalidMessage(
+            Some(*task_id),
+            "derived taskprov task ID does not match task config",
+        ));
+    }
+
+    // TODO(#1684): Parsing the taskprov header like this before we've been able to actually
+    // authenticate the client is undesireable. We should rework this such that the authorization
+    // header is handled before parsing the untrusted input.
+    Ok(Some(
+        TaskConfig::get_decoded(&task_config_encoded).map_err(Error::MessageDecode)?,
+    ))
 }
 
 struct BodyBytes(Vec<u8>);

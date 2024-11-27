@@ -1,7 +1,7 @@
 # Taskprov Extension
 
 Janus has limited support for the Taskprov extension, as defined in
-[draft-wang-ppm-dap-taskprov][1]. We support it largely to facilitiate
+[draft-ietf-ppm-dap-taskprov][1]. We support it largely to facilitiate
 integrations with Divvi Up partners who have requested support for the
 extension.
 
@@ -12,7 +12,7 @@ respond by validating and provisioning the task. The exact mechanism of how the
 task configuration is provided depends on the version of the implemented spec
 draft.
 
-[1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
+[1]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap-taskprov/
 
 ## Compatibility
 
@@ -21,11 +21,14 @@ implemented on any branches missing from this list.
 
 | Git branch | Taskprov draft version | Conforms to protocol? | Status |
 | ---------- | ------------- | --------------------- | ------ |
-| `release/0.subscriber-01` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Unmaintained as of November 1, 2023 |
-| `release/0.5` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
-| `main` | [`draft-wang-ppm-dap-taskprov-06`][2] | Helper only | Supported |
+| `release/0.subscriber-01` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Unsupported as of November 1, 2023 |
+| `release/0.5` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Unsupported as of June 24, 2024 |
+| `release/0.7` | [`draft-wang-ppm-dap-taskprov-06`][3] | Helper only | Supported |
+| `main` | [`draft-ietf-ppm-dap-taskprov-01`][4] | Helper only |  Supported |
 
-[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/06/
+[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/04/
+[3]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/06/
+[4]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap-taskprov/01/
 
 ## Operational Considerations
 

@@ -401,7 +401,7 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
         .prepare_init_generator
         .clone()
         .with_private_extensions(Vec::from([Extension::new(
-            ExtensionType::Taskprov,
+            ExtensionType::Taskbind,
             Vec::new(),
         )]))
         .next(&0)

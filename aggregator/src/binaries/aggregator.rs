@@ -713,10 +713,7 @@ mod tests {
             )
             .unwrap()
             .taskprov_config,
-            TaskprovConfig {
-                enabled: true,
-                ignore_unknown_differential_privacy_mechanism: false
-            },
+            TaskprovConfig { enabled: true },
         );
     }
 

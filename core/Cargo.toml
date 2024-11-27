@@ -76,7 +76,7 @@ url = { workspace = true }
 [dev-dependencies]
 fixed = { workspace = true }
 hex = { workspace = true, features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
-janus_core = { path = ".", features = ["test-util"] }
+janus_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }
 rstest.workspace = true
 rustls.workspace = true

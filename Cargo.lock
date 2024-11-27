@@ -2957,6 +2957,7 @@ dependencies = [
  "base64 0.22.1",
  "educe",
  "hex",
+ "janus_messages 0.8.0-prerelease-1",
  "num_enum",
  "pretty_assertions",
  "prio 0.17.0-alpha.0",

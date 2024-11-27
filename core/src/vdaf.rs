@@ -176,16 +176,18 @@ impl VdafInstance {
     }
 }
 
-impl TryFrom<&taskprov::VdafType> for VdafInstance {
+impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
     type Error = &'static str;
 
-    fn try_from(value: &taskprov::VdafType) -> Result<Self, Self::Error> {
+    fn try_from(value: &taskprov::VdafConfig) -> Result<Self, Self::Error> {
         match value {
-            taskprov::VdafType::Prio3Count => Ok(Self::Prio3Count),
-            taskprov::VdafType::Prio3Sum { bits } => Ok(Self::Prio3Sum {
-                bits: *bits as usize,
+            taskprov::VdafConfig::Prio3Count => Ok(Self::Prio3Count),
+            taskprov::VdafConfig::Prio3Sum {
+                max_measurement: _max_measurement,
+            } => Ok(Self::Prio3Sum {
+                bits: 32, // TODO(#3436): plumb through max_measurement once it's available
             }),
-            taskprov::VdafType::Prio3SumVec {
+            taskprov::VdafConfig::Prio3SumVec {
                 bits,
                 length,
                 chunk_length,
@@ -195,7 +197,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
-            taskprov::VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            taskprov::VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 bits,
                 length,
                 chunk_length,
@@ -207,7 +209,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
-            taskprov::VdafType::Prio3Histogram {
+            taskprov::VdafConfig::Prio3Histogram {
                 length,
                 chunk_length,
             } => Ok(Self::Prio3Histogram {
@@ -217,7 +219,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
             }),
 
             #[cfg(feature = "test-util")]
-            taskprov::VdafType::Fake { rounds } => Ok(Self::Fake { rounds: *rounds }),
+            taskprov::VdafConfig::Fake { rounds } => Ok(Self::Fake { rounds: *rounds }),
 
             _ => Err("unknown VdafType"),
         }

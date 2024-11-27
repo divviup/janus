@@ -497,7 +497,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             Vec::from([
                 // public extensions
                 Extension::new(ExtensionType::Tbd, "public_extension_tbd".into()),
-                Extension::new(ExtensionType::Taskprov, "public_extension_taskprov".into()),
+                Extension::new(ExtensionType::Taskbind, "public_extension_taskbind".into()),
             ]),
         ),
         (), // public share
@@ -505,8 +505,8 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             // leader private extensions
             Extension::new(ExtensionType::Tbd, "leader_private_extension_tbd".into()),
             Extension::new(
-                ExtensionType::Taskprov,
-                "leader_private_extension_taskprov".into(),
+                ExtensionType::Taskbind,
+                "leader_private_extension_taskbind".into(),
             ),
         ]),
         dummy::InputShare::default(), // leader input share
@@ -2327,8 +2327,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 )]),
                 public_share: vdaf_transcript.public_share,
                 leader_private_extensions: Vec::from([Extension::new(
-                    ExtensionType::Taskprov,
-                    "leader_private_extension_taskprov".into(),
+                    ExtensionType::Taskbind,
+                    "leader_private_extension_taskbind".into(),
                 )]),
                 leader_input_share: vdaf_transcript.leader_input_share,
                 helper_encrypted_input_share: HpkeCiphertext::new(
@@ -2854,8 +2854,8 @@ async fn create_report_aggregation_from_client_reports_table(
                     ),
                     (),
                     Vec::from([Extension::new(
-                        ExtensionType::Taskprov,
-                        "leader_private_extension_taskprov".into(),
+                        ExtensionType::Taskbind,
+                        "leader_private_extension_taskbind".into(),
                     )]),
                     vdaf_transcript.leader_input_share,
                     HpkeCiphertext::new(
