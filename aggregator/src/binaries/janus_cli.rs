@@ -736,7 +736,6 @@ impl From<kube::Client> for LazyKubeClient {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::{
