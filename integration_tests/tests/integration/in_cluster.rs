@@ -666,7 +666,7 @@ mod rate_limits {
     use std::{
         env,
         fs::File,
-        sync::{Arc, OnceLock},
+        sync::{Arc, LazyLock},
         time::Duration,
     };
     use tokio::sync::Semaphore;
@@ -687,14 +687,13 @@ mod rate_limits {
 
     impl TestConfig {
         fn load() -> &'static Self {
-            static CONFIG: OnceLock<TestConfig> = OnceLock::new();
-
-            CONFIG.get_or_init(|| {
+            static CONFIG: LazyLock<TestConfig> = LazyLock::new(|| {
                 serde_json::from_reader(
                     File::open(env::var("JANUS_E2E_RATE_LIMIT_TEST_CONFIG").unwrap()).unwrap(),
                 )
                 .unwrap()
-            })
+            });
+            &CONFIG
         }
     }
 

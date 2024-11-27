@@ -32,11 +32,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use tokio::{
     fs,
     runtime::{self, Runtime},
+    sync::Mutex,
 };
 use tracing::{debug, info};
 use url::Url;
@@ -510,8 +511,7 @@ async fn fetch_datastore_keys(
         secret_data_key, namespace, secret_name,
     );
 
-    let secrets_api: kube::Api<Secret> =
-        kube::Api::namespaced(kube_client.get().await?.clone(), namespace);
+    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.get().await?, namespace);
 
     let secret = secrets_api
         .get(secret_name)
@@ -542,7 +542,7 @@ async fn create_datastore_key(
         "Creating datastore key"
     );
     let secrets_api: kube::Api<Secret> =
-        kube::Api::namespaced(kube_client.get().await?.clone(), k8s_namespace);
+        kube::Api::namespaced(kube_client.get().await?, k8s_namespace);
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
     // consumers of the secret we are about to write.
@@ -700,39 +700,42 @@ impl BinaryConfig for ConfigFile {
 
 /// A wrapper around [`kube::Client`] adding lazy initialization.
 struct LazyKubeClient {
-    lock: OnceLock<kube::Client>,
+    lock: Mutex<Option<kube::Client>>,
 }
 
 impl LazyKubeClient {
     fn new() -> Self {
         Self {
-            lock: OnceLock::new(),
+            lock: Mutex::default(),
         }
     }
 
     /// Return a reference to a client, constructing a client from the default inferred
     /// configuration if it has not been done yet. This will use the local kubeconfig file if
     /// present, use in-cluster environment variables if present, or fail.
-    async fn get(&self) -> Result<&kube::Client> {
-        if let Some(client) = self.lock.get() {
-            return Ok(client);
+    async fn get(&self) -> Result<kube::Client> {
+        let mut guard = self.lock.lock().await;
+        match guard.as_ref() {
+            Some(kube_client) => Ok(kube_client.clone()),
+            None => {
+                let kube_client = kube::Client::try_default()
+                    .await
+                    .context("couldn't load Kubernetes configuration")?;
+                *guard = Some(kube_client.clone());
+                Ok(kube_client)
+            }
         }
-        let _ = self.lock.set(
-            kube::Client::try_default()
-                .await
-                .context("couldn't load Kubernetes configuration")?,
-        );
-        Ok(self.lock.get().unwrap())
     }
 }
 
 impl From<kube::Client> for LazyKubeClient {
-    fn from(value: kube::Client) -> Self {
+    fn from(kube_client: kube::Client) -> Self {
         Self {
-            lock: OnceLock::from(value),
+            lock: Mutex::new(Some(kube_client)),
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -823,7 +826,7 @@ mod tests {
             expected_datastore_keys
         );
         // Shouldn't have set up a kube Client for this, since no namespace was given.
-        assert!(empty_kube_client.lock.get().is_none());
+        assert!(empty_kube_client.lock.lock().await.is_none());
 
         // Keys not provided at command line, present in k8s
         let common_options = CommonBinaryOptions::default();

@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use regex::bytes::Regex;
@@ -143,11 +143,10 @@ impl<H: Handler> InspectHandler<H> {
             }
             if conn.path().ends_with("/aggregate_shares") {
                 inspect_response_body(&mut conn, |bytes| {
-                    static ONCE: OnceLock<Regex> = OnceLock::new();
-                    let batch_mismatch_regex = ONCE.get_or_init(|| {
+                    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
                         Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
                     });
-                    if batch_mismatch_regex.is_match(bytes) {
+                    if REGEX.is_match(bytes) {
                         error!("batch mismatch response");
                         *self.failure.lock().unwrap() = true;
                     }

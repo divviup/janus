@@ -11,7 +11,7 @@ use ring::{
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     str::{self, FromStr},
-    sync::OnceLock,
+    sync::LazyLock,
 };
 
 /// HTTP header where auth tokens are provided in messages between participants.
@@ -242,11 +242,9 @@ impl BearerToken {
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
     fn validate(value: &str) -> Result<(), anyhow::Error> {
-        static REGEX: OnceLock<Regex> = OnceLock::new();
-
-        let regex = REGEX.get_or_init(|| Regex::new("^[-A-Za-z0-9._~+/]+=*$").unwrap());
-
-        if regex.is_match(value) {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new("^[-A-Za-z0-9._~+/]+=*$").unwrap());
+        if REGEX.is_match(value) {
             Ok(())
         } else {
             Err(anyhow::anyhow!("bearer token has invalid format"))

@@ -9,7 +9,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
 };
-use std::{fmt, str::FromStr, sync::OnceLock};
+use std::{fmt, str::FromStr, sync::LazyLock};
 use url::Url;
 
 #[derive(Educe, Clone, Copy, PartialEq, Eq)]
@@ -131,8 +131,7 @@ pub struct PeerAggregator {
 ///
 /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#name-deriving-the-vdaf-verificat
 fn taskprov_salt() -> &'static Salt {
-    static SALT: OnceLock<Salt> = OnceLock::new();
-    SALT.get_or_init(|| {
+    static SALT: LazyLock<Salt> = LazyLock::new(|| {
         Salt::new(
             HKDF_SHA256,
             &[
@@ -141,7 +140,8 @@ fn taskprov_salt() -> &'static Salt {
                 0x72, 0x3a, 0xf, 0xfe,
             ],
         )
-    })
+    });
+    &SALT
 }
 
 impl PeerAggregator {
