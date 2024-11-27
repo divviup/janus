@@ -37,7 +37,6 @@ pub struct TaskConfig {
     extensions: Vec<TaskbindExtension>,
 }
 
-/// A taskprov task configuration.
 impl TaskConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
