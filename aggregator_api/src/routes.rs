@@ -26,7 +26,7 @@ use rand::random;
 use ring::digest::{digest, SHA256};
 use std::{
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock},
     unreachable,
 };
 use trillium::{Conn, Status};
@@ -36,9 +36,8 @@ pub(super) async fn get_config(
     _: &mut Conn,
     State(config): State<Arc<Config>>,
 ) -> Json<AggregatorApiConfig> {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    let software_version =
-        VERSION.get_or_init(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
+    static VERSION: LazyLock<String> =
+        LazyLock::new(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
 
     Json(AggregatorApiConfig {
         protocol: "DAP-09",
@@ -61,7 +60,7 @@ pub(super) async fn get_config(
             "PureDpDiscreteLaplace",
         ],
         software_name: "Janus",
-        software_version,
+        software_version: &VERSION,
     })
 }
 
