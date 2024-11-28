@@ -3,6 +3,7 @@ use crate::aggregator::{
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
     Config,
 };
+use assert_matches::assert_matches;
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
@@ -28,8 +29,8 @@ use janus_core::{
 };
 use janus_messages::{
     batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
-    AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, Collection, CollectionJobId,
-    CollectionReq, Interval, Query, Role, Time,
+    AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, CollectionJobId,
+    CollectionJobReq, CollectionJobResp, Interval, Query, Role, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -59,7 +60,7 @@ impl CollectionJobTestCase {
     pub(super) async fn put_collection_job_with_auth_token<B: BatchModeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
-        request: &CollectionReq<B>,
+        request: &CollectionJobReq<B>,
         auth_token: Option<&AuthenticationToken>,
     ) -> TestConn {
         let mut test_conn = put(self
@@ -75,7 +76,7 @@ impl CollectionJobTestCase {
         test_conn
             .with_request_header(
                 KnownHeaderName::ContentType,
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_request_body(request.get_encoded().unwrap())
             .run_async(&self.handler)
@@ -85,7 +86,7 @@ impl CollectionJobTestCase {
     pub(super) async fn put_collection_job<B: BatchModeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
-        request: &CollectionReq<B>,
+        request: &CollectionJobReq<B>,
     ) -> TestConn {
         self.put_collection_job_with_auth_token(
             collection_job_id,
@@ -329,7 +330,7 @@ async fn collection_job_success_leader_selected() {
     let leader_aggregate_share = dummy::AggregateShare(0);
     let helper_aggregate_share = dummy::AggregateShare(1);
     let aggregation_param = dummy::AggregationParam::default();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         aggregation_param.get_encoded().unwrap(),
     );
@@ -337,13 +338,27 @@ async fn collection_job_success_leader_selected() {
     for _ in 0..2 {
         let collection_job_id: CollectionJobId = random();
 
-        let test_conn = test_case
+        let mut test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Created));
+        assert_headers!(
+            &test_conn,
+            "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
+        );
+        let collect_resp: CollectionJobResp<TimeInterval> =
+            decode_response_body(&mut test_conn).await;
+        assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
 
-        let test_conn = test_case.get_collection_job(&collection_job_id).await;
-        assert_eq!(test_conn.status(), Some(Status::Accepted));
+        let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
+        );
+        let collect_resp: CollectionJobResp<TimeInterval> =
+            decode_response_body(&mut test_conn).await;
+        assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
 
         // Update the collection job with the aggregate shares. collection job should now be complete.
         let batch_id = test_case
@@ -408,19 +423,38 @@ async fn collection_job_success_leader_selected() {
         }
 
         let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
-        assert_headers!(&test_conn, "content-type" => (Collection::<LeaderSelected>::MEDIA_TYPE));
+        assert_headers!(&test_conn, "content-type" => (CollectionJobResp::<LeaderSelected>::MEDIA_TYPE));
 
-        let collect_resp: Collection<LeaderSelected> = decode_response_body(&mut test_conn).await;
-        assert_eq!(
-            collect_resp.report_count(),
-            test_case.task.min_batch_size() + 1
+        let collect_resp: CollectionJobResp<LeaderSelected> =
+            decode_response_body(&mut test_conn).await;
+        let (
+            report_count,
+            interval,
+            leader_encrypted_aggregate_share,
+            helper_encrypted_aggregate_share,
+        ) = assert_matches!(
+            collect_resp,
+            CollectionJobResp::Finished {
+                report_count,
+                interval,
+                leader_encrypted_agg_share,
+                helper_encrypted_agg_share,
+                ..
+            } => (
+                report_count,
+                interval,
+                leader_encrypted_agg_share,
+                helper_encrypted_agg_share
+            )
         );
-        assert_eq!(collect_resp.interval(), &spanned_interval);
+
+        assert_eq!(report_count, test_case.task.min_batch_size() + 1);
+        assert_eq!(interval, spanned_interval);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            collect_resp.leader_encrypted_aggregate_share(),
+            &leader_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 aggregation_param.get_encoded().unwrap(),
@@ -438,7 +472,7 @@ async fn collection_job_success_leader_selected() {
         let decrypted_helper_aggregate_share = hpke::open(
             test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            collect_resp.helper_encrypted_aggregate_share(),
+            &helper_encrypted_aggregate_share,
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 aggregation_param.get_encoded().unwrap(),
@@ -483,7 +517,7 @@ async fn collection_job_put_idempotence_time_interval() {
         .await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -535,7 +569,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
         .await;
 
     let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -592,7 +626,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
         .await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -608,7 +642,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
         .await;
     assert_eq!(response.status(), Some(Status::Created));
 
-    let mutated_request = CollectionReq::new(
+    let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(test_case.task.time_precision().as_seconds()),
@@ -633,7 +667,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
         .await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -649,7 +683,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
         .await;
     assert_eq!(response.status(), Some(Status::Created));
 
-    let mutated_request = CollectionReq::new(
+    let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -672,7 +706,7 @@ async fn collection_job_put_idempotence_leader_selected() {
         setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
@@ -723,7 +757,7 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
     let (test_case, _, _, _) = setup_leader_selected_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
@@ -734,7 +768,7 @@ async fn collection_job_put_idempotence_leader_selected_mutate_aggregation_param
 
     assert_eq!(response.status(), Some(Status::Created));
 
-    let mutated_request = CollectionReq::new(
+    let mutated_request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
@@ -752,7 +786,7 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
 
     let collection_job_id_1 = random();
     let collection_job_id_2 = random();
-    let request: Arc<CollectionReq<LeaderSelected>> = Arc::new(CollectionReq::new(
+    let request: Arc<CollectionJobReq<LeaderSelected>> = Arc::new(CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     ));
@@ -765,7 +799,7 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
 
     // Fetch the first collection job, to advance the current batch.
     let response = test_case.get_collection_job(&collection_job_id_1).await;
-    assert_eq!(response.status(), Some(Status::Accepted));
+    assert_eq!(response.status(), Some(Status::Ok));
 
     // Create the second collection job.
     let response = test_case
@@ -776,7 +810,7 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
     // Fetch the second collection job, to advance the current batch. There are now no outstanding
     // batches left.
     let response = test_case.get_collection_job(&collection_job_id_2).await;
-    assert_eq!(response.status(), Some(Status::Accepted));
+    assert_eq!(response.status(), Some(Status::Ok));
 
     // Re-send the collection job creation requests to confirm they are still idempotent.
     let response = test_case

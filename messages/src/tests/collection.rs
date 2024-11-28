@@ -1,16 +1,17 @@
 use crate::{
     roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
-    BatchSelector, Collection, CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, Interval,
-    LeaderSelected, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval,
+    BatchSelector, CollectionJobReq, CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId,
+    Interval, LeaderSelected, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time,
+    TimeInterval,
 };
 use prio::codec::Decode;
 
 #[test]
-fn roundtrip_collection_req() {
+fn roundtrip_collection_job_req() {
     // TimeInterval.
     roundtrip_encoding(&[
         (
-            CollectionReq::<TimeInterval> {
+            CollectionJobReq::<TimeInterval> {
                 query: Query {
                     query_body: Interval::new(
                         Time::from_seconds_since_epoch(54321),
@@ -39,7 +40,7 @@ fn roundtrip_collection_req() {
             ),
         ),
         (
-            CollectionReq::<TimeInterval> {
+            CollectionJobReq::<TimeInterval> {
                 query: Query {
                     query_body: Interval::new(
                         Time::from_seconds_since_epoch(48913),
@@ -72,7 +73,7 @@ fn roundtrip_collection_req() {
     // LeaderSelected.
     roundtrip_encoding(&[
         (
-            CollectionReq::<LeaderSelected> {
+            CollectionJobReq::<LeaderSelected> {
                 query: Query { query_body: () },
                 aggregation_parameter: Vec::new(),
             },
@@ -90,7 +91,7 @@ fn roundtrip_collection_req() {
             ),
         ),
         (
-            CollectionReq::<LeaderSelected> {
+            CollectionJobReq::<LeaderSelected> {
                 query: Query { query_body: () },
                 aggregation_parameter: Vec::from("012345"),
             },
@@ -144,15 +145,22 @@ fn roundtrip_partial_batch_selector() {
 }
 
 #[test]
-fn roundtrip_collection() {
+fn roundtrip_collection_job_resp() {
     let interval = Interval {
         start: Time::from_seconds_since_epoch(54321),
         duration: Duration::from_seconds(12345),
     };
+
     // TimeInterval.
     roundtrip_encoding(&[
         (
-            Collection {
+            CollectionJobResp::<TimeInterval>::Processing,
+            concat!(
+                "00", // status
+            ),
+        ),
+        (
+            CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_count: 0,
                 interval,
@@ -168,6 +176,7 @@ fn roundtrip_collection() {
                 ),
             },
             concat!(
+                "01", // status
                 concat!(
                     // partial_batch_selector
                     "01",   // batch_mode
@@ -211,7 +220,7 @@ fn roundtrip_collection() {
             ),
         ),
         (
-            Collection {
+            CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_count: 23,
                 interval,
@@ -227,6 +236,7 @@ fn roundtrip_collection() {
                 ),
             },
             concat!(
+                "01", // status
                 concat!(
                     // partial_batch_selector
                     "01",   // batch_mode
@@ -274,7 +284,13 @@ fn roundtrip_collection() {
     // LeaderSelected.
     roundtrip_encoding(&[
         (
-            Collection {
+            CollectionJobResp::<LeaderSelected>::Processing,
+            concat!(
+                "00", // status
+            ),
+        ),
+        (
+            CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [3u8; 32],
                 )),
@@ -292,6 +308,7 @@ fn roundtrip_collection() {
                 ),
             },
             concat!(
+                "01", // status
                 concat!(
                     // partial_batch_selector
                     "02",   // batch_mode
@@ -335,7 +352,7 @@ fn roundtrip_collection() {
             ),
         ),
         (
-            Collection {
+            CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [4u8; 32],
                 )),
@@ -353,6 +370,7 @@ fn roundtrip_collection() {
                 ),
             },
             concat!(
+                "01", // status
                 concat!(
                     // partial_batch_selector
                     "02",   // batch_mode

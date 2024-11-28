@@ -2,6 +2,7 @@ use crate::aggregator::{
     collection_job_tests::setup_collection_job_test_case,
     http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
 };
+use assert_matches::assert_matches;
 use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::models::{CollectionJob, CollectionJobState},
@@ -12,8 +13,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::TimeInterval, AggregateShareAad, BatchSelector, Collection, CollectionJobId,
-    CollectionReq, Duration, Interval, Query, Role, Time,
+    batch_mode::TimeInterval, AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, Duration, Interval, Query, Role, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -35,7 +36,7 @@ async fn collection_job_put_request_to_helper() {
         .await;
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -70,7 +71,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
         .await;
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -106,7 +107,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         .await;
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -152,7 +153,7 @@ async fn collection_job_put_request_invalid_batch_size() {
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -168,7 +169,7 @@ async fn collection_job_put_request_invalid_batch_size() {
         .with_request_header(header, value)
         .with_request_header(
             KnownHeaderName::ContentType,
-            CollectionReq::<TimeInterval>::MEDIA_TYPE,
+            CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
         )
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&handler)
@@ -200,7 +201,7 @@ async fn collection_job_put_request_unauthenticated() {
     )
     .unwrap();
     let collection_job_id: CollectionJobId = random();
-    let req = CollectionReq::new(
+    let req = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
@@ -275,7 +276,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     .unwrap();
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
@@ -360,12 +361,12 @@ async fn collection_job_success_time_interval() {
     let helper_aggregate_share = dummy::AggregateShare(1);
 
     let collection_job_id: CollectionJobId = random();
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         aggregation_param.get_encoded().unwrap(),
     );
 
-    let test_conn = test_case
+    let mut test_conn = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
@@ -397,9 +398,21 @@ async fn collection_job_success_time_interval() {
     assert_eq!(want_collection_job, got_collection_job);
 
     assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
+    );
+    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
+    assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
 
-    let test_conn = test_case.get_collection_job(&collection_job_id).await;
-    assert_eq!(test_conn.status(), Some(Status::Accepted));
+    let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
+    );
+    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
+    assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
     // job should now be complete.
@@ -457,17 +470,32 @@ async fn collection_job_success_time_interval() {
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(
         &test_conn,
-        "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
+        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
     );
-    let collect_resp: Collection<TimeInterval> = decode_response_body(&mut test_conn).await;
+    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
+    let (
+        report_count,
+        interval,
+        leader_encrypted_aggregate_share,
+        helper_encrypted_aggregate_share,
+    ) = assert_matches!(
+        collect_resp,
+        CollectionJobResp::Finished{
+            report_count,
+            interval,
+            leader_encrypted_agg_share,
+            helper_encrypted_agg_share,
+            ..
+        } => (report_count, interval, leader_encrypted_agg_share, helper_encrypted_agg_share)
+    );
 
-    assert_eq!(collect_resp.report_count(), 12);
-    assert_eq!(collect_resp.interval(), &batch_interval);
+    assert_eq!(report_count, 12);
+    assert_eq!(interval, batch_interval);
 
     let decrypted_leader_aggregate_share = hpke::open(
         test_case.task.collector_hpke_keypair(),
         &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-        collect_resp.leader_encrypted_aggregate_share(),
+        &leader_encrypted_aggregate_share,
         &AggregateShareAad::new(
             *test_case.task.id(),
             aggregation_param.get_encoded().unwrap(),
@@ -485,7 +513,7 @@ async fn collection_job_success_time_interval() {
     let decrypted_helper_aggregate_share = hpke::open(
         test_case.task.collector_hpke_keypair(),
         &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-        collect_resp.helper_encrypted_aggregate_share(),
+        &helper_encrypted_aggregate_share,
         &AggregateShareAad::new(
             *test_case.task.id(),
             aggregation_param.get_encoded().unwrap(),
@@ -532,7 +560,7 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         .await;
 
     // Sending this request will consume a query for [0, time_precision).
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
@@ -542,7 +570,7 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
     assert_eq!(test_conn.status(), Some(Status::Created));
 
     // This request will not be allowed due to the query count already being consumed.
-    let invalid_request = CollectionReq::new(
+    let invalid_request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
@@ -570,7 +598,7 @@ async fn collection_job_put_request_batch_overlap() {
         .await;
 
     // Sending this request will consume a query for [0, 2 * time_precision).
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
@@ -586,7 +614,7 @@ async fn collection_job_put_request_batch_overlap() {
     assert_eq!(test_conn.status(), Some(Status::Created));
 
     // This request will not be allowed due to overlapping with the previous request.
-    let invalid_request = CollectionReq::new(
+    let invalid_request = CollectionJobReq::new(
         Query::new_time_interval(interval),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
@@ -634,7 +662,7 @@ async fn delete_collection_job() {
     assert_eq!(test_conn.status(), Some(Status::NotFound));
 
     // Create a collection job
-    let request = CollectionReq::new(
+    let request = CollectionJobReq::new(
         Query::new_time_interval(batch_interval),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );

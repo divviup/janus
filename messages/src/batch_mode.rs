@@ -1,4 +1,4 @@
-use crate::{BatchId, Collection, Interval, Query};
+use crate::{BatchId, Interval, Query};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{CodecError, Decode, Encode};
@@ -55,7 +55,7 @@ pub trait BatchMode: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
     /// Retrieves the batch identifier associated with an ongoing collection.
     fn batch_identifier_for_collection(
         query: &Query<Self>,
-        collect_resp: &Collection<Self>,
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier;
 }
 
@@ -76,7 +76,7 @@ impl BatchMode for TimeInterval {
 
     fn batch_identifier_for_collection(
         query: &Query<Self>,
-        _: &Collection<Self>,
+        _: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier {
         *query.batch_interval()
     }
@@ -101,9 +101,9 @@ impl BatchMode for LeaderSelected {
 
     fn batch_identifier_for_collection(
         _: &Query<Self>,
-        collect_resp: &Collection<Self>,
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
     ) -> Self::BatchIdentifier {
-        *collect_resp.partial_batch_selector().batch_identifier()
+        *partial_batch_identifier
     }
 }
 

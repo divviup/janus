@@ -693,53 +693,64 @@ fn roundtrip_aggregation_job_continue_req() {
 
 #[test]
 fn roundtrip_aggregation_job_resp() {
-    roundtrip_encoding(&[(
-        AggregationJobResp {
-            prepare_resps: Vec::from([
-                PrepareResp {
-                    report_id: ReportId::from([
-                        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                    ]),
-                    result: PrepareStepResult::Continue {
-                        message: PingPongMessage::Continue {
-                            prep_msg: Vec::from("01234"),
-                            prep_share: Vec::from("56789"),
+    roundtrip_encoding(&[
+        (
+            AggregationJobResp::Processing,
+            concat!(
+                "00", // status
+            ),
+        ),
+        (
+            AggregationJobResp::Finished {
+                prepare_resps: Vec::from([
+                    PrepareResp {
+                        report_id: ReportId::from([
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                        ]),
+                        result: PrepareStepResult::Continue {
+                            message: PingPongMessage::Continue {
+                                prep_msg: Vec::from("01234"),
+                                prep_share: Vec::from("56789"),
+                            },
                         },
                     },
-                },
-                PrepareResp {
-                    report_id: ReportId::from([
-                        16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
-                    ]),
-                    result: PrepareStepResult::Finished,
-                },
-            ]),
-        },
-        concat!(concat!(
-            // prepare_steps
-            "00000039", // length
+                    PrepareResp {
+                        report_id: ReportId::from([
+                            16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                        ]),
+                        result: PrepareStepResult::Finished,
+                    },
+                ]),
+            },
             concat!(
-                "0102030405060708090A0B0C0D0E0F10", // report_id
-                "00",                               // prepare_step_result
+                "01", // status
                 concat!(
-                    "00000013", // ping pong message length
-                    "01",       // ping pong message type
+                    // prepare_steps
+                    "00000039", // length
                     concat!(
-                        // prep_msg
-                        "00000005",   // prep_msg length
-                        "3031323334", // opaque data
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
+                        "00",                               // prepare_step_result
+                        concat!(
+                            "00000013", // ping pong message length
+                            "01",       // ping pong message type
+                            concat!(
+                                // prep_msg
+                                "00000005",   // prep_msg length
+                                "3031323334", // opaque data
+                            ),
+                            concat!(
+                                // prep_share
+                                "00000005",   // prep_share length
+                                "3536373839", // opaque data
+                            )
+                        ),
                     ),
                     concat!(
-                        // prep_share
-                        "00000005",   // prep_share length
-                        "3536373839", // opaque data
+                        "100F0E0D0C0B0A090807060504030201", // report_id
+                        "01",                               // prepare_step_result
                     )
                 ),
             ),
-            concat!(
-                "100F0E0D0C0B0A090807060504030201", // report_id
-                "01",                               // prepare_step_result
-            )
-        ),),
-    )])
+        ),
+    ])
 }

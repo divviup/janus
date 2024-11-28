@@ -17,8 +17,8 @@ use janus_core::{
 use janus_messages::{
     batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-    AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
-    HpkeConfigList, Report, TaskId,
+    AggregationJobInitializeReq, AggregationJobResp, CollectionJobId, CollectionJobReq,
+    CollectionJobResp, HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
@@ -199,10 +199,11 @@ const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
 /// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the
 /// inner object and sending it as the response body, setting the Content-Type header to the
-/// provided media type, and setting the status to 200.
+/// provided media type, and setting the status to the specified value (or 200 if unspecified).
 struct EncodedBody<T> {
     object: T,
     media_type: &'static str,
+    status: Status,
 }
 
 impl<T> EncodedBody<T>
@@ -210,7 +211,15 @@ where
     T: Encode,
 {
     fn new(object: T, media_type: &'static str) -> Self {
-        Self { object, media_type }
+        Self {
+            object,
+            media_type,
+            status: Status::Ok,
+        }
+    }
+
+    fn with_status(self, status: Status) -> Self {
+        Self { status, ..self }
     }
 }
 
@@ -223,7 +232,9 @@ where
         match self.object.get_encoded() {
             Ok(encoded) => conn
                 .with_response_header(KnownHeaderName::ContentType, self.media_type)
-                .ok(encoded),
+                .with_status(self.status)
+                .with_body(encoded)
+                .halt(),
             Err(e) => Error::MessageEncode(e).run(conn).await,
         }
     }
@@ -545,7 +556,7 @@ async fn aggregation_jobs_put<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Created))
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
@@ -570,7 +581,7 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Accepted))
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
@@ -598,22 +609,29 @@ async fn aggregation_jobs_delete<C: Clock>(
 async fn collection_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Status, Error> {
-    validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
+) -> Result<(), Error> {
+    validate_content_type(conn, CollectionJobReq::<TimeInterval>::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    conn.cancel_on_disconnect(aggregator.handle_create_collection_job(
-        &task_id,
-        &collection_job_id,
-        &body,
-        auth_token,
-    ))
-    .await
-    .ok_or(Error::ClientDisconnected)??;
+    let response_bytes = conn
+        .cancel_on_disconnect(aggregator.handle_create_collection_job(
+            &task_id,
+            &collection_job_id,
+            &body,
+            auth_token,
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
-    Ok(Status::Created)
+    conn.response_headers_mut().insert(
+        KnownHeaderName::ContentType,
+        CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
+    );
+    conn.set_status(Status::Created);
+    conn.set_body(response_bytes);
+    Ok(())
 }
 
 /// API handler for the "/tasks/.../collection_jobs/..." GET endpoint.
@@ -624,7 +642,7 @@ async fn collection_jobs_get<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let response_opt = conn
+    let response_bytes = conn
         .cancel_on_disconnect(aggregator.handle_get_collection_job(
             &task_id,
             &collection_job_id,
@@ -632,17 +650,13 @@ async fn collection_jobs_get<C: Clock>(
         ))
         .await
         .ok_or(Error::ClientDisconnected)??;
-    match response_opt {
-        Some(response_bytes) => {
-            conn.response_headers_mut().insert(
-                KnownHeaderName::ContentType,
-                Collection::<TimeInterval>::MEDIA_TYPE,
-            );
-            conn.set_status(Status::Ok);
-            conn.set_body(response_bytes);
-        }
-        None => conn.set_status(Status::Accepted),
-    }
+
+    conn.response_headers_mut().insert(
+        KnownHeaderName::ContentType,
+        CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
+    );
+    conn.set_status(Status::Ok);
+    conn.set_body(response_bytes);
     Ok(())
 }
 

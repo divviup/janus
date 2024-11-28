@@ -10,6 +10,7 @@ use prio::{
     vdaf::dummy,
 };
 use rand::random;
+use trillium::Status;
 use trillium_testing::assert_status;
 
 use crate::aggregator::{
@@ -94,29 +95,37 @@ async fn helper_aggregation_report_share_replay() {
     // Make aggregation job initialization requests, and check the prepare step results.
     let mut test_conn =
         put_aggregation_job(&task, &aggregation_job_id_1, &agg_init_req_1, &handler).await;
-    assert_status!(test_conn, 200);
+    assert_status!(test_conn, Status::Created);
     let agg_init_resp_1 =
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
+    let prepare_resps_1 = assert_matches!(
+        agg_init_resp_1,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
     assert_matches!(
-        agg_init_resp_1.prepare_resps()[0].result(),
+        prepare_resps_1[0].result(),
         PrepareStepResult::Continue { .. }
     );
     assert_matches!(
-        agg_init_resp_1.prepare_resps()[1].result(),
+        prepare_resps_1[1].result(),
         PrepareStepResult::Continue { .. }
     );
 
     let mut test_conn =
         put_aggregation_job(&task, &aggregation_job_id_2, &agg_init_req_2, &handler).await;
-    assert_status!(test_conn, 200);
+    assert_status!(test_conn, Status::Created);
     let agg_init_resp_2 =
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
+    let prepare_resps_2 = assert_matches!(
+        agg_init_resp_2,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
     assert_matches!(
-        agg_init_resp_2.prepare_resps()[0].result(),
+        prepare_resps_2[0].result(),
         PrepareStepResult::Reject(ReportError::ReportReplayed)
     );
     assert_matches!(
-        agg_init_resp_2.prepare_resps()[1].result(),
+        prepare_resps_2[1].result(),
         PrepareStepResult::Continue { .. }
     );
 

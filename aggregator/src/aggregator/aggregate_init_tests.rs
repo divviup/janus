@@ -212,19 +212,23 @@ async fn setup_aggregate_init_test_for_vdaf<
         &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), Some(Status::Created));
 
-    let aggregation_job_init_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    let prepare_resps = assert_matches!(
+        &aggregation_job_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
     assert_eq!(
-        aggregation_job_init_resp.prepare_resps().len(),
+        prepare_resps.len(),
         test_case.aggregation_job_init_req.prepare_inits().len(),
     );
     assert_matches!(
-        aggregation_job_init_resp.prepare_resps()[0].result(),
+        prepare_resps[0].result(),
         &PrepareStepResult::Continue { .. }
     );
 
-    test_case.aggregation_job_init_resp = Some(aggregation_job_init_resp);
+    test_case.aggregation_job_init_resp = Some(aggregation_job_resp);
     test_case
 }
 
@@ -345,7 +349,7 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
     .run_async(&test_case.handler)
     .await;
 
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), Some(Status::Created));
 }
 
 #[rstest::rstest]
@@ -420,12 +424,14 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
         &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), Some(Status::Created));
 
-    let want_aggregation_job_resp = AggregationJobResp::new(Vec::from([PrepareResp::new(
-        report_id,
-        PrepareStepResult::Reject(ReportError::InvalidMessage),
-    )]));
+    let want_aggregation_job_resp = AggregationJobResp::Finished {
+        prepare_resps: Vec::from([PrepareResp::new(
+            report_id,
+            PrepareStepResult::Reject(ReportError::InvalidMessage),
+        )]),
+    };
     let got_aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     assert_eq!(want_aggregation_job_resp, got_aggregation_job_resp);
 }
@@ -589,19 +595,23 @@ async fn aggregation_job_intolerable_clock_skew() {
         &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), Some(Status::Ok));
+    assert_eq!(response.status(), Some(Status::Created));
 
-    let aggregation_job_init_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    let prepare_resps = assert_matches!(
+        aggregation_job_resp,
+        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+    );
     assert_eq!(
-        aggregation_job_init_resp.prepare_resps().len(),
+        prepare_resps.len(),
         test_case.aggregation_job_init_req.prepare_inits().len(),
     );
     assert_matches!(
-        aggregation_job_init_resp.prepare_resps()[0].result(),
+        prepare_resps[0].result(),
         &PrepareStepResult::Continue { .. }
     );
     assert_matches!(
-        aggregation_job_init_resp.prepare_resps()[1].result(),
+        prepare_resps[1].result(),
         &PrepareStepResult::Reject(ReportError::ReportTooEarly)
     );
 }

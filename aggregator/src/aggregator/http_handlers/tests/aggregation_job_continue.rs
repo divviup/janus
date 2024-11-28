@@ -9,6 +9,7 @@ use crate::aggregator::{
         BATCH_AGGREGATION_SHARD_COUNT,
     },
 };
+use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
@@ -268,13 +269,15 @@ async fn aggregate_continue() {
     // Validate response.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::new(Vec::from([
-            PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
-            PrepareResp::new(
-                *report_metadata_2.id(),
-                PrepareStepResult::Reject(ReportError::BatchCollected),
-            )
-        ]))
+        AggregationJobResp::Finished {
+            prepare_resps: Vec::from([
+                PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
+                PrepareResp::new(
+                    *report_metadata_2.id(),
+                    PrepareStepResult::Reject(ReportError::BatchCollected),
+                )
+            ])
+        }
     );
 
     // Validate datastore.
@@ -1133,9 +1136,11 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
 
     let resp =
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(resp.prepare_resps().len(), 1);
+    let prepare_resps =
+        assert_matches!(resp, AggregationJobResp::Finished{prepare_resps} => prepare_resps);
+    assert_eq!(prepare_resps.len(), 1);
     assert_eq!(
-        resp.prepare_resps()[0],
+        prepare_resps[0],
         PrepareResp::new(
             *report_metadata.id(),
             PrepareStepResult::Reject(ReportError::VdafPrepError),
@@ -1247,10 +1252,12 @@ async fn aggregate_continue_prep_step_fails() {
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::new(Vec::from([PrepareResp::new(
-            *report_metadata.id(),
-            PrepareStepResult::Reject(ReportError::VdafPrepError),
-        )]),)
+        AggregationJobResp::Finished {
+            prepare_resps: Vec::from([PrepareResp::new(
+                *report_metadata.id(),
+                PrepareStepResult::Reject(ReportError::VdafPrepError),
+            )])
+        }
     );
 
     // Check datastore state.
