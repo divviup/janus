@@ -621,8 +621,8 @@ impl<V: vdaf::Collector> Collector<V> {
                     job.aggregation_parameter.get_encoded()?,
                     BatchSelector::<B>::new(B::batch_identifier_for_collection(
                         &job.query,
-                        &collect_response,
-                    )?),
+                        partial_batch_selector.batch_identifier(),
+                    )),
                 )
                 .get_encoded()?,
             )?;

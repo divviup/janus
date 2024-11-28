@@ -81,7 +81,7 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
             let message: AggregateShare = AggregateShare::get_decoded(&message_buf)?;
             Box::new(message)
         }
-        MediaType::CollectionReq => {
+        MediaType::CollectionJobReq => {
             if let Ok(decoded) = CollectionJobReq::<TimeInterval>::get_decoded(&message_buf) {
                 let message: CollectionJobReq<TimeInterval> = decoded;
                 Box::new(message)
@@ -91,7 +91,7 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 Box::new(message)
             }
         }
-        MediaType::Collection => {
+        MediaType::CollectionJobResp => {
             if let Ok(decoded) = CollectionJobResp::<TimeInterval>::get_decoded(&message_buf) {
                 let message: CollectionJobResp<TimeInterval> = decoded;
                 Box::new(message)
@@ -125,10 +125,10 @@ enum MediaType {
     AggregateShareReq,
     #[value(name = "aggregate-share")]
     AggregateShare,
-    #[value(name = "collect-req")]
-    CollectionReq,
-    #[value(name = "collection")]
-    Collection,
+    #[value(name = "collect-job-req")]
+    CollectionJobReq,
+    #[value(name = "collection-job-resp")]
+    CollectionJobResp,
 }
 
 #[derive(Debug, Parser)]

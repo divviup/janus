@@ -150,8 +150,15 @@ fn roundtrip_collection_job_resp() {
         start: Time::from_seconds_since_epoch(54321),
         duration: Duration::from_seconds(12345),
     };
+
     // TimeInterval.
     roundtrip_encoding(&[
+        (
+            CollectionJobResp::<TimeInterval>::Processing,
+            concat!(
+                "00", // status
+            ),
+        ),
         (
             CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
@@ -276,6 +283,12 @@ fn roundtrip_collection_job_resp() {
 
     // LeaderSelected.
     roundtrip_encoding(&[
+        (
+            CollectionJobResp::<LeaderSelected>::Processing,
+            concat!(
+                "00", // status
+            ),
+        ),
         (
             CollectionJobResp::Finished {
                 partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
