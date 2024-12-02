@@ -129,7 +129,7 @@ where
     aggregate_result: V::AggregateResult,
 }
 
-pub async fn collect_generic<'a, V, B>(
+pub async fn collect_generic<V, B>(
     collector: &Collector<V>,
     query: Query<B>,
     aggregation_parameter: &V::AggregationParam,
