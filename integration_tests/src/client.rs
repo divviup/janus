@@ -196,7 +196,7 @@ pub enum ClientBackend<'a> {
     },
 }
 
-impl<'a> ClientBackend<'a> {
+impl ClientBackend<'_> {
     pub async fn build<V>(
         &self,
         test_name: &str,
