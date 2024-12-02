@@ -6246,14 +6246,14 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 B::write_outstanding_batch(tx, task.id(), &batch_identifier, &time_bucket_start)
                     .await;
 
-            return (
+            (
                 Some(*collection_job.id()),
                 None,
                 Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 outstanding_batch_id,
                 Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 time_bucket_start,
-            );
+            )
         } else {
             tx.put_aggregate_share_job::<0, B, dummy::Vdaf>(&AggregateShareJob::new(
                 *task.id(),
@@ -6266,14 +6266,14 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             .await
             .unwrap();
 
-            return (
+            (
                 None,
                 Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 None,
                 Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 None,
-            );
+            )
         }
     }
 
