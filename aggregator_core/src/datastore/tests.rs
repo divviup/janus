@@ -2320,7 +2320,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     for (ord, (role, state)) in [
         (
             Role::Leader,
-            ReportAggregationState::StartLeader {
+            ReportAggregationState::LeaderInit {
                 public_extensions: Vec::from([Extension::new(
                     ExtensionType::Tbd,
                     "public_extension_tbd".into(),
@@ -2340,7 +2340,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             Role::Leader,
-            ReportAggregationState::WaitingLeader {
+            ReportAggregationState::LeaderContinue {
                 transition: vdaf_transcript.leader_prepare_transitions[1]
                     .transition
                     .clone()
@@ -2348,8 +2348,20 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             },
         ),
         (
+            Role::Leader,
+            ReportAggregationState::LeaderPoll {
+                leader_state: vdaf_transcript.leader_prepare_transitions[0].state.clone(),
+            },
+        ),
+        (
+            Role::Leader,
+            ReportAggregationState::LeaderPoll {
+                leader_state: vdaf_transcript.leader_prepare_transitions[1].state.clone(),
+            },
+        ),
+        (
             Role::Helper,
-            ReportAggregationState::WaitingHelper {
+            ReportAggregationState::HelperContinue {
                 prepare_state: *vdaf_transcript.helper_prepare_transitions[0].prepare_state(),
             },
         ),
@@ -2479,6 +2491,7 @@ WHERE client_report_id = $1",
                         task.id(),
                         &aggregation_job_id,
                         &report_id,
+                        &aggregation_param,
                     )
                     .await
                 })
@@ -2547,6 +2560,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                         task.id(),
                         &aggregation_job_id,
                         &report_id,
+                        &aggregation_param,
                     )
                     .await
                 })
@@ -2570,6 +2584,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                         task.id(),
                         &aggregation_job_id,
                         &report_id,
+                        &aggregation_param,
                     )
                     .await
                 })
@@ -2587,6 +2602,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let vdaf = Arc::new(dummy::Vdaf::default());
+    let aggregation_param = dummy::AggregationParam(5);
 
     let rslt = ds
         .run_unnamed_tx(|tx| {
@@ -2599,6 +2615,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     &random(),
                     &random(),
                     &ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    &aggregation_param,
                 )
                 .await
             })
@@ -2682,7 +2699,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
-                    ReportAggregationState::StartLeader {
+                    ReportAggregationState::LeaderInit {
                         public_extensions: Vec::new(),
                         public_share: vdaf_transcript.public_share,
                         leader_private_extensions: Vec::new(),
@@ -2693,7 +2710,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                             Vec::from("payload"),
                         ),
                     },
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *vdaf_transcript.helper_prepare_transitions[0]
                             .prepare_state(),
                     },
@@ -2757,6 +2774,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
+                    &aggregation_param,
                 )
                 .await
             })
@@ -2777,6 +2795,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
+                    &aggregation_param,
                 )
                 .await
             })
@@ -2872,7 +2891,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     report_id,
                     timestamp,
                     0,
-                    ReportAggregationMetadataState::Start,
+                    ReportAggregationMetadataState::Init,
                 );
                 tx.put_leader_report_aggregation(&report_aggregation_metadata)
                     .await
@@ -2885,7 +2904,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     timestamp,
                     0,
                     None,
-                    ReportAggregationState::<0, dummy::Vdaf>::StartLeader {
+                    ReportAggregationState::<0, dummy::Vdaf>::LeaderInit {
                         public_extensions: leader_stored_report
                             .metadata()
                             .public_extensions()
@@ -2915,6 +2934,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     &Role::Leader,
                     task.id(),
                     &aggregation_job_id,
+                    &aggregation_param,
                 )
                 .await
             })
@@ -5262,7 +5282,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     1,
                     None,
                     // Counted among max_size.
-                    ReportAggregationState::WaitingLeader {
+                    ReportAggregationState::LeaderContinue {
                         transition: transcript.helper_prepare_transitions[0].transition.clone(),
                     },
                 );
@@ -5682,11 +5702,13 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
+    let aggregation_param = dummy::AggregationParam(0);
 
     // Setup.
     async fn write_aggregation_artifacts<B: TestBatchModeExt>(
         tx: &Transaction<'_, MockClock>,
         task_id: &TaskId,
+        aggregation_param: &dummy::AggregationParam,
         client_timestamps: &[Time],
     ) -> (
         B::BatchIdentifier,
@@ -5717,7 +5739,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         let aggregation_job = AggregationJob::<0, B, dummy::Vdaf>::new(
             *task_id,
             random(),
-            dummy::AggregationParam(0),
+            *aggregation_param,
             B::partial_batch_identifier(&batch_identifier).clone(),
             client_timestamp_interval,
             AggregationJobState::InProgress,
@@ -5809,6 +5831,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 write_aggregation_artifacts::<TimeInterval>(
                     tx,
                     leader_time_interval_task.id(),
+                    &aggregation_param,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5825,6 +5848,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<TimeInterval>(
                         tx,
                         leader_time_interval_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub(&Duration::from_seconds(5))
@@ -5843,6 +5867,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<TimeInterval>(
                         tx,
                         leader_time_interval_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .add(&Duration::from_seconds(19))
@@ -5860,6 +5885,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 write_aggregation_artifacts::<TimeInterval>(
                     tx,
                     helper_time_interval_task.id(),
+                    &aggregation_param,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5876,6 +5902,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<TimeInterval>(
                         tx,
                         helper_time_interval_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub(&Duration::from_seconds(5))
@@ -5894,6 +5921,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<TimeInterval>(
                         tx,
                         helper_time_interval_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .add(&Duration::from_seconds(19))
@@ -5911,6 +5939,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 write_aggregation_artifacts::<LeaderSelected>(
                     tx,
                     leader_leader_selected_task.id(),
+                    &aggregation_param,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5927,6 +5956,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<LeaderSelected>(
                         tx,
                         leader_leader_selected_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub(&Duration::from_seconds(5))
@@ -5945,6 +5975,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<LeaderSelected>(
                         tx,
                         leader_leader_selected_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .add(&Duration::from_seconds(19))
@@ -5962,6 +5993,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 write_aggregation_artifacts::<LeaderSelected>(
                     tx,
                     helper_leader_selected_task.id(),
+                    &aggregation_param,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub(&Duration::from_seconds(20))
@@ -5978,6 +6010,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<LeaderSelected>(
                         tx,
                         helper_leader_selected_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub(&Duration::from_seconds(5))
@@ -5996,6 +6029,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     write_aggregation_artifacts::<LeaderSelected>(
                         tx,
                         helper_leader_selected_task.id(),
+                        &aggregation_param,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .add(&Duration::from_seconds(19))
@@ -6101,6 +6135,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_time_interval_task_id,
+                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6109,6 +6144,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_time_interval_task_id,
+                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6117,6 +6153,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_leader_selected_task_id,
+                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6125,6 +6162,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_leader_selected_task_id,
+                        &aggregation_param,
                     )
                     .await
                     .unwrap();

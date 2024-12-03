@@ -38,8 +38,8 @@ use janus_core::{
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareStepResult, ReportError,
-    ReportMetadata, ReportShare, Role,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportError, ReportMetadata, ReportShare, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -180,37 +180,27 @@ where
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, verify_key) = datastore
-            .run_tx("step_aggregation_job_1", |tx| {
+            .run_tx("step_aggregation_job_generic", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
-                    let task = tx
-                        .get_aggregator_task(lease.leased().task_id())
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                anyhow!("couldn't find task {}", lease.leased().task_id()).into(),
-                            )
-                        })?;
+                    let task_future = tx.get_aggregator_task(lease.leased().task_id());
+                    let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
+                        lease.leased().task_id(),
+                        lease.leased().aggregation_job_id(),
+                    );
+
+                    let (task, aggregation_job) = try_join!(task_future, aggregation_job_future,)?;
+
+                    let task = task.ok_or_else(|| {
+                        datastore::Error::User(
+                            anyhow!("couldn't find task {}", lease.leased().task_id()).into(),
+                        )
+                    })?;
                     let verify_key = task.vdaf_verify_key().map_err(|_| {
                         datastore::Error::User(
                             anyhow!("VDAF verification key has wrong length").into(),
                         )
                     })?;
-
-                    let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, B, A>(
-                        lease.leased().task_id(),
-                        lease.leased().aggregation_job_id(),
-                    );
-                    let report_aggregations_future = tx
-                        .get_report_aggregations_for_aggregation_job(
-                            vdaf.as_ref(),
-                            &Role::Leader,
-                            lease.leased().task_id(),
-                            lease.leased().aggregation_job_id(),
-                        );
-
-                    let (aggregation_job, report_aggregations) =
-                        try_join!(aggregation_job_future, report_aggregations_future)?;
                     let aggregation_job = aggregation_job.ok_or_else(|| {
                         datastore::Error::User(
                             anyhow!(
@@ -221,6 +211,16 @@ where
                             .into(),
                         )
                     })?;
+
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_aggregation_job(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            lease.leased().task_id(),
+                            lease.leased().aggregation_job_id(),
+                            aggregation_job.aggregation_parameter(),
+                        )
+                        .await?;
 
                     Ok((
                         Arc::new(task),
@@ -233,26 +233,30 @@ where
             .await?;
 
         // Figure out the next step based on the non-error report aggregation states, and dispatch accordingly.
-        let (mut saw_start, mut saw_waiting, mut saw_finished) = (false, false, false);
+        let (mut saw_init, mut saw_continue, mut saw_poll, mut saw_finished) =
+            (false, false, false, false);
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
-                ReportAggregationState::StartLeader { .. } => saw_start = true,
-                ReportAggregationState::WaitingLeader { .. } => saw_waiting = true,
-                ReportAggregationState::WaitingHelper { .. } => {
+                ReportAggregationState::LeaderInit { .. } => saw_init = true,
+                ReportAggregationState::LeaderContinue { .. } => saw_continue = true,
+                ReportAggregationState::LeaderPoll { .. } => saw_poll = true,
+
+                ReportAggregationState::HelperContinue { .. } => {
                     return Err(Error::Internal(
-                        "Leader encountered unexpected ReportAggregationState::WaitingHelper"
+                        "Leader encountered unexpected ReportAggregationState::HelperContinue"
                             .to_string(),
                     ));
                 }
+
                 ReportAggregationState::Finished => saw_finished = true,
                 ReportAggregationState::Failed { .. } => (), // ignore failed aggregations
             }
         }
-        match (saw_start, saw_waiting, saw_finished) {
-            // Only saw report aggregations in state "start" (or failed or invalid).
-            (true, false, false) => {
+        match (saw_init, saw_continue, saw_poll, saw_finished) {
+            // Only saw report aggregations in state "init" (or failed).
+            (true, false, false, false) => {
                 self.step_aggregation_job_aggregate_init(
-                    Arc::clone(&datastore),
+                    datastore,
                     vdaf,
                     lease,
                     task,
@@ -263,10 +267,23 @@ where
                 .await
             }
 
-            // Only saw report aggregations in state "waiting" (or failed or invalid).
-            (false, true, false) => {
+            // Only saw report aggregations in state "continue" (or failed).
+            (false, true, false, false) => {
                 self.step_aggregation_job_aggregate_continue(
-                    Arc::clone(&datastore),
+                    datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
+
+            // Only saw report aggregations in state "poll" (or failed).
+            (false, false, true, false) => {
+                self.step_aggregation_job_aggregate_poll(
+                    datastore,
                     vdaf,
                     lease,
                     task,
@@ -277,8 +294,9 @@ where
             }
 
             _ => Err(Error::Internal(format!(
-                "unexpected combination of report aggregation states (saw_start = {saw_start}, \
-                saw_waiting = {saw_waiting}, saw_finished = {saw_finished})",
+                "unexpected combination of report aggregation states (saw_init = {saw_init}, \
+                saw_continue = {saw_continue}, saw_poll = {saw_poll}, \
+                saw_finished = {saw_finished})",
             ))),
         }
     }
@@ -317,7 +335,7 @@ where
             .filter(|report_aggregation| {
                 matches!(
                     report_aggregation.state(),
-                    &ReportAggregationState::StartLeader { .. }
+                    &ReportAggregationState::LeaderInit { .. }
                 )
             })
             .collect();
@@ -359,7 +377,7 @@ where
                         leader_input_share,
                         helper_encrypted_input_share,
                     ) = match report_aggregation.state() {
-                        ReportAggregationState::StartLeader {
+                        ReportAggregationState::LeaderInit {
                             public_extensions,
                             public_share,
                             leader_private_extensions,
@@ -521,7 +539,7 @@ where
                 &self.http_client,
                 self.backoff.clone(),
                 Method::PUT,
-                task.aggregation_job_uri(aggregation_job.id())?
+                task.aggregation_job_uri(aggregation_job.id(), None)?
                     .ok_or_else(|| {
                         Error::InvalidConfiguration("task is leader and has no aggregate share URI")
                     })?,
@@ -530,8 +548,8 @@ where
                     content_type: AggregationJobInitializeReq::<B>::MEDIA_TYPE,
                     body: Bytes::from(request.get_encoded().map_err(Error::MessageEncode)?),
                 }),
-                // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
-                // case, and Janus never acts as the leader with taskprov enabled.
+                // The only way a task wouldn't have an aggregator auth token in it is in the
+                // taskprov case, and Janus never acts as the leader with taskprov enabled.
                 task.aggregator_auth_token().ok_or_else(|| {
                     Error::InvalidConfiguration("no aggregator auth token in task")
                 })?,
@@ -592,7 +610,7 @@ where
             .filter(|report_aggregation| {
                 matches!(
                     report_aggregation.state(),
-                    &ReportAggregationState::WaitingLeader { .. }
+                    &ReportAggregationState::LeaderContinue { .. }
                 )
             })
             .collect();
@@ -626,7 +644,7 @@ where
                         let _entered = span.enter();
 
                         let transition = match report_aggregation.state() {
-                            ReportAggregationState::WaitingLeader { transition } => transition,
+                            ReportAggregationState::LeaderContinue { transition } => transition,
                             // Panic safety: this can't happen because we filter to only
                             // WaitingLeader-state report aggregations before this loop.
                             _ => panic!(
@@ -714,7 +732,7 @@ where
             &self.http_client,
             self.backoff.clone(),
             Method::POST,
-            task.aggregation_job_uri(aggregation_job.id())?
+            task.aggregation_job_uri(aggregation_job.id(), None)?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
@@ -745,6 +763,82 @@ where
         .await
     }
 
+    async fn step_aggregation_job_aggregate_poll<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: Arc<AggregatorTask>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
+        A::OutputShare: Send + Sync,
+        A::PrepareState: Send + Sync + Encode,
+        A::PrepareShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::PublicShare: Send + Sync,
+    {
+        // Only process non-failed report aggregations; convert non-failed report aggregations into
+        // stepped aggregations to be compatible with `process_response_from_helper`.
+        let stepped_aggregations: Vec<_> = report_aggregations
+            .into_iter()
+            .filter_map(|report_aggregation| {
+                let leader_state = match report_aggregation.state() {
+                    ReportAggregationState::LeaderPoll { leader_state } => {
+                        Some(leader_state.clone())
+                    }
+                    _ => None,
+                };
+
+                leader_state.map(|leader_state| SteppedAggregation {
+                    report_aggregation,
+                    leader_state,
+                })
+            })
+            .collect();
+
+        // Poll the Helper for completion.
+        let resp_bytes = send_request_to_helper(
+            &self.http_client,
+            self.backoff.clone(),
+            Method::GET,
+            task.aggregation_job_uri(aggregation_job.id(), Some(aggregation_job.step()))?
+                .ok_or_else(|| {
+                    Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
+                })?,
+            AGGREGATION_JOB_ROUTE,
+            None,
+            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+            // case, and Janus never acts as the leader with taskprov enabled.
+            task.aggregator_auth_token()
+                .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
+            &self.http_request_duration_histogram,
+        )
+        .await?;
+        let resp = AggregationJobResp::get_decoded(&resp_bytes).map_err(Error::MessageDecode)?;
+
+        self.process_response_from_helper(
+            datastore,
+            vdaf,
+            lease,
+            task,
+            aggregation_job,
+            stepped_aggregations,
+            Vec::new(),
+            resp,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn process_response_from_helper<
         const SEED_SIZE: usize,
@@ -759,7 +853,7 @@ where
         task: Arc<AggregatorTask>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
-        mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
+        report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         helper_resp: AggregationJobResp,
     ) -> Result<(), Error>
     where
@@ -772,16 +866,153 @@ where
         A::PrepareState: Send + Sync + Encode,
         A::PublicShare: Send + Sync,
     {
-        let prepare_resps = match helper_resp {
+        match helper_resp {
             // TODO(#3436): implement asynchronous aggregation
             AggregationJobResp::Processing => {
-                return Err(Error::Internal(
-                    "asynchronous aggregation not yet implemented".into(),
-                ))
+                self.process_response_from_helper_pending(
+                    datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    stepped_aggregations,
+                    report_aggregations_to_write,
+                )
+                .await
             }
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps,
-        };
 
+            AggregationJobResp::Finished { prepare_resps } => {
+                self.process_response_from_helper_finished(
+                    datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    stepped_aggregations,
+                    report_aggregations_to_write,
+                    prepare_resps,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn process_response_from_helper_pending<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: Arc<AggregatorTask>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
+        mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + PartialEq,
+        A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
+        A::OutputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
+        A::PrepareState: Send + Sync + Encode,
+        A::PublicShare: Send + Sync,
+    {
+        // XXX: respect retry-after
+        // XXX: verify Location header matches spec?
+
+        // Any non-failed report aggregations are set to the Poll state, allowing them to be polled
+        // when the aggregation job is next picked up.
+        report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
+            |stepped_aggregation| {
+                WritableReportAggregation::new(
+                    stepped_aggregation.report_aggregation.with_state(
+                        ReportAggregationState::LeaderPoll {
+                            leader_state: stepped_aggregation.leader_state,
+                        },
+                    ),
+                    // Even if we have recovered an output share (i.e.,
+                    // `stepped_aggregation.leader_state` is Finished), we don't include it here: we
+                    // aren't done with aggregation until we receive a response from the Helper, so
+                    // it would be incorrect to merge the results into the batch aggregations at
+                    // this point.
+                    None,
+                )
+            },
+        ));
+
+        // Write everything back to storage.
+        let mut aggregation_job_writer =
+            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
+                Arc::clone(&task),
+                self.batch_aggregation_shard_count,
+                Some(AggregationJobWriterMetrics {
+                    report_aggregation_success_counter: self.aggregation_success_counter.clone(),
+                    aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+                    aggregated_report_share_dimension_histogram: self
+                        .aggregated_report_share_dimension_histogram
+                        .clone(),
+                }),
+            );
+        aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
+        let aggregation_job_writer = Arc::new(aggregation_job_writer);
+
+        let counters = datastore
+            .run_tx("process_response_from_helper_pending", |tx| {
+                let vdaf = Arc::clone(&vdaf);
+                let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
+                let lease = Arc::clone(&lease);
+
+                Box::pin(async move {
+                    let ((_, counters), _) = try_join!(
+                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
+                        tx.release_aggregation_job(&lease),
+                    )?;
+                    Ok(counters)
+                })
+            })
+            .await?;
+
+        write_task_aggregation_counter(
+            datastore,
+            self.task_counter_shard_count,
+            *task.id(),
+            counters,
+        );
+
+        Ok(())
+    }
+
+    async fn process_response_from_helper_finished<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: Arc<AggregatorTask>,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
+        mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
+        prepare_resps: Vec<PrepareResp>,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + PartialEq,
+        A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
+        A::OutputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
+        A::PrepareState: Send + Sync + Encode,
+        A::PublicShare: Send + Sync,
+    {
         // Handle response, computing the new report aggregations to be stored.
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
@@ -823,99 +1054,99 @@ where
                 let ctx = vdaf_application_context(&task_id);
 
                 stepped_aggregations.into_par_iter().zip(prepare_resps).try_for_each(
-                    |(stepped_aggregation, helper_prep_resp)| {
-                        let _entered = span.enter();
+                        |(stepped_aggregation, helper_prep_resp)| {
+                            let _entered = span.enter();
 
-                        let (new_state, output_share) = match helper_prep_resp.result() {
-                            PrepareStepResult::Continue {
-                                message: helper_prep_msg,
-                            } => {
-                                let state_and_message = trace_span!("VDAF preparation (leader continuation)")
-                                    .in_scope(|| {
-                                        vdaf.leader_continued(
-                                            &ctx,
-                                            stepped_aggregation.leader_state.clone(),
-                                            aggregation_job.aggregation_parameter(),
-                                            helper_prep_msg,
-                                        )
-                                        .map_err(|ping_pong_error| {
-                                            handle_ping_pong_error(
-                                                &task_id,
-                                                Role::Leader,
-                                                stepped_aggregation.report_aggregation.report_id(),
-                                                ping_pong_error,
-                                                &aggregate_step_failure_counter,
+                            let (new_state, output_share) = match helper_prep_resp.result() {
+                                PrepareStepResult::Continue {
+                                    message: helper_prep_msg,
+                                } => {
+                                    let state_and_message = trace_span!("VDAF preparation (leader continuation)")
+                                        .in_scope(|| {
+                                            vdaf.leader_continued(
+                                                &ctx,
+                                                stepped_aggregation.leader_state.clone(),
+                                                aggregation_job.aggregation_parameter(),
+                                                helper_prep_msg,
                                             )
-                                        })
-                                    });
+                                            .map_err(|ping_pong_error| {
+                                                handle_ping_pong_error(
+                                                    &task_id,
+                                                    Role::Leader,
+                                                    stepped_aggregation.report_aggregation.report_id(),
+                                                    ping_pong_error,
+                                                    &aggregate_step_failure_counter,
+                                                )
+                                            })
+                                        });
 
-                                match state_and_message {
-                                    Ok(PingPongContinuedValue::WithMessage { transition }) => {
-                                        // Leader did not finish. Store our state and outgoing message for the
-                                        // next step.
-                                        // n.b. it's possible we finished and recovered an output share at the
-                                        // VDAF level (i.e., state may be PingPongState::Finished) but we cannot
-                                        // finish at the DAP layer and commit the output share until we get
-                                        // confirmation from the Helper that they finished, too.
-                                        (ReportAggregationState::WaitingLeader { transition }, None)
-                                    }
-                                    Ok(PingPongContinuedValue::FinishedNoMessage { output_share }) => {
-                                        // We finished and have no outgoing message, meaning the Helper was
-                                        // already finished. Commit the output share.
-                                        (ReportAggregationState::Finished, Some(output_share))
-                                    }
-                                    Err(report_error) => {
-                                        (ReportAggregationState::Failed { report_error }, None)
+                                    match state_and_message {
+                                        Ok(PingPongContinuedValue::WithMessage { transition }) => {
+                                            // Leader did not finish. Store our state and outgoing message for the
+                                            // next step.
+                                            // n.b. it's possible we finished and recovered an output share at the
+                                            // VDAF level (i.e., state may be PingPongState::Finished) but we cannot
+                                            // finish at the DAP layer and commit the output share until we get
+                                            // confirmation from the Helper that they finished, too.
+                                            (ReportAggregationState::LeaderContinue { transition }, None)
+                                        }
+                                        Ok(PingPongContinuedValue::FinishedNoMessage { output_share }) => {
+                                            // We finished and have no outgoing message, meaning the Helper was
+                                            // already finished. Commit the output share.
+                                            (ReportAggregationState::Finished, Some(output_share))
+                                        }
+                                        Err(report_error) => {
+                                            (ReportAggregationState::Failed { report_error }, None)
+                                        }
                                     }
                                 }
-                            }
 
-                            PrepareStepResult::Finished => {
-                                if let PingPongState::Finished(output_share) = stepped_aggregation.leader_state
-                                {
-                                    // Helper finished and we had already finished. Commit the output share.
-                                    (ReportAggregationState::Finished, Some(output_share))
-                                } else {
-                                    warn!(
+                                PrepareStepResult::Finished => {
+                                    if let PingPongState::Finished(output_share) = stepped_aggregation.leader_state
+                                    {
+                                        // Helper finished and we had already finished. Commit the output share.
+                                        (ReportAggregationState::Finished, Some(output_share))
+                                    } else {
+                                        warn!(
+                                            report_id = %stepped_aggregation.report_aggregation.report_id(),
+                                            "Helper finished but Leader did not",
+                                        );
+                                        aggregate_step_failure_counter
+                                            .add(1, &[KeyValue::new("type", "finish_mismatch")]);
+                                        (
+                                            ReportAggregationState::Failed {
+                                                report_error: ReportError::VdafPrepError,
+                                            },
+                                            None,
+                                        )
+                                    }
+                                }
+
+                                PrepareStepResult::Reject(err) => {
+                                    // If the helper failed, we move to FAILED immediately.
+                                    // TODO(#236): is it correct to just record the transition error that the helper reports?
+                                    info!(
                                         report_id = %stepped_aggregation.report_aggregation.report_id(),
-                                        "Helper finished but Leader did not",
+                                        helper_error = ?err,
+                                        "Helper couldn't step report aggregation",
                                     );
                                     aggregate_step_failure_counter
-                                        .add(1, &[KeyValue::new("type", "finish_mismatch")]);
+                                        .add(1, &[KeyValue::new("type", "helper_step_failure")]);
                                     (
                                         ReportAggregationState::Failed {
-                                            report_error: ReportError::VdafPrepError,
+                                            report_error: *err,
                                         },
                                         None,
                                     )
                                 }
-                            }
+                            };
 
-                            PrepareStepResult::Reject(err) => {
-                                // If the helper failed, we move to FAILED immediately.
-                                // TODO(#236): is it correct to just record the transition error that the helper reports?
-                                info!(
-                                    report_id = %stepped_aggregation.report_aggregation.report_id(),
-                                    helper_error = ?err,
-                                    "Helper couldn't step report aggregation",
-                                );
-                                aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "helper_step_failure")]);
-                                (
-                                    ReportAggregationState::Failed {
-                                        report_error: *err,
-                                    },
-                                    None,
-                                )
-                            }
-                        };
-
-                        ra_sender.send(WritableReportAggregation::new(
-                            stepped_aggregation.report_aggregation.with_state(new_state),
-                            output_share,
-                        ))
-                    }
-                )
+                            ra_sender.send(WritableReportAggregation::new(
+                                stepped_aggregation.report_aggregation.with_state(new_state),
+                                output_share,
+                            ))
+                        }
+                    )
             }
         });
 
@@ -961,7 +1192,7 @@ where
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
         let counters = datastore
-            .run_tx("step_aggregation_job_2", |tx| {
+            .run_tx("process_response_from_helper_finished", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let lease = Arc::clone(&lease);
@@ -1041,7 +1272,7 @@ where
         let vdaf = Arc::new(vdaf);
         let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
         let (aggregation_job_uri, aggregator_auth_token) = datastore
-            .run_tx("cancel_aggregation_job", |tx| {
+            .run_tx("cancel_aggregation_job_generic", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
 
@@ -1049,15 +1280,9 @@ where
                     // On abandoning an aggregation job, we update the aggregation job's state field
                     // to Abandoned, but leave all other state (e.g. report aggregations) alone to
                     // ease debugging.
-                    let (task, aggregation_job, report_aggregations) = try_join!(
+                    let (task, aggregation_job) = try_join!(
                         tx.get_aggregator_task(lease.leased().task_id()),
                         tx.get_aggregation_job::<SEED_SIZE, B, A>(
-                            lease.leased().task_id(),
-                            lease.leased().aggregation_job_id()
-                        ),
-                        tx.get_report_aggregations_for_aggregation_job(
-                            vdaf.as_ref(),
-                            &Role::Leader,
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id()
                         ),
@@ -1081,13 +1306,21 @@ where
                         })?
                         .with_state(AggregationJobState::Abandoned);
 
-                    let report_aggregations = report_aggregations
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_aggregation_job(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            lease.leased().task_id(),
+                            lease.leased().aggregation_job_id(),
+                            aggregation_job.aggregation_parameter(),
+                        )
+                        .await?
                         .into_iter()
                         .map(|ra| WritableReportAggregation::new(ra, None))
                         .collect();
 
                     let aggregation_job_uri =
-                        task.aggregation_job_uri(lease.leased().aggregation_job_id());
+                        task.aggregation_job_uri(lease.leased().aggregation_job_id(), None);
                     let aggregator_auth_token = task.aggregator_auth_token().cloned();
 
                     let mut aggregation_job_writer =

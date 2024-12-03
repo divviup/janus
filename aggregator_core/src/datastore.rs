@@ -39,7 +39,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongState, PingPongTransition},
     vdaf,
 };
 use rand::random;
@@ -1573,7 +1573,7 @@ ON CONFLICT(task_id, report_id) DO UPDATE
     ///
     /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
     /// can no longer be read, so this method should only be called once all aggregations over the
-    /// report have stepped past their START state.
+    /// report have stepped past their INIT state.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn scrub_client_report(
         &self,
@@ -2082,6 +2082,7 @@ WHERE aggregation_jobs.task_id = $6
         role: &Role,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
+        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2098,8 +2099,8 @@ SELECT
     ord, client_report_id, client_timestamp, last_prep_resp,
     report_aggregations.state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code
+    helper_encrypted_input_share, leader_prep_transition, leader_prepare_state,
+    leader_output_share, helper_prep_state, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2127,6 +2128,7 @@ ORDER BY ord ASC",
                 task_id,
                 aggregation_job_id,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                aggregation_param,
                 &row,
             )
         })
@@ -2145,6 +2147,7 @@ ORDER BY ord ASC",
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
+        aggregation_param: &A::AggregationParam,
     ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2161,7 +2164,7 @@ SELECT
     ord, client_timestamp, last_prep_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
     leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    helper_prep_state, error_code
+    leader_prepare_state, leader_output_share, helper_prep_state, error_code
 FROM report_aggregations
 JOIN aggregation_jobs
     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -2190,6 +2193,7 @@ WHERE report_aggregations.task_id = $1
                 task_id,
                 aggregation_job_id,
                 report_id,
+                aggregation_param,
                 &row,
             )
         })
@@ -2207,6 +2211,7 @@ WHERE report_aggregations.task_id = $1
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
+        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2224,7 +2229,7 @@ SELECT
     client_timestamp, last_prep_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
     leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    helper_prep_state, error_code
+    leader_prepare_state, leader_output_share, helper_prep_state, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
 WHERE report_aggregations.task_id = $1
@@ -2249,6 +2254,7 @@ WHERE report_aggregations.task_id = $1
                 task_id,
                 &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                aggregation_param,
                 &row,
             )
         })
@@ -2261,6 +2267,7 @@ WHERE report_aggregations.task_id = $1
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
+        aggregation_param: &A::AggregationParam,
         row: &Row,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
     where
@@ -2277,12 +2284,12 @@ WHERE report_aggregations.task_id = $1
             .transpose()?;
 
         let agg_state = match state {
-            ReportAggregationStateCode::Start => {
+            ReportAggregationStateCode::Init => {
                 let public_extensions_bytes = row
                     .get::<_, Option<Vec<u8>>>("public_extensions")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state START but public_extensions is NULL"
+                            "report aggregation in state INIT but public_extensions is NULL"
                                 .to_string(),
                         )
                     })?;
@@ -2290,7 +2297,7 @@ WHERE report_aggregations.task_id = $1
                     row.get::<_, Option<Vec<u8>>>("public_share")
                         .ok_or_else(|| {
                             Error::DbState(
-                                "report aggregation in state START but public_share is NULL"
+                                "report aggregation in state INIT but public_share is NULL"
                                     .to_string(),
                             )
                         })?;
@@ -2298,7 +2305,7 @@ WHERE report_aggregations.task_id = $1
                     .get::<_, Option<Vec<u8>>>("leader_private_extensions")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state START but leader_private_extensions is NULL"
+                            "report aggregation in state INIT but leader_private_extensions is NULL"
                                 .to_string(),
                         )
                     })?;
@@ -2306,7 +2313,7 @@ WHERE report_aggregations.task_id = $1
                     .get::<_, Option<Vec<u8>>>("leader_input_share")
                     .ok_or_else(|| {
                         Error::DbState(
-                            "report aggregation in state START but leader_input_share is NULL"
+                            "report aggregation in state INIT but leader_input_share is NULL"
                                 .to_string(),
                         )
                     })?;
@@ -2314,7 +2321,7 @@ WHERE report_aggregations.task_id = $1
                     row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
                         .ok_or_else(|| {
                             Error::DbState(
-                            "report aggregation in state START but helper_encrypted_input_share is NULL"
+                            "report aggregation in state INIT but helper_encrypted_input_share is NULL"
                                 .to_string(),
                         )
                         })?;
@@ -2332,7 +2339,7 @@ WHERE report_aggregations.task_id = $1
                 let helper_encrypted_input_share =
                     HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
 
-                ReportAggregationState::StartLeader {
+                ReportAggregationState::LeaderInit {
                     public_extensions,
                     public_share,
                     leader_private_extensions,
@@ -2341,7 +2348,7 @@ WHERE report_aggregations.task_id = $1
                 }
             }
 
-            ReportAggregationStateCode::Waiting => {
+            ReportAggregationStateCode::Continue => {
                 match role {
                     Role::Leader => {
                         let leader_prep_transition_bytes = row
@@ -2357,7 +2364,7 @@ WHERE report_aggregations.task_id = $1
                             &leader_prep_transition_bytes,
                         )?;
 
-                        ReportAggregationState::WaitingLeader {
+                        ReportAggregationState::LeaderContinue {
                             transition: ping_pong_transition,
                         }
                     }
@@ -2375,10 +2382,40 @@ WHERE report_aggregations.task_id = $1
                             &helper_prep_state_bytes,
                         )?;
 
-                        ReportAggregationState::WaitingHelper { prepare_state }
+                        ReportAggregationState::HelperContinue { prepare_state }
                     }
                     _ => panic!("unexpected role"),
                 }
+            }
+
+            ReportAggregationStateCode::Poll => {
+                let leader_prepare_state_bytes =
+                    row.get::<_, Option<Vec<u8>>>("leader_prepare_state");
+                let leader_output_share_bytes =
+                    row.get::<_, Option<Vec<u8>>>("leader_output_share");
+
+                let leader_state = match (leader_prepare_state_bytes, leader_output_share_bytes) {
+                    (Some(leader_prepare_state_bytes), None) => PingPongState::Continued(
+                        A::PrepareState::get_decoded_with_param(
+                            &(vdaf, 0 /* leader */),
+                            &leader_prepare_state_bytes
+                        )?
+                    ),
+
+                    (None, Some(leader_output_share_bytes)) => PingPongState::Finished(
+                        A::OutputShare::get_decoded_with_param(
+                            &(&vdaf, aggregation_param),
+                            &leader_output_share_bytes
+                        )?
+                    ),
+
+                    _ => return Err(Error::DbState(
+                        "report aggregation in state POLL but both/neither of leader_prepare_state \
+                        and leader_output_share are NULL".to_string()
+                    )),
+                };
+
+                ReportAggregationState::LeaderPoll { leader_state }
             }
 
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
@@ -2447,11 +2484,11 @@ INSERT INTO report_aggregations
     (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
     last_prep_resp, state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
-    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-    error_code, created_at, updated_at, updated_by)
+    helper_encrypted_input_share, leader_prep_transition, leader_prepare_state,
+    leader_output_share, helper_prep_state, error_code, created_at, updated_at, updated_by)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17, $18
+    $15, $16, $17, $18, $19, $20
 FROM aggregation_jobs
 WHERE task_id = $1
   AND aggregation_job_id = $2
@@ -2460,20 +2497,21 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         client_report_id, client_timestamp, last_prep_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, helper_prep_state, error_code, created_at,
-        updated_at, updated_by
+        leader_prep_transition, leader_prepare_state, leader_output_share,
+        helper_prep_state, error_code, created_at, updated_at, updated_by
     ) = (
         excluded.client_report_id, excluded.client_timestamp,
         excluded.last_prep_resp, excluded.state, excluded.public_extensions,
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
-        excluded.leader_prep_transition, excluded.helper_prep_state,
+        excluded.leader_prep_transition, excluded.leader_prepare_state,
+        excluded.leader_output_share, excluded.helper_prep_state,
         excluded.error_code, excluded.created_at, excluded.updated_at,
         excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $19",
+           WHERE id = report_aggregations.aggregation_job_id) >= $21",
             )
             .await?;
         check_insert(
@@ -2497,6 +2535,8 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     &encoded_state_values.helper_encrypted_input_share,
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
+                    /* leader_prepare_state */ &encoded_state_values.leader_prepare_state,
+                    /* leader_output_share */ &encoded_state_values.leader_output_share,
                     /* helper_prep_state */ &encoded_state_values.helper_prep_state,
                     /* error_code */ &encoded_state_values.report_error,
                     /* created_at */ &now,
@@ -2509,7 +2549,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         )
     }
 
-    /// Creates a report aggregation in the `StartLeader` state from its metadata.
+    /// Creates a report aggregation in the `LeaderInit` state from its metadata.
     ///
     /// Report shares are copied directly from the `client_reports` table.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
@@ -2527,7 +2567,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         let now = self.clock.now().as_naive_date_time()?;
 
         match report_aggregation_metadata.state() {
-            ReportAggregationMetadataState::Start => {
+            ReportAggregationMetadataState::Init => {
                 let stmt = self
                     .prepare_cached(
                         "-- put_leader_report_aggregation()
@@ -2537,7 +2577,7 @@ INSERT INTO report_aggregations
     leader_input_share, helper_encrypted_input_share, created_at, updated_at,
     updated_by)
 SELECT
-    $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
+    $1, aggregation_jobs.id, $3, $4, $5, 'INIT'::REPORT_AGGREGATION_STATE,
     client_reports.public_extensions, client_reports.public_share,
     client_reports.leader_private_extensions,
     client_reports.leader_input_share,
@@ -2685,16 +2725,18 @@ SET
     last_prep_resp = $1, state = $2, public_extensions = $3, public_share = $4,
     leader_private_extensions = $5, leader_input_share = $6,
     helper_encrypted_input_share = $7, leader_prep_transition = $8,
-    helper_prep_state = $9, error_code = $10, updated_at = $11, updated_by = $12
+    leader_prepare_state = $9, leader_output_share = $10,
+    helper_prep_state = $11, error_code = $12, updated_at = $13,
+    updated_by = $14
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
-  AND aggregation_jobs.aggregation_job_id = $13
-  AND aggregation_jobs.task_id = $14
-  AND report_aggregations.task_id = $14
-  AND report_aggregations.client_report_id = $15
-  AND report_aggregations.client_timestamp = $16
-  AND report_aggregations.ord = $17
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $18",
+  AND aggregation_jobs.aggregation_job_id = $15
+  AND aggregation_jobs.task_id = $16
+  AND report_aggregations.task_id = $16
+  AND report_aggregations.client_report_id = $17
+  AND report_aggregations.client_timestamp = $18
+  AND report_aggregations.ord = $19
+  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $20",
             )
             .await?;
         check_single_row_mutation(
@@ -2712,6 +2754,8 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     &encoded_state_values.helper_encrypted_input_share,
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
+                    /* leader_prepare_state */ &encoded_state_values.leader_prepare_state,
+                    /* leader_output_share */ &encoded_state_values.leader_output_share,
                     /* helper_prep_state */ &encoded_state_values.helper_prep_state,
                     /* error_code */ &encoded_state_values.report_error,
                     /* updated_at */ &now,
@@ -4487,7 +4531,7 @@ WHERE task_id = $1
     //  * min_size is the minimum possible number of reports included in the batch, i.e. all report
     //    aggregations in the batch which have reached the FINISHED state.
     //  * max_size is the maximum possible number of reports included in the batch, i.e. all report
-    //    aggregations in the batch which are in a non-failure state (START/WAITING/FINISHED).
+    //    aggregations in the batch which are in a non-failure state (INIT/CONTINUE/FINISHED).
     async fn read_batch_size(
         &self,
         task_pkey: i64,
@@ -4503,7 +4547,7 @@ WITH report_aggregations_count AS (
     WHERE aggregation_jobs.task_id = $1
     AND report_aggregations.task_id = aggregation_jobs.task_id
     AND aggregation_jobs.batch_id = $2
-    AND report_aggregations.state in ('START', 'WAITING')
+    AND report_aggregations.state in ('INIT', 'CONTINUE')
 ),
 batch_aggregation_count AS (
     SELECT SUM(report_count) AS count FROM batch_aggregations
