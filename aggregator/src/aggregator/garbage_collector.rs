@@ -210,6 +210,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
 
         // Setup.
         let task = ds
@@ -236,7 +237,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        dummy::AggregationParam(0),
+                        aggregation_param,
                         (),
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
@@ -246,7 +247,7 @@ mod tests {
                     .unwrap();
 
                     tx.put_report_aggregation(
-                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                        &report.as_leader_init_report_aggregation(aggregation_job_id, 0),
                     )
                     .await
                     .unwrap();
@@ -329,6 +330,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -361,6 +363,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
 
         // Setup.
         let task = ds
@@ -397,7 +400,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        dummy::AggregationParam(0),
+                        aggregation_param,
                         (),
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
@@ -498,6 +501,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -533,6 +537,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
 
         // Setup.
         let task = ds
@@ -566,7 +571,7 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
-                        dummy::AggregationParam(0),
+                        aggregation_param,
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
@@ -575,7 +580,7 @@ mod tests {
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
                     let report_aggregation =
-                        report.as_start_leader_report_aggregation(*aggregation_job.id(), 0);
+                        report.as_leader_init_report_aggregation(*aggregation_job.id(), 0);
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();
@@ -661,6 +666,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -701,6 +707,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
 
         // Setup.
         let task = ds
@@ -744,7 +751,7 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
-                        dummy::AggregationParam(0),
+                        aggregation_param,
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
@@ -851,6 +858,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &aggregation_param,
                     )
                     .await
                     .unwrap()

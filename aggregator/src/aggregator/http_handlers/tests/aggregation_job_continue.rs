@@ -198,7 +198,7 @@ async fn aggregate_continue() {
                     *report_metadata_0.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_0,
                     },
                 ))
@@ -211,7 +211,7 @@ async fn aggregate_continue() {
                     *report_metadata_1.time(),
                     1,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_1,
                     },
                 ))
@@ -224,7 +224,7 @@ async fn aggregate_continue() {
                     *report_metadata_2.time(),
                     2,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_2,
                     },
                 ))
@@ -299,6 +299,7 @@ async fn aggregate_continue() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
+                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -575,7 +576,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_0.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_0,
                     },
                 ))
@@ -588,7 +589,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_1.time(),
                     1,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_1,
                     },
                 ))
@@ -601,7 +602,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_2.time(),
                     2,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_2,
                     },
                 ))
@@ -883,7 +884,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_3.time(),
                     3,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_3,
                     },
                 ))
@@ -896,7 +897,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_4.time(),
                     4,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_4,
                     },
                 ))
@@ -909,7 +910,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     *report_metadata_5.time(),
                     5,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: helper_prep_state_5,
                     },
                 ))
@@ -1112,7 +1113,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                     *report_metadata.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
@@ -1226,7 +1227,7 @@ async fn aggregate_continue_prep_step_fails() {
                     *report_metadata.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
@@ -1281,6 +1282,7 @@ async fn aggregate_continue_prep_step_fails() {
                         task.id(),
                         &aggregation_job_id,
                         report_metadata.id(),
+                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -1401,7 +1403,7 @@ async fn aggregate_continue_unexpected_transition() {
                     *report_metadata.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *transcript.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
@@ -1559,7 +1561,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     *report_metadata_0.time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *transcript_0.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
@@ -1572,7 +1574,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     *report_metadata_1.time(),
                     1,
                     None,
-                    ReportAggregationState::WaitingHelper {
+                    ReportAggregationState::HelperContinue {
                         prepare_state: *transcript_1.helper_prepare_transitions[0].prepare_state(),
                     },
                 ))
