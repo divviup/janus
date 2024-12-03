@@ -670,7 +670,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
-                                        ReportAggregationMetadataState::Start,
+                                        ReportAggregationMetadataState::Init,
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
@@ -812,7 +812,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                         *report.report_id(),
                                         *report.client_timestamp(),
                                         ord.try_into()?,
-                                        ReportAggregationMetadataState::Start,
+                                        ReportAggregationMetadataState::Init,
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
@@ -1042,7 +1042,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -1222,7 +1222,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -1409,7 +1409,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -1466,7 +1466,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -1802,7 +1802,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -1995,7 +1995,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2162,7 +2162,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2257,7 +2257,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2424,7 +2424,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2527,7 +2527,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2724,7 +2724,7 @@ mod tests {
                     (
                         (*report.metadata().id(), ()),
                         report
-                            .as_start_leader_report_aggregation(random(), 0)
+                            .as_leader_init_report_aggregation(random(), 0)
                             .state()
                             .clone(),
                     )
@@ -2878,7 +2878,7 @@ mod tests {
             expected_report_aggregations.insert(
                 (*report.metadata().id(), first_aggregation_param),
                 report
-                    .as_start_leader_report_aggregation(random(), 0)
+                    .as_leader_init_report_aggregation(random(), 0)
                     .state()
                     .clone(),
             );
@@ -2897,14 +2897,14 @@ mod tests {
             expected_report_aggregations.insert(
                 (*report.metadata().id(), first_aggregation_param),
                 report
-                    .as_start_leader_report_aggregation(random(), 0)
+                    .as_leader_init_report_aggregation(random(), 0)
                     .state()
                     .clone(),
             );
             expected_report_aggregations.insert(
                 (*report.metadata().id(), second_aggregation_param),
                 report
-                    .as_start_leader_report_aggregation(random(), 0)
+                    .as_leader_init_report_aggregation(random(), 0)
                     .state()
                     .clone(),
             );
@@ -3172,6 +3172,7 @@ mod tests {
                                 &Role::Leader,
                                 task_id,
                                 &agg_job_id,
+                                agg_job.aggregation_parameter(),
                             )
                             .await
                             .unwrap();

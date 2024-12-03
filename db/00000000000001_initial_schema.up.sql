@@ -248,10 +248,11 @@ CREATE INDEX aggregation_jobs_task_and_client_timestamp_interval ON aggregation_
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
-    'START',     -- the aggregator is waiting to decrypt its input share & compute initial preparation state
-    'WAITING',   -- the aggregator is waiting for a message from its peer before proceeding
-    'FINISHED',  -- the aggregator has completed the preparation process and recovered an output share
-    'FAILED'     -- an error has occurred and an output share cannot be recovered
+    'INIT',      -- the aggregator is ready for the aggregation initialization step
+    'CONTINUE',  -- the aggregator is ready for an aggregation continuation step
+    'POLL',      -- the aggregator is polling for completion of a previous operation
+    'FINISHED',  -- the aggregator has completed the preparation process successfully
+    'FAILED'     -- the aggregator has completed the preparation process unsuccessfully
 );
 
 -- An aggregation attempt for a single client report. An aggregation job logically contains a number
@@ -267,17 +268,21 @@ CREATE TABLE report_aggregations(
     last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
 
-    -- Additional data for state StartLeader.
+    -- Additional data for state LeaderInit.
     public_extensions             BYTEA,  -- encoded sequence of public Extension messages (opaque DAP messages)
     public_share                  BYTEA,  -- the public share for the report (opaque VDAF message)
     leader_private_extensions     BYTEA,  -- encoded sequence of leader's private Extension messages (opaque DAP messages)
     leader_input_share            BYTEA,  -- encoded leader input share (opaque VDAF message)
     helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
 
-    -- Additional data for state WaitingLeader.
+    -- Additional data for state LeaderContinue.
     leader_prep_transition  BYTEA,  -- the current VDAF prepare transition (opaque VDAF message)
 
-    -- Additional data for state WaitingHelper.
+    -- Additional data for state LeaderPoll.
+    leader_prep_state    BYTEA,  -- the current prepare state (opaque VDAF message)
+    leader_output_share  BYTEA,  -- the leader's recovered output share (opaque VDAF message)
+
+    -- Additional data for state HelperContinue.
     helper_prep_state  BYTEA,  -- the current VDAF prepare state (opaque VDAF message)
 
     -- Additional data for state Failed.

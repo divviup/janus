@@ -347,7 +347,7 @@ where
         .map_err(Error::DifferentialPrivacy)?;
 
         // Send an aggregate share request to the helper.
-        let resp_bytes = send_request_to_helper(
+        let http_response = send_request_to_helper(
             &self.http_client,
             self.backoff.clone(),
             Method::POST,
@@ -385,7 +385,7 @@ where
             collection_job.with_state(CollectionJobState::Finished {
                 report_count,
                 client_timestamp_interval,
-                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)
+                encrypted_helper_aggregate_share: AggregateShare::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?
                     .encrypted_aggregate_share()
                     .clone(),
