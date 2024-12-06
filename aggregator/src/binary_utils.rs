@@ -8,6 +8,7 @@ use crate::{
     trace::{install_trace_subscriber, TraceReloadHandle},
 };
 use anyhow::{anyhow, Context as _, Result};
+use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use backoff::{future::retry, ExponentialBackoff};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
@@ -19,7 +20,6 @@ use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::metrics::{Meter, MetricsError};
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
-use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use rustls::RootCertStore;
 use std::{
     fmt::{self, Debug, Formatter},

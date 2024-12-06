@@ -40,6 +40,7 @@ test-util = [
 anyhow.workspace = true
 assert_matches = { workspace = true, optional = true }
 async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
@@ -75,7 +76,6 @@ rand = { workspace = true, features = ["min_const_gen"] }
 rayon.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-ring = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 sec1.workspace = true

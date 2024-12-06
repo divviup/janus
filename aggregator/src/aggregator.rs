@@ -26,6 +26,11 @@ use crate::{
         report_aggregation_success_counter,
     },
 };
+use aws_lc_rs::{
+    digest::{digest, SHA256},
+    rand::SystemRandom,
+    signature::{EcdsaKeyPair, Signature},
+};
 use backoff::{backoff::Backoff, Notify};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
@@ -98,11 +103,6 @@ use prio::{
 use rand::{thread_rng, Rng};
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefIterator as _, ParallelIterator};
 use reqwest::Client;
-use ring::{
-    digest::{digest, SHA256},
-    rand::SystemRandom,
-    signature::{EcdsaKeyPair, Signature},
-};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},

@@ -1,13 +1,13 @@
 use anyhow::anyhow;
+use aws_lc_rs::{
+    constant_time,
+    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use educe::Educe;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
 use regex::Regex;
-use ring::{
-    constant_time,
-    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
-};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     str::{self, FromStr},
