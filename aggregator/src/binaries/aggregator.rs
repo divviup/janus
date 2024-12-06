@@ -12,16 +12,13 @@ use crate::{
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use anyhow::{anyhow, Context, Result};
+use aws_lc_rs::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
 use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
 use opentelemetry::metrics::Meter;
-use ring::{
-    rand::SystemRandom,
-    signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING},
-};
 use sec1::EcPrivateKey;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
@@ -502,7 +499,6 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
         ec_private_key
             .public_key
             .ok_or_else(|| anyhow!("EcPrivateKey missing public key component"))?,
-        &SystemRandom::new(),
     )
     .map_err(|err| anyhow!("couldn't create EcdsaKeyPair: {:?}", err))
 }
@@ -527,14 +523,14 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use aws_lc_rs::{
+        rand::SystemRandom,
+        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
+    };
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
     use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
-    use ring::{
-        rand::SystemRandom,
-        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
-    };
     use std::{
         collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},

@@ -1,4 +1,5 @@
 use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
+use aws_lc_rs::signature::EcdsaKeyPair;
 use janus_aggregator_core::{
     datastore::{models::TaskAggregationCounter, Datastore},
     task::AggregatorTask,
@@ -17,7 +18,6 @@ use prio::{
     vdaf::{self, prio3::Prio3Count, Client},
 };
 use rand::random;
-use ring::signature::EcdsaKeyPair;
 use std::time::Duration;
 use tokio::time::{sleep, Instant};
 
@@ -43,8 +43,8 @@ pub(crate) fn hpke_config_signing_key() -> EcdsaKeyPair {
     parse_pem_ec_private_key(HPKE_CONFIG_SIGNING_KEY_PEM).unwrap()
 }
 
-pub fn hpke_config_verification_key() -> ring::signature::UnparsedPublicKey<Vec<u8>> {
-    use ring::signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
+pub fn hpke_config_verification_key() -> aws_lc_rs::signature::UnparsedPublicKey<Vec<u8>> {
+    use aws_lc_rs::signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
     UnparsedPublicKey::new(
         &ECDSA_P256_SHA256_ASN1,
         hpke_config_signing_key().public_key().as_ref().to_vec(),
