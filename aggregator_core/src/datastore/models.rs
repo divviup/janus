@@ -24,7 +24,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::{encode_u16_items, Encode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongState, PingPongTransition},
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -162,7 +162,7 @@ where
     }
 
     #[cfg(feature = "test-util")]
-    pub fn as_start_leader_report_aggregation(
+    pub fn as_leader_init_report_aggregation(
         &self,
         aggregation_job_id: AggregationJobId,
         ord: u64,
@@ -174,7 +174,7 @@ where
             *self.metadata().time(),
             ord,
             None,
-            ReportAggregationState::StartLeader {
+            ReportAggregationState::LeaderInit {
                 public_extensions: self.metadata().public_extensions().to_vec(),
                 public_share: self.public_share().clone(),
                 leader_private_extensions: self.leader_private_extensions().to_vec(),
@@ -919,7 +919,11 @@ where
 #[derive(Clone, Educe)]
 #[educe(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
-    StartLeader {
+    //
+    // Leader-only states.
+    //
+    /// The Leader is ready to send an aggregation initialization request to the Helper.
+    LeaderInit {
         /// The sequence of public extensions from this report's metadata.
         #[educe(Debug(ignore))]
         public_extensions: Vec<Extension>,
@@ -936,20 +940,36 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
         #[educe(Debug(ignore))]
         helper_encrypted_input_share: HpkeCiphertext,
     },
-    WaitingLeader {
+    /// The Leader is ready to send an aggregation continuation request to the Helper.
+    LeaderContinue {
         /// Most recent transition for this report aggregation.
         #[educe(Debug(ignore))]
         transition: PingPongTransition<SEED_SIZE, 16, A>,
     },
-    WaitingHelper {
+    /// The Leader received a "processing" response from a previous aggregation initialization or
+    /// continuation request, and is ready to poll for completion.
+    LeaderPoll {
+        /// Leader's current aggregation state.
+        leader_state: PingPongState<SEED_SIZE, 16, A>,
+    },
+
+    //
+    // Helper-only states.
+    //
+    /// The Helper is ready to receive an aggregation continuation request from the Leader.
+    HelperContinue {
         /// Helper's current preparation state
         #[educe(Debug(ignore))]
         prepare_state: A::PrepareState,
     },
+
+    //
+    // Common states.
+    //
+    /// Aggregation has completed successfully.
     Finished,
-    Failed {
-        report_error: ReportError,
-    },
+    /// Aggregation has completed unsuccessfully.
+    Failed { report_error: ReportError },
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -957,9 +977,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     pub(super) fn state_code(&self) -> ReportAggregationStateCode {
         match self {
-            ReportAggregationState::StartLeader { .. } => ReportAggregationStateCode::Start,
-            ReportAggregationState::WaitingLeader { .. }
-            | ReportAggregationState::WaitingHelper { .. } => ReportAggregationStateCode::Waiting,
+            ReportAggregationState::LeaderInit { .. } => ReportAggregationStateCode::Init,
+            ReportAggregationState::LeaderContinue { .. }
+            | ReportAggregationState::HelperContinue { .. } => ReportAggregationStateCode::Continue,
+            ReportAggregationState::LeaderPoll { .. } => ReportAggregationStateCode::Poll,
             ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
             ReportAggregationState::Failed { .. } => ReportAggregationStateCode::Failed,
         }
@@ -975,7 +996,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
         A::PrepareState: Encode,
     {
         Ok(match self {
-            ReportAggregationState::StartLeader {
+            ReportAggregationState::LeaderInit {
                 public_extensions,
                 public_share,
                 leader_private_extensions,
@@ -1001,18 +1022,35 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     ..Default::default()
                 }
             }
-            ReportAggregationState::WaitingLeader { transition } => {
+            ReportAggregationState::LeaderContinue { transition } => {
                 EncodedReportAggregationStateValues {
                     leader_prep_transition: Some(transition.get_encoded()?),
                     ..Default::default()
                 }
             }
-            ReportAggregationState::WaitingHelper { prepare_state } => {
+            ReportAggregationState::LeaderPoll { leader_state } => {
+                let (encoded_leader_prep_state, encoded_leader_output_share) = match leader_state {
+                    PingPongState::Continued(prepare_state) => {
+                        (Some(prepare_state.get_encoded()?), None)
+                    }
+                    PingPongState::Finished(output_share) => {
+                        (None, Some(output_share.get_encoded()?))
+                    }
+                };
+                EncodedReportAggregationStateValues {
+                    leader_prep_state: encoded_leader_prep_state,
+                    leader_output_share: encoded_leader_output_share,
+                    ..Default::default()
+                }
+            }
+
+            ReportAggregationState::HelperContinue { prepare_state } => {
                 EncodedReportAggregationStateValues {
                     helper_prep_state: Some(prepare_state.get_encoded()?),
                     ..Default::default()
                 }
             }
+
             ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
             ReportAggregationState::Failed { report_error } => {
                 EncodedReportAggregationStateValues {
@@ -1026,17 +1064,21 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 
 #[derive(Default)]
 pub(super) struct EncodedReportAggregationStateValues {
-    // State for StartLeader.
+    // State for LeaderInit.
     pub(super) public_extensions: Option<Vec<u8>>,
     pub(super) public_share: Option<Vec<u8>>,
     pub(super) leader_private_extensions: Option<Vec<u8>>,
     pub(super) leader_input_share: Option<Vec<u8>>,
     pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
 
-    // State for WaitingLeader.
+    // State for LeaderContinue.
     pub(super) leader_prep_transition: Option<Vec<u8>>,
 
-    // State for WaitingHelper.
+    // State for LeaderPoll.
+    pub(super) leader_prep_state: Option<Vec<u8>>,
+    pub(super) leader_output_share: Option<Vec<u8>>,
+
+    // State for HelperContinue.
     pub(super) helper_prep_state: Option<Vec<u8>>,
 
     // State for Failed.
@@ -1049,10 +1091,12 @@ pub(super) struct EncodedReportAggregationStateValues {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
 #[postgres(name = "report_aggregation_state")]
 pub(super) enum ReportAggregationStateCode {
-    #[postgres(name = "START")]
-    Start,
-    #[postgres(name = "WAITING")]
-    Waiting,
+    #[postgres(name = "INIT")]
+    Init,
+    #[postgres(name = "CONTINUE")]
+    Continue,
+    #[postgres(name = "POLL")]
+    Poll,
     #[postgres(name = "FINISHED")]
     Finished,
     #[postgres(name = "FAILED")]
@@ -1074,14 +1118,14 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
-                Self::StartLeader {
+                Self::LeaderInit {
                     public_extensions: lhs_public_extensions,
                     public_share: lhs_public_share,
                     leader_private_extensions: lhs_leader_private_extensions,
                     leader_input_share: lhs_leader_input_share,
                     helper_encrypted_input_share: lhs_helper_encrypted_input_share,
                 },
-                Self::StartLeader {
+                Self::LeaderInit {
                     public_extensions: rhs_public_extensions,
                     public_share: rhs_public_share,
                     leader_private_extensions: rhs_leader_private_extensions,
@@ -1096,18 +1140,18 @@ where
                     && lhs_helper_encrypted_input_share == rhs_helper_encrypted_input_share
             }
             (
-                Self::WaitingLeader {
+                Self::LeaderContinue {
                     transition: lhs_transition,
                 },
-                Self::WaitingLeader {
+                Self::LeaderContinue {
                     transition: rhs_transition,
                 },
             ) => lhs_transition == rhs_transition,
             (
-                Self::WaitingHelper {
+                Self::HelperContinue {
                     prepare_state: lhs_state,
                 },
-                Self::WaitingHelper {
+                Self::HelperContinue {
                     prepare_state: rhs_state,
                 },
             ) => lhs_state == rhs_state,
@@ -1143,14 +1187,14 @@ where
 /// See also [`ReportAggregationState`].
 #[derive(Clone, Debug)]
 pub enum ReportAggregationMetadataState {
-    Start,
+    Init,
     Failed { report_error: ReportError },
 }
 
 /// Metadata from the state of a single client report's ongoing aggregation. This is like
 /// [`ReportAggregation`], but omits the report aggregation state and report shares.
 ///
-/// This is only used with report aggregations in the `StartLeader` or `Failed` states.
+/// This is only used with report aggregations in the `LeaderInit` or `Failed` states.
 #[derive(Clone, Debug)]
 pub struct ReportAggregationMetadata {
     task_id: TaskId,
@@ -2439,5 +2483,11 @@ impl TaskAggregationCounter {
     /// Increments the counter of successfully-aggregated reports.
     pub fn increment_success(&mut self) {
         self.success += 1
+    }
+
+    /// Returns true if and only if this task aggregation counter is "zero", i.e. it would not
+    /// change the state of the written task aggregation counters.
+    pub fn is_zero(&self) -> bool {
+        self == &TaskAggregationCounter::default()
     }
 }

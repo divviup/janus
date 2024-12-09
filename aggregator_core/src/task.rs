@@ -8,7 +8,9 @@ use janus_core::{
     time::TimeExt,
     vdaf::VdafInstance,
 };
-use janus_messages::{batch_mode, AggregationJobId, Duration, HpkeConfig, Role, TaskId, Time};
+use janus_messages::{
+    batch_mode, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId, Time,
+};
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::array::TryFromSliceError;
@@ -378,15 +380,23 @@ impl AggregatorTask {
     pub fn aggregation_job_uri(
         &self,
         aggregation_job_id: &AggregationJobId,
+        step: Option<AggregationJobStep>,
     ) -> Result<Option<Url>, Error> {
         if matches!(
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
-            Ok(Some(self.peer_aggregator_endpoint().join(&format!(
+            let mut uri = self.peer_aggregator_endpoint().join(&format!(
                 "{}/aggregation_jobs/{aggregation_job_id}",
                 self.tasks_path()
-            ))?))
+            ))?;
+
+            if let Some(step) = step {
+                uri.query_pairs_mut()
+                    .append_pair("step", &u16::from(step).to_string());
+            }
+
+            Ok(Some(uri))
         } else {
             Ok(None)
         }
