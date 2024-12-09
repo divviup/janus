@@ -40,7 +40,7 @@ ARG GIT_REVISION=unknown
 ENV GIT_REVISION=${GIT_REVISION}
 RUN cargo build --release -p janus_aggregator --features=prometheus,otlp
 
-FROM alpine:3.20.3 AS final
+FROM alpine:3.21.0 AS final
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 LABEL revision=${GIT_REVISION}
