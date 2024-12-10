@@ -111,7 +111,7 @@ where
 pub enum VdafObject {
     Prio3Count,
     Prio3Sum {
-        bits: NumberAsString<usize>,
+        max_measurement: NumberAsString<u64>,
     },
     Prio3SumVec {
         bits: NumberAsString<usize>,
@@ -142,8 +142,8 @@ impl From<VdafInstance> for VdafObject {
         match vdaf {
             VdafInstance::Prio3Count => VdafObject::Prio3Count,
 
-            VdafInstance::Prio3Sum { bits } => VdafObject::Prio3Sum {
-                bits: NumberAsString(bits),
+            VdafInstance::Prio3Sum { max_measurement } => VdafObject::Prio3Sum {
+                max_measurement: NumberAsString(max_measurement),
             },
 
             VdafInstance::Prio3SumVec {
@@ -200,7 +200,9 @@ impl From<VdafObject> for VdafInstance {
         match vdaf {
             VdafObject::Prio3Count => VdafInstance::Prio3Count,
 
-            VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
+            VdafObject::Prio3Sum { max_measurement } => VdafInstance::Prio3Sum {
+                max_measurement: max_measurement.0,
+            },
 
             VdafObject::Prio3SumVec {
                 bits,

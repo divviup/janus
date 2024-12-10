@@ -705,10 +705,10 @@ where
                                             .aggregated_report_share_dimension_histogram
                                             .record(1, &[KeyValue::new("type", "Prio3Count")]),
 
-                                        Prio3Sum { bits } => metrics
+                                        Prio3Sum { max_measurement } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*bits).unwrap_or(u64::MAX),
+                                                *max_measurement,
                                                 &[KeyValue::new("type", "Prio3Sum")],
                                             ),
 

@@ -77,7 +77,7 @@ pretty_assertions = "1.4.1"
 # re-enable them
 # TODO(#3436): switch to a released version of libprio, once there is a released version implementing VDAF-13
 # prio = { version = "0.16.7", default-features = false, features = ["experimental"] }
-prio = { git = "https://github.com/divviup/libprio-rs", rev = "c85e537682a7932edc0c44c80049df0429d6fa4c", default-features = false, features = ["experimental"] }
+prio = { git = "https://github.com/divviup/libprio-rs", rev = "3c1aeb30c661d373566749a81589fc0a4045f89a", default-features = false, features = ["experimental"] }
 prometheus = "0.13.4"
 querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }
