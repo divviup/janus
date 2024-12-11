@@ -109,7 +109,7 @@ pub enum VdafInstance {
     /// A `Prio3` counter.
     Prio3Count,
     /// A `Prio3` sum.
-    Prio3Sum { bits: usize },
+    Prio3Sum { max_measurement: u64 },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
         bits: usize,
@@ -182,10 +182,8 @@ impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
     fn try_from(value: &taskprov::VdafConfig) -> Result<Self, Self::Error> {
         match value {
             taskprov::VdafConfig::Prio3Count => Ok(Self::Prio3Count),
-            taskprov::VdafConfig::Prio3Sum {
-                max_measurement: _max_measurement,
-            } => Ok(Self::Prio3Sum {
-                bits: 32, // TODO(#3436): plumb through max_measurement once it's available
+            taskprov::VdafConfig::Prio3Sum { max_measurement } => Ok(Self::Prio3Sum {
+                max_measurement: u64::from(*max_measurement),
             }),
             taskprov::VdafConfig::Prio3SumVec {
                 bits,
@@ -266,8 +264,8 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::vdaf::VdafInstance::Prio3Sum { bits } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum(2, *bits)?;
+            ::janus_core::vdaf::VdafInstance::Prio3Sum { max_measurement } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum(2, *max_measurement as u128)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
@@ -638,15 +636,17 @@ mod tests {
             }],
         );
         assert_tokens(
-            &VdafInstance::Prio3Sum { bits: 64 },
+            &VdafInstance::Prio3Sum {
+                max_measurement: 4096,
+            },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3Sum",
                     len: 1,
                 },
-                Token::Str("bits"),
-                Token::U64(64),
+                Token::Str("max_measurement"),
+                Token::U64(4096),
                 Token::StructVariantEnd,
             ],
         );
@@ -854,9 +854,11 @@ length: 10"
             serde_yaml::from_str(
                 "---
 !Prio3Sum
-bits: 12"
+max_measurement: 4096"
             ),
-            Ok(VdafInstance::Prio3Sum { bits: 12 })
+            Ok(VdafInstance::Prio3Sum {
+                max_measurement: 4096
+            })
         );
         assert_matches!(
             serde_yaml::from_str(

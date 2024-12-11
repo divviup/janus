@@ -4252,7 +4252,7 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.17.0-alpha.0"
-source = "git+https://github.com/divviup/libprio-rs?rev=c85e537682a7932edc0c44c80049df0429d6fa4c#c85e537682a7932edc0c44c80049df0429d6fa4c"
+source = "git+https://github.com/divviup/libprio-rs?rev=3c1aeb30c661d373566749a81589fc0a4045f89a#3c1aeb30c661d373566749a81589fc0a4045f89a"
 dependencies = [
  "aes 0.8.4",
  "bitvec",

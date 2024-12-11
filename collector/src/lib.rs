@@ -1032,7 +1032,7 @@ mod tests {
     async fn successful_collect_prio3_sum() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_sum(2, 8).unwrap();
+        let vdaf = Prio3::new_sum(2, 255).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &144);
         let collector = setup_collector(&mut server, vdaf);
 

@@ -1201,10 +1201,15 @@ mod tests {
                 .build()
                 .leader_view()
                 .unwrap(),
-            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
-                .build()
-                .helper_view()
-                .unwrap(),
+            TaskBuilder::new(
+                BatchMode::TimeInterval,
+                VdafInstance::Prio3Sum {
+                    max_measurement: 4096,
+                },
+            )
+            .build()
+            .helper_view()
+            .unwrap(),
         ]);
 
         let written_tasks = run_provision_tasks_testcase(&ds, &tasks, false).await;
@@ -1254,10 +1259,15 @@ mod tests {
                 .build()
                 .leader_view()
                 .unwrap(),
-            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
-                .build()
-                .leader_view()
-                .unwrap(),
+            TaskBuilder::new(
+                BatchMode::TimeInterval,
+                VdafInstance::Prio3Sum {
+                    max_measurement: 4096,
+                },
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
         ]);
 
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -1327,7 +1337,7 @@ mod tests {
 - peer_aggregator_endpoint: https://helper
   batch_mode: TimeInterval
   vdaf: !Prio3Sum
-    bits: 2
+    max_measurement: 4096
   role: Leader
   vdaf_verify_key:
   task_end: 9000000000
@@ -1350,7 +1360,7 @@ mod tests {
 - peer_aggregator_endpoint: https://leader
   batch_mode: TimeInterval
   vdaf: !Prio3Sum
-    bits: 2
+    max_measurement: 4096
   role: Helper
   vdaf_verify_key:
   task_end: 9000000000

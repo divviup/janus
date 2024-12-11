@@ -311,8 +311,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
-                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
+            (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { max_measurement }) => {
+                let vdaf = Arc::new(Prio3::new_sum(2, u128::from(*max_measurement))?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
@@ -415,9 +415,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 task::BatchMode::LeaderSelected {
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Sum { bits },
+                VdafInstance::Prio3Sum { max_measurement },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
+                let vdaf = Arc::new(Prio3::new_sum(2, u128::from(*max_measurement))?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH,

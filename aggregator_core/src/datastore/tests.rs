@@ -176,8 +176,18 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             },
             Role::Helper,
         ),
-        (VdafInstance::Prio3Sum { bits: 64 }, Role::Helper),
-        (VdafInstance::Prio3Sum { bits: 32 }, Role::Helper),
+        (
+            VdafInstance::Prio3Sum {
+                max_measurement: 4096,
+            },
+            Role::Helper,
+        ),
+        (
+            VdafInstance::Prio3Sum {
+                max_measurement: 4096,
+            },
+            Role::Helper,
+        ),
         (
             VdafInstance::Prio3Histogram {
                 length: 4,

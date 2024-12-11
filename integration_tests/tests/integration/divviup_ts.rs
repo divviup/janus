@@ -58,8 +58,13 @@ async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
     initialize_rustls();
 
-    run_divviup_ts_integration_test("janus_divviup_ts_sum", VdafInstance::Prio3Sum { bits: 8 })
-        .await;
+    run_divviup_ts_integration_test(
+        "janus_divviup_ts_sum",
+        VdafInstance::Prio3Sum {
+            max_measurement: 255,
+        },
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

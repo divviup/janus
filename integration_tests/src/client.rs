@@ -88,9 +88,9 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
         VdafInstance::Prio3Count => json!({
             "type": "Prio3Count"
         }),
-        VdafInstance::Prio3Sum { bits } => json!({
+        VdafInstance::Prio3Sum { max_measurement } => json!({
             "type": "Prio3Sum",
-            "bits": format!("{bits}"),
+            "max_measurement": format!("{max_measurement}"),
         }),
         VdafInstance::Prio3SumVec {
             bits,

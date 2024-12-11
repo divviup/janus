@@ -412,8 +412,11 @@ impl InClusterJanusPair {
             helper_aggregator_id,
             vdaf: match task.vdaf().to_owned() {
                 VdafInstance::Prio3Count => Vdaf::Count,
-                VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
-                    bits: bits.try_into().unwrap(),
+                VdafInstance::Prio3Sum {
+                    max_measurement: _max_measurement,
+                } => Vdaf::Sum {
+                    // TODO(#3436): once divviup_client is updated for DAP-13, plumb max_measurement through
+                    bits: 64,
                 },
                 VdafInstance::Prio3SumVec {
                     bits,
@@ -564,8 +567,13 @@ async fn in_cluster_sum() {
     initialize_rustls();
 
     // Start port forwards and set up task.
-    let janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Sum { bits: 16 }, BatchMode::TimeInterval).await;
+    let janus_pair = InClusterJanusPair::new(
+        VdafInstance::Prio3Sum {
+            max_measurement: 65535,
+        },
+        BatchMode::TimeInterval,
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

@@ -314,9 +314,12 @@ struct Options {
     /// used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
-    /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
+    /// Bit length of measurements, for use with --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     bits: Option<usize>,
+    /// Maximum measurement value, for use with --vdaf=sum
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
+    max_measurement: Option<u64>,
 
     #[clap(flatten)]
     query: QueryOptions,
@@ -450,18 +453,24 @@ macro_rules! options_query_dispatch {
 
 macro_rules! options_vdaf_dispatch {
     ($options:expr, ($vdaf:ident) => $body:tt) => {
-        match ($options.vdaf, $options.length, $options.bits) {
-            (VdafType::Count, None, None) => {
+        match (
+            $options.vdaf,
+            $options.length,
+            $options.bits,
+            $options.max_measurement,
+        ) {
+            (VdafType::Count, None, None, None) => {
                 let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
-            (VdafType::Sum, None, Some(bits)) => {
-                let $vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
+            (VdafType::Sum, None, None, Some(max_measurement)) => {
+                let $vdaf = Prio3::new_sum(2, u128::from(max_measurement))
+                    .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
-            (VdafType::SumVec, Some(length), Some(bits)) => {
+            (VdafType::SumVec, Some(length), Some(bits), None) => {
                 // We can take advantage of the fact that Prio3SumVec unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf = Prio3::new_sum_vec(2, bits, length, 1)
@@ -469,7 +478,7 @@ macro_rules! options_vdaf_dispatch {
                 let body = $body;
                 body
             }
-            (VdafType::Histogram, Some(length), None) => {
+            (VdafType::Histogram, Some(length), None, None) => {
                 // We can take advantage of the fact that Prio3Histogram unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf =
@@ -478,7 +487,7 @@ macro_rules! options_vdaf_dispatch {
                 body
             }
             #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
+            (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None, None) => {
                 let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
@@ -486,7 +495,7 @@ macro_rules! options_vdaf_dispatch {
                 body
             }
             #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
+            (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None, None) => {
                 let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
                         .map_err(|err| Error::Anyhow(err.into()))?;
@@ -758,6 +767,7 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
+            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
@@ -991,6 +1001,7 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
+            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
@@ -1332,6 +1343,7 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
+            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
@@ -1415,6 +1427,7 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
+            max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),

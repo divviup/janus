@@ -162,7 +162,9 @@ async fn janus_janus_sum_16() {
     // Start servers.
     let janus_pair = JanusContainerPair::new(
         TEST_NAME,
-        VdafInstance::Prio3Sum { bits: 16 },
+        VdafInstance::Prio3Sum {
+            max_measurement: 65535,
+        },
         BatchMode::TimeInterval,
     )
     .await;
@@ -186,7 +188,9 @@ async fn janus_in_process_sum_16() {
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
-        VdafInstance::Prio3Sum { bits: 16 },
+        VdafInstance::Prio3Sum {
+            max_measurement: 4096,
+        },
     ))
     .await;
 

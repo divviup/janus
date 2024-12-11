@@ -828,8 +828,8 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3Sum { bits } => {
-                let vdaf = Prio3::new_sum(2, *bits)?;
+            VdafInstance::Prio3Sum { max_measurement } => {
+                let vdaf = Prio3::new_sum(2, u128::from(*max_measurement))?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }

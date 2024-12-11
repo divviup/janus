@@ -612,7 +612,7 @@ async fn e2e_prio3_sum() {
     let result = run(
         "e2e_prio3_sum",
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Sum", "bits": "64"}),
+        json!({"type": "Prio3Sum", "max_measurement": "255"}),
         &[
             json!("0"),
             json!("10"),
