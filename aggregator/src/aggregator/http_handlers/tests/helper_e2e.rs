@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
+use janus_aggregator_core::task::{test_util::TaskBuilder, AggregationMode, BatchMode};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
     batch_mode::LeaderSelected, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
@@ -38,6 +38,7 @@ async fn helper_aggregation_report_share_replay() {
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },
+        AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
     .with_min_batch_size(1)

@@ -19,7 +19,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        BatchMode,
+        AggregationMode, BatchMode,
     },
     taskprov::{taskprov_task_id, test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
@@ -104,7 +104,7 @@ where
         let collector_hpke_keypair = HpkeKeypair::test();
         let peer_aggregator = PeerAggregatorBuilder::new()
             .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
-            .with_role(Role::Leader)
+            .with_peer_role(Role::Leader)
             .with_collector_hpke_config(collector_hpke_keypair.config().clone())
             .build();
 
@@ -169,6 +169,7 @@ where
             BatchMode::LeaderSelected {
                 batch_time_window_size: None,
             },
+            AggregationMode::Synchronous,
             vdaf_instance,
         )
         .with_id(task_id)
@@ -371,7 +372,7 @@ async fn taskprov_aggregate_init() {
                 .eq(&batch_id_1)
             && aggregation_jobs[0]
                 .state()
-                .eq(&AggregationJobState::InProgress)
+                .eq(&AggregationJobState::AwaitingRequest)
     );
     assert!(
         aggregation_jobs[1].task_id().eq(&test.task_id)
@@ -381,7 +382,7 @@ async fn taskprov_aggregate_init() {
                 .eq(&batch_id_2)
             && aggregation_jobs[1]
                 .state()
-                .eq(&AggregationJobState::InProgress)
+                .eq(&AggregationJobState::AwaitingRequest)
     );
     let got_task = got_task.unwrap();
     assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task);
@@ -835,7 +836,12 @@ async fn taskprov_aggregate_continue() {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_scrubbed_report(task.id(), &report_share).await?;
+                tx.put_scrubbed_report(
+                    task.id(),
+                    report_share.metadata().id(),
+                    report_share.metadata().time(),
+                )
+                .await?;
 
                 tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task.id(),
@@ -844,7 +850,7 @@ async fn taskprov_aggregate_continue() {
                     batch_id,
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
-                    AggregationJobState::InProgress,
+                    AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
                 .await?;

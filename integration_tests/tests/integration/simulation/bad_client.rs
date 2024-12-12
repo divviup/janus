@@ -3,7 +3,10 @@ use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
-    task::test_util::{Task, TaskBuilder},
+    task::{
+        test_util::{Task, TaskBuilder},
+        AggregationMode,
+    },
     test_util::noop_meter,
 };
 use janus_core::{
@@ -392,6 +395,7 @@ async fn bad_client_report_validity() {
     };
     let task = TaskBuilder::new(
         janus_aggregator_core::task::BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         vdaf_instance,
     )
     .with_leader_aggregator_endpoint(format!("http://{socket_address}/").parse().unwrap())

@@ -28,8 +28,8 @@ use janus_core::{
     time::{Clock, DurationExt as _, TimeExt as _},
     vdaf::{
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
-        Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH,
-        VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+        Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH_PRIO3,
+        VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
     },
 };
 use janus_messages::{
@@ -307,13 +307,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         match (task.batch_mode(), task.vdaf()) {
             (task::BatchMode::TimeInterval, VdafInstance::Prio3Count) => {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Count>(task, vdaf)
                     .await
             }
 
             (task::BatchMode::TimeInterval, VdafInstance::Prio3Sum { max_measurement }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, u128::from(*max_measurement))?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Sum>(task, vdaf)
                     .await
             }
 
@@ -327,7 +327,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVec>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3SumVec>(task, vdaf)
                     .await
             }
 
@@ -345,7 +345,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     ParallelSum<Field64, Mul<Field64>>,
                 >(*proofs, *bits, *length, *chunk_length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
-                    VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+                    VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
                     Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
                 >(task, vdaf).await
             }
@@ -359,7 +359,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
             ) => {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3Histogram>(task, vdaf)
                     .await
             }
 
@@ -375,13 +375,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
                     let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
                         Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, vdaf)
+                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, vdaf)
                             .await
                 }
                 Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
                     let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
                         Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, vdaf)
+                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, vdaf)
                             .await
                 }
             },
@@ -406,7 +406,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 > = Arc::new(Prio3::new_count(2)?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                    VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH_PRIO3,
                     Prio3Count,
                 >(task, vdaf, batch_time_window_size).await
             }
@@ -420,7 +420,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_sum(2, u128::from(*max_measurement))?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                    VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH_PRIO3,
                     Prio3Sum,
                 >(task, vdaf, batch_time_window_size).await
             }
@@ -439,7 +439,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                    VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH_PRIO3,
                     Prio3SumVec,
                 >(task, vdaf, batch_time_window_size).await
             }
@@ -461,7 +461,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 >(*proofs, *bits, *length, *chunk_length)?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                    VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+                    VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
                     Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
                 >(task, vdaf, batch_time_window_size).await
             }
@@ -479,7 +479,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                    VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH_PRIO3,
                     Prio3Histogram,
                 >(task, vdaf, batch_time_window_size).await
             }
@@ -502,7 +502,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
                             Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
                         self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                                VERIFY_KEY_LENGTH,
+                                VERIFY_KEY_LENGTH_PRIO3,
                             Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>,
                             >(task, vdaf, batch_time_window_size).await
                     }
@@ -510,7 +510,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
                             Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
                         self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                                VERIFY_KEY_LENGTH,
+                                VERIFY_KEY_LENGTH_PRIO3,
                             Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>,
                             >(task, vdaf, batch_time_window_size).await
                     }
@@ -656,7 +656,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 (),
                                 (),
                                 client_timestamp_interval,
-                                AggregationJobState::InProgress,
+                                AggregationJobState::Active,
                                 AggregationJobStep::from(0),
                             );
 
@@ -799,7 +799,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 aggregation_param.clone(),
                                 (),
                                 client_timestamp_interval,
-                                AggregationJobState::InProgress,
+                                AggregationJobState::Active,
                                 AggregationJobStep::from(0),
                             );
                             let report_aggregations: Vec<_> = agg_job_reports
@@ -908,14 +908,14 @@ mod tests {
             test_util::ephemeral_datastore,
             Transaction,
         },
-        task::{test_util::TaskBuilder, BatchMode as TaskBatchMode},
+        task::{test_util::TaskBuilder, AggregationMode, BatchMode as TaskBatchMode},
         test_util::noop_meter,
     };
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
-        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
     };
     use janus_messages::{
         batch_mode::{LeaderSelected, TimeInterval},
@@ -959,10 +959,14 @@ mod tests {
 
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = Arc::new(
-            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
-                .build()
-                .leader_view()
-                .unwrap(),
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
         );
         let batch_identifier =
             TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
@@ -986,10 +990,14 @@ mod tests {
         ));
 
         let helper_task = Arc::new(
-            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
-                .build()
-                .helper_view()
-                .unwrap(),
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .helper_view()
+            .unwrap(),
         );
         let helper_report = Arc::new(LeaderStoredReport::new_dummy(
             *helper_task.id(),
@@ -1065,7 +1073,7 @@ mod tests {
                 Box::pin(async move {
                     let (leader_aggregations, leader_batch_aggregations) =
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             TimeInterval,
                             _,
                             _,
@@ -1138,10 +1146,14 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
-                .build()
-                .leader_view()
-                .unwrap(),
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // In one batch, create enough reports to fill 2 max-size aggregation jobs, a min-size
@@ -1238,7 +1250,7 @@ mod tests {
 
                 Box::pin(async move {
                     Ok(read_and_verify_aggregate_info_for_task::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
                         _,
@@ -1327,10 +1339,14 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let task = Arc::new(
-            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
-                .build()
-                .leader_view()
-                .unwrap(),
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         let report_time = clock.now();
@@ -1425,7 +1441,7 @@ mod tests {
 
                 Box::pin(async move {
                     Ok(read_and_verify_aggregate_info_for_task::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
                         _,
@@ -1482,7 +1498,7 @@ mod tests {
 
                 Box::pin(async move {
                     Ok(read_and_verify_aggregate_info_for_task::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
                         _,
@@ -1539,10 +1555,14 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(TaskBatchMode::TimeInterval, VdafInstance::Prio3Count)
-                .build()
-                .leader_view()
-                .unwrap(),
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create a min-size batch.
@@ -1587,7 +1607,7 @@ mod tests {
                     tx.put_client_report(report).await.unwrap();
                 }
                 tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH_PRIO3,
                     TimeInterval,
                     Prio3Count,
                 >::new(
@@ -1651,7 +1671,7 @@ mod tests {
 
                 Box::pin(async move {
                     Ok(read_and_verify_aggregate_info_for_task::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH_PRIO3,
                         TimeInterval,
                         _,
                         _,
@@ -1722,6 +1742,7 @@ mod tests {
                 TaskBatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
+                AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1822,7 +1843,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -1920,6 +1941,7 @@ mod tests {
                 TaskBatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
+                AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -2015,7 +2037,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2082,6 +2104,7 @@ mod tests {
                 TaskBatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
+                AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -2182,7 +2205,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2278,7 +2301,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2344,6 +2367,7 @@ mod tests {
                 TaskBatchMode::LeaderSelected {
                     batch_time_window_size: None,
                 },
+                AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -2444,7 +2468,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2548,7 +2572,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2615,6 +2639,7 @@ mod tests {
                 TaskBatchMode::LeaderSelected {
                     batch_time_window_size: Some(batch_time_window_size),
                 },
+                AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -2751,7 +2776,7 @@ mod tests {
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
-                            VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH_PRIO3,
                             LeaderSelected,
                             _,
                             _,
@@ -2853,6 +2878,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
                 VdafInstance::Fake { rounds: 1 },
             )
             .build()

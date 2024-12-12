@@ -7,7 +7,7 @@ use futures::future::join_all;
 use janus_core::{
     test_util::install_test_trace_subscriber,
     time::{Clock, RealClock, TimeExt},
-    vdaf::VERIFY_KEY_LENGTH,
+    vdaf::VERIFY_KEY_LENGTH_PRIO3,
 };
 use janus_interop_binaries::{
     get_rust_log_level,

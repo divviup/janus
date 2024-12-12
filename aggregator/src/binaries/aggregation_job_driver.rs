@@ -1,6 +1,7 @@
 use crate::{
     aggregator::aggregation_job_driver::AggregationJobDriver,
     binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    cache::HpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, JobDriverConfig, TaskprovConfig},
 };
 use anyhow::{Context, Result};
@@ -17,6 +18,11 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         env!("CARGO_PKG_VERSION"),
         "/aggregation_job_driver",
     );
+
+    let hpke_configs_refresh_interval = match ctx.config.hpke_configs_refresh_interval {
+        Some(duration) => Duration::from_millis(duration),
+        None => HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+    };
 
     let datastore = Arc::new(ctx.datastore);
     let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
@@ -36,6 +42,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
         ctx.config.task_counter_shard_count,
+        hpke_configs_refresh_interval,
     ));
     let lease_duration = Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_s);
 
@@ -132,6 +139,12 @@ pub struct Config {
     /// aggregations, while increasing the cost of getting task metrics.
     #[serde(default = "default_task_counter_shard_count")]
     pub task_counter_shard_count: u64,
+
+    /// Defines how often to refresh the HPKE configs cache in milliseconds. This affects how often
+    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined by
+    /// [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to specify this.
+    #[serde(default)]
+    pub hpke_configs_refresh_interval: Option<u64>,
 }
 
 impl BinaryConfig for Config {
@@ -190,6 +203,7 @@ mod tests {
             },
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
+            hpke_configs_refresh_interval: Some(180000),
             taskprov_config: TaskprovConfig::default(),
         })
     }

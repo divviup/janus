@@ -12,7 +12,7 @@ use janus_aggregator_core::{
     datastore::test_util::{ephemeral_datastore, EphemeralDatastore},
     task::{
         test_util::{Task, TaskBuilder},
-        AggregatorTask, BatchMode,
+        AggregationMode, AggregatorTask, BatchMode,
     },
     test_util::noop_meter,
 };
@@ -244,9 +244,13 @@ async fn setup_aggregate_init_test_without_sending_request<
 ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, vdaf_instance)
-        .with_aggregator_auth_token(auth_token)
-        .build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        vdaf_instance,
+    )
+    .with_aggregator_auth_token(auth_token)
+    .build();
     let helper_task = task.helper_view().unwrap();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -391,7 +395,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
 }
 
 #[tokio::test]
-async fn aggregation_job_init_unexpected_taskprov_extension() {
+async fn aggregation_job_init_unexpected_taskbind_extension() {
     let test_case = setup_aggregate_init_test_without_sending_request(
         dummy::Vdaf::new(1),
         VdafInstance::Fake { rounds: 1 },

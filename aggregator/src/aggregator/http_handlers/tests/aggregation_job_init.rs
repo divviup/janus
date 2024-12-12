@@ -14,7 +14,7 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
         ReportAggregation, ReportAggregationState, TaskAggregationCounter,
     },
-    task::{test_util::TaskBuilder, BatchMode, VerifyKey},
+    task::{test_util::TaskBuilder, AggregationMode, BatchMode, VerifyKey},
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
@@ -46,7 +46,12 @@ async fn aggregate_leader() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .build();
     datastore
         .put_aggregator_task(&task.leader_view().unwrap())
         .await
@@ -116,9 +121,13 @@ async fn aggregate_wrong_agg_auth_token() {
 
     let dap_auth_token = AuthenticationToken::DapAuth(random());
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count)
-        .with_aggregator_auth_token(dap_auth_token.clone())
-        .build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_aggregator_auth_token(dap_auth_token.clone())
+    .build();
 
     datastore
         .put_aggregator_task(&task.helper_view().unwrap())
@@ -190,7 +199,12 @@ async fn aggregate_init() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .build();
 
     let helper_task = task.helper_view().unwrap();
 
@@ -445,29 +459,33 @@ async fn aggregate_init() {
     let mut aggregation_jobs_results = Vec::new();
     let conflicting_aggregation_job = datastore
         .run_unnamed_tx(|tx| {
-            let task = helper_task.clone();
+            let helper_task = helper_task.clone();
             let report_share_4 = prepare_init_4.report_share().clone();
 
             Box::pin(async move {
-                tx.put_aggregator_task(&task).await.unwrap();
+                tx.put_aggregator_task(&helper_task).await.unwrap();
 
                 // report_share_4 is already in the datastore as it was referenced by an existing
                 // aggregation job.
-                tx.put_scrubbed_report(task.id(), &report_share_4)
-                    .await
-                    .unwrap();
+                tx.put_scrubbed_report(
+                    helper_task.id(),
+                    report_share_4.metadata().id(),
+                    report_share_4.metadata().time(),
+                )
+                .await
+                .unwrap();
 
                 // Put in an aggregation job and report aggregation for report_share_4. It uses
                 // the same aggregation parameter as the aggregation job this test will later
                 // add and so should cause report_share_4 to fail to prepare.
                 let conflicting_aggregation_job = AggregationJob::new(
-                    *task.id(),
+                    *helper_task.id(),
                     random(),
                     dummy::AggregationParam(0),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
-                    AggregationJobState::InProgress,
+                    AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 );
                 tx.put_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
@@ -476,7 +494,7 @@ async fn aggregate_init() {
                 .await
                 .unwrap();
                 tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
-                    *task.id(),
+                    *helper_task.id(),
                     *conflicting_aggregation_job.id(),
                     *report_share_4.metadata().id(),
                     *report_share_4.metadata().time(),
@@ -491,10 +509,13 @@ async fn aggregate_init() {
                 // into, which will cause it to fail to prepare.
                 try_join_all(
                     empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
-                        &task,
+                        &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
-                            .unwrap(),
+                        &Interval::new(
+                            Time::from_seconds_since_epoch(0),
+                            *helper_task.time_precision(),
+                        )
+                        .unwrap(),
                         &dummy::AggregationParam(0),
                         &[],
                     )
@@ -715,6 +736,7 @@ async fn aggregate_init_batch_already_collected() {
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },
+        AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
@@ -827,7 +849,12 @@ async fn aggregate_init_prep_init_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::FakeFailsPrepInit,
+    )
+    .build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -892,7 +919,12 @@ async fn aggregate_init_prep_step_failed() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::FakeFailsPrepStep,
+    )
+    .build();
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(
         clock.clone(),
@@ -956,7 +988,12 @@ async fn aggregate_init_duplicated_report_id() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .build();
 
     let helper_task = task.helper_view().unwrap();
     let prep_init_generator = PrepareInitGenerator::new(

@@ -1,6 +1,7 @@
 use crate::{
     aggregator::{
         aggregate_step_failure_counter,
+        aggregation_job_init::{compute_helper_aggregate_init, AggregateInitMetrics},
         aggregation_job_writer::{
             AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
             WritableReportAggregation,
@@ -11,13 +12,14 @@ use crate::{
         report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
         Error, RequestBody,
     },
+    cache::HpkeKeypairCache,
     metrics::aggregated_report_share_dimension_histogram,
 };
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
 use bytes::Bytes;
 use educe::Educe;
-use futures::future::BoxFuture;
+use futures::future::{try_join_all, BoxFuture};
 use http::{header::RETRY_AFTER, HeaderValue};
 use janus_aggregator_core::{
     datastore::{
@@ -28,7 +30,7 @@ use janus_aggregator_core::{
         },
         Datastore,
     },
-    task::{self, AggregatorTask, VerifyKey},
+    task::{self, AggregatorTask},
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -55,13 +57,20 @@ use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, Paral
 use reqwest::Method;
 use retry_after::RetryAfter;
 use std::{
+    borrow::Cow,
     collections::HashSet,
     panic,
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
-use tokio::{join, sync::mpsc, try_join};
+use tokio::{
+    join,
+    sync::{mpsc, Mutex},
+    try_join,
+};
 use tracing::{debug, error, info, info_span, trace_span, warn, Span};
+
+use super::aggregation_job_writer::{InitialWrite, ReportAggregationUpdate as _};
 
 #[cfg(test)]
 mod tests;
@@ -72,6 +81,7 @@ pub struct AggregationJobDriver<B> {
     // Configuration.
     batch_aggregation_shard_count: u64,
     task_counter_shard_count: u64,
+    hpke_configs_refresh_interval: Duration,
 
     // Dependencies.
     http_client: reqwest::Client,
@@ -101,6 +111,7 @@ where
         meter: &Meter,
         batch_aggregation_shard_count: u64,
         task_counter_shard_count: u64,
+        hpke_configs_refresh_interval: Duration,
     ) -> Self {
         let aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
@@ -132,6 +143,7 @@ where
         Self {
             batch_aggregation_shard_count,
             task_counter_shard_count,
+            hpke_configs_refresh_interval,
             http_client,
             backoff,
             aggregation_success_counter,
@@ -146,17 +158,28 @@ where
     async fn step_aggregation_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(datastore, Arc::new(vdaf), lease).await
+                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
+                        datastore,
+                        hpke_keypairs,
+                        Arc::new(vdaf),
+                        lease
+                    ).await
                 })
             }
             task::BatchMode::LeaderSelected { .. } => {
                 vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(datastore, Arc::new(vdaf), lease).await
+                    self.step_aggregation_job_generic::<VERIFY_KEY_LENGTH, C, LeaderSelected, VdafType>(
+                        datastore,
+                        hpke_keypairs,
+                        Arc::new(vdaf),
+                        lease
+                    ).await
                 })
             }
         }
@@ -170,6 +193,7 @@ where
     >(
         &self,
         datastore: Arc<Datastore<C>>,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<(), Error>
@@ -186,7 +210,7 @@ where
         A::PublicShare: PartialEq + Send + Sync,
     {
         // Read all information about the aggregation job.
-        let (task, aggregation_job, report_aggregations, verify_key) = datastore
+        let (task, aggregation_job, report_aggregations) = datastore
             .run_tx("step_aggregation_job_generic", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
@@ -196,16 +220,11 @@ where
                         lease.leased().aggregation_job_id(),
                     );
 
-                    let (task, aggregation_job) = try_join!(task_future, aggregation_job_future,)?;
+                    let (task, aggregation_job) = try_join!(task_future, aggregation_job_future)?;
 
                     let task = task.ok_or_else(|| {
                         datastore::Error::User(
                             anyhow!("couldn't find task {}", lease.leased().task_id()).into(),
-                        )
-                    })?;
-                    let verify_key = task.vdaf_verify_key().map_err(|_| {
-                        datastore::Error::User(
-                            anyhow!("VDAF verification key has wrong length").into(),
                         )
                     })?;
                     let aggregation_job = aggregation_job.ok_or_else(|| {
@@ -229,29 +248,95 @@ where
                         )
                         .await?;
 
-                    Ok((
-                        Arc::new(task),
-                        aggregation_job,
-                        report_aggregations,
-                        verify_key,
-                    ))
+                    Ok((task, aggregation_job, report_aggregations))
                 })
             })
             .await?;
 
-        // Figure out the next step based on the non-error report aggregation states, and dispatch accordingly.
-        let (mut saw_init, mut saw_continue, mut saw_poll, mut saw_finished) =
-            (false, false, false, false);
+        match task.role() {
+            Role::Leader => {
+                self.step_aggregation_job_leader(
+                    datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
+
+            Role::Helper => {
+                self.step_aggregation_job_helper(
+                    datastore,
+                    hpke_keypairs,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
+
+            _ => Err(Error::Internal(format!("unexpected role {}", task.role()))),
+        }
+    }
+
+    async fn step_aggregation_job_leader<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: AggregatorTask,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
+        for<'a> A::PrepareState:
+            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
+    {
+        // Figure out the next step based on the non-error report aggregation states, and dispatch
+        // accordingly.
+        let mut saw_init = false;
+        let mut saw_continue = false;
+        let mut saw_poll = false;
+        let mut saw_finished = false;
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
                 ReportAggregationState::LeaderInit { .. } => saw_init = true,
                 ReportAggregationState::LeaderContinue { .. } => saw_continue = true,
                 ReportAggregationState::LeaderPoll { .. } => saw_poll = true,
 
+                ReportAggregationState::HelperInitProcessing { .. } => {
+                    return Err(Error::Internal(
+                        "Leader encountered unexpected ReportAggregationState::HelperInitProcessing"
+                            .to_string()
+                    ));
+                }
                 ReportAggregationState::HelperContinue { .. } => {
                     return Err(Error::Internal(
                         "Leader encountered unexpected ReportAggregationState::HelperContinue"
                             .to_string(),
+                    ));
+                }
+                ReportAggregationState::HelperContinueProcessing { .. } => {
+                    return Err(Error::Internal(
+                        "Leader encountered unexpected ReportAggregationState::HelperContinueProcessing"
+                            .to_string()
                     ));
                 }
 
@@ -262,21 +347,20 @@ where
         match (saw_init, saw_continue, saw_poll, saw_finished) {
             // Only saw report aggregations in state "init" (or failed).
             (true, false, false, false) => {
-                self.step_aggregation_job_aggregate_init(
+                self.step_aggregation_job_leader_init(
                     datastore,
                     vdaf,
                     lease,
                     task,
                     aggregation_job,
                     report_aggregations,
-                    verify_key,
                 )
                 .await
             }
 
             // Only saw report aggregations in state "continue" (or failed).
             (false, true, false, false) => {
-                self.step_aggregation_job_aggregate_continue(
+                self.step_aggregation_job_leader_continue(
                     datastore,
                     vdaf,
                     lease,
@@ -289,7 +373,7 @@ where
 
             // Only saw report aggregations in state "poll" (or failed).
             (false, false, true, false) => {
-                self.step_aggregation_job_aggregate_poll(
+                self.step_aggregation_job_leader_poll(
                     datastore,
                     vdaf,
                     lease,
@@ -309,7 +393,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn step_aggregation_job_aggregate_init<
+    async fn step_aggregation_job_leader_init<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -319,10 +403,9 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync + PartialEq + Eq,
@@ -334,8 +417,6 @@ where
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
-        let aggregation_job = Arc::new(aggregation_job);
-
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
@@ -356,6 +437,10 @@ where
         // on receiving an error.
         let (ra_sender, mut ra_receiver) = mpsc::unbounded_channel();
         let (pi_and_sa_sender, mut pi_and_sa_receiver) = mpsc::unbounded_channel();
+        let aggregation_job = Arc::new(aggregation_job);
+        let verify_key = task
+            .vdaf_verify_key()
+            .map_err(|_| Error::Internal("VDAF verification key has wrong length".to_string()))?;
         let producer_task = tokio::task::spawn_blocking({
             let parent_span = Span::current();
             let vdaf = Arc::clone(&vdaf);
@@ -587,7 +672,7 @@ where
 
         let aggregation_job: AggregationJob<SEED_SIZE, B, A> =
             Arc::unwrap_or_clone(aggregation_job);
-        self.process_response_from_helper(
+        self.step_aggregation_job_leader_process_response(
             datastore,
             vdaf,
             lease,
@@ -601,7 +686,7 @@ where
         .await
     }
 
-    async fn step_aggregation_job_aggregate_continue<
+    async fn step_aggregation_job_leader_continue<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -611,7 +696,7 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error>
@@ -778,7 +863,7 @@ where
         let resp =
             AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
 
-        self.process_response_from_helper(
+        self.step_aggregation_job_leader_process_response(
             datastore,
             vdaf,
             lease,
@@ -792,7 +877,7 @@ where
         .await
     }
 
-    async fn step_aggregation_job_aggregate_poll<
+    async fn step_aggregation_job_leader_poll<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -802,7 +887,7 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error>
@@ -862,7 +947,7 @@ where
         let resp =
             AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
 
-        self.process_response_from_helper(
+        self.step_aggregation_job_leader_process_response(
             datastore,
             vdaf,
             lease,
@@ -877,7 +962,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn process_response_from_helper<
+    async fn step_aggregation_job_leader_process_response<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -887,7 +972,7 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
@@ -906,7 +991,7 @@ where
     {
         match helper_resp {
             AggregationJobResp::Processing => {
-                self.process_response_from_helper_pending(
+                self.step_aggregation_job_leader_process_response_processing(
                     datastore,
                     vdaf,
                     lease,
@@ -920,7 +1005,7 @@ where
             }
 
             AggregationJobResp::Finished { prepare_resps } => {
-                self.process_response_from_helper_finished(
+                self.step_aggregation_job_leader_process_response_finished(
                     datastore,
                     vdaf,
                     lease,
@@ -935,7 +1020,7 @@ where
         }
     }
 
-    async fn process_response_from_helper_pending<
+    async fn step_aggregation_job_leader_process_response_processing<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -945,7 +1030,7 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
@@ -982,9 +1067,10 @@ where
         ));
 
         // Write everything back to storage.
+        let task_id = *task.id();
         let mut aggregation_job_writer =
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                Arc::clone(&task),
+                Arc::new(task),
                 self.batch_aggregation_shard_count,
                 Some(AggregationJobWriterMetrics {
                     report_aggregation_success_counter: self.aggregation_success_counter.clone(),
@@ -1002,7 +1088,7 @@ where
             .transpose()?
             .or_else(|| Some(Duration::from_secs(60)));
         let counters = datastore
-            .run_tx("process_response_from_helper_pending", |tx| {
+            .run_tx("process_response_from_helper_processing", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let lease = Arc::clone(&lease);
@@ -1017,17 +1103,12 @@ where
             })
             .await?;
 
-        write_task_aggregation_counter(
-            datastore,
-            self.task_counter_shard_count,
-            *task.id(),
-            counters,
-        );
+        write_task_aggregation_counter(datastore, self.task_counter_shard_count, task_id, counters);
 
         Ok(())
     }
 
-    async fn process_response_from_helper_finished<
+    async fn step_aggregation_job_leader_process_response_finished<
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
@@ -1037,7 +1118,7 @@ where
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<AggregatorTask>,
+        task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
@@ -1089,7 +1170,7 @@ where
             move || {
                 let span = info_span!(
                     parent: parent_span,
-                    "process_Response_from_helper threadpool task"
+                    "process_response_from_helper threadpool task"
                 );
                 let ctx = vdaf_application_context(&task_id);
 
@@ -1212,9 +1293,10 @@ where
 
         // Write everything back to storage.
         let aggregation_job = Arc::unwrap_or_clone(aggregation_job);
+        let task_id = *task.id();
         let mut aggregation_job_writer =
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                Arc::clone(&task),
+                Arc::new(task),
                 self.batch_aggregation_shard_count,
                 Some(AggregationJobWriterMetrics {
                     report_aggregation_success_counter: self.aggregation_success_counter.clone(),
@@ -1247,6 +1329,236 @@ where
             })
             .await?;
 
+        write_task_aggregation_counter(datastore, self.task_counter_shard_count, task_id, counters);
+
+        Ok(())
+    }
+
+    async fn step_aggregation_job_helper<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: AggregatorTask,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
+        for<'a> A::PrepareState:
+            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
+    {
+        // Figure out the next step based on the non-error report aggregation states, and dispatch
+        // accordingly.
+        let mut saw_init = false;
+        let mut saw_continue = false;
+        let mut saw_finished = false;
+        for report_aggregation in &report_aggregations {
+            match report_aggregation.state() {
+                ReportAggregationState::LeaderInit { .. } => {
+                    return Err(Error::Internal(
+                        "Helper encountered unexpected ReportAggregationState::LeaderInit"
+                            .to_string(),
+                    ));
+                }
+                ReportAggregationState::LeaderContinue { .. } => {
+                    return Err(Error::Internal(
+                        "Helper encountered unexpected ReportAggregationState::LeaderContinue"
+                            .to_string(),
+                    ));
+                }
+                ReportAggregationState::LeaderPoll { .. } => {
+                    return Err(Error::Internal(
+                        "Leader encountered unexpected ReportAggregationState::LeaderPoll"
+                            .to_string(),
+                    ));
+                }
+
+                ReportAggregationState::HelperInitProcessing { .. } => saw_init = true,
+                ReportAggregationState::HelperContinue { .. } => {
+                    return Err(Error::Internal(
+                        "Helper encountered unexpected ReportAggregationState::HelperContinue"
+                            .to_string(),
+                    ));
+                }
+                ReportAggregationState::HelperContinueProcessing { .. } => saw_continue = true,
+
+                ReportAggregationState::Finished => saw_finished = true,
+                ReportAggregationState::Failed { .. } => (), // ignore failed aggregations
+            }
+        }
+
+        // XXX below here
+        match (saw_init, saw_continue, saw_finished) {
+            // Only saw report aggregations in state "init processing" (or failed).
+            (true, false, false) => {
+                self.step_aggregation_job_helper_init(
+                    datastore,
+                    hpke_keypairs,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
+
+            // Only saw report aggregations in state "continue processing" (or failed).
+            (false, true, false) => {
+                self.step_aggregation_job_helper_continue(
+                    datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
+
+            _ => Err(Error::Internal(format!(
+                "unexpected combination of report aggregation states (saw_init = {saw_init}, \
+                saw_continue = {saw_continue}, saw_finished = {saw_finished})",
+            ))),
+        }
+    }
+
+    async fn step_aggregation_job_helper_init<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        hpke_keypairs: Arc<HpkeKeypairCache>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: AggregatorTask,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
+        for<'a> A::PrepareState:
+            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
+    {
+        // Only process report aggregations in the HelperInitProcessing state.
+        let report_aggregations = report_aggregations
+            .into_iter()
+            .filter(|ra| {
+                matches!(
+                    ra.state(),
+                    ReportAggregationState::HelperInitProcessing { .. }
+                )
+            })
+            .collect();
+
+        // Compute the next aggregation step.
+        let task = Arc::new(task);
+        let aggregation_job =
+            Arc::new(aggregation_job.with_state(AggregationJobState::AwaitingRequest));
+        let report_aggregations = Arc::new(
+            compute_helper_aggregate_init(
+                datastore.clock(),
+                hpke_keypairs,
+                Arc::clone(&vdaf),
+                AggregateInitMetrics::new(self.aggregate_step_failure_counter.clone()),
+                Arc::clone(&task),
+                Arc::clone(&aggregation_job),
+                report_aggregations,
+            )
+            .await?,
+        );
+
+        // Write results back to datastore.
+        let metrics = AggregationJobWriterMetrics {
+            report_aggregation_success_counter: self.aggregation_success_counter.clone(),
+            aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+            aggregated_report_share_dimension_histogram: self
+                .aggregated_report_share_dimension_histogram
+                .clone(),
+        };
+
+        let counters = datastore
+            .run_tx("aggregate_init_driver_write", |tx| {
+                let vdaf = Arc::clone(&vdaf);
+                let lease = Arc::clone(&lease);
+                let task = Arc::clone(&task);
+                let metrics = metrics.clone();
+                let aggregation_job = Arc::clone(&aggregation_job);
+                let report_aggregations = Arc::clone(&report_aggregations);
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
+
+                Box::pin(async move {
+                    // Write report shares, and ensure this isn't a repeated report aggregation.
+                    let report_aggregations = try_join_all(report_aggregations.iter().map(|ra| {
+                        let task = Arc::clone(&task);
+
+                        async move {
+                            let mut report_aggregation = Cow::Borrowed(ra);
+                            match tx
+                                .put_scrubbed_report(
+                                    task.id(),
+                                    ra.report_aggregation().report_id(),
+                                    ra.report_aggregation().time(),
+                                )
+                                .await
+                            {
+                                Ok(()) => (),
+                                Err(datastore::Error::MutationTargetAlreadyExists) => {
+                                    report_aggregation = Cow::Owned(
+                                        report_aggregation
+                                            .into_owned()
+                                            .with_failure(ReportError::ReportReplayed),
+                                    )
+                                }
+                                Err(err) => return Err(err),
+                            };
+                            Ok(report_aggregation)
+                        }
+                    }))
+                    .await?;
+
+                    // Write aggregation job, report aggregations, and batch aggregations.
+                    let mut aggregation_job_writer =
+                        AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
+                            task,
+                            batch_aggregation_shard_count,
+                            Some(metrics),
+                        );
+                    aggregation_job_writer
+                        .put(aggregation_job.as_ref().clone(), report_aggregations)?;
+                    let ((_, counters), _) = try_join!(
+                        aggregation_job_writer.write(tx, vdaf),
+                        tx.release_aggregation_job(&lease, None),
+                    )?;
+                    Ok(counters)
+                })
+            })
+            .await?;
+
         write_task_aggregation_counter(
             datastore,
             self.task_counter_shard_count,
@@ -1255,6 +1567,35 @@ where
         );
 
         Ok(())
+    }
+
+    async fn step_aggregation_job_helper_continue<
+        const SEED_SIZE: usize,
+        C: Clock,
+        B: CollectableBatchMode,
+        A,
+    >(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
+        lease: Arc<Lease<AcquiredAggregationJob>>,
+        task: AggregatorTask,
+        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::AggregateShare: Send + Sync,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
+        for<'a> A::PrepareState:
+            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
+    {
+        todo!() // XXX
     }
 
     async fn abandon_aggregation_job<C: Clock>(
@@ -1415,6 +1756,7 @@ where
     {
         move |max_acquire_count: usize| {
             let datastore = Arc::clone(&datastore);
+
             Box::pin(async move {
                 datastore
                     .run_tx("acquire_aggregation_jobs", |tx| {
@@ -1437,9 +1779,14 @@ where
         datastore: Arc<Datastore<C>>,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredAggregationJob>) -> BoxFuture<'static, Result<(), Error>> {
+        let hpke_keypairs = Arc::new(Mutex::new(None));
+
         move |lease| {
-            let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
+            let this = Arc::clone(&self);
+            let datastore = Arc::clone(&datastore);
+            let hpke_keypairs = Arc::clone(&hpke_keypairs);
             let lease = Arc::new(lease);
+
             Box::pin(async move {
                 let attempts = lease.lease_attempts();
                 if attempts > maximum_attempts_before_failure {
@@ -1456,8 +1803,30 @@ where
                     this.job_retry_counter.add(1, &[]);
                 }
 
+                let hpke_keypairs = {
+                    let mut hpke_keypairs = hpke_keypairs.lock().await;
+                    match hpke_keypairs.as_ref() {
+                        Some(hpke_keypairs) => Arc::clone(&hpke_keypairs),
+                        None => {
+                            let hk = Arc::new(
+                                HpkeKeypairCache::new(
+                                    Arc::clone(&datastore),
+                                    this.hpke_configs_refresh_interval,
+                                )
+                                .await?,
+                            );
+                            *hpke_keypairs = Some(Arc::clone(&hk));
+                            hk
+                        }
+                    }
+                };
+
                 match this
-                    .step_aggregation_job(Arc::clone(&datastore), Arc::clone(&lease))
+                    .step_aggregation_job(
+                        Arc::clone(&datastore),
+                        Arc::clone(&hpke_keypairs),
+                        Arc::clone(&lease),
+                    )
                     .await
                 {
                     Ok(_) => Ok(()),

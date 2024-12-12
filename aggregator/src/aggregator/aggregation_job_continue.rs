@@ -1,300 +1,4 @@
-//! Implements portions of aggregation job continuation for the helper.
-
-use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
-    error::handle_ping_pong_error,
-    AggregatorMetrics, Error, VdafOps,
-};
-use janus_aggregator_core::{
-    batch_mode::AccumulableBatchMode,
-    datastore::{
-        self,
-        models::{
-            AggregationJob, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
-        },
-        Transaction,
-    },
-    task::AggregatorTask,
-};
-use janus_core::{time::Clock, vdaf::vdaf_application_context};
-use janus_messages::{
-    AggregationJobContinueReq, AggregationJobResp, PrepareResp, PrepareStepResult, ReportError,
-    Role,
-};
-use prio::{
-    codec::{Encode, ParameterizedDecode},
-    topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
-    vdaf,
-};
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use std::{panic, sync::Arc};
-use tokio::sync::mpsc;
-use tracing::{info_span, trace_span, Span};
-
-impl VdafOps {
-    /// Step the helper's aggregation job to the next step using the step `n` ping pong state in
-    /// `report_aggregations` with the step `n+1` ping pong messages in `leader_aggregation_job`.
-    pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, B, A>(
-        tx: &Transaction<'_, C>,
-        task: Arc<AggregatorTask>,
-        vdaf: Arc<A>,
-        batch_aggregation_shard_count: u64,
-        aggregation_job: AggregationJob<SEED_SIZE, B, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        req: Arc<AggregationJobContinueReq>,
-        request_hash: [u8; 32],
-        metrics: &AggregatorMetrics,
-    ) -> Result<(AggregationJobResp, TaskAggregationCounter), datastore::Error>
-    where
-        C: Clock,
-        B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-    {
-        let request_step = req.step();
-
-        // Match preparation step received from leader to stored report aggregation, and extract
-        // the stored preparation step.
-        let report_aggregation_count = report_aggregations.len();
-        let mut report_aggregations_iter = report_aggregations.into_iter();
-
-        let mut prep_steps_and_ras = Vec::with_capacity(req.prepare_steps().len()); // matched to prep_steps
-        let mut report_aggregations_to_write = Vec::with_capacity(report_aggregation_count);
-        for prep_step in req.prepare_steps() {
-            let report_aggregation = loop {
-                let report_agg = report_aggregations_iter.next().ok_or_else(|| {
-                    datastore::Error::User(
-                        Error::InvalidMessage(
-                            Some(*task.id()),
-                            "leader sent unexpected, duplicate, or out-of-order prepare steps",
-                        )
-                        .into(),
-                    )
-                })?;
-                if report_agg.report_id() != prep_step.report_id() {
-                    // This report was omitted by the leader because of a prior failure. Note that
-                    // the report was dropped (if it's not already in an error state) and continue.
-                    if matches!(
-                        report_agg.state(),
-                        ReportAggregationState::HelperContinue { .. }
-                    ) {
-                        report_aggregations_to_write.push(WritableReportAggregation::new(
-                            report_agg
-                                .clone()
-                                .with_state(ReportAggregationState::Failed {
-                                    report_error: ReportError::ReportDropped,
-                                })
-                                .with_last_prep_resp(None),
-                            None,
-                        ));
-                    }
-                    continue;
-                }
-                break report_agg;
-            };
-
-            let prep_state = match report_aggregation.state() {
-                ReportAggregationState::HelperContinue { prepare_state } => prepare_state.clone(),
-                ReportAggregationState::LeaderContinue { .. } => {
-                    return Err(datastore::Error::User(
-                        Error::Internal(
-                            "helper encountered unexpected ReportAggregationState::LeaderContinue"
-                                .to_string(),
-                        )
-                        .into(),
-                    ))
-                }
-                _ => {
-                    return Err(datastore::Error::User(
-                        Error::InvalidMessage(
-                            Some(*task.id()),
-                            "leader sent prepare step for non-WAITING report aggregation",
-                        )
-                        .into(),
-                    ));
-                }
-            };
-
-            prep_steps_and_ras.push((prep_step.clone(), report_aggregation, prep_state));
-        }
-
-        for report_aggregation in report_aggregations_iter {
-            // This report was omitted by the leader because of a prior failure. Note that
-            // the report was dropped (if it's not already in an error state) and continue.
-            if matches!(
-                report_aggregation.state(),
-                ReportAggregationState::HelperContinue { .. }
-            ) {
-                report_aggregations_to_write.push(WritableReportAggregation::new(
-                    report_aggregation
-                        .clone()
-                        .with_state(ReportAggregationState::Failed {
-                            report_error: ReportError::ReportDropped,
-                        })
-                        .with_last_prep_resp(None),
-                    None,
-                ));
-            }
-        }
-
-        // Compute the next aggregation step.
-        //
-        // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped.
-        // This will cause any attempts to send on `sender` to return a `SendError`, which will be
-        // returned from the function passed to `try_for_each_with`; `try_for_each_with` will
-        // terminate early on receiving an error.
-        let (sender, mut receiver) = mpsc::unbounded_channel();
-        let aggregation_job = Arc::new(aggregation_job);
-        let producer_task = tokio::task::spawn_blocking({
-            let parent_span = Span::current();
-            let metrics = metrics.clone();
-            let task = Arc::clone(&task);
-            let vdaf = Arc::clone(&vdaf);
-            let aggregation_job = Arc::clone(&aggregation_job);
-
-            move || {
-                let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
-                let ctx = vdaf_application_context(task.id());
-
-                prep_steps_and_ras.into_par_iter().try_for_each(
-                    |(prep_step, report_aggregation, prep_state)| {
-                        let _entered = span.enter();
-
-                        let (report_aggregation_state, prepare_step_result, output_share) =
-                            trace_span!("VDAF preparation (helper continuation)")
-                                .in_scope(|| {
-                                    // Continue with the incoming message.
-                                    vdaf.helper_continued(
-                                        &ctx,
-                                        PingPongState::Continued(prep_state.clone()),
-                                        aggregation_job.aggregation_parameter(),
-                                        prep_step.message(),
-                                    )
-                                    .and_then(
-                                        |continued_value| {
-                                            match continued_value {
-                                                PingPongContinuedValue::WithMessage {
-                                                    transition,
-                                                } => {
-                                                    let (new_state, message) =
-                                                        transition.evaluate(&ctx, vdaf.as_ref())?;
-                                                    let (report_aggregation_state, output_share) =
-                                                        match new_state {
-                                                            // Helper did not finish. Store the new
-                                                            // state and await the next message from
-                                                            // the Leader to advance preparation.
-                                                            PingPongState::Continued(prepare_state) => (
-                                                                ReportAggregationState::HelperContinue {
-                                                                    prepare_state,
-                                                                },
-                                                                None,
-                                                            ),
-                                                            // Helper finished. Commit the output
-                                                            // share.
-                                                            PingPongState::Finished(output_share) => (
-                                                                ReportAggregationState::Finished,
-                                                                Some(output_share),
-                                                            ),
-                                                        };
-
-                                                    Ok((
-                                                        report_aggregation_state,
-                                                        // Helper has an outgoing message for Leader
-                                                        PrepareStepResult::Continue { message },
-                                                        output_share,
-                                                    ))
-                                                }
-
-                                                PingPongContinuedValue::FinishedNoMessage {
-                                                    output_share,
-                                                } => Ok((
-                                                    ReportAggregationState::Finished,
-                                                    PrepareStepResult::Finished,
-                                                    Some(output_share),
-                                                )),
-                                            }
-                                        },
-                                    )
-                                })
-                                .map_err(|error| {
-                                    handle_ping_pong_error(
-                                        task.id(),
-                                        Role::Leader,
-                                        prep_step.report_id(),
-                                        error,
-                                        &metrics.aggregate_step_failure_counter,
-                                    )
-                                })
-                                .unwrap_or_else(|report_error| {
-                                    (
-                                        ReportAggregationState::Failed { report_error },
-                                        PrepareStepResult::Reject(report_error),
-                                        None,
-                                    )
-                                });
-
-                        sender.send(WritableReportAggregation::new(
-                            report_aggregation
-                                .clone()
-                                .with_state(report_aggregation_state)
-                                .with_last_prep_resp(Some(PrepareResp::new(
-                                    *prep_step.report_id(),
-                                    prepare_step_result,
-                                ))),
-                            output_share,
-                        ))
-                    },
-                )
-            }
-        });
-
-        while receiver
-            .recv_many(&mut report_aggregations_to_write, 10)
-            .await
-            > 0
-        {}
-
-        // Await the producer task to resume any panics that may have occurred, and to ensure we can
-        // unwrap the aggregation job's Arc in a few lines. The only other errors that can occur
-        // are: a `JoinError` indicating cancellation, which is impossible because we do not cancel
-        // the task; and a `SendError`, which can only happen if this future is cancelled (in which
-        // case we will not run this code at all).
-        let _ = producer_task.await.map_err(|join_error| {
-            if let Ok(reason) = join_error.try_into_panic() {
-                panic::resume_unwind(reason);
-            }
-        });
-        assert_eq!(report_aggregations_to_write.len(), report_aggregation_count);
-
-        // Write accumulated aggregation values back to the datastore; this will mark any reports
-        // that can't be aggregated because the batch is collected with error BatchCollected.
-        let aggregation_job_id = *aggregation_job.id();
-        let aggregation_job = Arc::unwrap_or_clone(aggregation_job)
-            .with_step(request_step) // Advance the job to the leader's step
-            .with_last_request_hash(request_hash);
-        let mut aggregation_job_writer =
-            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
-                task,
-                batch_aggregation_shard_count,
-                Some(metrics.for_aggregation_job_writer()),
-            );
-        aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
-        let (mut prep_resps_by_agg_job, counters) = aggregation_job_writer.write(tx, vdaf).await?;
-        Ok((
-            AggregationJobResp::Finished {
-                prepare_resps: prep_resps_by_agg_job
-                    .remove(&aggregation_job_id)
-                    .unwrap_or_default(),
-            },
-            counters,
-        ))
-    }
-}
+//! Implements portions of aggregation job continuation for the Helper.
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -416,7 +120,7 @@ mod tests {
         },
         task::{
             test_util::{Task, TaskBuilder},
-            BatchMode,
+            AggregationMode, BatchMode,
         },
         test_util::noop_meter,
     };
@@ -463,8 +167,12 @@ mod tests {
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
-        let task =
-            TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Fake { rounds: 2 }).build();
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Fake { rounds: 2 },
+        )
+        .build();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -485,33 +193,34 @@ mod tests {
 
         datastore
             .run_unnamed_tx(|tx| {
-                let (task, aggregation_param, prepare_init, transcript) = (
-                    helper_task.clone(),
-                    aggregation_parameter,
-                    prepare_init.clone(),
-                    transcript.clone(),
-                );
+                let helper_task = helper_task.clone();
+                let prepare_init = prepare_init.clone();
+                let transcript = transcript.clone();
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_scrubbed_report(task.id(), prepare_init.report_share())
-                        .await
-                        .unwrap();
+                    tx.put_aggregator_task(&helper_task).await.unwrap();
+                    tx.put_scrubbed_report(
+                        helper_task.id(),
+                        prepare_init.report_share().metadata().id(),
+                        prepare_init.report_share().metadata().time(),
+                    )
+                    .await
+                    .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
+                        *helper_task.id(),
                         aggregation_job_id,
-                        aggregation_param,
+                        aggregation_parameter,
                         (),
                         Interval::from_time(prepare_init.report_share().metadata().time()).unwrap(),
-                        AggregationJobState::InProgress,
+                        AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ))
                     .await
                     .unwrap();
 
                     tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
-                        *task.id(),
+                        *helper_task.id(),
                         aggregation_job_id,
                         *prepare_init.report_share().metadata().id(),
                         *prepare_init.report_share().metadata().time(),
@@ -585,7 +294,7 @@ mod tests {
             AggregationJobResp::Finished {
                 prepare_resps: test_case
                     .first_continue_request
-                    .prepare_steps()
+                    .prepare_continues()
                     .iter()
                     .map(|step| PrepareResp::new(*step.report_id(), PrepareStepResult::Finished))
                     .collect()
@@ -605,7 +314,12 @@ mod tests {
             ..
         } = HttpHandlerTest::new().await;
 
-        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build();
         datastore
             .put_aggregator_task(&task.leader_view().unwrap())
             .await
@@ -636,7 +350,12 @@ mod tests {
             ..
         } = HttpHandlerTest::new().await;
 
-        let task = TaskBuilder::new(BatchMode::TimeInterval, VdafInstance::Prio3Count).build();
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .build();
         datastore
             .put_aggregator_task(&task.leader_view().unwrap())
             .await
@@ -673,7 +392,10 @@ mod tests {
         // to advance to step 0. Should be rejected because that is an illegal transition.
         let step_zero_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(0),
-            test_case.first_continue_request.prepare_steps().to_vec(),
+            test_case
+                .first_continue_request
+                .prepare_continues()
+                .to_vec(),
         );
 
         post_aggregation_job_expecting_error(
@@ -719,15 +441,18 @@ mod tests {
         let (before_aggregation_job, before_report_aggregations) = test_case
             .datastore
             .run_unnamed_tx(|tx| {
-                let (task_id, unrelated_prepare_init, aggregation_job_id) = (
-                    *test_case.task.id(),
-                    unrelated_prepare_init.clone(),
-                    test_case.aggregation_job_id,
-                );
+                let task_id = *test_case.task.id();
+                let unrelated_prepare_init = unrelated_prepare_init.clone();
+                let aggregation_job_id = test_case.aggregation_job_id;
+
                 Box::pin(async move {
-                    tx.put_scrubbed_report(&task_id, unrelated_prepare_init.report_share())
-                        .await
-                        .unwrap();
+                    tx.put_scrubbed_report(
+                        &task_id,
+                        unrelated_prepare_init.report_share().metadata().id(),
+                        unrelated_prepare_init.report_share().metadata().time(),
+                    )
+                    .await
+                    .unwrap();
 
                     let aggregation_job = tx
                         .get_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
@@ -842,7 +567,10 @@ mod tests {
         // Send another request for a step that the helper is past. Should fail.
         let past_step_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(1),
-            test_case.first_continue_request.prepare_steps().to_vec(),
+            test_case
+                .first_continue_request
+                .prepare_continues()
+                .to_vec(),
         );
 
         post_aggregation_job_expecting_error(
@@ -866,7 +594,10 @@ mod tests {
         // helper isn't on that step.
         let future_step_request = AggregationJobContinueReq::new(
             AggregationJobStep::from(17),
-            test_case.first_continue_request.prepare_steps().to_vec(),
+            test_case
+                .first_continue_request
+                .prepare_continues()
+                .to_vec(),
         );
 
         post_aggregation_job_expecting_error(

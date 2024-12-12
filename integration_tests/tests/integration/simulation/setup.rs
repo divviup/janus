@@ -30,7 +30,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        BatchMode,
+        AggregationMode, BatchMode,
     },
 };
 use janus_client::{default_http_client, Client};
@@ -173,21 +173,25 @@ impl Components {
         } else {
             BatchMode::TimeInterval
         };
-        let task = TaskBuilder::new(batch_mode, state.vdaf_instance.clone())
-            .with_leader_aggregator_endpoint(
-                format!("http://{}/", leader.socket_address)
-                    .parse()
-                    .unwrap(),
-            )
-            .with_helper_aggregator_endpoint(
-                format!("http://{}/", helper.socket_address)
-                    .parse()
-                    .unwrap(),
-            )
-            .with_time_precision(input.config.time_precision)
-            .with_min_batch_size(input.config.min_batch_size)
-            .with_report_expiry_age(input.config.report_expiry_age)
-            .build();
+        let task = TaskBuilder::new(
+            batch_mode,
+            AggregationMode::Synchronous,
+            state.vdaf_instance.clone(),
+        )
+        .with_leader_aggregator_endpoint(
+            format!("http://{}/", leader.socket_address)
+                .parse()
+                .unwrap(),
+        )
+        .with_helper_aggregator_endpoint(
+            format!("http://{}/", helper.socket_address)
+                .parse()
+                .unwrap(),
+        )
+        .with_time_precision(input.config.time_precision)
+        .with_min_batch_size(input.config.min_batch_size)
+        .with_report_expiry_age(input.config.report_expiry_age)
+        .build();
         let leader_task = task.leader_view().unwrap();
         let helper_task = task.helper_view().unwrap();
         leader

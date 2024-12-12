@@ -5,7 +5,7 @@ use crate::{
     },
     initialize_rustls,
 };
-use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
+use janus_aggregator_core::task::{test_util::TaskBuilder, AggregationMode, BatchMode};
 use janus_core::{
     test_util::install_test_trace_subscriber,
     vdaf::{vdaf_dp_strategies, VdafInstance},
@@ -48,7 +48,7 @@ impl JanusContainerPair {
         batch_mode: BatchMode,
     ) -> JanusContainerPair {
         let (task_parameters, task_builder) = build_test_task(
-            TaskBuilder::new(batch_mode, vdaf),
+            TaskBuilder::new(batch_mode, AggregationMode::Synchronous, vdaf),
             TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
@@ -137,6 +137,7 @@ async fn janus_in_process_count() {
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     ))
     .await;
@@ -188,6 +189,7 @@ async fn janus_in_process_sum_16() {
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3Sum {
             max_measurement: 4096,
         },
@@ -243,6 +245,7 @@ async fn janus_in_process_histogram_4_buckets() {
     // Start servers.
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
@@ -300,6 +303,7 @@ async fn janus_in_process_leader_selected() {
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },
+        AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     ))
     .await;
@@ -351,6 +355,7 @@ async fn janus_in_process_sum_vec() {
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,
@@ -378,6 +383,7 @@ async fn janus_in_process_customized_sum_vec() {
 
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs: 2,
             bits: 16,
@@ -409,6 +415,7 @@ async fn janus_in_process_histogram_dp_noise() {
     let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3Histogram {
             length: HISTOGRAM_LENGTH,
             chunk_length: CHUNK_LENGTH,
@@ -471,6 +478,7 @@ async fn janus_in_process_sumvec_dp_noise() {
     let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
     let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
         VdafInstance::Prio3SumVec {
             bits: BITS,
             length: VECTOR_LENGTH,
