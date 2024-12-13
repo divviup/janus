@@ -81,7 +81,7 @@ impl VdafOps {
                     // the report was dropped (if it's not already in an error state) and continue.
                     if matches!(
                         report_agg.state(),
-                        ReportAggregationState::WaitingHelper { .. }
+                        ReportAggregationState::HelperContinue { .. }
                     ) {
                         report_aggregations_to_write.push(WritableReportAggregation::new(
                             report_agg
@@ -99,11 +99,11 @@ impl VdafOps {
             };
 
             let prep_state = match report_aggregation.state() {
-                ReportAggregationState::WaitingHelper { prepare_state } => prepare_state.clone(),
-                ReportAggregationState::WaitingLeader { .. } => {
+                ReportAggregationState::HelperContinue { prepare_state } => prepare_state.clone(),
+                ReportAggregationState::LeaderContinue { .. } => {
                     return Err(datastore::Error::User(
                         Error::Internal(
-                            "helper encountered unexpected ReportAggregationState::WaitingLeader"
+                            "helper encountered unexpected ReportAggregationState::LeaderContinue"
                                 .to_string(),
                         )
                         .into(),
@@ -128,7 +128,7 @@ impl VdafOps {
             // the report was dropped (if it's not already in an error state) and continue.
             if matches!(
                 report_aggregation.state(),
-                ReportAggregationState::WaitingHelper { .. }
+                ReportAggregationState::HelperContinue { .. }
             ) {
                 report_aggregations_to_write.push(WritableReportAggregation::new(
                     report_aggregation
@@ -189,7 +189,7 @@ impl VdafOps {
                                                             // state and await the next message from
                                                             // the Leader to advance preparation.
                                                             PingPongState::Continued(prepare_state) => (
-                                                                ReportAggregationState::WaitingHelper {
+                                                                ReportAggregationState::HelperContinue {
                                                                     prepare_state,
                                                                 },
                                                                 None,
@@ -517,7 +517,7 @@ mod tests {
                         *prepare_init.report_share().metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::WaitingHelper {
+                        ReportAggregationState::HelperContinue {
                             prepare_state: *transcript.helper_prepare_transitions[0]
                                 .prepare_state(),
                         },
@@ -743,6 +743,7 @@ mod tests {
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
+                            &test_case.aggregation_parameter,
                         )
                         .await
                         .unwrap();
@@ -795,6 +796,7 @@ mod tests {
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
+                            &test_case.aggregation_parameter,
                         )
                         .await
                         .unwrap();

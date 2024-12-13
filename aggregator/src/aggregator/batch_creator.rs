@@ -349,7 +349,7 @@ where
                     *report.report_id(),
                     client_timestamp,
                     ord,
-                    ReportAggregationMetadataState::Start,
+                    ReportAggregationMetadataState::Init,
                 )
             })
             .collect();
