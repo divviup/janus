@@ -53,7 +53,13 @@ use prio::{
 };
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
 use reqwest::Method;
-use std::{collections::HashSet, panic, str::FromStr, sync::Arc, time::Duration};
+use retry_after::RetryAfter;
+use std::{
+    collections::HashSet,
+    panic,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
 use tokio::{join, sync::mpsc, try_join};
 use tracing::{debug, error, info, info_span, trace_span, warn, Span};
 
@@ -885,7 +891,7 @@ where
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        retry_after: Option<&Duration>,
+        retry_after: Option<&RetryAfter>,
         helper_resp: AggregationJobResp,
     ) -> Result<(), Error>
     where
@@ -899,7 +905,6 @@ where
         A::PublicShare: Send + Sync,
     {
         match helper_resp {
-            // TODO(#3436): implement asynchronous aggregation
             AggregationJobResp::Processing => {
                 self.process_response_from_helper_pending(
                     datastore,
@@ -944,7 +949,7 @@ where
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        retry_after: Option<&Duration>,
+        retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync + Eq + PartialEq,
@@ -993,7 +998,8 @@ where
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
         let retry_after = retry_after
-            .copied()
+            .map(|ra| retry_after_to_duration(datastore.clock(), ra))
+            .transpose()?
             .or_else(|| Some(Duration::from_secs(60)));
         let counters = datastore
             .run_tx("process_response_from_helper_pending", |tx| {
@@ -1514,10 +1520,25 @@ struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE,
     leader_state: PingPongState<SEED_SIZE, 16, A>,
 }
 
-fn parse_retry_after(header_value: &HeaderValue) -> Result<Duration, Error> {
-    let val = header_value
-        .to_str()
-        .map_err(|err| Error::BadRequest(err.to_string()))?;
-    let val = u64::from_str(val).map_err(|err| Error::BadRequest(err.to_string()))?;
-    Ok(Duration::from_secs(val))
+fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {
+    RetryAfter::try_from(header_value)
+        .map_err(|err| Error::BadRequest(format!("couldn't parse retry-after header: {err}")))
+}
+
+fn retry_after_to_duration<C: Clock>(
+    clock: &C,
+    retry_after: &RetryAfter,
+) -> Result<Duration, Error> {
+    match retry_after {
+        RetryAfter::Delay(duration) => Ok(*duration),
+        RetryAfter::DateTime(next_retry_time) => {
+            let now = UNIX_EPOCH + Duration::from_secs(clock.now().as_seconds_since_epoch());
+            if &now > next_retry_time {
+                return Ok(Duration::ZERO);
+            }
+            next_retry_time
+                .duration_since(now)
+                .map_err(|err| Error::Internal(format!("computing retry-after duration: {err}")))
+        }
+    }
 }

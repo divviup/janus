@@ -886,6 +886,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
 where
     A::InputShare: PartialEq,
     A::PrepareShare: PartialEq,
+    A::PrepareState: PartialEq,
     A::PublicShare: PartialEq,
     A::OutputShare: PartialEq,
 {
@@ -909,6 +910,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
 where
     A::InputShare: Eq,
     A::PrepareShare: Eq,
+    A::PrepareState: Eq,
     A::PublicShare: Eq,
     A::OutputShare: Eq,
 {
@@ -1112,6 +1114,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
 where
     A::InputShare: PartialEq,
     A::PrepareShare: PartialEq,
+    A::PrepareState: PartialEq,
     A::PublicShare: PartialEq,
     A::OutputShare: PartialEq,
 {
@@ -1139,6 +1142,7 @@ where
                     && lhs_leader_input_share == rhs_leader_input_share
                     && lhs_helper_encrypted_input_share == rhs_helper_encrypted_input_share
             }
+
             (
                 Self::LeaderContinue {
                     transition: lhs_transition,
@@ -1147,6 +1151,26 @@ where
                     transition: rhs_transition,
                 },
             ) => lhs_transition == rhs_transition,
+
+            (
+                Self::LeaderPoll {
+                    leader_state: lhs_leader_state,
+                },
+                Self::LeaderPoll {
+                    leader_state: rhs_leader_state,
+                },
+            ) => match (lhs_leader_state, rhs_leader_state) {
+                (
+                    PingPongState::Continued(lhs_prepare_state),
+                    PingPongState::Continued(rhs_prepare_state),
+                ) => lhs_prepare_state == rhs_prepare_state,
+                (
+                    PingPongState::Finished(lhs_output_share),
+                    PingPongState::Finished(rhs_output_share),
+                ) => lhs_output_share == rhs_output_share,
+                _ => false,
+            },
+
             (
                 Self::HelperContinue {
                     prepare_state: lhs_state,
@@ -1155,6 +1179,7 @@ where
                     prepare_state: rhs_state,
                 },
             ) => lhs_state == rhs_state,
+
             (
                 Self::Failed {
                     report_error: lhs_report_error,
@@ -1163,6 +1188,7 @@ where
                     report_error: rhs_report_error,
                 },
             ) => lhs_report_error == rhs_report_error,
+
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -1177,6 +1203,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
 where
     A::InputShare: Eq,
     A::PrepareShare: Eq,
+    A::PrepareState: Eq,
     A::PublicShare: Eq,
     A::OutputShare: Eq,
 {

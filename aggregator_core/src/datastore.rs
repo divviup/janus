@@ -381,6 +381,11 @@ impl<C: Clock> Datastore<C> {
         (rslt, retry.load(Ordering::Relaxed))
     }
 
+    /// Returns the clock in use by this datastore.
+    pub fn clock(&self) -> &C {
+        &self.clock
+    }
+
     /// See [`Datastore::run_tx`]. This method provides a placeholder transaction name. It is useful
     /// for tests where the transaction name is not important.
     #[cfg(feature = "test-util")]
