@@ -1457,7 +1457,7 @@ dependencies = [
  "prio 0.16.7",
  "serde",
  "serde_json",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "time",
  "trillium-client",
  "trillium-http",
@@ -2770,7 +2770,7 @@ dependencies = [
  "signal-hook-tokio",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
@@ -2818,7 +2818,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tracing",
  "trillium",
@@ -2872,7 +2872,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -2901,7 +2901,7 @@ dependencies = [
  "prio 0.17.0-alpha.0",
  "rand",
  "reqwest",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tracing",
  "tracing-log",
@@ -2930,7 +2930,7 @@ dependencies = [
  "retry-after",
  "serde",
  "serde_json",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tracing",
  "url",
@@ -2975,7 +2975,7 @@ dependencies = [
  "stopper",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -3104,7 +3104,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_test",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "url",
 ]
 
@@ -4277,7 +4277,7 @@ dependencies = [
  "sha2 0.10.8",
  "sha3",
  "subtle",
- "thiserror 2.0.6",
+ "thiserror 2.0.7",
  "zipf",
 ]
 
@@ -5753,11 +5753,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.6"
+version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
+checksum = "93605438cbd668185516ab499d589afb7ee1859ea3d5fc8f6b0755e1c7443767"
 dependencies = [
- "thiserror-impl 2.0.6",
+ "thiserror-impl 2.0.7",
 ]
 
 [[package]]
@@ -5773,9 +5773,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.6"
+version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
+checksum = "e1d8749b4531af2117677a5fcd12b1348a3fe2b81e36e61ffeac5c4aa3273e36"
 dependencies = [
  "proc-macro2",
  "quote",
