@@ -45,6 +45,7 @@ allow = [
     "OpenSSL",
     "Unlicense",
     "CC0-1.0",
+    "Zlib",
 ]
 
 [[licenses.clarify]]
