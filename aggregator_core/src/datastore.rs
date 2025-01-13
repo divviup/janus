@@ -205,6 +205,7 @@ impl<C: Clock> Datastore<C> {
             .u64_histogram(TRANSACTION_RETRIES_METER_NAME)
             .with_description("The number of retries before a transaction is committed or aborted.")
             .with_unit("{retry}")
+            .with_boundaries(RETRIES_HISTOGRAM_BOUNDARIES.to_vec())
             .build();
         let transaction_duration_histogram = meter
             .f64_histogram(TRANSACTION_DURATION_METER_NAME)
@@ -460,6 +461,12 @@ pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_error
 pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
 pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
 pub const TRANSACTION_POOL_WAIT_METER_NAME: &str = "janus_database_pool_wait_duration";
+
+/// These boundaries are for the number of times a database transaction was retried.
+const RETRIES_HISTOGRAM_BOUNDARIES: &[f64] = &[
+    1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
+    16384.0,
+];
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {

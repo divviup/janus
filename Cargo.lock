@@ -6260,7 +6260,7 @@ dependencies = [
 [[package]]
 name = "trillium-opentelemetry"
 version = "0.9.0"
-source = "git+https://github.com/divviup/trillium-opentelemetry.git?rev=da2f578c4684e50a03ba177ceefd183e43a5367f#da2f578c4684e50a03ba177ceefd183e43a5367f"
+source = "git+https://github.com/divviup/trillium-opentelemetry.git?rev=7bdc6efd22256a3416dbc77ed5f5e0abcce3dea5#7bdc6efd22256a3416dbc77ed5f5e0abcce3dea5"
 dependencies = [
  "opentelemetry",
  "opentelemetry-semantic-conventions",

@@ -32,7 +32,7 @@ use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State, TryFromConn};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
-use trillium_opentelemetry::metrics;
+use trillium_opentelemetry::Metrics;
 use trillium_router::{Router, RouterConnExt};
 
 #[cfg(test)]
@@ -302,6 +302,12 @@ pub(crate) static AGGREGATION_JOB_ROUTE: &str =
 pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
+/// These boundaries are intended to be used with measurements having the unit of "bytes".
+const BYTES_HISTOGRAM_BOUNDARIES: &[f64] = &[
+    1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
+    1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelperAggregationRequestQueue {
@@ -420,17 +426,22 @@ where
                 instrumented(api(aggregate_shares::<C>)),
             );
 
+        let metrics = Metrics::builder(self.meter.clone())
+            .with_route(|conn| {
+                conn.route()
+                    .map(|route_spec| Cow::Owned(route_spec.to_string()))
+            })
+            .with_error_type(|conn| {
+                conn.state::<ErrorCode>()
+                    .map(|error_code| Cow::Borrowed(error_code.0))
+            })
+            .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+            .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
+
         Ok((
             State(self.aggregator),
-            metrics(self.meter)
-                .with_route(|conn| {
-                    conn.route()
-                        .map(|route_spec| Cow::Owned(route_spec.to_string()))
-                })
-                .with_error_type(|conn| {
-                    conn.state::<ErrorCode>()
-                        .map(|error_code| Cow::Borrowed(error_code.0))
-                }),
+            metrics,
             router,
             StatusCounter::new(self.meter),
         ))

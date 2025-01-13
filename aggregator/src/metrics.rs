@@ -30,13 +30,9 @@ use {
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     janus_aggregator_api::git_revision,
-    janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
     opentelemetry::global::set_meter_provider,
     opentelemetry_sdk::{
-        metrics::{
-            new_view, Aggregation, Instrument, InstrumentKind, MetricError, SdkMeterProvider,
-            Stream, View,
-        },
+        metrics::{MetricError, SdkMeterProvider},
         Resource,
     },
 };
@@ -114,94 +110,6 @@ pub enum MetricsExporterHandle {
     Noop,
 }
 
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-struct CustomView {
-    retries_histogram_view: Box<dyn View>,
-    vdaf_dimension_histogram_view: Box<dyn View>,
-    bytes_histogram_view: Box<dyn View>,
-    default_histogram_view: Box<dyn View>,
-}
-
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-impl CustomView {
-    /// These boundaries are for the number of times a database transaction was retried.
-    const RETRIES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
-        16384.0,
-    ];
-
-    /// These boundaries are for the dimensions of VDAF measurements.
-    const VDAF_DIMENSION_HISTOGRAM_VALUES: &'static [f64] = &[
-        1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0,
-    ];
-
-    /// These boundaries are intended to be used with measurements having the unit of "bytes".
-    const BYTES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
-        1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
-    ];
-
-    /// These boundaries are intended to be able to capture the length of short-lived operations
-    /// (e.g HTTP requests) as well as longer-running operations.
-    const DEFAULT_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
-    ];
-
-    pub fn new() -> Result<Self, MetricError> {
-        let wildcard_instrument = Instrument::new().name("*");
-        Ok(Self {
-            retries_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::RETRIES_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-            vdaf_dimension_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::VDAF_DIMENSION_HISTOGRAM_VALUES),
-                    record_min_max: true,
-                }),
-            )?,
-            bytes_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::BYTES_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-            default_histogram_view: new_view(
-                wildcard_instrument,
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::DEFAULT_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-        })
-    }
-}
-
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-impl View for CustomView {
-    fn match_inst(&self, inst: &Instrument) -> Option<Stream> {
-        match (inst.kind, inst.name.as_ref()) {
-            (Some(InstrumentKind::Histogram), TRANSACTION_RETRIES_METER_NAME) => {
-                self.retries_histogram_view.match_inst(inst)
-            }
-            (Some(InstrumentKind::Histogram), AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME) => {
-                self.vdaf_dimension_histogram_view.match_inst(inst)
-            }
-            (
-                Some(InstrumentKind::Histogram),
-                "http.server.request.body.size" | "http.server.response.body.size",
-            ) => self.bytes_histogram_view.match_inst(inst),
-            (Some(InstrumentKind::Histogram), _) => self.default_histogram_view.match_inst(inst),
-            _ => None,
-        }
-    }
-}
-
 /// Construct and return an opentelemetry-prometheus MeterProvider.
 ///
 /// # Arguments
@@ -218,7 +126,6 @@ fn build_opentelemetry_prometheus_meter_provider(
     let reader = reader_builder.build()?;
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(reader)
-        .with_view(CustomView::new()?)
         .with_resource(resource())
         .build();
     Ok(meter_provider)
@@ -322,7 +229,6 @@ pub async fn install_metrics_exporter(
             let reader = PeriodicReader::builder(exporter, Tokio).build();
             let meter_provider = SdkMeterProvider::builder()
                 .with_reader(reader)
-                .with_view(CustomView::new()?)
                 .with_resource(resource())
                 .build();
             set_meter_provider(meter_provider.clone());
@@ -374,10 +280,16 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
 pub const AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME: &str =
     "janus_aggregated_report_share_vdaf_dimension";
 
+/// These boundaries are for the dimensions of VDAF measurements.
+const VDAF_DIMENSION_HISTOGRAM_VALUES: &[f64] = &[
+    1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0,
+];
+
 pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Histogram<u64> {
     meter
         .u64_histogram(AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME)
         .with_description("Successfully aggregated report shares")
+        .with_boundaries(VDAF_DIMENSION_HISTOGRAM_VALUES.to_vec())
         .build()
 }
 

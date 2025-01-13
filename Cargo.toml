@@ -68,7 +68,7 @@ ohttp = { version = "0.5.1", default-features = false }
 opentelemetry = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", default-features = false, features = ["trace", "metrics", "grpc-tonic"] }
 opentelemetry-prometheus = "0.27"
-opentelemetry_sdk = { version = "0.27", default-features = false, features = ["trace", "metrics", "spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 pem = "3"
 postgres-protocol = "0.6.7"
 postgres-types = "0.2.8"
@@ -148,4 +148,4 @@ debug = false     # Do not generate debug info.
 strip = true      # Strip symbols from binary.
 
 [patch.crates-io]
-trillium-opentelemetry = { git = "https://github.com/divviup/trillium-opentelemetry.git", rev = "da2f578c4684e50a03ba177ceefd183e43a5367f" }
+trillium-opentelemetry = { git = "https://github.com/divviup/trillium-opentelemetry.git", rev = "7bdc6efd22256a3416dbc77ed5f5e0abcce3dea5" }
