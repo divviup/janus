@@ -439,14 +439,14 @@ fn check_error<T>(
 }
 
 fn is_retryable_error(err: &tokio_postgres::Error) -> bool {
-    err.code().map_or(false, |code| {
+    err.code().is_some_and(|code| {
         code == &SqlState::T_R_SERIALIZATION_FAILURE || code == &SqlState::T_R_DEADLOCK_DETECTED
     })
 }
 
 fn is_transaction_abort_error(err: &tokio_postgres::Error) -> bool {
     err.code()
-        .map_or(false, |code| code == &SqlState::IN_FAILED_SQL_TRANSACTION)
+        .is_some_and(|code| code == &SqlState::IN_FAILED_SQL_TRANSACTION)
 }
 
 pub const TRANSACTION_METER_NAME: &str = "janus_database_transactions";
@@ -526,10 +526,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         // Run operation, and check if error triggers a retry or requires a drain.
         let rslt = check_error(&self.retry, op.await);
-        let needs_drain = rslt
-            .as_ref()
-            .err()
-            .map_or(false, is_transaction_abort_error);
+        let needs_drain = rslt.as_ref().err().is_some_and(is_transaction_abort_error);
 
         // Exit.
         //
