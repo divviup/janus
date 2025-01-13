@@ -179,7 +179,7 @@ mod tests {
         let request_histogram = noop_meter()
             .f64_histogram("janus_http_request_duration")
             .with_unit("s")
-            .init();
+            .build();
 
         struct TestCase {
             error_factory: Box<dyn Fn() -> Error + Send + Sync>,

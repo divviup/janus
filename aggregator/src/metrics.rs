@@ -24,23 +24,18 @@ use {
 #[cfg(feature = "otlp")]
 use {
     opentelemetry_otlp::WithExportConfig,
-    opentelemetry_sdk::{
-        metrics::{
-            reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
-            PeriodicReader,
-        },
-        runtime::Tokio,
-    },
+    opentelemetry_sdk::{metrics::PeriodicReader, runtime::Tokio},
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     janus_aggregator_api::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::{global::set_meter_provider, metrics::MetricsError},
+    opentelemetry::global::set_meter_provider,
     opentelemetry_sdk::{
         metrics::{
-            new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
+            new_view, Aggregation, Instrument, InstrumentKind, MetricError, SdkMeterProvider,
+            Stream, View,
         },
         Resource,
     },
@@ -60,7 +55,7 @@ pub enum Error {
     #[error("bad IP address: {0}")]
     IpAddress(#[from] AddrParseError),
     #[error(transparent)]
-    OpenTelemetry(#[from] opentelemetry::metrics::MetricsError),
+    OpenTelemetry(#[from] opentelemetry_sdk::metrics::MetricError),
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -105,59 +100,6 @@ pub struct TokioMetricsConfiguration {
     /// to the compiler if this is enabled.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Enable Tokio's poll time histogram. This introduces some additional overhead by calling
-    /// [`Instant::now`](std::time::Instant::now) twice per task poll.
-    #[serde(default)]
-    pub enable_poll_time_histogram: bool,
-
-    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale, and
-    /// set the parameters for the histogram.
-    #[serde(default)]
-    pub poll_time_histogram: PollTimeHistogramConfiguration,
-}
-
-/// Configuration for the poll time histogram.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "lowercase")]
-pub enum PollTimeHistogramConfiguration {
-    /// Linear histogram scale.
-    Linear {
-        /// Width of each histogram bucket, in microseconds.
-        #[serde(default = "default_linear_histogram_resolution_us")]
-        resolution_us: u64,
-        /// Number of histogram buckets.
-        #[serde(default = "default_linear_histogram_num_buckets")]
-        num_buckets: usize,
-    },
-    /// Logarithmic histogram scale.
-    Log {
-        /// Sets the minimum duration that can be accurately recorded, in microseconds.
-        min_value_us: Option<u64>,
-        /// Sets the maximum value that can be accurately recorded, in microseconds.
-        max_value_us: Option<u64>,
-        /// Sets the maximum relative error. This should be between 0.0 and 1.0.
-        max_relative_error: Option<f64>,
-    },
-}
-
-impl Default for PollTimeHistogramConfiguration {
-    /// This uses the default configuration values of
-    /// [`tokio::runtime::Builder`].
-    fn default() -> Self {
-        Self::Linear {
-            resolution_us: default_linear_histogram_resolution_us(),
-            num_buckets: default_linear_histogram_num_buckets(),
-        }
-    }
-}
-
-fn default_linear_histogram_resolution_us() -> u64 {
-    100
-}
-
-fn default_linear_histogram_num_buckets() -> usize {
-    10
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.
@@ -205,7 +147,7 @@ impl CustomView {
         0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
     ];
 
-    pub fn new() -> Result<Self, MetricsError> {
+    pub fn new() -> Result<Self, MetricError> {
         let wildcard_instrument = Instrument::new().name("*");
         Ok(Self {
             retries_histogram_view: new_view(
@@ -270,14 +212,9 @@ impl View for CustomView {
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
-    runtime_opt: Option<&Runtime>,
-) -> Result<SdkMeterProvider, MetricsError> {
+) -> Result<SdkMeterProvider, MetricError> {
     let mut reader_builder = opentelemetry_prometheus::exporter();
     reader_builder = reader_builder.with_registry(registry);
-    if let Some(runtime) = runtime_opt {
-        reader_builder = reader_builder
-            .with_producer(tokio_runtime::TokioRuntimeMetrics::new(runtime.metrics()));
-    }
     let reader = reader_builder.build()?;
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(reader)
@@ -332,21 +269,18 @@ pub async fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let runtime_opt = if config
+            let registry = Registry::new();
+            let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone())?;
+            set_meter_provider(meter_provider.clone());
+
+            if config
                 .tokio
                 .as_ref()
                 .map(|tokio_metrics_config| tokio_metrics_config.enabled)
                 .unwrap_or_default()
             {
-                Some(_runtime)
-            } else {
-                None
-            };
-
-            let registry = Registry::new();
-            let meter_provider =
-                build_opentelemetry_prometheus_meter_provider(registry.clone(), runtime_opt)?;
-            set_meter_provider(meter_provider);
+                tokio_runtime::initialize(_runtime.metrics(), &meter_provider);
+            }
 
             let host = config_exporter_host
                 .as_ref()
@@ -381,13 +315,10 @@ pub async fn install_metrics_exporter(
                 )));
             }
 
-            let exporter = opentelemetry_otlp::new_exporter()
-                .tonic()
+            let exporter = opentelemetry_otlp::MetricExporter::builder()
+                .with_tonic()
                 .with_endpoint(otlp_config.endpoint.clone())
-                .build_metrics_exporter(
-                    Box::new(DefaultAggregationSelector::new()),
-                    Box::new(DefaultTemporalitySelector::new()),
-                )?;
+                .build()?;
             let reader = PeriodicReader::builder(exporter, Tokio).build();
             let meter_provider = SdkMeterProvider::builder()
                 .with_reader(reader)
@@ -435,7 +366,7 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
         .u64_counter("janus_report_aggregation_success_counter")
         .with_description("Number of successfully-aggregated report shares")
         .with_unit("{report}")
-        .init();
+        .build();
     report_aggregation_success_counter.add(0, &[]);
     report_aggregation_success_counter
 }
@@ -447,7 +378,7 @@ pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Hist
     meter
         .u64_histogram(AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME)
         .with_description("Successfully aggregated report shares")
-        .init()
+        .build()
 }
 
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
@@ -458,7 +389,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
             "related to individual client reports rather than entire aggregation jobs."
         ))
         .with_unit("{error}")
-        .init();
+        .build();
 
     // Initialize counters with desired status labels. This causes Prometheus to see the first
     // non-zero value we record.

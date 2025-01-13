@@ -18,12 +18,10 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 otlp = [
     "dep:opentelemetry-otlp",
-    "dep:opentelemetry_sdk",
     "dep:tracing-opentelemetry",
 ]
 prometheus = [
     "dep:opentelemetry-prometheus",
-    "dep:opentelemetry_sdk",
     "dep:prometheus",
     "dep:trillium-prometheus",
 ]
@@ -66,7 +64,7 @@ moka = { version = "0.12.10", features = ["future"] }
 opentelemetry.workspace = true
 opentelemetry-otlp = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry-prometheus = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
 pem.workspace = true
 postgres-protocol = { workspace = true }
 postgres-types = { workspace = true, features = ["derive", "array-impls"] }

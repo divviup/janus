@@ -4,29 +4,29 @@ use opentelemetry::metrics::{Meter, MeterProvider};
 use opentelemetry_sdk::{
     metrics::{data::Metric, PeriodicReader, SdkMeterProvider},
     runtime,
-    testing::metrics::InMemoryMetricsExporter,
+    testing::metrics::InMemoryMetricExporter,
 };
 use tokio::task::spawn_blocking;
 
 #[derive(Clone)]
-pub(crate) struct InMemoryMetricsInfrastructure {
-    /// The in-memory metrics exporter
-    pub exporter: InMemoryMetricsExporter,
+pub(crate) struct InMemoryMetricInfrastructure {
+    /// The in-memory metric exporter
+    pub exporter: InMemoryMetricExporter,
     /// The meter provider.
     pub meter_provider: SdkMeterProvider,
     /// A meter, with the name "test".
     pub meter: Meter,
 }
 
-impl InMemoryMetricsInfrastructure {
-    /// Create an [`InMemoryMetricsExporter`], then use it to create an [`SdkMeterProvider`] and
+impl InMemoryMetricInfrastructure {
+    /// Create an [`InMemoryMetricExporter`], then use it to create an [`SdkMeterProvider`] and
     /// [`Meter`].
-    pub(crate) fn new() -> InMemoryMetricsInfrastructure {
-        let exporter = InMemoryMetricsExporter::default();
+    pub(crate) fn new() -> InMemoryMetricInfrastructure {
+        let exporter = InMemoryMetricExporter::default();
         let reader = PeriodicReader::builder(exporter.clone(), runtime::Tokio).build();
         let meter_provider = SdkMeterProvider::builder().with_reader(reader).build();
         let meter = meter_provider.meter("test");
-        InMemoryMetricsInfrastructure {
+        InMemoryMetricInfrastructure {
             exporter,
             meter_provider,
             meter,

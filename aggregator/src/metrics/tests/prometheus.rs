@@ -20,8 +20,7 @@ use trillium_testing::prelude::get;
 #[tokio::test]
 async fn prometheus_metrics_pull() {
     let registry = Registry::new();
-    let meter_provider =
-        build_opentelemetry_prometheus_meter_provider(registry.clone(), None).unwrap();
+    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
     let (join_handle, port) = prometheus_metrics_server(registry, Ipv4Addr::LOCALHOST.into(), 0)
         .await
         .unwrap();
@@ -30,8 +29,8 @@ async fn prometheus_metrics_pull() {
     meter
         .u64_observable_gauge("test_metric")
         .with_description("Gauge for test purposes")
-        .init()
-        .observe(1, &[]);
+        .with_callback(|observer| observer.observe(1, &[]))
+        .build();
 
     let url = format!("http://127.0.0.1:{port}/metrics");
     let response = retry_http_request(test_http_request_exponential_backoff(), || {
@@ -76,8 +75,7 @@ async fn http_metrics() {
     install_test_trace_subscriber();
 
     let registry = Registry::new();
-    let meter_provider =
-        build_opentelemetry_prometheus_meter_provider(registry.clone(), None).unwrap();
+    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
     let meter = meter_provider.meter("tests");
 
     let clock = MockClock::default();

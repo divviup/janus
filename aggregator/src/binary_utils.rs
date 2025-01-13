@@ -18,7 +18,8 @@ use futures::StreamExt;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::metrics::{Meter, MetricsError};
+use opentelemetry::metrics::Meter;
+use opentelemetry_sdk::metrics::MetricError;
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use rustls::RootCertStore;
 use std::{
@@ -268,17 +269,6 @@ where
 
     let mut runtime_builder = runtime::Builder::new_multi_thread();
     runtime_builder.enable_all();
-    if let Some(tokio_metrics_config) = config.common_config().metrics_config.tokio.as_ref() {
-        if tokio_metrics_config.enabled {
-            #[cfg(feature = "prometheus")]
-            {
-                crate::metrics::tokio_runtime::configure_runtime(
-                    &mut runtime_builder,
-                    tokio_metrics_config,
-                );
-            }
-        }
-    }
     let runtime = runtime_builder.build()?;
 
     runtime.block_on(async {
@@ -353,58 +343,60 @@ where
 }
 
 /// Set up metrics to monitor the database connection pool's status.
-fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<(), MetricsError> {
-    let available_connections_gauge = meter
+fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<(), MetricError> {
+    let _available_connections_gauge = meter
         .u64_observable_gauge("janus_database_pool_available_connections")
         .with_description(
             "Number of available database connections in the database connection pool.",
         )
-        .init();
-    let total_connections_gauge = meter
+        .with_callback({
+            let pool = pool.clone();
+            move |observer| {
+                observer.observe(
+                    u64::try_from(pool.status().available).unwrap_or(u64::MAX),
+                    &[],
+                )
+            }
+        })
+        .build();
+    let _total_connections_gauge = meter
         .u64_observable_gauge("janus_database_pool_total_connections")
         .with_description("Total number of connections in the database connection pool.")
-        .init();
-    let maximum_size_gauge = meter
+        .with_callback({
+            let pool = pool.clone();
+            move |observer| {
+                observer.observe(u64::try_from(pool.status().size).unwrap_or(u64::MAX), &[])
+            }
+        })
+        .build();
+    let _maximum_size_gauge = meter
         .u64_observable_gauge("janus_database_pool_maximum_size_connections")
         .with_description("Maximum size of the database connection pool.")
-        .init();
-    let waiting_tasks_gauge = meter
+        .with_callback({
+            let pool = pool.clone();
+            move |observer| {
+                observer.observe(
+                    u64::try_from(pool.status().max_size).unwrap_or(u64::MAX),
+                    &[],
+                )
+            }
+        })
+        .build();
+    let _waiting_tasks_gauge = meter
         .u64_observable_gauge("janus_database_pool_waiting_tasks")
         .with_description(
             "Number of tasks waiting for a connection from the database connection pool.",
         )
-        .init();
-    meter.register_callback(
-        &[
-            available_connections_gauge.as_any(),
-            total_connections_gauge.as_any(),
-            maximum_size_gauge.as_any(),
-            waiting_tasks_gauge.as_any(),
-        ],
-        move |observer| {
-            let status = pool.status();
-            observer.observe_u64(
-                &available_connections_gauge,
-                u64::try_from(status.available).unwrap_or(u64::MAX),
-                &[],
-            );
-            observer.observe_u64(
-                &total_connections_gauge,
-                u64::try_from(status.size).unwrap_or(u64::MAX),
-                &[],
-            );
-            observer.observe_u64(
-                &maximum_size_gauge,
-                u64::try_from(status.max_size).unwrap_or(u64::MAX),
-                &[],
-            );
-            observer.observe_u64(
-                &waiting_tasks_gauge,
-                u64::try_from(status.waiting).unwrap_or(u64::MAX),
-                &[],
-            );
-        },
-    )?;
+        .with_callback({
+            let pool = pool.clone();
+            move |observer| {
+                observer.observe(
+                    u64::try_from(pool.status().waiting).unwrap_or(u64::MAX),
+                    &[],
+                )
+            }
+        })
+        .build();
     Ok(())
 }
 
@@ -559,7 +551,7 @@ mod tests {
             zpages_handler, CommonBinaryOptions,
         },
         config::DbConfig,
-        metrics::test_util::InMemoryMetricsInfrastructure,
+        metrics::test_util::InMemoryMetricInfrastructure,
     };
     use clap::CommandFactory;
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
@@ -722,7 +714,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let pool = ephemeral_datastore.pool();
 
-        let in_memory_metrics = InMemoryMetricsInfrastructure::new();
+        let in_memory_metrics = InMemoryMetricInfrastructure::new();
 
         register_database_pool_status_metrics(pool.clone(), &in_memory_metrics.meter).unwrap();
 
@@ -736,7 +728,7 @@ mod tests {
     }
 
     async fn check_database_pool_gauges(
-        in_memory_metrics: &InMemoryMetricsInfrastructure,
+        in_memory_metrics: &InMemoryMetricInfrastructure,
         expected_available: u64,
         expected_total: u64,
         expected_waiting: u64,

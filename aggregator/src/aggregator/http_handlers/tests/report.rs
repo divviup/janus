@@ -7,7 +7,7 @@ use crate::{
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
     },
-    metrics::test_util::InMemoryMetricsInfrastructure,
+    metrics::test_util::InMemoryMetricInfrastructure,
 };
 use janus_aggregator_core::{
     datastore::test_util::{ephemeral_datastore, EphemeralDatastoreBuilder},
@@ -527,7 +527,7 @@ async fn upload_handler_error_fanout() {
 async fn upload_client_early_disconnect() {
     install_test_trace_subscriber();
 
-    let in_memory_metrics = InMemoryMetricsInfrastructure::new();
+    let in_memory_metrics = InMemoryMetricInfrastructure::new();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);

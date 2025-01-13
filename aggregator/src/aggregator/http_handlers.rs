@@ -253,7 +253,7 @@ impl StatusCounter {
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
                 .with_unit("{request}")
-                .init(),
+                .build(),
         )
     }
 }

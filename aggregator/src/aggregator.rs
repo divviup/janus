@@ -293,7 +293,7 @@ impl<C: Clock> Aggregator<C> {
                 "Number of decryption failures in the tasks/{task-id}/reports endpoint.",
             )
             .with_unit("{error}")
-            .init();
+            .build();
         upload_decrypt_failure_counter.add(0, &[]);
 
         let upload_decode_failure_counter = meter
@@ -302,7 +302,7 @@ impl<C: Clock> Aggregator<C> {
                 "Number of message decode failures in the tasks/{task-id}/reports endpoint.",
             )
             .with_unit("{error}")
-            .init();
+            .build();
         upload_decode_failure_counter.add(0, &[]);
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);

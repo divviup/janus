@@ -77,9 +77,50 @@ impl<H: Handler> InstrumentedHandler<H> {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use opentelemetry::metrics::{noop::NoopMeterProvider, Meter, MeterProvider};
+    use std::sync::Arc;
+
+    use opentelemetry::{
+        metrics::{InstrumentProvider, Meter, MeterProvider},
+        InstrumentationScope,
+    };
 
     pub fn noop_meter() -> Meter {
         NoopMeterProvider::new().meter("janus_aggregator")
     }
+
+    // TODO(https://github.com/open-telemetry/opentelemetry-rust/issues/2444): Version 0.27 of
+    // `opentelemetry` removed `NoopMeterProvider` from the public API. The implementation is copied
+    // below until it is added back to a future version.
+
+    #[derive(Debug, Default)]
+    pub struct NoopMeterProvider {
+        _private: (),
+    }
+
+    impl NoopMeterProvider {
+        /// Create a new no-op meter provider.
+        pub fn new() -> Self {
+            Self { _private: () }
+        }
+    }
+
+    impl MeterProvider for NoopMeterProvider {
+        fn meter_with_scope(&self, _scope: InstrumentationScope) -> Meter {
+            Meter::new(Arc::new(NoopMeter::new()))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    pub struct NoopMeter {
+        _private: (),
+    }
+
+    impl NoopMeter {
+        /// Create a new no-op meter core.
+        pub fn new() -> Self {
+            Self { _private: () }
+        }
+    }
+
+    impl InstrumentProvider for NoopMeter {}
 }

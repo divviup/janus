@@ -192,7 +192,7 @@ impl<C: Clock> Datastore<C> {
             .u64_counter(TRANSACTION_METER_NAME)
             .with_description("Count of database transactions run, with their status.")
             .with_unit("{transaction}")
-            .init();
+            .build();
         let rollback_error_counter = meter
             .u64_counter(TRANSACTION_ROLLBACK_METER_NAME)
             .with_description(concat!(
@@ -200,12 +200,12 @@ impl<C: Clock> Datastore<C> {
                 "with their PostgreSQL error code.",
             ))
             .with_unit("{error}")
-            .init();
+            .build();
         let transaction_retry_histogram = meter
             .u64_histogram(TRANSACTION_RETRIES_METER_NAME)
             .with_description("The number of retries before a transaction is committed or aborted.")
             .with_unit("{retry}")
-            .init();
+            .build();
         let transaction_duration_histogram = meter
             .f64_histogram(TRANSACTION_DURATION_METER_NAME)
             .with_description(concat!(
@@ -213,7 +213,7 @@ impl<C: Clock> Datastore<C> {
                 "BEGIN and COMMIT/ROLLBACK statements."
             ))
             .with_unit("s")
-            .init();
+            .build();
         let transaction_pool_wait_histogram = meter
             .f64_histogram(TRANSACTION_POOL_WAIT_METER_NAME)
             .with_description(concat!(
@@ -221,7 +221,7 @@ impl<C: Clock> Datastore<C> {
                 "slot to become available in the connection pooler."
             ))
             .with_unit("s")
-            .init();
+            .build();
 
         Self {
             pool,

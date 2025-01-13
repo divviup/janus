@@ -323,7 +323,7 @@ mod tests {
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             CommonConfig, DbConfig, JobDriverConfig,
         },
-        metrics::{MetricsExporterConfiguration, PollTimeHistogramConfiguration},
+        metrics::MetricsExporterConfiguration,
         trace::OpenTelemetryTraceConfiguration,
     };
     use assert_matches::assert_matches;
@@ -427,23 +427,9 @@ metrics_config:
       port: 9464
   tokio:
     enabled: true
-    enable_poll_time_histogram: true
-    poll_time_histogram: !log
-      min_value_us: 100
-      max_value_us: 3000000
-      max_relative_error: 0.25
 ";
         let config: CommonConfig = serde_yaml::from_str(input).unwrap();
         let tokio_config = config.metrics_config.tokio.unwrap();
         assert!(tokio_config.enabled);
-        assert!(tokio_config.enable_poll_time_histogram);
-        assert_eq!(
-            tokio_config.poll_time_histogram,
-            PollTimeHistogramConfiguration::Log {
-                min_value_us: Some(100),
-                max_value_us: Some(3_000_000),
-                max_relative_error: Some(0.25),
-            }
-        );
     }
 }

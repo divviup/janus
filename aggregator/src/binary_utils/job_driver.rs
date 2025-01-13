@@ -101,13 +101,13 @@ where
             .f64_histogram("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
             .with_unit("s")
-            .init();
+            .build();
         let job_step_time_histogram = self
             .meter
             .f64_histogram("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
             .with_unit("s")
-            .init();
+            .build();
 
         // Set up state for the job driver run.
         let sem = Arc::new(Semaphore::new(self.max_concurrent_job_workers));

@@ -128,13 +128,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .f64_histogram("janus_task_update_time")
             .with_description("Time spent updating tasks.")
             .with_unit("s")
-            .init();
+            .build();
         let job_creation_time_histogram = self
             .meter
             .f64_histogram("janus_job_creation_time")
             .with_description("Time spent creating aggregation jobs.")
             .with_unit("s")
-            .init();
+            .build();
 
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter

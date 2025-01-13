@@ -111,14 +111,14 @@ where
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
             .with_unit("{job}")
-            .init();
+            .build();
         job_cancel_counter.add(0, &[]);
 
         let job_retry_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
             .with_unit("{step}")
-            .init();
+            .build();
         job_retry_counter.add(0, &[]);
 
         let http_request_duration_histogram = meter
@@ -127,7 +127,7 @@ where
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
             .with_unit("s")
-            .init();
+            .build();
 
         Self {
             batch_aggregation_shard_count,
