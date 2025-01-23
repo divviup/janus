@@ -171,6 +171,8 @@ pub async fn assert_task_aggregation_counter(
 ) {
     // We can't coordinate with the counter-update tasks, so we loop on polling them.
 
+    sleep(Duration::from_millis(100)).await;
+
     let end_instant = Instant::now() + Duration::from_secs(10);
     loop {
         let now = Instant::now();
