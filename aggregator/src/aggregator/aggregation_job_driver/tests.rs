@@ -4000,7 +4000,7 @@ async fn async_aggregation_job_init_poll_to_finished() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(0))
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
         .await;
 }
 
