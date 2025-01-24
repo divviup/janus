@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
         Datastore,
     },
-    task,
+    task, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -666,7 +666,7 @@ impl CollectionJobDriverMetrics {
             .u64_counter("janus_collection_jobs_finished")
             .with_description("Count of finished collection jobs.")
             .with_unit("{job}")
-            .init();
+            .build();
         jobs_finished_counter.add(0, &[]);
 
         let http_request_duration_histogram = meter
@@ -675,13 +675,14 @@ impl CollectionJobDriverMetrics {
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         let jobs_abandoned_counter = meter
             .u64_counter("janus_collection_jobs_abandoned")
             .with_description("Count of abandoned collection jobs.")
             .with_unit("{job}")
-            .init();
+            .build();
         jobs_abandoned_counter.add(0, &[]);
 
         let deleted_jobs_encountered_counter = meter
@@ -691,7 +692,7 @@ impl CollectionJobDriverMetrics {
                  deleted.",
             )
             .with_unit("{job}")
-            .init();
+            .build();
         deleted_jobs_encountered_counter.add(0, &[]);
 
         let unexpected_job_state_counter = meter
@@ -701,14 +702,14 @@ impl CollectionJobDriverMetrics {
                  state.",
             )
             .with_unit("{job}")
-            .init();
+            .build();
         unexpected_job_state_counter.add(0, &[]);
 
         let job_steps_retried_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
             .with_unit("{step}")
-            .init();
+            .build();
         job_steps_retried_counter.add(0, &[]);
 
         Self {

@@ -42,17 +42,17 @@ impl<C: Clock> GarbageCollector<C> {
             .u64_counter("janus_gc_deleted_reports")
             .with_description("Count of client reports deleted by the garbage collector.")
             .with_unit("{report}")
-            .init();
+            .build();
         let deleted_aggregation_job_counter = meter
             .u64_counter("janus_gc_deleted_aggregation_jobs")
             .with_description("Count of aggregation jobs deleted by the garbage collector.")
             .with_unit("{job}")
-            .init();
+            .build();
         let deleted_batch_counter = meter
             .u64_counter("janus_gc_deleted_batches")
             .with_description("Count of batches deleted by the garbage collector.")
             .with_unit("{batch}")
-            .init();
+            .build();
 
         deleted_report_counter.add(0, &[]);
         deleted_aggregation_job_counter.add(0, &[]);

@@ -2,7 +2,10 @@
 
 use anyhow::Context as _;
 use chrono::NaiveDateTime;
-use janus_aggregator_core::datastore::{self, models::Lease};
+use janus_aggregator_core::{
+    datastore::{self, models::Lease},
+    TIME_HISTOGRAM_BOUNDARIES,
+};
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{metrics::Meter, KeyValue};
 use rand::{thread_rng, Rng};
@@ -101,13 +104,15 @@ where
             .f64_histogram("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
         let job_step_time_histogram = self
             .meter
             .f64_histogram("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         // Set up state for the job driver run.
         let sem = Arc::new(Semaphore::new(self.max_concurrent_job_workers));

@@ -6,7 +6,10 @@ use super::{
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use janus_aggregator_core::{datastore::Datastore, instrumented, taskprov::taskprov_task_id};
+use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
+use janus_aggregator_core::{
+    datastore::Datastore, instrumented, taskprov::taskprov_task_id, TIME_HISTOGRAM_BOUNDARIES,
+};
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::extract_bearer_token,
@@ -32,7 +35,7 @@ use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State, TryFromConn};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
-use trillium_opentelemetry::metrics;
+use trillium_opentelemetry::Metrics;
 use trillium_router::{Router, RouterConnExt};
 
 #[cfg(test)]
@@ -253,7 +256,7 @@ impl StatusCounter {
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
                 .with_unit("{request}")
-                .init(),
+                .build(),
         )
     }
 }
@@ -420,17 +423,22 @@ where
                 instrumented(api(aggregate_shares::<C>)),
             );
 
+        let metrics = Metrics::new(self.meter.clone())
+            .with_route(|conn| {
+                conn.route()
+                    .map(|route_spec| Cow::Owned(route_spec.to_string()))
+            })
+            .with_error_type(|conn| {
+                conn.state::<ErrorCode>()
+                    .map(|error_code| Cow::Borrowed(error_code.0))
+            })
+            .with_duration_histogram_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+            .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
+
         Ok((
             State(self.aggregator),
-            metrics(self.meter)
-                .with_route(|conn| {
-                    conn.route()
-                        .map(|route_spec| Cow::Owned(route_spec.to_string()))
-                })
-                .with_error_type(|conn| {
-                    conn.state::<ErrorCode>()
-                        .map(|error_code| Cow::Borrowed(error_code.0))
-                }),
+            metrics,
             router,
             StatusCounter::new(self.meter),
         ))
