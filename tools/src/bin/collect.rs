@@ -465,7 +465,7 @@ macro_rules! options_vdaf_dispatch {
                 body
             }
             (VdafType::Sum, None, None, Some(max_measurement)) => {
-                let $vdaf = Prio3::new_sum(2, u128::from(max_measurement))
+                let $vdaf = Prio3::new_sum(2, u64::from(max_measurement))
                     .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body

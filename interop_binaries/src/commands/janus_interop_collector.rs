@@ -305,8 +305,8 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Sum { max_measurement }) => {
-            let vdaf = Prio3::new_sum(2, u128::from(max_measurement))
-                .context("failed to construct Prio3Sum VDAF")?;
+            let vdaf =
+                Prio3::new_sum(2, max_measurement).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
                 task_state,
@@ -314,7 +314,7 @@ async fn handle_collection_start(
                 vdaf,
                 &agg_param,
                 |_| None,
-                |result| AggregationResult::Number(NumberAsString(*result)),
+                |result| AggregationResult::Number(NumberAsString(u128::from(*result))),
             )
             .await?
         }
@@ -516,8 +516,8 @@ async fn handle_collection_start(
         },
 
         (ParsedQuery::LeaderSelected, VdafInstance::Prio3Sum { max_measurement }) => {
-            let vdaf = Prio3::new_sum(2, u128::from(max_measurement))
-                .context("failed to construct Prio3Sum VDAF")?;
+            let vdaf =
+                Prio3::new_sum(2, max_measurement).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
                 task_state,
@@ -525,7 +525,7 @@ async fn handle_collection_start(
                 vdaf,
                 &agg_param,
                 |selector| Some(*selector.batch_id()),
-                |result| AggregationResult::Number(NumberAsString(*result)),
+                |result| AggregationResult::Number(NumberAsString(u128::from(*result))),
             )
             .await?
         }

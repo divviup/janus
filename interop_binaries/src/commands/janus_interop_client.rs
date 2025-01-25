@@ -124,9 +124,9 @@ async fn handle_upload(
         }
 
         VdafInstance::Prio3Sum { max_measurement } => {
-            let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
-            let vdaf = Prio3::new_sum(2, u128::from(max_measurement))
-                .context("failed to construct Prio3Sum VDAF")?;
+            let measurement = parse_primitive_measurement::<u64>(request.measurement.clone())?;
+            let vdaf =
+                Prio3::new_sum(2, max_measurement).context("failed to construct Prio3Sum VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 

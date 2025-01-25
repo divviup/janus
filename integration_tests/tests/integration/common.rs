@@ -396,7 +396,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .await;
         }
         VdafInstance::Prio3Sum { max_measurement } => {
-            let max_measurement = u128::from(*max_measurement);
+            let max_measurement = *max_measurement;
             let vdaf = Prio3::new_sum(2, max_measurement).unwrap();
 
             let measurements: Vec<_> =
