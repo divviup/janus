@@ -81,6 +81,7 @@ use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     PartialBatchSelector, Query, Role, TaskId,
 };
+use mime;
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -570,7 +571,11 @@ impl<V: vdaf::Collector> Collector<V> {
             .headers()
             .get(CONTENT_TYPE)
             .ok_or(Error::BadContentType(None))?;
-        if content_type != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
+        if let Ok(mime) = content_type.to_str()?.parse::<mime::Mime>() {
+            if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
+                return Err(Error::BadContentType(Some(content_type.clone())));
+            }
+        } else {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 

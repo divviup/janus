@@ -25,6 +25,7 @@ fixed = { workspace = true, optional = true }
 hpke-dispatch = { workspace = true, features = ["serde"] }
 janus_core.workspace = true
 janus_messages.workspace = true
+mime.workspace = true
 prio.workspace = true
 rand = { workspace = true, features = ["min_const_gen"] }
 reqwest = { workspace = true, features = ["json"] }

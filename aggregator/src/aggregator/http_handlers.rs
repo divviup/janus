@@ -713,12 +713,22 @@ async fn aggregate_shares<C: Clock>(
 /// the expected value.
 fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
     if let Some(content_type) = conn.request_headers().get(KnownHeaderName::ContentType) {
-        if content_type != expected_media_type {
-            Err(Error::BadRequest(format!(
-                "wrong Content-Type header: {content_type}"
-            )))
+        let mime_str = content_type.as_str().ok_or(Error::BadRequest(format!(
+            "invalid Content-Type header: {content_type}"
+        )))?;
+
+        if let Ok(mime) = mime_str.parse::<mime::Mime>() {
+            if mime.essence_str() == expected_media_type {
+                Ok(())
+            } else {
+                Err(Error::BadRequest(format!(
+                    "unexpected Content-Type header: {mime}"
+                )))
+            }
         } else {
-            Ok(())
+            Err(Error::BadRequest(format!(
+                "unable to parse Content-Type header: {content_type}"
+            )))
         }
     } else {
         Err(Error::BadRequest("no Content-Type header".to_owned()))
