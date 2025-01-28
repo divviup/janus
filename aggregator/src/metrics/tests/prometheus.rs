@@ -15,13 +15,13 @@ use prometheus::{
     Registry,
 };
 use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
+use trillium::Handler;
 use trillium_testing::prelude::get;
 
 #[tokio::test]
 async fn prometheus_metrics_pull() {
     let registry = Registry::new();
-    let meter_provider =
-        build_opentelemetry_prometheus_meter_provider(registry.clone(), None).unwrap();
+    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
     let (join_handle, port) = prometheus_metrics_server(registry, Ipv4Addr::LOCALHOST.into(), 0)
         .await
         .unwrap();
@@ -30,8 +30,8 @@ async fn prometheus_metrics_pull() {
     meter
         .u64_observable_gauge("test_metric")
         .with_description("Gauge for test purposes")
-        .init()
-        .observe(1, &[]);
+        .with_callback(|observer| observer.observe(1, &[]))
+        .build();
 
     let url = format!("http://127.0.0.1:{port}/metrics");
     let response = retry_http_request(test_http_request_exponential_backoff(), || {
@@ -76,15 +76,14 @@ async fn http_metrics() {
     install_test_trace_subscriber();
 
     let registry = Registry::new();
-    let meter_provider =
-        build_opentelemetry_prometheus_meter_provider(registry.clone(), None).unwrap();
+    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
     let meter = meter_provider.meter("tests");
 
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     datastore.put_hpke_key().await.unwrap();
-    let handler = AggregatorHandlerBuilder::new(
+    let mut handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -95,6 +94,9 @@ async fn http_metrics() {
     .unwrap()
     .build()
     .unwrap();
+
+    // Call init to finish setting up metrics.
+    handler.init(&mut "testing".into()).await;
 
     get("/hpke_config").run_async(&handler).await;
 

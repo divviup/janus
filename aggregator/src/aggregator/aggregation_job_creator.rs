@@ -21,6 +21,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask},
+    TIME_HISTOGRAM_BOUNDARIES,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -128,13 +129,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .f64_histogram("janus_task_update_time")
             .with_description("Time spent updating tasks.")
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
         let job_creation_time_histogram = self
             .meter
             .f64_histogram("janus_job_creation_time")
             .with_description("Time spent creating aggregation jobs.")
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter

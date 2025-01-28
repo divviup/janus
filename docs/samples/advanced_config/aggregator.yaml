@@ -78,17 +78,6 @@ metrics_config:
     # binary must have been compiled with the flag `--cfg tokio_unstable`.
     # (optional)
     enabled: false
-    # Enable a histogram of task poll times. This introduces some additional
-    # overhead. (optional)
-    enable_poll_time_histogram: false
-    # Configure the scale and parameters of the poll time histogram. Defaults to
-    # a linear scale. (optional)
-    poll_time_histogram:
-      linear:
-        # Sets the poll time histogram's resolution. (optional)
-        resolution_us: 100
-        # Sets the number of buckets in the poll time histogram. (optional)
-        num_buckets: 10
 
 # Stack size, in bytes, for threads used for VDAF preparation. (optional)
 thread_pool_stack_size: 2097152

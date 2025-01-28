@@ -137,7 +137,7 @@ mod tests {
     use bytes::Bytes;
     use futures::future::join_all;
     use http::Method;
-    use janus_aggregator_core::test_util::noop_meter;
+    use janus_aggregator_core::{test_util::noop_meter, TIME_HISTOGRAM_BOUNDARIES};
     use janus_core::{
         retries::test_util::LimitedRetryer,
         time::{Clock, RealClock},
@@ -179,7 +179,8 @@ mod tests {
         let request_histogram = noop_meter()
             .f64_histogram("janus_http_request_duration")
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         struct TestCase {
             error_factory: Box<dyn Fn() -> Error + Send + Sync>,

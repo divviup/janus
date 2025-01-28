@@ -15,7 +15,7 @@ use crate::{
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes,
+    SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
 };
 use aws_lc_rs::aead::{self, LessSafeKey, AES_128_GCM};
 use chrono::NaiveDateTime;
@@ -192,7 +192,7 @@ impl<C: Clock> Datastore<C> {
             .u64_counter(TRANSACTION_METER_NAME)
             .with_description("Count of database transactions run, with their status.")
             .with_unit("{transaction}")
-            .init();
+            .build();
         let rollback_error_counter = meter
             .u64_counter(TRANSACTION_ROLLBACK_METER_NAME)
             .with_description(concat!(
@@ -200,12 +200,13 @@ impl<C: Clock> Datastore<C> {
                 "with their PostgreSQL error code.",
             ))
             .with_unit("{error}")
-            .init();
+            .build();
         let transaction_retry_histogram = meter
             .u64_histogram(TRANSACTION_RETRIES_METER_NAME)
             .with_description("The number of retries before a transaction is committed or aborted.")
             .with_unit("{retry}")
-            .init();
+            .with_boundaries(RETRIES_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
         let transaction_duration_histogram = meter
             .f64_histogram(TRANSACTION_DURATION_METER_NAME)
             .with_description(concat!(
@@ -213,7 +214,8 @@ impl<C: Clock> Datastore<C> {
                 "BEGIN and COMMIT/ROLLBACK statements."
             ))
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
         let transaction_pool_wait_histogram = meter
             .f64_histogram(TRANSACTION_POOL_WAIT_METER_NAME)
             .with_description(concat!(
@@ -221,7 +223,8 @@ impl<C: Clock> Datastore<C> {
                 "slot to become available in the connection pooler."
             ))
             .with_unit("s")
-            .init();
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         Self {
             pool,
@@ -460,6 +463,12 @@ pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_error
 pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
 pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
 pub const TRANSACTION_POOL_WAIT_METER_NAME: &str = "janus_database_pool_wait_duration";
+
+/// These boundaries are for the number of times a database transaction was retried.
+const RETRIES_HISTOGRAM_BOUNDARIES: &[f64] = &[
+    1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
+    16384.0,
+];
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {

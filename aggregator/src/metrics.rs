@@ -24,24 +24,15 @@ use {
 #[cfg(feature = "otlp")]
 use {
     opentelemetry_otlp::WithExportConfig,
-    opentelemetry_sdk::{
-        metrics::{
-            reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
-            PeriodicReader,
-        },
-        runtime::Tokio,
-    },
+    opentelemetry_sdk::{metrics::PeriodicReader, runtime::Tokio},
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     janus_aggregator_api::git_revision,
-    janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::{global::set_meter_provider, metrics::MetricsError},
+    opentelemetry::global::set_meter_provider,
     opentelemetry_sdk::{
-        metrics::{
-            new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
-        },
+        metrics::{MetricError, SdkMeterProvider},
         Resource,
     },
 };
@@ -60,7 +51,7 @@ pub enum Error {
     #[error("bad IP address: {0}")]
     IpAddress(#[from] AddrParseError),
     #[error(transparent)]
-    OpenTelemetry(#[from] opentelemetry::metrics::MetricsError),
+    OpenTelemetry(#[from] opentelemetry_sdk::metrics::MetricError),
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -105,59 +96,6 @@ pub struct TokioMetricsConfiguration {
     /// to the compiler if this is enabled.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Enable Tokio's poll time histogram. This introduces some additional overhead by calling
-    /// [`Instant::now`](std::time::Instant::now) twice per task poll.
-    #[serde(default)]
-    pub enable_poll_time_histogram: bool,
-
-    /// Choose whether poll times should be tracked on a linear scale or a logarithmic scale, and
-    /// set the parameters for the histogram.
-    #[serde(default)]
-    pub poll_time_histogram: PollTimeHistogramConfiguration,
-}
-
-/// Configuration for the poll time histogram.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "lowercase")]
-pub enum PollTimeHistogramConfiguration {
-    /// Linear histogram scale.
-    Linear {
-        /// Width of each histogram bucket, in microseconds.
-        #[serde(default = "default_linear_histogram_resolution_us")]
-        resolution_us: u64,
-        /// Number of histogram buckets.
-        #[serde(default = "default_linear_histogram_num_buckets")]
-        num_buckets: usize,
-    },
-    /// Logarithmic histogram scale.
-    Log {
-        /// Sets the minimum duration that can be accurately recorded, in microseconds.
-        min_value_us: Option<u64>,
-        /// Sets the maximum value that can be accurately recorded, in microseconds.
-        max_value_us: Option<u64>,
-        /// Sets the maximum relative error. This should be between 0.0 and 1.0.
-        max_relative_error: Option<f64>,
-    },
-}
-
-impl Default for PollTimeHistogramConfiguration {
-    /// This uses the default configuration values of
-    /// [`tokio::runtime::Builder`].
-    fn default() -> Self {
-        Self::Linear {
-            resolution_us: default_linear_histogram_resolution_us(),
-            num_buckets: default_linear_histogram_num_buckets(),
-        }
-    }
-}
-
-fn default_linear_histogram_resolution_us() -> u64 {
-    100
-}
-
-fn default_linear_histogram_num_buckets() -> usize {
-    10
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.
@@ -172,94 +110,6 @@ pub enum MetricsExporterHandle {
     Noop,
 }
 
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-struct CustomView {
-    retries_histogram_view: Box<dyn View>,
-    vdaf_dimension_histogram_view: Box<dyn View>,
-    bytes_histogram_view: Box<dyn View>,
-    default_histogram_view: Box<dyn View>,
-}
-
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-impl CustomView {
-    /// These boundaries are for the number of times a database transaction was retried.
-    const RETRIES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
-        16384.0,
-    ];
-
-    /// These boundaries are for the dimensions of VDAF measurements.
-    const VDAF_DIMENSION_HISTOGRAM_VALUES: &'static [f64] = &[
-        1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0,
-    ];
-
-    /// These boundaries are intended to be used with measurements having the unit of "bytes".
-    const BYTES_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
-        1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
-    ];
-
-    /// These boundaries are intended to be able to capture the length of short-lived operations
-    /// (e.g HTTP requests) as well as longer-running operations.
-    const DEFAULT_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
-        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
-    ];
-
-    pub fn new() -> Result<Self, MetricsError> {
-        let wildcard_instrument = Instrument::new().name("*");
-        Ok(Self {
-            retries_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::RETRIES_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-            vdaf_dimension_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::VDAF_DIMENSION_HISTOGRAM_VALUES),
-                    record_min_max: true,
-                }),
-            )?,
-            bytes_histogram_view: new_view(
-                wildcard_instrument.clone(),
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::BYTES_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-            default_histogram_view: new_view(
-                wildcard_instrument,
-                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
-                    boundaries: Vec::from(Self::DEFAULT_HISTOGRAM_BOUNDARIES),
-                    record_min_max: true,
-                }),
-            )?,
-        })
-    }
-}
-
-#[cfg(any(feature = "prometheus", feature = "otlp"))]
-impl View for CustomView {
-    fn match_inst(&self, inst: &Instrument) -> Option<Stream> {
-        match (inst.kind, inst.name.as_ref()) {
-            (Some(InstrumentKind::Histogram), TRANSACTION_RETRIES_METER_NAME) => {
-                self.retries_histogram_view.match_inst(inst)
-            }
-            (Some(InstrumentKind::Histogram), AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME) => {
-                self.vdaf_dimension_histogram_view.match_inst(inst)
-            }
-            (
-                Some(InstrumentKind::Histogram),
-                "http.server.request.body.size" | "http.server.response.body.size",
-            ) => self.bytes_histogram_view.match_inst(inst),
-            (Some(InstrumentKind::Histogram), _) => self.default_histogram_view.match_inst(inst),
-            _ => None,
-        }
-    }
-}
-
 /// Construct and return an opentelemetry-prometheus MeterProvider.
 ///
 /// # Arguments
@@ -270,18 +120,12 @@ impl View for CustomView {
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
-    runtime_opt: Option<&Runtime>,
-) -> Result<SdkMeterProvider, MetricsError> {
+) -> Result<SdkMeterProvider, MetricError> {
     let mut reader_builder = opentelemetry_prometheus::exporter();
     reader_builder = reader_builder.with_registry(registry);
-    if let Some(runtime) = runtime_opt {
-        reader_builder = reader_builder
-            .with_producer(tokio_runtime::TokioRuntimeMetrics::new(runtime.metrics()));
-    }
     let reader = reader_builder.build()?;
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(reader)
-        .with_view(CustomView::new()?)
         .with_resource(resource())
         .build();
     Ok(meter_provider)
@@ -332,21 +176,18 @@ pub async fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let runtime_opt = if config
+            let registry = Registry::new();
+            let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone())?;
+            set_meter_provider(meter_provider.clone());
+
+            if config
                 .tokio
                 .as_ref()
                 .map(|tokio_metrics_config| tokio_metrics_config.enabled)
                 .unwrap_or_default()
             {
-                Some(_runtime)
-            } else {
-                None
-            };
-
-            let registry = Registry::new();
-            let meter_provider =
-                build_opentelemetry_prometheus_meter_provider(registry.clone(), runtime_opt)?;
-            set_meter_provider(meter_provider);
+                tokio_runtime::initialize(_runtime.metrics(), &meter_provider);
+            }
 
             let host = config_exporter_host
                 .as_ref()
@@ -381,17 +222,13 @@ pub async fn install_metrics_exporter(
                 )));
             }
 
-            let exporter = opentelemetry_otlp::new_exporter()
-                .tonic()
+            let exporter = opentelemetry_otlp::MetricExporter::builder()
+                .with_tonic()
                 .with_endpoint(otlp_config.endpoint.clone())
-                .build_metrics_exporter(
-                    Box::new(DefaultAggregationSelector::new()),
-                    Box::new(DefaultTemporalitySelector::new()),
-                )?;
+                .build()?;
             let reader = PeriodicReader::builder(exporter, Tokio).build();
             let meter_provider = SdkMeterProvider::builder()
                 .with_reader(reader)
-                .with_view(CustomView::new()?)
                 .with_resource(resource())
                 .build();
             set_meter_provider(meter_provider.clone());
@@ -435,7 +272,7 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
         .u64_counter("janus_report_aggregation_success_counter")
         .with_description("Number of successfully-aggregated report shares")
         .with_unit("{report}")
-        .init();
+        .build();
     report_aggregation_success_counter.add(0, &[]);
     report_aggregation_success_counter
 }
@@ -443,11 +280,17 @@ pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> 
 pub const AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME: &str =
     "janus_aggregated_report_share_vdaf_dimension";
 
+/// These boundaries are for the dimensions of VDAF measurements.
+const VDAF_DIMENSION_HISTOGRAM_VALUES: &[f64] = &[
+    1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0,
+];
+
 pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Histogram<u64> {
     meter
         .u64_histogram(AGGREGATED_REPORT_SHARE_DIMENSION_METER_NAME)
         .with_description("Successfully aggregated report shares")
-        .init()
+        .with_boundaries(VDAF_DIMENSION_HISTOGRAM_VALUES.to_vec())
+        .build()
 }
 
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
@@ -458,7 +301,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
             "related to individual client reports rather than entire aggregation jobs."
         ))
         .with_unit("{error}")
-        .init();
+        .build();
 
     // Initialize counters with desired status labels. This causes Prometheus to see the first
     // non-zero value we record.

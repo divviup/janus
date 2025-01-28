@@ -7,7 +7,8 @@ use std::{
 };
 
 use itertools::Itertools;
-use opentelemetry::metrics::{Meter, MetricsError};
+use opentelemetry::metrics::Meter;
+use opentelemetry_sdk::metrics::MetricError;
 use tokio::{
     select,
     sync::{
@@ -300,17 +301,21 @@ impl Metrics {
         meter: &Meter,
         prefix: &str,
         max_outstanding_requests: u64,
-    ) -> Result<Self, MetricsError> {
+    ) -> Result<Self, MetricError> {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
-        let outstanding_requests_gauge = meter
+        let _outstanding_requests_gauge = meter
             .u64_observable_gauge(Self::get_outstanding_requests_name(prefix))
             .with_description(concat!(
                 "The approximate number of requests currently being serviced by the ",
                 "aggregator."
             ))
             .with_unit("{request}")
-            .init();
-        let max_outstanding_requests_gauge = meter
+            .with_callback({
+                let outstanding_requests = Arc::clone(&outstanding_requests);
+                move |observer| observer.observe(outstanding_requests.load(Ordering::Relaxed), &[])
+            })
+            .build();
+        let _max_outstanding_requests_gauge = meter
             .u64_observable_gauge(
                 [prefix, Self::MAX_OUTSTANDING_REQUESTS_METRIC_NAME]
                     .into_iter()
@@ -320,29 +325,8 @@ impl Metrics {
                 "The maximum number of requests that the aggregator can service at a time."
             ))
             .with_unit("{request}")
-            .init();
-
-        meter.register_callback(
-            &[
-                outstanding_requests_gauge.as_any(),
-                max_outstanding_requests_gauge.as_any(),
-            ],
-            {
-                let outstanding_requests = Arc::clone(&outstanding_requests);
-                move |observer| {
-                    observer.observe_u64(
-                        &outstanding_requests_gauge,
-                        outstanding_requests.load(Ordering::Relaxed),
-                        &[],
-                    );
-                    observer.observe_u64(
-                        &max_outstanding_requests_gauge,
-                        max_outstanding_requests,
-                        &[],
-                    );
-                }
-            },
-        )?;
+            .with_callback(move |observer| observer.observe(max_outstanding_requests, &[]))
+            .build();
 
         Ok(Self {
             outstanding_requests,
@@ -385,7 +369,7 @@ mod tests {
 
     use crate::{
         aggregator::queue::{queued_lifo, LIFORequestQueue, Metrics},
-        metrics::test_util::InMemoryMetricsInfrastructure,
+        metrics::test_util::InMemoryMetricInfrastructure,
     };
 
     /// Some tests busy loop waiting for a condition to become true. Avoid hanging broken tests
@@ -393,7 +377,7 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
     async fn get_outstanding_requests_gauge(
-        metrics: &InMemoryMetricsInfrastructure,
+        metrics: &InMemoryMetricInfrastructure,
         meter_prefix: &str,
     ) -> Option<usize> {
         Some(
@@ -415,7 +399,7 @@ mod tests {
     }
 
     async fn wait_for(
-        metrics: &InMemoryMetricsInfrastructure,
+        metrics: &InMemoryMetricInfrastructure,
         meter_prefix: &str,
         condition: impl Fn(usize) -> bool,
     ) {
@@ -445,7 +429,7 @@ mod tests {
         handler: Arc<impl Handler>,
         concurrency: u32,
         depth: usize,
-        metrics: &InMemoryMetricsInfrastructure,
+        metrics: &InMemoryMetricInfrastructure,
         meter_prefix: &str,
     ) -> Vec<JoinHandle<()>> {
         debug!("filling queue");
@@ -605,7 +589,7 @@ mod tests {
 
             runtime_flavor.run(async move {
                 let meter_prefix = "test";
-                let metrics = InMemoryMetricsInfrastructure::new();
+                let metrics = InMemoryMetricInfrastructure::new();
                 let unhang = Arc::new(Notify::new());
                 let queue = Arc::new(
                     LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
@@ -687,7 +671,7 @@ mod tests {
             runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
                 let meter_prefix = "test";
-                let metrics = InMemoryMetricsInfrastructure::new();
+                let metrics = InMemoryMetricInfrastructure::new();
                 let queue = Arc::new(
                     LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
                         .unwrap(),
@@ -752,7 +736,7 @@ mod tests {
             runtime_flavor.run(async move {
                 let unhang = Arc::new(Notify::new());
                 let meter_prefix = "test";
-                let metrics = InMemoryMetricsInfrastructure::new();
+                let metrics = InMemoryMetricInfrastructure::new();
                 let queue = Arc::new(
                     LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix)
                         .unwrap(),
