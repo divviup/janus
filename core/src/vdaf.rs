@@ -13,7 +13,7 @@ use std::str;
 
 /// The length of the verify key parameter for Prio3 VDAF instantiations using
 /// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
-pub const VERIFY_KEY_LENGTH: usize = 16;
+pub const VERIFY_KEY_LENGTH: usize = 32;
 
 /// Private use algorithm ID for a customized version of Prio3SumVec. This value was chosen for
 /// interoperability with Daphne.
@@ -265,7 +265,7 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::vdaf::VdafInstance::Prio3Sum { max_measurement } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum(2, *max_measurement as u128)?;
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum(2, *max_measurement)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;

@@ -26,7 +26,7 @@ use janus_core::{
     hpke::HpkeKeypair,
     test_util::install_test_trace_subscriber,
     time::MockClock,
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
@@ -183,7 +183,12 @@ async fn post_task_bad_role() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
 
     let req = PostTaskReq {
@@ -217,7 +222,12 @@ async fn post_task_unauthorized() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
 
     let req = PostTaskReq {
@@ -252,7 +262,12 @@ async fn post_task_helper_no_optional_fields() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
 
     // Verify: posting a task creates a new task which matches the request.
     let req = PostTaskReq {
@@ -332,7 +347,12 @@ async fn post_task_helper_with_aggregator_auth_token() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
 
     // Verify: posting a task with role = helper and an aggregator auth token fails
@@ -368,7 +388,12 @@ async fn post_task_idempotence() {
     let (handler, ephemeral_datastore, _) = setup_api_test().await;
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
 
     // Verify: posting a task creates a new task which matches the request.
@@ -442,7 +467,12 @@ async fn post_task_leader_all_optional_fields() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
     let collector_auth_token_hash = AuthenticationTokenHash::from(&random());
     // Verify: posting a task creates a new task which matches the request.
@@ -522,7 +552,12 @@ async fn post_task_leader_no_aggregator_auth_token() {
     // Setup: create a datastore & handler.
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
-    let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+    let vdaf_verify_key = SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(VERIFY_KEY_LENGTH)
+            .collect(),
+    );
 
     // Verify: posting a task with role = Leader and no aggregator auth token fails
     let req = PostTaskReq {

@@ -61,7 +61,7 @@ impl AggregatorWithNoise<0, 16, NoDifferentialPrivacy> for dummy::Vdaf {
 }
 
 // identity strategy implementations for vdafs from libprio
-impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Sum<Field128> {
+impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Sum<Field64> {
     fn add_noise_to_result(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
