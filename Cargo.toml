@@ -37,7 +37,7 @@ cfg-if = "1.0.0"
 chrono = { version = "0.4.39", default-features = false }
 clap = { version = "4.5.27", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.4.1"
-deadpool = "0.12.1"
+deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
 educe = { version = "0.6.0", default-features = false, features = ["Debug"] }
