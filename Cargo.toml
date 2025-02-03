@@ -128,7 +128,7 @@ trillium-tokio = "0.4.0"
 trycmd = "0.15.8"
 url = { version = "2.5.4", features = ["serde"] }
 uuid = { version = "1.12.1", features = ["v4"] }
-wait-timeout = "0.2.0"
+wait-timeout = "0.2.1"
 
 [profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.
