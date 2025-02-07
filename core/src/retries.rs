@@ -485,4 +485,68 @@ mod tests {
         listener_task.abort();
         assert!(listener_task.await.unwrap_err().is_cancelled());
     }
+
+    #[tokio::test]
+    async fn http_retry_server_json_problem() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+
+        let mock_problem = server
+            .mock("GET", "/")
+            .with_status(400)
+            .with_header("Content-Type", "application/problem+json")
+            .with_body("{\"type\":\"evil://league_of_evil/bad.horse?hes.bad\"}")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        let response = retry_http_request(LimitedRetryer::new(0), || async {
+            http_client.get(server.url()).send().await
+        })
+        .await
+        .unwrap_err()
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.type_uri(),
+            Some("evil://league_of_evil/bad.horse?hes.bad")
+        );
+        mock_problem.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn http_retry_server_json_problem_versioned_doc() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+
+        // Ensure that even with a complex media type, we parse a problem
+        // document and prefer its status code.
+        let mock_problem = server
+            .mock("GET", "/")
+            .with_status(418)
+            .with_header(
+                "Content-Type",
+                "application/problem+json; charset=\"utf-8\"; version=4",
+            )
+            .with_body("{\"title\":\"too many eels\"}")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        let response = retry_http_request(LimitedRetryer::new(0), || async {
+            http_client.get(server.url()).send().await
+        })
+        .await
+        .unwrap_err()
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+        assert_eq!(response.title(), Some("too many eels"));
+        mock_problem.assert_async().await;
+    }
 }
