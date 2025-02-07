@@ -267,6 +267,7 @@ mod tests {
         test_util::install_test_trace_subscriber,
     };
     use backoff::Notify;
+    use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
     use reqwest::StatusCode;
     use std::time::Duration;
     use tokio::net::TcpListener;
@@ -494,7 +495,7 @@ mod tests {
         let mock_problem = server
             .mock("GET", "/")
             .with_status(400)
-            .with_header("Content-Type", "application/problem+json")
+            .with_header("Content-Type", PROBLEM_JSON_MEDIA_TYPE)
             .with_body("{\"type\":\"evil://league_of_evil/bad.horse?hes.bad\"}")
             .expect(1)
             .create_async()
