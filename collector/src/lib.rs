@@ -81,7 +81,6 @@ use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     PartialBatchSelector, Query, Role, TaskId,
 };
-use mime;
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
