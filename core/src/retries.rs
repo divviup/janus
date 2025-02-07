@@ -523,7 +523,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
 
         // Ensure that even with a complex media type, we parse a problem
-        // document and prefer its status code.
+        // document.
         let mock_problem = server
             .mock("GET", "/")
             .with_status(418)
