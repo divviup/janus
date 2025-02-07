@@ -81,6 +81,7 @@ use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     PartialBatchSelector, Query, Role, TaskId,
 };
+use mime::{FromStrError, Mime};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -131,6 +132,8 @@ pub enum Error {
     ReportCountOverflow,
     #[error("message error: {0}")]
     Message(#[from] janus_messages::Error),
+    #[error("unable to parse media-type")]
+    MediaTypeError(#[from] FromStrError),
 }
 
 impl From<HttpErrorResponse> for Error {
@@ -570,11 +573,8 @@ impl<V: vdaf::Collector> Collector<V> {
             .headers()
             .get(CONTENT_TYPE)
             .ok_or(Error::BadContentType(None))?;
-        if let Ok(mime) = content_type.to_str()?.parse::<mime::Mime>() {
-            if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
-                return Err(Error::BadContentType(Some(content_type.clone())));
-            }
-        } else {
+        let mime: Mime = content_type.to_str()?.parse()?;
+        if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
