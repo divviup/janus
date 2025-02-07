@@ -23,7 +23,7 @@ use janus_messages::{
     AggregationJobInitializeReq, AggregationJobResp, CollectionJobId, CollectionJobReq,
     CollectionJobResp, HpkeConfigList, Report, TaskId,
 };
-use mime::Mime;
+use mime::{FromStrError, Mime};
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
@@ -168,14 +168,6 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently servicing too many requests, please try the request ",
                 "again later."
             )),
-        ),
-        Error::MediaTypeError(_) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#content_type",
-                "Bad Request.",
-                Status::BadRequest,
-            )
-            .with_detail(concat!("The request included an invalid Content-Type.")),
         ),
     };
 
@@ -730,7 +722,9 @@ fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Resu
         "invalid Content-Type header: {content_type}"
     )))?;
 
-    let mime: Mime = mime_str.parse()?;
+    let mime: Mime = mime_str.parse().map_err(|e: FromStrError| {
+        Error::BadRequest(format!("failed to parse Content-Type header: {e}"))
+    })?;
 
     if mime.essence_str() != expected_media_type {
         return Err(Error::BadRequest(format!(
