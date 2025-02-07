@@ -23,6 +23,7 @@ use janus_messages::{
     AggregationJobInitializeReq, AggregationJobResp, CollectionJobId, CollectionJobReq,
     CollectionJobResp, HpkeConfigList, Report, TaskId,
 };
+use mime::Mime;
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
@@ -167,6 +168,14 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently servicing too many requests, please try the request ",
                 "again later."
             )),
+        ),
+        Error::MediaTypeError(_) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#content_type",
+                "Bad Request.",
+                Status::BadRequest,
+            )
+            .with_detail(concat!("The request included an invalid Content-Type.")),
         ),
     };
 
@@ -712,27 +721,24 @@ async fn aggregate_shares<C: Clock>(
 /// Check the request's Content-Type header, and return an error if it is missing or not equal to
 /// the expected value.
 fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
-    if let Some(content_type) = conn.request_headers().get(KnownHeaderName::ContentType) {
-        let mime_str = content_type.as_str().ok_or(Error::BadRequest(format!(
-            "invalid Content-Type header: {content_type}"
-        )))?;
+    let content_type = conn
+        .request_headers()
+        .get(KnownHeaderName::ContentType)
+        .ok_or_else(|| Error::BadRequest("no Content-Type header".to_owned()))?;
 
-        if let Ok(mime) = mime_str.parse::<mime::Mime>() {
-            if mime.essence_str() == expected_media_type {
-                Ok(())
-            } else {
-                Err(Error::BadRequest(format!(
-                    "unexpected Content-Type header: {mime}"
-                )))
-            }
-        } else {
-            Err(Error::BadRequest(format!(
-                "unable to parse Content-Type header: {content_type}"
-            )))
-        }
-    } else {
-        Err(Error::BadRequest("no Content-Type header".to_owned()))
+    let mime_str = content_type.as_str().ok_or(Error::BadRequest(format!(
+        "invalid Content-Type header: {content_type}"
+    )))?;
+
+    let mime: Mime = mime_str.parse()?;
+
+    if mime.essence_str() != expected_media_type {
+        return Err(Error::BadRequest(format!(
+            "unexpected Content-Type header: {mime}"
+        )));
     }
+
+    Ok(())
 }
 
 /// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter

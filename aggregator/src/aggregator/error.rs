@@ -147,6 +147,8 @@ pub enum Error {
     ClientDisconnected,
     #[error("too many requests")]
     TooManyRequests,
+    #[error("unable to parse media-type")]
+    MediaTypeError(#[from] mime::FromStrError),
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -317,6 +319,7 @@ impl Error {
             Error::DifferentialPrivacy(_) => "differential_privacy",
             Error::ClientDisconnected => "client_disconnected",
             Error::TooManyRequests => "too_many_requests",
+            Error::MediaTypeError(_) => "media_type_error",
         }
     }
 }
