@@ -23,6 +23,7 @@ use janus_messages::{
     AggregationJobInitializeReq, AggregationJobResp, CollectionJobId, CollectionJobReq,
     CollectionJobResp, HpkeConfigList, Report, TaskId,
 };
+use mime::{FromStrError, Mime};
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
@@ -712,17 +713,26 @@ async fn aggregate_shares<C: Clock>(
 /// Check the request's Content-Type header, and return an error if it is missing or not equal to
 /// the expected value.
 fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
-    if let Some(content_type) = conn.request_headers().get(KnownHeaderName::ContentType) {
-        if content_type != expected_media_type {
-            Err(Error::BadRequest(format!(
-                "wrong Content-Type header: {content_type}"
-            )))
-        } else {
-            Ok(())
-        }
-    } else {
-        Err(Error::BadRequest("no Content-Type header".to_owned()))
+    let content_type = conn
+        .request_headers()
+        .get(KnownHeaderName::ContentType)
+        .ok_or_else(|| Error::BadRequest("no Content-Type header".to_owned()))?;
+
+    let mime_str = content_type.as_str().ok_or(Error::BadRequest(format!(
+        "invalid Content-Type header: {content_type}"
+    )))?;
+
+    let mime: Mime = mime_str.parse().map_err(|e: FromStrError| {
+        Error::BadRequest(format!("failed to parse Content-Type header: {e}"))
+    })?;
+
+    if mime.essence_str() != expected_media_type {
+        return Err(Error::BadRequest(format!(
+            "unexpected Content-Type header: {mime}"
+        )));
     }
+
+    Ok(())
 }
 
 /// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter

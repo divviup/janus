@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use http::StatusCode;
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
+use mime;
 use reqwest::{header::CONTENT_TYPE, Response};
 use std::fmt::{self, Display, Formatter};
 use tracing::warn;
@@ -21,15 +22,20 @@ impl HttpErrorResponse {
     /// the response's status code. (see [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807.html))
     pub async fn from_response(response: Response) -> Self {
         let status = response.status();
+
         if let Some(content_type) = response.headers().get(CONTENT_TYPE) {
-            if content_type == PROBLEM_JSON_MEDIA_TYPE {
-                match response.json::<HttpApiProblem>().await {
-                    Ok(mut problem) => {
-                        problem.status = Some(status);
-                        // Unwrap safety: the conversion always succeeds if the status is populated.
-                        return problem.try_into().unwrap();
+            if let Ok(content_type_str) = content_type.to_str() {
+                if let Ok(mime) = content_type_str.parse::<mime::Mime>() {
+                    if mime.essence_str() == PROBLEM_JSON_MEDIA_TYPE {
+                        match response.json::<HttpApiProblem>().await {
+                            Ok(mut problem) => {
+                                problem.status = Some(status);
+                                // Unwrap safety: the conversion always succeeds if the status is populated.
+                                return problem.try_into().unwrap();
+                            }
+                            Err(error) => warn!(%error, "Failed to parse problem details"),
+                        }
                     }
-                    Err(error) => warn!(%error, "Failed to parse problem details"),
                 }
             }
         }

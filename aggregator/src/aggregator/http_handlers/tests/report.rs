@@ -96,6 +96,18 @@ async fn upload_handler() {
         assert!(test_conn.take_response_body().is_none());
     }
 
+    // Upload a report with a versioned media-type header
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            format!("{};version=07", Report::MEDIA_TYPE),
+        )
+        .with_request_body(report.get_encoded().unwrap())
+        .run_async(&handler)
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert!(test_conn.take_response_body().is_none());
+
     let accepted_report_id = report.metadata().id();
 
     // Verify that new reports using an existing report ID are also accepted as a duplicate.

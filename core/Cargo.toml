@@ -53,6 +53,7 @@ http-api-problem.workspace = true
 janus_messages.workspace = true
 k8s-openapi = { workspace = true, optional = true }
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
+mime.workspace = true
 prio = { workspace = true, default-features = true, features = ["experimental"] }
 quickcheck = { workspace = true, optional = true }
 rand.workspace = true
