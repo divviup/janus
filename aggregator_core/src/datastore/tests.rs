@@ -36,8 +36,8 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId, ReportIdChecksum,
-    ReportMetadata, ReportShare, Role, TaskId, Time,
+    PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -2387,8 +2387,6 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
-    use janus_messages::PrepareContinue;
-
     install_test_trace_subscriber();
 
     let task_id = random();

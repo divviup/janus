@@ -502,10 +502,13 @@ impl<C: Clock> Aggregator<C> {
             .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
-        if task_aggregator.task.role() != &Role::Helper
-            || task_aggregator.task.aggregation_mode() != Some(&AggregationMode::Asynchronous)
-        {
+        if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
+        }
+        if task_aggregator.task.aggregation_mode() != Some(&AggregationMode::Asynchronous) {
+            return Err(Error::BadRequest(
+                "aggregation job GET for a synchronous task".to_string(),
+            ));
         }
 
         if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {

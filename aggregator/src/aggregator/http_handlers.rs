@@ -161,7 +161,14 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
         ),
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
-        Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+        Error::BadRequest(detail) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#bad-request",
+                "Bad request.",
+                Status::BadRequest,
+            )
+            .with_detail(detail),
+        ),
         Error::InvalidTask(task_id, _) => conn.with_problem_document(
             &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
         ),

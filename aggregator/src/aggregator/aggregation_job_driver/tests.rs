@@ -5465,7 +5465,7 @@ async fn helper_async_init_processing_to_continue() {
 
 #[tokio::test]
 async fn helper_async_continue_processing_to_finished() {
-    // Setup: insert an aggregation job with a report aggregation in state HelperInitProcessing.
+    // Setup: insert an aggregation job with a report aggregation in state HelperContinueProcessing.
     install_test_trace_subscriber();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;

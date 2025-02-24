@@ -172,6 +172,7 @@ async fn janus_janus_sync_count() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
 async fn janus_janus_async_count() {
+    // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated interop test design)
     run_container_test(
         "janus_janus_async_count",
         BatchMode::TimeInterval,
@@ -259,7 +260,7 @@ async fn janus_in_process_sync_sum_16() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_async_sum_16() {
     run_in_process_test(
-        "janus_in_process_sync_sum_16",
+        "janus_in_process_async_sum_16",
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Sum {
@@ -327,7 +328,7 @@ async fn janus_in_process_sync_histogram_4_buckets() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_async_histogram_4_buckets() {
     run_in_process_test(
-        "janus_in_process_sync_histogram_4_buckets",
+        "janus_in_process_async_histogram_4_buckets",
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3Histogram {
@@ -391,7 +392,7 @@ async fn janus_in_process_leader_selected_sync() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_leader_selected_async() {
     run_in_process_test(
-        "janus_in_process_leader_selected_sync",
+        "janus_in_process_leader_selected_async",
         BatchMode::LeaderSelected {
             batch_time_window_size: None,
         },
@@ -426,7 +427,7 @@ async fn janus_janus_sync_sum_vec() {
 #[cfg(feature = "testcontainer")]
 async fn janus_janus_async_sum_vec() {
     run_container_test(
-        "janus_janus_sync_sum_vec",
+        "janus_janus_async_sum_vec",
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3SumVec {
@@ -462,7 +463,7 @@ async fn janus_in_process_sync_sum_vec() {
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_in_process_async_sum_vec() {
     run_in_process_test(
-        "janus_in_process_sync_sum_vec",
+        "janus_in_process_async_sum_vec",
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3SumVec {
