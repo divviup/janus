@@ -163,8 +163,8 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
         Error::BadRequest(detail) => conn.with_problem_document(
             &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#bad-request",
-                "Bad request.",
+                "about:blank", // No additional semantics over-and-above the HTTP status code.
+                "Bad Request.",
                 Status::BadRequest,
             )
             .with_detail(detail),
