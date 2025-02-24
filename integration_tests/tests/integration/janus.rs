@@ -230,7 +230,7 @@ async fn janus_janus_sync_sum_16() {
 #[cfg(feature = "testcontainer")]
 async fn janus_janus_async_sum_16() {
     run_container_test(
-        "janus_janus_sync_sum_16",
+        "janus_janus_async_sum_16",
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3Sum {
