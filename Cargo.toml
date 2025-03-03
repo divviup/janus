@@ -65,7 +65,7 @@ kube = { version = "0.94.2", default-features = false, features = ["client", "ru
 mime = "0.3.17"
 mockito = "1.6.1"
 num_enum = "0.7.3"
-ohttp = { version = "0.5.1", default-features = false }
+ohttp = { version = "0.5.4", default-features = false }
 opentelemetry = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", default-features = false, features = ["trace", "metrics", "grpc-tonic"] }
 opentelemetry-prometheus = "0.27"
