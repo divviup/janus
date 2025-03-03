@@ -617,9 +617,9 @@ dependencies = [
 
 [[package]]
 name = "bhttp"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "496ccaebbc6d40ce3e15469d4e75e9c43d65f8df68725acec50239258126cffd"
+checksum = "2bc657efe5aa3821f1cacfb47665c32849e09820844bff9f5066227312829fa3"
 dependencies = [
  "thiserror 1.0.69",
  "url",
