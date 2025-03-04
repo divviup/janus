@@ -1,3 +1,4 @@
+use janus_aggregator_core::task::AggregationMode;
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,10 @@ pub(super) struct Config {
     /// Janus-specific task parameter: report expiry age (for garbage collection).
     pub(super) report_expiry_age: Option<Duration>,
 
+    /// Janus-specific task parameter: aggregation mode. This is only used by the helper, and
+    /// ignored otherwise.
+    pub(super) aggregation_mode: AggregationMode,
+
     /// Aggregation job creator configuration: minimum aggregation job size.
     pub(super) min_aggregation_job_size: usize,
 
@@ -39,6 +44,8 @@ pub(super) enum Op {
     /// Advance the `MockClock`'s time by `amount`.
     AdvanceTime { amount: Duration },
 
+    /// Upload some reports.
+    ///
     /// Have the client shard some reports at the given timestamp, with the next sequential
     /// measurements, and send them to the leader aggregator. The leader will handle the requests
     /// and store the reports to the database. Note that, as currently implemented, this will wait
@@ -72,30 +79,41 @@ pub(super) enum Op {
     /// Run the aggregation job creator once.
     AggregationJobCreator,
 
-    /// Run the aggregation job driver once, and wait until it is done stepping all the jobs it
-    /// acquired. Requests and responses will pass through an inspecting proxy in front of the
-    /// helper.
-    AggregationJobDriver,
+    /// Run the aggregation job driver once in the leader, and wait until it is done stepping all
+    /// the jobs it acquired.
+    ///
+    /// Requests and responses will pass through an inspecting proxy in front of the helper.
+    LeaderAggregationJobDriver,
 
-    /// Same as `AggregationJobDriver`, with fault injection. Drop all requests and return some sort
+    /// Same as `LeaderAggregationJobDriver`, with fault injection. Drop all requests and return some sort
     /// of error.
-    AggregationJobDriverRequestError,
+    LeaderAggregationJobDriverRequestError,
 
-    /// Same as `AggregationJobDriver`, with fault injection. Forward all requests, but drop the
+    /// Same as `LeaderAggregationJobDriver`, with fault injection. Forward all requests, but drop the
     /// responses, and return some sort of error.
-    AggregationJobDriverResponseError,
+    LeaderAggregationJobDriverResponseError,
+
+    /// Run the aggregation job driver once in the helper, and wait until it is done stepping all
+    /// the jobs it acquired.
+    ///
+    /// Note that the helper aggregation job driver makes no outgoing requests. It only updates its
+    /// own database.
+    HelperAggregationJobDriver,
 
     /// Run the collection job driver once, and wait until it is done stepping all the jobs it
-    /// acquired. Requests and responses will pass through an inspecting proxy in front of the
-    /// helper.
+    /// acquired.
+    ///
+    /// Requests and responses will pass through an inspecting proxy in front of the helper.
     CollectionJobDriver,
 
-    /// Same as `CollectionJobDriver`, with fault injection. Drop all requests and return some sort
-    /// of error.
+    /// Same as `CollectionJobDriver`, with fault injection.
+    ///
+    /// Drop all requests and return some sort of error.
     CollectionJobDriverRequestError,
 
-    /// Same as `CollectionJobDriver`, with fault injection. Forward all requests, but drop the
-    /// responses, and return some sort of error.
+    /// Same as `CollectionJobDriver`, with fault injection.
+    ///
+    /// Forward all requests, but drop the responses, and return some sort of error.
     CollectionJobDriverResponseError,
 
     /// The collector sends a collection request to the leader. It remembers the collection job ID.

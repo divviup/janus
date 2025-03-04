@@ -30,7 +30,7 @@ use janus_aggregator_core::{
     },
     task::{
         test_util::{Task, TaskBuilder},
-        AggregationMode, BatchMode,
+        BatchMode,
     },
 };
 use janus_client::{default_http_client, Client};
@@ -139,8 +139,12 @@ pub(super) struct Components {
     pub(super) leader_key_rotator: KeyRotator<MockClock>,
     pub(super) helper_key_rotator: KeyRotator<MockClock>,
     pub(super) aggregation_job_creator: Arc<AggregationJobCreator<MockClock>>,
-    pub(super) aggregation_job_driver_acquirer_cb: JobAcquirerCallback<AcquiredAggregationJob>,
-    pub(super) aggregation_job_driver_stepper_cb: JobStepperCallback<AcquiredAggregationJob>,
+    pub(super) leader_aggregation_job_driver_acquirer_cb:
+        JobAcquirerCallback<AcquiredAggregationJob>,
+    pub(super) leader_aggregation_job_driver_stepper_cb: JobStepperCallback<AcquiredAggregationJob>,
+    pub(super) helper_aggregation_job_driver_acquirer_cb:
+        JobAcquirerCallback<AcquiredAggregationJob>,
+    pub(super) helper_aggregation_job_driver_stepper_cb: JobStepperCallback<AcquiredAggregationJob>,
     pub(super) collection_job_driver_acquirer_cb: JobAcquirerCallback<AcquiredCollectionJob>,
     pub(super) collection_job_driver_stepper_cb: JobStepperCallback<AcquiredCollectionJob>,
     pub(super) collector: Collector<Prio3Histogram>,
@@ -175,7 +179,7 @@ impl Components {
         };
         let task = TaskBuilder::new(
             batch_mode,
-            AggregationMode::Synchronous,
+            input.config.aggregation_mode,
             state.vdaf_instance.clone(),
         )
         .with_leader_aggregator_endpoint(
@@ -253,7 +257,7 @@ impl Components {
             5000,
         ));
 
-        let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
+        let leader_aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
             http_request_exponential_backoff(),
             &state.meter,
@@ -262,14 +266,35 @@ impl Components {
             HPKE_CONFIGS_REFRESH_INTERVAL,
             DEFAULT_ASYNC_POLL_INTERVAL,
         ));
-        let aggregation_job_driver_acquirer_cb = Box::new(
-            aggregation_job_driver.make_incomplete_job_acquirer_callback(
+        let leader_aggregation_job_driver_acquirer_cb = Box::new(
+            leader_aggregation_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&leader.datastore),
                 StdDuration::from_secs(600),
             ),
         );
-        let aggregation_job_driver_stepper_cb = Box::new(
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&leader.datastore), 2),
+        let leader_aggregation_job_driver_stepper_cb = Box::new(
+            leader_aggregation_job_driver
+                .make_job_stepper_callback(Arc::clone(&leader.datastore), 2),
+        );
+
+        let helper_aggregation_job_driver = Arc::new(AggregationJobDriver::new(
+            reqwest::Client::new(),
+            http_request_exponential_backoff(),
+            &state.meter,
+            BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
+            TASK_COUNTER_SHARD_COUNT,
+            HPKE_CONFIGS_REFRESH_INTERVAL,
+            DEFAULT_ASYNC_POLL_INTERVAL,
+        ));
+        let helper_aggregation_job_driver_acquirer_cb = Box::new(
+            helper_aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&helper.datastore),
+                StdDuration::from_secs(600),
+            ),
+        );
+        let helper_aggregation_job_driver_stepper_cb = Box::new(
+            helper_aggregation_job_driver
+                .make_job_stepper_callback(Arc::clone(&helper.datastore), 2),
         );
 
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
@@ -315,8 +340,10 @@ impl Components {
                 leader_key_rotator,
                 helper_key_rotator,
                 aggregation_job_creator,
-                aggregation_job_driver_acquirer_cb,
-                aggregation_job_driver_stepper_cb,
+                leader_aggregation_job_driver_acquirer_cb,
+                leader_aggregation_job_driver_stepper_cb,
+                helper_aggregation_job_driver_acquirer_cb,
+                helper_aggregation_job_driver_stepper_cb,
                 collection_job_driver_acquirer_cb,
                 collection_job_driver_stepper_cb,
                 collector,

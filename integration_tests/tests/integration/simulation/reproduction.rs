@@ -1,3 +1,4 @@
+use janus_aggregator_core::task::AggregationMode;
 use janus_core::{test_util::install_test_trace_subscriber, time::TimeExt};
 use janus_messages::{Duration, Interval, Time};
 use rand::random;
@@ -20,6 +21,7 @@ fn successful_collection_time_interval() {
             min_batch_size: 4,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
         },
@@ -29,21 +31,21 @@ fn successful_collection_time_interval() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
@@ -62,7 +64,7 @@ fn successful_collection_time_interval() {
                 count: 4,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
@@ -92,6 +94,7 @@ fn successful_collection_leader_selected() {
             min_batch_size: 4,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
         },
@@ -101,21 +104,21 @@ fn successful_collection_leader_selected() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
                 report_time: START_TIME,
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::CollectorStart {
                 collection_job_id,
@@ -128,7 +131,7 @@ fn successful_collection_leader_selected() {
                 count: 4,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::LeaderSelected,
@@ -152,6 +155,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
         },
@@ -168,12 +172,12 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriverResponseError,
+            Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
                 amount: Duration::from_seconds(5400),
             },
             Op::LeaderGarbageCollector,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
         ]),
     };
     assert!(!Simulation::run(input).is_failure());
@@ -191,6 +195,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
         },
@@ -207,12 +212,12 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriverResponseError,
+            Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
                 amount: Duration::from_seconds(5400),
             },
             Op::LeaderGarbageCollector,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
         ]),
     };
     assert!(!Simulation::run(input).is_failure());
@@ -230,6 +235,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             min_batch_size: 100,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(4000)),
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
         },
@@ -249,7 +255,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             Op::AdvanceTime {
                 amount: Duration::from_seconds(3500),
             },
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
         ]),
     };
     assert!(!Simulation::run(input).is_failure());
@@ -268,6 +274,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
         },
@@ -277,21 +284,21 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::Upload {
                 report_time: START_TIME,
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriverResponseError,
+            Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
                 amount: Duration::from_seconds(610),
             },
-            Op::AggregationJobDriverResponseError,
+            Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
                 amount: Duration::from_seconds(610),
             },
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
@@ -316,6 +323,7 @@ fn repro_helper_accumulate_on_retried_request() {
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
+            aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
         },
@@ -325,11 +333,11 @@ fn repro_helper_accumulate_on_retried_request() {
                 count: 1,
             },
             Op::AggregationJobCreator,
-            Op::AggregationJobDriverResponseError,
+            Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
                 amount: Duration::from_seconds(700),
             },
-            Op::AggregationJobDriver,
+            Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
                 collection_job_id: random(),
                 query: Query::TimeInterval(
