@@ -144,6 +144,99 @@ fn successful_collection_leader_selected() {
 }
 
 #[test]
+fn successful_collection_asynchronous() {
+    install_test_trace_subscriber();
+
+    let collection_job_id = random();
+    let input = Input {
+        is_leader_selected: false,
+        config: Config {
+            time_precision: Duration::from_seconds(3600),
+            min_batch_size: 4,
+            batch_time_window_size: None,
+            report_expiry_age: Some(Duration::from_seconds(7200)),
+            aggregation_mode: AggregationMode::Asynchronous,
+            min_aggregation_job_size: 1,
+            max_aggregation_job_size: 10,
+        },
+        ops: Vec::from([
+            Op::Upload {
+                report_time: START_TIME,
+                count: 1,
+            },
+            Op::AggregationJobCreator,
+            Op::LeaderAggregationJobDriver,
+            Op::HelperAggregationJobDriver,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(2),
+            },
+            Op::LeaderAggregationJobDriver,
+            Op::LeaderGarbageCollector,
+            Op::Upload {
+                report_time: START_TIME,
+                count: 1,
+            },
+            Op::AggregationJobCreator,
+            Op::LeaderAggregationJobDriver,
+            Op::HelperAggregationJobDriver,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(2),
+            },
+            Op::LeaderAggregationJobDriver,
+            Op::LeaderGarbageCollector,
+            Op::Upload {
+                report_time: START_TIME,
+                count: 1,
+            },
+            Op::AggregationJobCreator,
+            Op::LeaderAggregationJobDriver,
+            Op::HelperAggregationJobDriver,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(2),
+            },
+            Op::LeaderAggregationJobDriver,
+            Op::LeaderGarbageCollector,
+            Op::CollectorStart {
+                collection_job_id,
+                query: Query::TimeInterval(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1_699_999_200),
+                        Duration::from_seconds(3600),
+                    )
+                    .unwrap(),
+                ),
+            },
+            Op::CollectionJobDriver,
+            Op::CollectorPoll { collection_job_id },
+            Op::Upload {
+                report_time: START_TIME,
+                count: 4,
+            },
+            Op::AggregationJobCreator,
+            Op::LeaderAggregationJobDriver,
+            Op::HelperAggregationJobDriver,
+            Op::AdvanceTime {
+                amount: Duration::from_seconds(2),
+            },
+            Op::LeaderAggregationJobDriver,
+            Op::CollectorStart {
+                collection_job_id,
+                query: Query::TimeInterval(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1_699_999_200),
+                        Duration::from_seconds(3600),
+                    )
+                    .unwrap(),
+                ),
+            },
+            Op::CollectionJobDriver,
+            Op::CollectorPoll { collection_job_id },
+        ]),
+    };
+    assert!(!Simulation::run(input).is_failure());
+}
+
+#[test]
 /// Regression test for https://github.com/divviup/janus/issues/2442.
 fn repro_gc_changes_aggregation_job_retry_time_interval() {
     install_test_trace_subscriber();
