@@ -1455,11 +1455,13 @@ async fn get_taskprov_peer_aggregator() {
     let leader = PeerAggregatorBuilder::new()
         .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_peer_role(Role::Leader)
-        .build();
+        .build()
+        .unwrap();
     let helper = PeerAggregatorBuilder::new()
         .with_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_peer_role(Role::Helper)
-        .build();
+        .build()
+        .unwrap();
 
     ds.run_unnamed_tx(|tx| {
         let leader = leader.clone();
@@ -1531,7 +1533,8 @@ async fn post_taskprov_peer_aggregator() {
     let leader = PeerAggregatorBuilder::new()
         .with_endpoint(endpoint.clone())
         .with_peer_role(Role::Leader)
-        .build();
+        .build()
+        .unwrap();
 
     let req = PostTaskprovPeerAggregatorReq {
         endpoint,
@@ -1607,7 +1610,8 @@ async fn delete_taskprov_peer_aggregator() {
     let leader = PeerAggregatorBuilder::new()
         .with_endpoint(endpoint.clone())
         .with_peer_role(Role::Leader)
-        .build();
+        .build()
+        .unwrap();
 
     ds.run_unnamed_tx(|tx| {
         let leader = leader.clone();

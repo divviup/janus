@@ -7505,17 +7505,20 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
     // Basic aggregator.
     let example_leader_peer_aggregator = PeerAggregatorBuilder::new()
         .with_peer_role(Role::Leader)
-        .build();
+        .build()
+        .unwrap();
     let example_helper_peer_aggregator = PeerAggregatorBuilder::new()
         .with_peer_role(Role::Helper)
         .with_aggregator_auth_tokens(Vec::from([random(), random()]))
         .with_collector_auth_tokens(Vec::new())
-        .build();
+        .build()
+        .unwrap();
     let another_example_leader_peer_aggregator = PeerAggregatorBuilder::new()
         .with_endpoint(Url::parse("https://another.example.com/").unwrap())
         .with_aggregator_auth_tokens(Vec::new())
         .with_collector_auth_tokens(Vec::from([random(), random()]))
-        .build();
+        .build()
+        .unwrap();
 
     datastore
         .run_tx("test-put-peer-aggregator", |tx| {
@@ -7544,7 +7547,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         datastore
             .run_unnamed_tx(|tx| {
                 Box::pin(async move {
-                    let colliding_peer_aggregator = PeerAggregatorBuilder::new().build();
+                    let colliding_peer_aggregator = PeerAggregatorBuilder::new().build().unwrap();
                     tx.put_taskprov_peer_aggregator(&colliding_peer_aggregator)
                         .await
                 })

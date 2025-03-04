@@ -429,7 +429,7 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
         tolerable_clock_skew,
         Vec::from([aggregator_auth_token.clone()]),
         collector_auth_tokens,
-    ));
+    )?);
 
     if !dry_run {
         datastore
@@ -1129,7 +1129,8 @@ mod tests {
             tolerable_clock_skew,
             Vec::from([aggregator_auth_token]),
             Vec::from([collector_auth_token]),
-        );
+        )
+        .unwrap();
 
         let got_peer_aggregator = ds
             .run_unnamed_tx(|tx| {

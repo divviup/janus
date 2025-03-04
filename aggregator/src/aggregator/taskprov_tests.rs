@@ -106,7 +106,8 @@ where
             .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
             .with_peer_role(Role::Leader)
             .with_collector_hpke_config(collector_hpke_keypair.config().clone())
-            .build();
+            .build()
+            .unwrap();
 
         datastore
             .run_unnamed_tx(|tx| {

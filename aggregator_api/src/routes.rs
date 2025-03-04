@@ -456,7 +456,8 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.tolerable_clock_skew,
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
-    );
+    )
+    .map_err(|e| Error::BadRequest(format!("Invalid request: {e}")))?;
 
     let inserted = ds
         .run_tx("post_taskprov_peer_aggregator", |tx| {
