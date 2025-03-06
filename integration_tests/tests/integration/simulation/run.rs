@@ -113,17 +113,24 @@ impl Simulation {
                         Op::AggregationJobCreator => {
                             simulation.execute_aggregation_job_creator().await
                         }
-                        Op::AggregationJobDriver => {
-                            simulation.execute_aggregation_job_driver().await
-                        }
-                        Op::AggregationJobDriverRequestError => {
+                        Op::LeaderAggregationJobDriver => {
                             simulation
-                                .execute_aggregation_job_driver_request_error()
+                                .execute_aggregation_job_driver(AggregatorRole::Leader)
                                 .await
                         }
-                        Op::AggregationJobDriverResponseError => {
+                        Op::LeaderAggregationJobDriverRequestError => {
                             simulation
-                                .execute_aggregation_job_driver_response_error()
+                                .execute_leader_aggregation_job_driver_request_error()
+                                .await
+                        }
+                        Op::LeaderAggregationJobDriverResponseError => {
+                            simulation
+                                .execute_leader_aggregation_job_driver_response_error()
+                                .await
+                        }
+                        Op::HelperAggregationJobDriver => {
+                            simulation
+                                .execute_aggregation_job_driver(AggregatorRole::Helper)
                                 .await
                         }
                         Op::CollectionJobDriver => simulation.execute_collection_job_driver().await,
@@ -317,38 +324,59 @@ impl Simulation {
         ControlFlow::Continue(())
     }
 
-    async fn execute_aggregation_job_driver(&mut self) -> ControlFlow<TestResult> {
-        let leases = match (self.components.aggregation_job_driver_acquirer_cb)(10).await {
+    async fn execute_aggregation_job_driver(
+        &mut self,
+        role: AggregatorRole,
+    ) -> ControlFlow<TestResult> {
+        let (acquirer, stepper) = match role {
+            AggregatorRole::Leader => (
+                &mut self.components.leader_aggregation_job_driver_acquirer_cb,
+                &mut self.components.leader_aggregation_job_driver_stepper_cb,
+            ),
+            AggregatorRole::Helper => (
+                &mut self.components.helper_aggregation_job_driver_acquirer_cb,
+                &mut self.components.helper_aggregation_job_driver_stepper_cb,
+            ),
+        };
+        let leases = match acquirer(10).await {
             Ok(leases) => leases,
             Err(error) => {
-                error!(?error, "aggregation job driver error");
+                error!(?error, ?role, "aggregation job driver error");
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
         };
-        debug!(count = leases.len(), "acquired aggregation jobs");
+        debug!(count = leases.len(), ?role, "acquired aggregation jobs");
         for lease in leases {
-            if let Err(error) = (self.components.aggregation_job_driver_stepper_cb)(lease).await {
+            if let Err(error) = stepper(lease).await {
                 if let aggregator::Error::Http(_) = error {
-                    warn!(?error, "aggregation job driver error");
+                    warn!(?error, ?role, "aggregation job driver error");
                     return ControlFlow::Continue(());
                 }
-                error!(?error, "aggregation job driver error");
+                error!(?error, ?role, "aggregation job driver error");
                 return ControlFlow::Break(TestResult::error(format!("{error:?}")));
             }
         }
         ControlFlow::Continue(())
     }
 
-    async fn execute_aggregation_job_driver_request_error(&mut self) -> ControlFlow<TestResult> {
+    async fn execute_leader_aggregation_job_driver_request_error(
+        &mut self,
+    ) -> ControlFlow<TestResult> {
         self.components.helper.fault_injector.error_before();
-        let result = self.execute_aggregation_job_driver().await;
+        let result = self
+            .execute_aggregation_job_driver(AggregatorRole::Leader)
+            .await;
         self.components.helper.fault_injector.reset();
         result
     }
 
-    async fn execute_aggregation_job_driver_response_error(&mut self) -> ControlFlow<TestResult> {
+    async fn execute_leader_aggregation_job_driver_response_error(
+        &mut self,
+    ) -> ControlFlow<TestResult> {
         self.components.helper.fault_injector.error_after();
-        let result = self.execute_aggregation_job_driver().await;
+        let result = self
+            .execute_aggregation_job_driver(AggregatorRole::Leader)
+            .await;
         self.components.helper.fault_injector.reset();
         result
     }

@@ -6,6 +6,7 @@
 
 use std::cmp::max;
 
+use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{DurationExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{empty_shrinker, Arbitrary, Gen};
@@ -31,6 +32,11 @@ impl Arbitrary for Config {
             )),
             report_expiry_age: bool::arbitrary(g)
                 .then_some(Duration::from_seconds(u16::arbitrary(g).into())),
+            aggregation_mode: if bool::arbitrary(g) {
+                AggregationMode::Synchronous
+            } else {
+                AggregationMode::Asynchronous
+            },
             min_aggregation_job_size: aggregation_job_size_limits[0].into(),
             max_aggregation_job_size: aggregation_job_size_limits[1].into(),
         }
@@ -165,9 +171,10 @@ fn shrink_op(op: &Op) -> Box<dyn Iterator<Item = Op>> {
         | Op::LeaderKeyRotator
         | Op::HelperKeyRotator
         | Op::AggregationJobCreator
-        | Op::AggregationJobDriver
-        | Op::AggregationJobDriverRequestError
-        | Op::AggregationJobDriverResponseError
+        | Op::LeaderAggregationJobDriver
+        | Op::LeaderAggregationJobDriverRequestError
+        | Op::LeaderAggregationJobDriverResponseError
+        | Op::HelperAggregationJobDriver
         | Op::CollectionJobDriver
         | Op::CollectionJobDriverRequestError
         | Op::CollectionJobDriverResponseError
@@ -324,9 +331,10 @@ enum OpKind {
     LeaderKeyRotator,
     HelperKeyRotator,
     AggregationJobCreator,
-    AggregationJobDriver,
-    AggregationJobDriverRequestError,
-    AggregationJobDriverResponseError,
+    LeaderAggregationJobDriver,
+    LeaderAggregationJobDriverRequestError,
+    LeaderAggregationJobDriverResponseError,
+    HelperAggregationJobDriver,
     CollectionJobDriver,
     CollectionJobDriverRequestError,
     CollectionJobDriverResponseError,
@@ -352,7 +360,8 @@ mod choices {
         LeaderKeyRotator,
         HelperKeyRotator,
         AggregationJobCreator,
-        AggregationJobDriver,
+        LeaderAggregationJobDriver,
+        HelperAggregationJobDriver,
         CollectionJobDriver,
         CollectorStart,
         CollectorPoll,
@@ -371,9 +380,10 @@ mod choices {
         LeaderKeyRotator,
         HelperKeyRotator,
         AggregationJobCreator,
-        AggregationJobDriver,
-        AggregationJobDriverRequestError,
-        AggregationJobDriverResponseError,
+        LeaderAggregationJobDriver,
+        LeaderAggregationJobDriverRequestError,
+        LeaderAggregationJobDriverResponseError,
+        HelperAggregationJobDriver,
         CollectionJobDriver,
         CollectionJobDriverRequestError,
         CollectionJobDriverResponseError,
@@ -398,9 +408,14 @@ fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,
         OpKind::HelperKeyRotator => Op::HelperKeyRotator,
         OpKind::AggregationJobCreator => Op::AggregationJobCreator,
-        OpKind::AggregationJobDriver => Op::AggregationJobDriver,
-        OpKind::AggregationJobDriverRequestError => Op::AggregationJobDriverRequestError,
-        OpKind::AggregationJobDriverResponseError => Op::AggregationJobDriverResponseError,
+        OpKind::LeaderAggregationJobDriver => Op::LeaderAggregationJobDriver,
+        OpKind::LeaderAggregationJobDriverRequestError => {
+            Op::LeaderAggregationJobDriverRequestError
+        }
+        OpKind::LeaderAggregationJobDriverResponseError => {
+            Op::LeaderAggregationJobDriverResponseError
+        }
+        OpKind::HelperAggregationJobDriver => Op::HelperAggregationJobDriver,
         OpKind::CollectionJobDriver => Op::CollectionJobDriver,
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
@@ -446,9 +461,14 @@ fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKin
         OpKind::LeaderKeyRotator => Op::LeaderKeyRotator,
         OpKind::HelperKeyRotator => Op::HelperKeyRotator,
         OpKind::AggregationJobCreator => Op::AggregationJobCreator,
-        OpKind::AggregationJobDriver => Op::AggregationJobDriver,
-        OpKind::AggregationJobDriverRequestError => Op::AggregationJobDriverRequestError,
-        OpKind::AggregationJobDriverResponseError => Op::AggregationJobDriverResponseError,
+        OpKind::LeaderAggregationJobDriver => Op::LeaderAggregationJobDriver,
+        OpKind::LeaderAggregationJobDriverRequestError => {
+            Op::LeaderAggregationJobDriverRequestError
+        }
+        OpKind::LeaderAggregationJobDriverResponseError => {
+            Op::LeaderAggregationJobDriverResponseError
+        }
+        OpKind::HelperAggregationJobDriver => Op::HelperAggregationJobDriver,
         OpKind::CollectionJobDriver => Op::CollectionJobDriver,
         OpKind::CollectionJobDriverRequestError => Op::CollectionJobDriverRequestError,
         OpKind::CollectionJobDriverResponseError => Op::CollectionJobDriverResponseError,
@@ -690,7 +710,7 @@ fn coalesce_ops_correct() {
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(4),
                 },
-                Op::AggregationJobDriver,
+                Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(5),
                 },
@@ -706,7 +726,7 @@ fn coalesce_ops_correct() {
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(7),
                 },
-                Op::AggregationJobDriver,
+                Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(11),
                 },
@@ -721,14 +741,14 @@ fn coalesce_ops_correct() {
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(4),
                 },
-                Op::AggregationJobDriver,
+                Op::LeaderAggregationJobDriver,
             ]),
             Some(Vec::from([
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
                     amount: Duration::from_seconds(7),
                 },
-                Op::AggregationJobDriver,
+                Op::LeaderAggregationJobDriver,
             ])),
         ),
     ];
