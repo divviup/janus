@@ -2,6 +2,7 @@ use crate::{
     task::{AggregationMode, Error},
     SecretBytes,
 };
+use anyhow::anyhow;
 use aws_lc_rs::{
     digest::{self, digest, Digest, SHA256},
     hkdf::{KeyType, Salt, HKDF_SHA256},
@@ -149,8 +150,14 @@ impl PeerAggregator {
         tolerable_clock_skew: Duration,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        if !peer_role.is_aggregator() {
+            return Err(anyhow!("invalid role: {peer_role}"));
+        }
+        if peer_role == Role::Leader && aggregation_mode.is_none() {
+            return Err(anyhow!("missing aggregation_mode"));
+        }
+        Ok(Self {
             endpoint,
             peer_role,
             aggregation_mode,
@@ -160,7 +167,7 @@ impl PeerAggregator {
             tolerable_clock_skew,
             aggregator_auth_tokens,
             collector_auth_tokens,
-        }
+        })
     }
 
     /// Retrieve the URL endpoint of the peer.
@@ -301,97 +308,123 @@ pub mod test_util {
     use url::Url;
 
     #[derive(Debug, Clone)]
-    pub struct PeerAggregatorBuilder(PeerAggregator);
+    pub struct PeerAggregatorBuilder {
+        endpoint: Url,
+        peer_role: Role,
+        aggregation_mode: Option<AggregationMode>,
+        verify_key_init: VerifyKeyInit,
+        collector_hpke_config: HpkeConfig,
+        report_expiry_age: Option<Duration>,
+        tolerable_clock_skew: Duration,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+        collector_auth_tokens: Vec<AuthenticationToken>,
+    }
 
     impl PeerAggregatorBuilder {
         pub fn new() -> Self {
-            Self(PeerAggregator::new(
-                Url::parse("https://example.com").unwrap(),
-                Role::Leader,
-                Some(AggregationMode::Synchronous),
-                random(),
-                HpkeKeypair::test().config().clone(),
-                None,
-                Duration::from_seconds(1),
-                Vec::from([random()]),
-                Vec::from([random()]),
-            ))
+            Self {
+                endpoint: Url::parse("https://example.com").unwrap(),
+                peer_role: Role::Leader,
+                aggregation_mode: Some(AggregationMode::Synchronous),
+                verify_key_init: random(),
+                collector_hpke_config: HpkeKeypair::test().config().clone(),
+                report_expiry_age: None,
+                tolerable_clock_skew: Duration::from_seconds(1),
+                aggregator_auth_tokens: Vec::from([random()]),
+                collector_auth_tokens: Vec::from([random()]),
+            }
         }
 
-        pub fn with_endpoint(self, endpoint: Url) -> Self {
-            Self(PeerAggregator { endpoint, ..self.0 })
+        pub fn with_endpoint(mut self, endpoint: Url) -> Self {
+            self.endpoint = endpoint;
+            self
         }
 
-        pub fn with_peer_role(self, peer_role: Role) -> Self {
-            Self(PeerAggregator {
-                peer_role,
-                ..self.0
-            })
+        pub fn with_peer_role(mut self, peer_role: Role) -> Self {
+            self.peer_role = peer_role;
+            self
         }
 
-        pub fn with_aggregation_mode(self, aggregation_mode: Option<AggregationMode>) -> Self {
-            Self(PeerAggregator {
-                aggregation_mode,
-                ..self.0
-            })
+        pub fn with_aggregation_mode(mut self, aggregation_mode: Option<AggregationMode>) -> Self {
+            self.aggregation_mode = aggregation_mode;
+            self
         }
 
-        pub fn with_verify_key_init(self, verify_key_init: VerifyKeyInit) -> Self {
-            Self(PeerAggregator {
-                verify_key_init,
-                ..self.0
-            })
+        pub fn with_verify_key_init(mut self, verify_key_init: VerifyKeyInit) -> Self {
+            self.verify_key_init = verify_key_init;
+            self
         }
 
-        pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
-            Self(PeerAggregator {
-                collector_hpke_config,
-                ..self.0
-            })
+        pub fn with_collector_hpke_config(mut self, collector_hpke_config: HpkeConfig) -> Self {
+            self.collector_hpke_config = collector_hpke_config;
+            self
         }
 
-        pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
-            Self(PeerAggregator {
-                report_expiry_age,
-                ..self.0
-            })
+        pub fn with_report_expiry_age(mut self, report_expiry_age: Option<Duration>) -> Self {
+            self.report_expiry_age = report_expiry_age;
+            self
         }
 
-        pub fn with_tolerable_clock_skew(self, tolerable_clock_skew: Duration) -> Self {
-            Self(PeerAggregator {
-                tolerable_clock_skew,
-                ..self.0
-            })
+        pub fn with_tolerable_clock_skew(mut self, tolerable_clock_skew: Duration) -> Self {
+            self.tolerable_clock_skew = tolerable_clock_skew;
+            self
         }
 
         pub fn with_aggregator_auth_tokens(
-            self,
+            mut self,
             aggregator_auth_tokens: Vec<AuthenticationToken>,
         ) -> Self {
-            Self(PeerAggregator {
-                aggregator_auth_tokens,
-                ..self.0
-            })
+            self.aggregator_auth_tokens = aggregator_auth_tokens;
+            self
         }
 
         pub fn with_collector_auth_tokens(
-            self,
+            mut self,
             collector_auth_tokens: Vec<AuthenticationToken>,
         ) -> Self {
-            Self(PeerAggregator {
-                collector_auth_tokens,
-                ..self.0
-            })
+            self.collector_auth_tokens = collector_auth_tokens;
+            self
         }
 
-        pub fn build(self) -> PeerAggregator {
-            self.0
+        pub fn build(self) -> anyhow::Result<PeerAggregator> {
+            PeerAggregator::new(
+                self.endpoint,
+                self.peer_role,
+                self.aggregation_mode,
+                self.verify_key_init,
+                self.collector_hpke_config,
+                self.report_expiry_age,
+                self.tolerable_clock_skew,
+                self.aggregator_auth_tokens,
+                self.collector_auth_tokens,
+            )
         }
     }
 
     impl From<PeerAggregator> for PeerAggregatorBuilder {
         fn from(value: PeerAggregator) -> Self {
-            Self(value)
+            let PeerAggregator {
+                endpoint,
+                peer_role,
+                aggregation_mode,
+                verify_key_init,
+                collector_hpke_config,
+                report_expiry_age,
+                tolerable_clock_skew,
+                aggregator_auth_tokens,
+                collector_auth_tokens,
+            } = value;
+            Self {
+                endpoint,
+                peer_role,
+                aggregation_mode,
+                verify_key_init,
+                collector_hpke_config,
+                report_expiry_age,
+                tolerable_clock_skew,
+                aggregator_auth_tokens,
+                collector_auth_tokens,
+            }
         }
     }
 

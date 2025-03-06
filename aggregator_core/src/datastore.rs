@@ -5310,7 +5310,7 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         let collector_auth_tokens =
             decrypt_tokens(collector_auth_token_rows, "taskprov_collector_auth_tokens")?;
 
-        Ok(PeerAggregator::new(
+        PeerAggregator::new(
             endpoint,
             peer_role.as_role(),
             aggregation_mode,
@@ -5320,7 +5320,8 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
             tolerable_clock_skew,
             aggregator_auth_tokens,
             collector_auth_tokens,
-        ))
+        )
+        .map_err(|e| Error::User(e.into()))
     }
 
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
