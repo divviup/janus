@@ -4,8 +4,9 @@ use educe::Educe;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
 use regex::Regex;
+#[allow(deprecated)]
 use ring::{
-    constant_time,
+    deprecated_constant_time,
     digest::{digest, SHA256, SHA256_OUTPUT_LEN},
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
@@ -205,7 +206,8 @@ impl PartialEq for DapAuthToken {
         // that this function still leaks whether the lengths of the tokens are equal -- this is
         // acceptable because we expect the content of the tokens to provide enough randomness that
         // needs to be guessed even if the length is known.
-        constant_time::verify_slices_are_equal(self.0.as_ref(), other.0.as_ref()).is_ok()
+        #[allow(deprecated)]
+        deprecated_constant_time::verify_slices_are_equal(self.0.as_ref(), other.0.as_ref()).is_ok()
     }
 }
 
@@ -313,7 +315,9 @@ impl PartialEq for BearerToken {
         // that this function still leaks whether the lengths of the tokens are equal -- this is
         // acceptable because we expect the content of the tokens to provide enough randomness that
         // needs to be guessed even if the length is known.
-        constant_time::verify_slices_are_equal(self.0.as_bytes(), other.0.as_bytes()).is_ok()
+        #[allow(deprecated)]
+        deprecated_constant_time::verify_slices_are_equal(self.0.as_bytes(), other.0.as_bytes())
+            .is_ok()
     }
 }
 
@@ -417,7 +421,12 @@ impl PartialEq for AuthenticationTokenHash {
         };
 
         // We attempt constant-time comparisons of the token data to mitigate timing attacks.
-        constant_time::verify_slices_are_equal(self_digest.as_ref(), other_digest.as_ref()).is_ok()
+        #[allow(deprecated)]
+        deprecated_constant_time::verify_slices_are_equal(
+            self_digest.as_ref(),
+            other_digest.as_ref(),
+        )
+        .is_ok()
     }
 }
 
