@@ -7,6 +7,7 @@ use crate::{
     config::TaskprovConfig,
 };
 use assert_matches::assert_matches;
+use aws_lc_rs::digest::{digest, SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{
@@ -55,7 +56,6 @@ use prio::{
     },
 };
 use rand::random;
-use ring::digest::{digest, SHA256};
 use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};

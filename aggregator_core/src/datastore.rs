@@ -17,6 +17,7 @@ use crate::{
     taskprov::PeerAggregator,
     SecretBytes,
 };
+use aws_lc_rs::aead::{self, LessSafeKey, AES_128_GCM};
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -42,7 +43,6 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -5941,8 +5941,8 @@ pub enum Error {
     TooManyRetries { source: Option<Box<Error>> },
 }
 
-impl From<ring::error::Unspecified> for Error {
-    fn from(_: ring::error::Unspecified) -> Self {
+impl From<aws_lc_rs::error::Unspecified> for Error {
+    fn from(_: aws_lc_rs::error::Unspecified) -> Self {
         Error::Crypt
     }
 }

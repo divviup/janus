@@ -5,6 +5,7 @@ use super::{
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
+use aws_lc_rs::digest::{digest, SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
@@ -25,7 +26,6 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::codec::Encode;
-use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, time::Duration as StdDuration};
 use std::{io::Cursor, sync::Arc};

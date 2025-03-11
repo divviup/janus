@@ -9,6 +9,7 @@ use crate::{
     },
     Config, ConnExt, Error,
 };
+use aws_lc_rs::digest::{digest, SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -24,7 +25,6 @@ use janus_messages::{
 };
 use querystring::querify;
 use rand::random;
-use ring::digest::{digest, SHA256};
 use std::{
     str::FromStr,
     sync::{Arc, OnceLock},

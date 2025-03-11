@@ -499,6 +499,7 @@ checksum = "f409eb70b561706bf8abba8ca9c112729c481595893fd06a2dd9af8ed8441148"
 dependencies = [
  "aws-lc-sys",
  "paste",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -2750,6 +2751,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
+ "aws-lc-rs",
  "backoff",
  "base64 0.22.1",
  "bytes",
@@ -2789,7 +2791,6 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
- "ring",
  "rstest",
  "rustc_version",
  "rustls",
@@ -2836,6 +2837,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
+ "aws-lc-rs",
  "base64 0.22.1",
  "educe",
  "futures",
@@ -2846,7 +2848,6 @@ dependencies = [
  "opentelemetry",
  "querystring",
  "rand 0.8.5",
- "ring",
  "rstest",
  "serde",
  "serde_json",
@@ -2869,6 +2870,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
+ "aws-lc-rs",
  "backoff",
  "base64 0.22.1",
  "bytes",
@@ -2894,7 +2896,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
- "ring",
  "rstest",
  "rstest_reuse",
  "rustc_version",
@@ -2975,6 +2976,7 @@ version = "0.7.54"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "aws-lc-rs",
  "backoff",
  "base64 0.22.1",
  "bytes",
@@ -2997,7 +2999,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
- "ring",
  "rstest",
  "rustls",
  "serde",
@@ -3087,7 +3088,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
- "ring",
  "serde",
  "serde_json",
  "testcontainers",
@@ -4681,7 +4681,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.15",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -4926,7 +4926,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -6593,6 +6593,12 @@ name = "unsafe-libyaml"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

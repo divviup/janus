@@ -23,6 +23,7 @@ test-util = [
 [dependencies]
 anyhow.workspace = true
 async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
@@ -47,7 +48,6 @@ prio = { workspace = true, features = ["experimental"] }
 rand = { workspace = true, features = ["min_const_gen"] }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-ring = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

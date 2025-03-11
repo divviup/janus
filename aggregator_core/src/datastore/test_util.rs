@@ -2,6 +2,7 @@ use crate::{
     datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
 };
+use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
@@ -11,7 +12,6 @@ use janus_core::{
 };
 use janus_messages::Time;
 use rand::{distributions::Standard, random, thread_rng, Rng};
-use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use sqlx::{
     migrate::{Migrate, Migrator},
     Connection, PgConnection,

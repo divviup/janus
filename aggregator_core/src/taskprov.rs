@@ -1,10 +1,10 @@
 use crate::{task::Error, SecretBytes};
+use aws_lc_rs::hkdf::{KeyType, Salt, HKDF_SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId};
 use rand::{distributions::Standard, prelude::Distribution};
-use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,

@@ -5,6 +5,7 @@ use crate::{
     trace::{install_trace_subscriber, TraceGuards},
 };
 use anyhow::{anyhow, Context, Result};
+use aws_lc_rs::aead::AES_128_GCM;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator_api::git_revision;
@@ -27,7 +28,6 @@ use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
 use prio::codec::Decode as _;
 use rand::{distributions::Standard, thread_rng, Rng};
-use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -748,6 +748,7 @@ mod tests {
             CommonConfig,
         },
     };
+    use aws_lc_rs::aead::{UnboundKey, AES_128_GCM};
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::CommandFactory;
     use janus_aggregator_core::{
@@ -768,7 +769,6 @@ mod tests {
     };
     use prio::codec::Decode;
     use rand::random;
-    use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
         io::Write,

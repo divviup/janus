@@ -1,14 +1,13 @@
 use anyhow::anyhow;
+use aws_lc_rs::{
+    constant_time,
+    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use educe::Educe;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
 use regex::Regex;
-#[allow(deprecated)]
-use ring::{
-    deprecated_constant_time,
-    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
-};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     str::{self, FromStr},
@@ -206,8 +205,7 @@ impl PartialEq for DapAuthToken {
         // that this function still leaks whether the lengths of the tokens are equal -- this is
         // acceptable because we expect the content of the tokens to provide enough randomness that
         // needs to be guessed even if the length is known.
-        #[allow(deprecated)]
-        deprecated_constant_time::verify_slices_are_equal(self.0.as_ref(), other.0.as_ref()).is_ok()
+        constant_time::verify_slices_are_equal(self.0.as_ref(), other.0.as_ref()).is_ok()
     }
 }
 
@@ -315,9 +313,7 @@ impl PartialEq for BearerToken {
         // that this function still leaks whether the lengths of the tokens are equal -- this is
         // acceptable because we expect the content of the tokens to provide enough randomness that
         // needs to be guessed even if the length is known.
-        #[allow(deprecated)]
-        deprecated_constant_time::verify_slices_are_equal(self.0.as_bytes(), other.0.as_bytes())
-            .is_ok()
+        constant_time::verify_slices_are_equal(self.0.as_bytes(), other.0.as_bytes()).is_ok()
     }
 }
 
@@ -421,12 +417,7 @@ impl PartialEq for AuthenticationTokenHash {
         };
 
         // We attempt constant-time comparisons of the token data to mitigate timing attacks.
-        #[allow(deprecated)]
-        deprecated_constant_time::verify_slices_are_equal(
-            self_digest.as_ref(),
-            other_digest.as_ref(),
-        )
-        .is_ok()
+        constant_time::verify_slices_are_equal(self_digest.as_ref(), other_digest.as_ref()).is_ok()
     }
 }
 
