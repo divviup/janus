@@ -1,7 +1,8 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use backoff::{backoff::Backoff, future::retry_notify, ExponentialBackoff, Notify};
+use anyhow::anyhow;
+use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::Future;
 use http::HeaderMap;
@@ -31,13 +32,13 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
 ///
 /// [1]: https://github.com/googleapis/gax-go/blob/fbaf9882acf3297573f3a7cb832e54c7d8f40635/v2/call_option.go#L120
 pub fn http_request_exponential_backoff() -> ExponentialBackoff {
-    ExponentialBackoff {
-        initial_interval: Duration::from_secs(1),
-        max_interval: Duration::from_secs(30),
-        multiplier: 2.0,
-        max_elapsed_time: Some(Duration::from_secs(600)),
-        ..Default::default()
-    }
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_secs(1))
+        .with_max_delay(Duration::from_secs(30))
+        .with_factor(2.0)
+        .with_jitter()
+        .with_max_times(10)
+        .build()
 }
 
 /// HttpResponse represents an HTTP response. It will typically be returned from
@@ -67,12 +68,7 @@ impl HttpResponse {
 }
 
 /// No-op implementation of [`Notify`]. Does nothing.
-// (Based on an implementation in `backoff`'s `retry.rs`, which is unfortunately private.)
-pub struct NoopNotify;
-
-impl<E> Notify<E> for NoopNotify {
-    fn notify(&mut self, _: E, _: Duration) {}
-}
+pub fn NoopNotify<E>(_: E, _: Duration) {}
 
 /// Executes the provided HTTP request function, retrying using the parameters in the provided
 /// `ExponentialBackoff` if the [`reqwest::Error`] returned by `request_fn` is:
@@ -140,19 +136,19 @@ where
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
-    notify: impl Notify<Result<HttpErrorResponse, reqwest::Error>>,
-    request_fn: impl Fn() -> ResultFuture,
+    notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
+    request_fn: impl FnMut() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
     fn check_reqwest_result<T>(
         rslt: Result<T, reqwest::Error>,
-    ) -> Result<T, backoff::Error<Result<HttpErrorResponse, reqwest::Error>>> {
+    ) -> Result<T, Result<reqwest::Response, reqwest::Error>> {
         rslt.map_err(|err| {
             if err.is_timeout() || err.is_connect() {
                 warn!(?err, "Encountered retryable network error");
-                return backoff::Error::transient(Err(err));
+                return Err(err);
             }
 
             if let Some(io_error) = find_io_error(&err) {
@@ -161,45 +157,88 @@ where
                 | std::io::ErrorKind::ConnectionAborted = io_error.kind()
                 {
                     warn!(?err, "Encountered retryable network error");
-                    return backoff::Error::transient(Err(err));
+                    return Err(err);
                 }
             }
 
             debug!("Encountered non-retryable network error");
-            backoff::Error::permanent(Err(err))
+            Err(err)
         })
     }
 
-    retry_notify(
-        backoff,
-        || async {
-            let response = check_reqwest_result(request_fn().await)?;
-            let status = response.status();
-            if status.is_server_error() || status.is_client_error() {
-                if is_retryable_http_status(status) {
-                    warn!(?response, "Encountered retryable HTTP error");
-                    return Err(backoff::Error::transient(Ok(
-                        HttpErrorResponse::from_response(response).await,
-                    )));
-                } else {
-                    warn!(?response, "Encountered non-retryable HTTP error");
-                    return Err(backoff::Error::permanent(Ok(
-                        HttpErrorResponse::from_response(response).await,
-                    )));
-                }
-            }
-            let headers = response.headers().clone();
-            let body = check_reqwest_result(response.bytes().await)?;
+    async fn execute<ResultFuture>(
+        mut request_fn: impl FnMut() -> ResultFuture,
+    ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
+    where
+        ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
+    {
+        let response = request_fn().await.map_err(|e| Err(e))?;
+        let status = response.status();
 
-            Ok(HttpResponse {
-                status,
-                headers,
-                body,
-            })
-        },
-        notify,
-    )
-    .await
+        if status.is_server_error() || status.is_client_error() {
+            response.error_for_status_ref().map_err(|e| Err(e))?;
+        }
+        let headers = response.headers().clone();
+        let body = response.bytes().await?;
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    (|| async { execute(request_fn).await })
+        .retry(backoff)
+        .when(is_retryable_result)
+        .await
+        .map_err(|e| async {
+            match e {
+                Ok(resp) => Ok(HttpErrorResponse::from_response(resp).await),
+                Err(err) => Err(err),
+            }
+        })
+    // .notify(notify)
+}
+
+fn is_retryable_error(err: &reqwest::Error) -> bool {
+    if err.is_timeout() || err.is_connect() {
+        warn!(?err, "Encountered retryable network error");
+        return true;
+    }
+
+    if let Some(status) = err.status() {
+        err.res
+        if is_retryable_http_status(status) {
+            warn!(?response, "Encountered retryable HTTP error");
+            return true;
+        } else {
+            warn!(?response, "Encountered non-retryable HTTP error");
+            return false;
+        }
+    }
+
+    if let Some(io_error) = find_io_error(&err) {
+        if let std::io::ErrorKind::ConnectionRefused
+        | std::io::ErrorKind::ConnectionReset
+        | std::io::ErrorKind::ConnectionAborted = io_error.kind()
+        {
+            warn!(?err, "Encountered retryable network error");
+            return true;
+        }
+    }
+    debug!("Encountered non-retryable network error");
+    false
+}
+
+fn is_retryable_response(response: &reqwest::Response) -> bool {
+    let status = response.status();
+}
+
+fn is_retryable_result(res: &Result<reqwest::Response, reqwest::Error>) -> bool {
+    match res {
+        Err(err) => is_retryable_error(err),
+        Ok(resp) => is_retryable_response(resp),
+    }
 }
 
 pub fn is_retryable_http_status(status: StatusCode) -> bool {
@@ -214,48 +253,32 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use backoff::{backoff::Backoff, ExponentialBackoff};
+    use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
     use std::time::Duration;
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
     pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
-        ExponentialBackoff {
-            initial_interval: Duration::from_nanos(1),
-            max_interval: Duration::from_nanos(30),
-            multiplier: 2.0,
-            max_elapsed_time: Some(Duration::from_millis(100)),
-            ..Default::default()
-        }
+        ExponentialBuilder::default()
+            .with_jitter()
+            .with_min_delay(Duration::from_nanos(1))
+            .with_max_delay(Duration::from_nanos(30))
+            .with_factor(2.0)
+            .with_max_times(5)
+            .build()
     }
 
     /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
     #[derive(Clone)]
-    pub struct LimitedRetryer {
-        retries: u64,
-        max_retries: u64,
-    }
+    pub struct LimitedRetryer {}
 
     impl LimitedRetryer {
-        pub fn new(max_retries: u64) -> Self {
-            Self {
-                retries: 0,
-                max_retries,
+        pub fn new(max_retries: u64) -> impl Backoff {
+            let mut retryer_vec = Vec::new();
+            for _ in 0..max_retries {
+                retryer_vec.push(Duration::ZERO)
             }
-        }
-    }
-
-    impl Backoff for LimitedRetryer {
-        fn next_backoff(&mut self) -> Option<Duration> {
-            if self.retries >= self.max_retries {
-                return None;
-            }
-            self.retries += 1;
-            Some(Duration::ZERO)
-        }
-
-        fn reset(&mut self) {
-            self.retries = 0
+            retryer_vec.into_iter().build()
         }
     }
 }
