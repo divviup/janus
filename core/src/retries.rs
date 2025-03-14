@@ -67,6 +67,41 @@ impl HttpResponse {
     }
 }
 
+#[derive(Debug)]
+struct HttpRetryError {
+    result: Result<HttpErrorResponse, reqwest::Error>,
+    retryable: bool,
+}
+
+impl HttpRetryError {
+    fn retryable_error(err: reqwest::Error) -> HttpRetryError {
+        HttpRetryError {
+            result: Err(err),
+            retryable: true,
+        }
+    }
+    fn fatal_error(err: reqwest::Error) -> HttpRetryError {
+        HttpRetryError {
+            result: Err(err),
+            retryable: false,
+        }
+    }
+
+    async fn retryable_response(resp: reqwest::Response) -> HttpRetryError {
+        HttpRetryError {
+            result: Ok(HttpErrorResponse::from_response(resp).await),
+            retryable: true,
+        }
+    }
+
+    async fn fatal_response(resp: reqwest::Response) -> HttpRetryError {
+        HttpRetryError {
+            result: Ok(HttpErrorResponse::from_response(resp).await),
+            retryable: false,
+        }
+    }
+}
+
 /// No-op implementation of [`Notify`]. Does nothing.
 pub fn NoopNotify<E>(_: E, _: Duration) {}
 
@@ -97,7 +132,7 @@ pub fn NoopNotify<E>(_: E, _: Duration) {}
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request<ResultFuture>(
     backoff: impl Backoff,
-    request_fn: impl Fn() -> ResultFuture,
+    request_fn: impl FnMut() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
@@ -137,18 +172,16 @@ where
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
     notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
-    request_fn: impl FnMut() -> ResultFuture,
+    mut request_fn: impl FnMut() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
-    fn check_reqwest_result<T>(
-        rslt: Result<T, reqwest::Error>,
-    ) -> Result<T, Result<reqwest::Response, reqwest::Error>> {
+    fn check_reqwest_result<T>(rslt: Result<T, reqwest::Error>) -> Result<T, HttpRetryError> {
         rslt.map_err(|err| {
             if err.is_timeout() || err.is_connect() {
                 warn!(?err, "Encountered retryable network error");
-                return Err(err);
+                return HttpRetryError::retryable_error(err);
             }
 
             if let Some(io_error) = find_io_error(&err) {
@@ -157,29 +190,35 @@ where
                 | std::io::ErrorKind::ConnectionAborted = io_error.kind()
                 {
                     warn!(?err, "Encountered retryable network error");
-                    return Err(err);
+                    return HttpRetryError::retryable_error(err);
                 }
             }
 
             debug!("Encountered non-retryable network error");
-            Err(err)
+            HttpRetryError::fatal_error(err)
         })
     }
 
     async fn execute<ResultFuture>(
-        mut request_fn: impl FnMut() -> ResultFuture,
-    ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
+        request_fn: &mut impl FnMut() -> ResultFuture,
+    ) -> Result<HttpResponse, HttpRetryError>
     where
         ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
     {
-        let response = request_fn().await.map_err(|e| Err(e))?;
+        let response = check_reqwest_result(request_fn().await)?;
         let status = response.status();
 
         if status.is_server_error() || status.is_client_error() {
-            response.error_for_status_ref().map_err(|e| Err(e))?;
+            if is_retryable_http_status(status) {
+                warn!(?response, "Encountered retryable HTTP error");
+                return Err(HttpRetryError::retryable_response(response).await);
+            } else {
+                warn!(?response, "Encountered non-retryable HTTP error");
+                return Err(HttpRetryError::fatal_response(response).await);
+            }
         }
         let headers = response.headers().clone();
-        let body = response.bytes().await?;
+        let body = check_reqwest_result(response.bytes().await)?;
         Ok(HttpResponse {
             status,
             headers,
@@ -187,58 +226,17 @@ where
         })
     }
 
-    (|| async { execute(request_fn).await })
+    let content = (|| async { execute(&mut request_fn).await })
         .retry(backoff)
         .when(is_retryable_result)
         .await
-        .map_err(|e| async {
-            match e {
-                Ok(resp) => Ok(HttpErrorResponse::from_response(resp).await),
-                Err(err) => Err(err),
-            }
-        })
+        .map_err(|e| e.result);
     // .notify(notify)
+    content
 }
 
-fn is_retryable_error(err: &reqwest::Error) -> bool {
-    if err.is_timeout() || err.is_connect() {
-        warn!(?err, "Encountered retryable network error");
-        return true;
-    }
-
-    if let Some(status) = err.status() {
-        err.res
-        if is_retryable_http_status(status) {
-            warn!(?response, "Encountered retryable HTTP error");
-            return true;
-        } else {
-            warn!(?response, "Encountered non-retryable HTTP error");
-            return false;
-        }
-    }
-
-    if let Some(io_error) = find_io_error(&err) {
-        if let std::io::ErrorKind::ConnectionRefused
-        | std::io::ErrorKind::ConnectionReset
-        | std::io::ErrorKind::ConnectionAborted = io_error.kind()
-        {
-            warn!(?err, "Encountered retryable network error");
-            return true;
-        }
-    }
-    debug!("Encountered non-retryable network error");
-    false
-}
-
-fn is_retryable_response(response: &reqwest::Response) -> bool {
-    let status = response.status();
-}
-
-fn is_retryable_result(res: &Result<reqwest::Response, reqwest::Error>) -> bool {
-    match res {
-        Err(err) => is_retryable_error(err),
-        Ok(resp) => is_retryable_response(resp),
-    }
+fn is_retryable_result(retryerror: &HttpRetryError) -> bool {
+    retryerror.retryable
 }
 
 pub fn is_retryable_http_status(status: StatusCode) -> bool {
