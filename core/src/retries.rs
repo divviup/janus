@@ -171,7 +171,7 @@ where
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
-    notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
+    mut notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
     mut request_fn: impl FnMut() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
@@ -229,9 +229,9 @@ where
     let content = (|| async { execute(&mut request_fn).await })
         .retry(backoff)
         .when(is_retryable_result)
+        .notify(|e, d| notify(&e.result, d))
         .await
         .map_err(|e| e.result);
-    // .notify(notify)
     content
 }
 
