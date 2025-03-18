@@ -11,10 +11,6 @@ ignore = [
     # `instant` is unmaintained, but it is feature-complete and small, so it is unlikely to have
     # bugs or security vulnerabilities.
     "RUSTSEC-2024-0384",
-
-    # Use of `derivative` has been removed from production code. It still exists as transitive
-    # dependency on integration_tests.
-    "RUSTSEC-2024-0388"
 ]
 
 [bans]

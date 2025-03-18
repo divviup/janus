@@ -1351,17 +1351,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1428,7 +1417,7 @@ checksum = "29ff1e7ce34595633b7da26cd617c0f48c48bb7b0f000d05a0cc73b4788c1016"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.43",
+ "janus_messages 0.7.55",
  "log",
  "num-bigint",
  "num-rational",
@@ -3075,19 +3064,19 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.43"
+version = "0.7.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "849928487588a01e92a7b59099ff60d4eb9ec1627c6878667a86bbf033cf3efa"
+checksum = "05ea151826d3dfa95391502d64e847b747a66500dd9d669a823bd0c55e91f331"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "derivative",
+ "educe",
  "hex",
  "num_enum",
  "prio 0.16.7",
  "rand 0.8.5",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "url",
 ]
 
