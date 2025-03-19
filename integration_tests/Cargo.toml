@@ -53,6 +53,9 @@ opentelemetry.workspace = true
 quickcheck.workspace = true
 regex.workspace = true
 rstest.workspace = true
+# This crate does not actually depend on rustls-webpki, but we need to make sure
+# feature std is enabled. See Janus issue #3744.
+rustls-webpki = { version = "0.102.8", features = ["std"] }
 tempfile = { workspace = true }
 tracing.workspace = true
 trillium.workspace = true
