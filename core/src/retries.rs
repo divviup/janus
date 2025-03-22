@@ -1,10 +1,12 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use anyhow::anyhow;
-use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
+use backon::{
+    Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable,
+    RetryableWithContext,
+};
 use bytes::Bytes;
-use futures::Future;
+use futures::future::{BoxFuture, Future};
 use http::HeaderMap;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
@@ -137,8 +139,75 @@ pub async fn retry_http_request<ResultFuture>(
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
-    retry_http_request_notify(backoff, NoopNotify, request_fn).await
+    // retry_http_request_notify(backoff, NoopNotify, request_fn).await
+    !unimplemented!()
 }
+
+// struct RequestExecutor
+// where
+//     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
+// {
+//     request_fn: Box<dyn FnMut() -> ResultFuture>,
+// }
+
+// impl RequestExecutor
+// where
+//     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
+// {
+//     fn new<F>(request_fn: fn() -> F) -> Self
+//     where
+//         F: Future<Output = R> + Send + 'static,
+//     {
+//         Self {
+//             request_fn: Box::new(move || Box::pin(request_fn)),
+//         }
+//     }
+
+//     fn check_reqwest_result<T>(rslt: Result<T, reqwest::Error>) -> Result<T, HttpRetryError> {
+//         rslt.map_err(|err| {
+//             if err.is_timeout() || err.is_connect() {
+//                 warn!(?err, "Encountered retryable network error");
+//                 return HttpRetryError::retryable_error(err);
+//             }
+
+//             if let Some(io_error) = find_io_error(&err) {
+//                 if let std::io::ErrorKind::ConnectionRefused
+//                 | std::io::ErrorKind::ConnectionReset
+//                 | std::io::ErrorKind::ConnectionAborted = io_error.kind()
+//                 {
+//                     warn!(?err, "Encountered retryable network error");
+//                     return HttpRetryError::retryable_error(err);
+//                 }
+//             }
+
+//             debug!("Encountered non-retryable network error");
+//             HttpRetryError::fatal_error(err)
+//         })
+//     }
+
+//     async fn run(&mut self) -> Result<HttpResponse, HttpRetryError> {
+//         let result = (self.request_fn)().await;
+//         let response = Self::check_reqwest_result(result)?;
+//         let status = response.status();
+
+//         if status.is_server_error() || status.is_client_error() {
+//             if is_retryable_http_status(status) {
+//                 warn!(?response, "Encountered retryable HTTP error");
+//                 return Err(HttpRetryError::retryable_response(response).await);
+//             } else {
+//                 warn!(?response, "Encountered non-retryable HTTP error");
+//                 return Err(HttpRetryError::fatal_response(response).await);
+//             }
+//         }
+//         let headers = response.headers().clone();
+//         let body = Self::check_reqwest_result(response.bytes().await)?;
+//         Ok(HttpResponse {
+//             status,
+//             headers,
+//             body,
+//         })
+//     }
+// }
 
 /// Executes the provided HTTP request function, retrying using the parameters in the provided
 /// `ExponentialBackoff` if the [`reqwest::Error`] returned by `request_fn` is:
@@ -172,7 +241,7 @@ where
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
     mut notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
-    mut request_fn: impl FnMut() -> ResultFuture,
+    request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
@@ -199,15 +268,9 @@ where
         })
     }
 
-    async fn execute<ResultFuture>(
-        request_fn: &mut impl FnMut() -> ResultFuture,
-    ) -> Result<HttpResponse, HttpRetryError>
-    where
-        ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
-    {
+    let content = (|| async {
         let response = check_reqwest_result(request_fn().await)?;
         let status = response.status();
-
         if status.is_server_error() || status.is_client_error() {
             if is_retryable_http_status(status) {
                 warn!(?response, "Encountered retryable HTTP error");
@@ -219,20 +282,44 @@ where
         }
         let headers = response.headers().clone();
         let body = check_reqwest_result(response.bytes().await)?;
+
         Ok(HttpResponse {
             status,
             headers,
             body,
         })
-    }
-
-    let content = (|| async { execute(&mut request_fn).await })
-        .retry(backoff)
-        .when(is_retryable_result)
-        .notify(|e, d| notify(&e.result, d))
-        .await
-        .map_err(|e| e.result);
+    })
+    .retry(backoff)
+    .when(is_retryable_result)
+    .notify(|e, d| notify(&e.result, d))
+    .await
+    .map_err(|e| e.result);
     content
+
+    // let content = execute(&mut request_fn)
+    // let content = {
+    //     // |&mut x: dyn FnMut() -> Result<HttpResponse, HttpRetryError>| async {
+    //     || async {
+    //         x();
+    //         Ok(HttpResponse {
+    //             status: StatusCode::NOT_ACCEPTABLE,
+    //             headers: HeaderMap::new(),
+    //             body: vec![0].into(),
+    //         })
+    //     }
+    // }
+    // let mut executor = RequestExecutor::new(request_fn);
+    // let content = executor
+    // .run()
+
+    // let content = (move |x| async { x.run() })
+    //     .retry(backoff)
+    //     .context(request_fn)
+    //     .when(is_retryable_result)
+    //     .notify(|e, d| notify(&e.result, d))
+    //     .await
+    //     .map_err(|e| e.result);
+    // content
 }
 
 fn is_retryable_result(retryerror: &HttpRetryError) -> bool {
