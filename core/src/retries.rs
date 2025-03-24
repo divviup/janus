@@ -1,12 +1,9 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use backon::{
-    Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable,
-    RetryableWithContext,
-};
+use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
-use futures::future::{BoxFuture, Future};
+use futures::future::Future;
 use http::HeaderMap;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
@@ -69,6 +66,11 @@ impl HttpResponse {
     }
 }
 
+/// HttpRetryError represents both an HTTP error and whether that error is
+/// retryable. The result field can be either a problem doc
+/// (`HttpErrorResponse`) or a direct error from `reqwest`. Since there are
+/// error conditions from both which are retryable, a separate boolean tracks
+/// that.
 #[derive(Debug)]
 struct HttpRetryError {
     result: Result<HttpErrorResponse, reqwest::Error>,
@@ -104,9 +106,6 @@ impl HttpRetryError {
     }
 }
 
-/// No-op implementation of [`Notify`]. Does nothing.
-pub fn NoopNotify<E>(_: E, _: Duration) {}
-
 /// Executes the provided HTTP request function, retrying using the parameters in the provided
 /// `ExponentialBackoff` if the [`reqwest::Error`] returned by `request_fn` is:
 ///
@@ -134,80 +133,13 @@ pub fn NoopNotify<E>(_: E, _: Duration) {}
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request<ResultFuture>(
     backoff: impl Backoff,
-    request_fn: impl FnMut() -> ResultFuture,
+    request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
-    // retry_http_request_notify(backoff, NoopNotify, request_fn).await
-    !unimplemented!()
+    retry_http_request_notify(backoff, |_, _| {}, request_fn).await
 }
-
-// struct RequestExecutor
-// where
-//     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
-// {
-//     request_fn: Box<dyn FnMut() -> ResultFuture>,
-// }
-
-// impl RequestExecutor
-// where
-//     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
-// {
-//     fn new<F>(request_fn: fn() -> F) -> Self
-//     where
-//         F: Future<Output = R> + Send + 'static,
-//     {
-//         Self {
-//             request_fn: Box::new(move || Box::pin(request_fn)),
-//         }
-//     }
-
-//     fn check_reqwest_result<T>(rslt: Result<T, reqwest::Error>) -> Result<T, HttpRetryError> {
-//         rslt.map_err(|err| {
-//             if err.is_timeout() || err.is_connect() {
-//                 warn!(?err, "Encountered retryable network error");
-//                 return HttpRetryError::retryable_error(err);
-//             }
-
-//             if let Some(io_error) = find_io_error(&err) {
-//                 if let std::io::ErrorKind::ConnectionRefused
-//                 | std::io::ErrorKind::ConnectionReset
-//                 | std::io::ErrorKind::ConnectionAborted = io_error.kind()
-//                 {
-//                     warn!(?err, "Encountered retryable network error");
-//                     return HttpRetryError::retryable_error(err);
-//                 }
-//             }
-
-//             debug!("Encountered non-retryable network error");
-//             HttpRetryError::fatal_error(err)
-//         })
-//     }
-
-//     async fn run(&mut self) -> Result<HttpResponse, HttpRetryError> {
-//         let result = (self.request_fn)().await;
-//         let response = Self::check_reqwest_result(result)?;
-//         let status = response.status();
-
-//         if status.is_server_error() || status.is_client_error() {
-//             if is_retryable_http_status(status) {
-//                 warn!(?response, "Encountered retryable HTTP error");
-//                 return Err(HttpRetryError::retryable_response(response).await);
-//             } else {
-//                 warn!(?response, "Encountered non-retryable HTTP error");
-//                 return Err(HttpRetryError::fatal_response(response).await);
-//             }
-//         }
-//         let headers = response.headers().clone();
-//         let body = Self::check_reqwest_result(response.bytes().await)?;
-//         Ok(HttpResponse {
-//             status,
-//             headers,
-//             body,
-//         })
-//     }
-// }
 
 /// Executes the provided HTTP request function, retrying using the parameters in the provided
 /// `ExponentialBackoff` if the [`reqwest::Error`] returned by `request_fn` is:
@@ -240,7 +172,7 @@ where
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
-    mut notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
+    notify: impl Fn(&Result<HttpErrorResponse, reqwest::Error>, Duration),
     request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
@@ -268,7 +200,7 @@ where
         })
     }
 
-    let content = (|| async {
+    (|| async {
         let response = check_reqwest_result(request_fn().await)?;
         let status = response.status();
         if status.is_server_error() || status.is_client_error() {
@@ -290,40 +222,10 @@ where
         })
     })
     .retry(backoff)
-    .when(is_retryable_result)
+    .when(|e| e.retryable)
     .notify(|e, d| notify(&e.result, d))
     .await
-    .map_err(|e| e.result);
-    content
-
-    // let content = execute(&mut request_fn)
-    // let content = {
-    //     // |&mut x: dyn FnMut() -> Result<HttpResponse, HttpRetryError>| async {
-    //     || async {
-    //         x();
-    //         Ok(HttpResponse {
-    //             status: StatusCode::NOT_ACCEPTABLE,
-    //             headers: HeaderMap::new(),
-    //             body: vec![0].into(),
-    //         })
-    //     }
-    // }
-    // let mut executor = RequestExecutor::new(request_fn);
-    // let content = executor
-    // .run()
-
-    // let content = (move |x| async { x.run() })
-    //     .retry(backoff)
-    //     .context(request_fn)
-    //     .when(is_retryable_result)
-    //     .notify(|e, d| notify(&e.result, d))
-    //     .await
-    //     .map_err(|e| e.result);
-    // content
-}
-
-fn is_retryable_result(retryerror: &HttpRetryError) -> bool {
-    retryerror.retryable
+    .map_err(|e| e.result)
 }
 
 pub fn is_retryable_http_status(status: StatusCode) -> bool {
@@ -358,7 +260,7 @@ pub mod test_util {
     pub struct LimitedRetryer {}
 
     impl LimitedRetryer {
-        pub fn new(max_retries: u64) -> impl Backoff {
+        pub fn build(max_retries: u64) -> impl Backoff {
             let mut retryer_vec = Vec::new();
             for _ in 0..max_retries {
                 retryer_vec.push(Duration::ZERO)
@@ -374,23 +276,11 @@ mod tests {
         retries::{retry_http_request, retry_http_request_notify, test_util::LimitedRetryer},
         test_util::install_test_trace_subscriber,
     };
-    use backoff::Notify;
     use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
     use reqwest::StatusCode;
     use std::time::Duration;
     use tokio::net::TcpListener;
     use url::Url;
-
-    #[derive(Default)]
-    struct NotifyCounter {
-        count: u64,
-    }
-
-    impl<E> Notify<E> for &mut NotifyCounter {
-        fn notify(&mut self, _: E, _: Duration) {
-            self.count += 1;
-        }
-    }
 
     #[tokio::test]
     async fn http_retry_client_error() {
@@ -410,15 +300,19 @@ mod tests {
 
         // HTTP 404 should cause the client to give up after a single attempt, and the caller should
         // get `Err(Ok(HttpErrorResponse))`.
-        let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
-            http_client.get(server.url()).send().await
-        })
+        let mut notify_count = 0;
+        let response = retry_http_request_notify(
+            LimitedRetryer::build(10),
+            |_, _| {
+                notify_count += 1;
+            },
+            || async { http_client.get(server.url()).send().await },
+        )
         .await
         .unwrap_err()
         .unwrap();
 
-        assert_eq!(notify.count, 0);
+        assert_eq!(notify_count, 0);
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         mock_404.assert_async().await;
     }
@@ -443,12 +337,13 @@ mod tests {
         // an `HttpErrorResponse` so they can examine the error, which you can't get from a
         // `reqwest::Error`.
         let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
-            http_client.get(server.url()).send().await
-        })
-        .await
-        .unwrap_err()
-        .unwrap();
+        let response =
+            retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
+                http_client.get(server.url()).send().await
+            })
+            .await
+            .unwrap_err()
+            .unwrap();
 
         // We check only that retries occurred, not the specific number of retries, because the
         // number of retries is nondeterministic.
@@ -472,12 +367,13 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
-            http_client.get(server.url()).send().await
-        })
-        .await
-        .unwrap_err()
-        .unwrap();
+        let response =
+            retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
+                http_client.get(server.url()).send().await
+            })
+            .await
+            .unwrap_err()
+            .unwrap();
 
         assert_eq!(notify.count, 0);
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
@@ -505,7 +401,7 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         let mut notify = NotifyCounter::default();
-        retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
+        retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
             http_client.get(server.url()).send().await
         })
         .await
@@ -539,7 +435,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = retry_http_request(LimitedRetryer::new(0), || async {
+        let err = retry_http_request(LimitedRetryer::build(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -584,7 +480,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        retry_http_request(LimitedRetryer::new(0), || async {
+        retry_http_request(LimitedRetryer::build(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -611,7 +507,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::new(0), || async {
+        let response = retry_http_request(LimitedRetryer::build(0), || async {
             http_client.get(server.url()).send().await
         })
         .await
@@ -647,7 +543,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::new(0), || async {
+        let response = retry_http_request(LimitedRetryer::build(0), || async {
             http_client.get(server.url()).send().await
         })
         .await
