@@ -33,7 +33,7 @@ use aws_lc_rs::{
     rand::SystemRandom,
     signature::{EcdsaKeyPair, Signature},
 };
-use backoff::{backoff::Backoff, Notify};
+use backon::Backoff;
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{

@@ -1,7 +1,7 @@
 //! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backon::ExponentialBuilder;
 use educe::Educe;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -167,7 +167,7 @@ pub struct TaskprovConfig {
 /// maximum_attempts_before_failure: 5
 /// retry_initial_interval_ms: 1000
 /// retry_max_interval_ms: 30000
-/// retry_max_elapsed_time_ms: 300000
+/// max_retries: 10
 /// "#;
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -224,22 +224,20 @@ pub struct JobDriverConfig {
         alias = "retry_max_interval_millis"
     )]
     pub retry_max_interval_ms: u64,
-    /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
-    /// HTTP request.
+    /// The retries on a retryable HTTP request.
     #[serde(
-        default = "JobDriverConfig::default_retry_max_elapsed_time_ms",
-        alias = "retry_max_elapsed_time_millis"
+        default = "JobDriverConfig::default_max_retries",
+        alias = "max_retries"
     )]
-    pub retry_max_elapsed_time_ms: u64,
+    pub max_retries: u64,
 }
 
 impl JobDriverConfig {
-    pub fn retry_config(&self) -> ExponentialBackoff {
-        ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(self.retry_initial_interval_ms))
-            .with_max_interval(Duration::from_millis(self.retry_max_interval_ms))
-            .with_max_elapsed_time(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
-            .build()
+    pub fn retry_config(&self) -> ExponentialBuilder {
+        ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(self.retry_initial_interval_ms))
+            .with_max_delay(Duration::from_millis(self.retry_max_interval_ms))
+            .with_max_times(self.max_retries)
     }
 
     fn default_http_connection_timeout_s() -> u64 {
@@ -258,8 +256,8 @@ impl JobDriverConfig {
         30_000
     }
 
-    fn default_retry_max_elapsed_time_ms() -> u64 {
-        300_000
+    fn default_max_retries() -> u64 {
+        10
     }
 }
 
@@ -382,7 +380,7 @@ connection_pool_max_size: 42",
             http_request_timeout_s: 30,
             retry_initial_interval_ms: 1000,
             retry_max_interval_ms: 30_000,
-            retry_max_elapsed_time_ms: 300_000,
+            max_retries: 10,
         })
     }
 

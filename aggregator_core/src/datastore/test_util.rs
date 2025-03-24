@@ -3,7 +3,7 @@ use crate::{
     test_util::noop_meter,
 };
 use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use backoff::{future::retry, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
 use janus_core::{
@@ -370,24 +370,17 @@ impl EphemeralDatastoreBuilder {
         //
         // Since this is the first connection we're establishing since the container has been created,
         // retry this a few times. The database may not be ready yet.
-        let backoff = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(500))
-            .with_max_interval(Duration::from_millis(500))
-            .with_max_elapsed_time(Some(Duration::from_secs(5)))
+
+        let backoff = ConstantBuilder::default()
+            .with_delay(Duration::from_millis(500))
+            .with_max_times(10)
             .build();
-        let (client, conn) = retry(backoff, || {
-            let connection_string = db.connection_string("postgres");
-            async move {
-                connect(&connection_string, NoTls)
-                    .await
-                    .map_err(|err| backoff::Error::Transient {
-                        err,
-                        retry_after: None,
-                    })
-            }
-        })
-        .await
-        .unwrap();
+
+        let connection_string = db.connection_string("postgres");
+        let (client, conn) = (|| connect(&connection_string, NoTls))
+            .retry(backoff)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
         client
