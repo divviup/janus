@@ -172,7 +172,7 @@ where
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
-    notify: impl Fn(&Result<HttpErrorResponse, reqwest::Error>, Duration),
+    mut notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
     request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
@@ -336,18 +336,21 @@ mod tests {
         // We expect to eventually give up in the face of repeated HTTP 500, but the caller expects
         // an `HttpErrorResponse` so they can examine the error, which you can't get from a
         // `reqwest::Error`.
-        let mut notify = NotifyCounter::default();
-        let response =
-            retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
-                http_client.get(server.url()).send().await
-            })
-            .await
-            .unwrap_err()
-            .unwrap();
+        let mut notify_count = 0;
+        let response = retry_http_request_notify(
+            LimitedRetryer::build(10),
+            |_, _| {
+                notify_count += 1;
+            },
+            || async { http_client.get(server.url()).send().await },
+        )
+        .await
+        .unwrap_err()
+        .unwrap();
 
         // We check only that retries occurred, not the specific number of retries, because the
         // number of retries is nondeterministic.
-        assert_eq!(notify.count, 10);
+        assert_eq!(notify_count, 10);
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         mock_500.assert_async().await;
     }
@@ -366,16 +369,19 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let mut notify = NotifyCounter::default();
-        let response =
-            retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
-                http_client.get(server.url()).send().await
-            })
-            .await
-            .unwrap_err()
-            .unwrap();
+        let mut notify_count = 0;
+        let response = retry_http_request_notify(
+            LimitedRetryer::build(10),
+            |_, _| {
+                notify_count += 1;
+            },
+            || async { http_client.get(server.url()).send().await },
+        )
+        .await
+        .unwrap_err()
+        .unwrap();
 
-        assert_eq!(notify.count, 0);
+        assert_eq!(notify_count, 0);
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
         mock_501.assert_async().await;
     }
@@ -400,14 +406,18 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let mut notify = NotifyCounter::default();
-        retry_http_request_notify(LimitedRetryer::build(10), &mut notify, || async {
-            http_client.get(server.url()).send().await
-        })
+        let mut notify_count = 0;
+        retry_http_request_notify(
+            LimitedRetryer::build(10),
+            |_, _| {
+                notify_count += 1;
+            },
+            || async { http_client.get(server.url()).send().await },
+        )
         .await
         .unwrap();
 
-        assert_eq!(notify.count, 2);
+        assert_eq!(notify_count, 2);
         mock_200.assert_async().await;
         mock_500.assert_async().await;
     }
