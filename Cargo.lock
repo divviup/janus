@@ -3010,7 +3010,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rstest",
- "rustls-webpki 0.102.8",
+ "rustls-webpki 0.103.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -3307,7 +3307,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -4869,7 +4869,6 @@ version = "0.102.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
- "ring",
  "rustls-pki-types",
  "untrusted 0.9.0",
 ]
