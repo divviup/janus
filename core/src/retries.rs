@@ -1,7 +1,7 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
+use backon::{Backoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::future::Future;
 use http::HeaderMap;
@@ -30,14 +30,13 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
 /// matter.
 ///
 /// [1]: https://github.com/googleapis/gax-go/blob/fbaf9882acf3297573f3a7cb832e54c7d8f40635/v2/call_option.go#L120
-pub fn http_request_exponential_backoff() -> ExponentialBackoff {
+pub fn http_request_exponential_backoff() -> ExponentialBuilder {
     ExponentialBuilder::default()
         .with_min_delay(Duration::from_secs(1))
         .with_max_delay(Duration::from_secs(30))
         .with_factor(2.0)
         .with_jitter()
         .with_max_times(10)
-        .build()
 }
 
 /// HttpResponse represents an HTTP response. It will typically be returned from
@@ -240,19 +239,18 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
+    use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
     use std::time::Duration;
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
-    pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
+    pub fn test_http_request_exponential_backoff() -> ExponentialBuilder {
         ExponentialBuilder::default()
             .with_jitter()
             .with_min_delay(Duration::from_nanos(1))
             .with_max_delay(Duration::from_nanos(30))
             .with_factor(2.0)
             .with_max_times(5)
-            .build()
     }
 
     /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
