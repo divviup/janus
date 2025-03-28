@@ -588,7 +588,7 @@ pub mod test_util {
             .with_delay(Duration::from_millis(250))
             .with_max_times(30 * 4);
 
-        (|| async {
+        let _ = (|| async {
             (|| async { http_client.post(url.clone()).send().await })
                 .retry(backoff.build())
                 .await
@@ -612,7 +612,7 @@ pub mod test_util {
             .with_delay(Duration::from_millis(250))
             .with_max_times(30 * 4);
 
-        (|| async { http_client.get(url.clone()).send().await })
+        let _ = (|| async { http_client.get(url.clone()).send().await })
             .retry(backoff.build())
             .await;
     }
