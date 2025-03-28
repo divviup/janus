@@ -10,8 +10,8 @@ use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
 use janus_collector::{
-    default_http_client, AuthenticationToken, BackoffBuilder, Collection, CollectionJob, Collector,
-    ExponentialBackoff, ExponentialBuilder, PollResult, PrivateCollectorCredential,
+    default_http_client, AuthenticationToken, Collection, CollectionJob, Collector,
+    ExponentialBuilder, PollResult, PrivateCollectorCredential,
 };
 use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{

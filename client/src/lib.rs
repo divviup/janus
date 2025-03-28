@@ -373,7 +373,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         #[cfg(feature = "ohttp")]
         let ohttp_config = if let Some(ohttp_config) = self.ohttp_config {
             let key_configs = ohttp_key_configs(
-                self.parameters.http_request_retry_parameters.clone(),
+                self.parameters.http_request_retry_parameters,
                 &ohttp_config,
                 &http_client,
             )
