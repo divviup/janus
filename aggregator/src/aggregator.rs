@@ -33,7 +33,7 @@ use aws_lc_rs::{
     rand::SystemRandom,
     signature::{EcdsaKeyPair, Signature},
 };
-use backon::Backoff;
+use backon::BackoffBuilder;
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
@@ -3612,12 +3612,6 @@ impl<'a> RequestTimer<'a> {
     }
 }
 
-impl<E> Notify<E> for &RequestTimer<'_> {
-    fn notify(&mut self, _: E, _: std::time::Duration) {
-        self.finish_attempt("error")
-    }
-}
-
 /// Convenience method to perform an HTTP request to the helper. This includes common
 /// metrics and error handling functionality.
 #[tracing::instrument(
@@ -3634,7 +3628,7 @@ impl<E> Notify<E> for &RequestTimer<'_> {
 )]
 async fn send_request_to_helper(
     http_client: &Client,
-    backoff: impl Backoff,
+    backoff: impl BackoffBuilder,
     method: Method,
     url: Url,
     route_label: &'static str,
@@ -3652,18 +3646,22 @@ async fn send_request_to_helper(
         method_str,
     );
 
-    let result = retry_http_request_notify(backoff, &timer, || async {
-        timer.start_attempt();
-        let mut request = http_client
-            .request(method.clone(), url.clone())
-            .header(auth_header, auth_value.as_str());
-        if let Some(request_body) = request_body.clone() {
-            request = request
-                .header(CONTENT_TYPE, request_body.content_type)
-                .body(request_body.body)
-        };
-        request.send().await
-    })
+    let result = retry_http_request_notify(
+        backoff.build(),
+        |_, _| timer.finish_attempt("error"),
+        || async {
+            timer.start_attempt();
+            let mut request = http_client
+                .request(method.clone(), url.clone())
+                .header(auth_header, auth_value.as_str());
+            if let Some(request_body) = request_body.clone() {
+                request = request
+                    .header(CONTENT_TYPE, request_body.content_type)
+                    .body(request_body.body)
+            };
+            request.send().await
+        },
+    )
     .await;
 
     match result {
