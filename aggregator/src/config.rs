@@ -229,7 +229,7 @@ pub struct JobDriverConfig {
         default = "JobDriverConfig::default_max_retries",
         alias = "max_retries"
     )]
-    pub max_retries: u64,
+    pub max_retries: usize,
 }
 
 impl JobDriverConfig {
@@ -256,7 +256,7 @@ impl JobDriverConfig {
         30_000
     }
 
-    fn default_max_retries() -> u64 {
+    fn default_max_retries() -> usize {
         10
     }
 }
