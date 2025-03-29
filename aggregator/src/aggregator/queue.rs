@@ -351,7 +351,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use backoff::{future::retry, ExponentialBackoff};
+    use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
     use futures::{future::join_all, Future};
     use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
@@ -366,6 +366,8 @@ mod tests {
     use tracing::debug;
     use trillium::{Conn, Handler, Status};
     use trillium_testing::{assert_ok, assert_status, methods::get};
+
+    use super::Error;
 
     use crate::{
         aggregator::queue::{queued_lifo, LIFORequestQueue, Metrics},
@@ -436,32 +438,29 @@ mod tests {
 
         let mut requests = Vec::new();
 
-        let backoff = ExponentialBackoff {
-            initial_interval: Duration::from_nanos(1),
-            max_interval: Duration::from_nanos(30),
-            multiplier: 2.0,
-            ..Default::default()
-        };
+        let backoff = ExponentialBuilder::new()
+            .with_min_delay(Duration::from_nanos(1))
+            .with_factor(2.0)
+            .with_max_times(30);
 
         debug!("spawning requests");
         for _ in 0..(concurrency as usize + depth) {
             let handler = Arc::clone(&handler);
-            let backoff = backoff.clone();
+            let backoff = backoff.build();
             requests.push(tokio::spawn({
                 async move {
-                    retry(backoff, || {
+                    (|| {
                         let handler = Arc::clone(&handler);
                         async move {
                             let request = get("/").run_async(&handler).await;
                             if request.status().unwrap() == Status::Ok {
                                 Ok(())
                             } else {
-                                Err(backoff::Error::transient(()))
+                                Err(Error::BadRequest("No worky".to_string()))
                             }
                         }
                     })
-                    .await
-                    .unwrap();
+                    .retry(backoff);
                 }
             }));
         }
