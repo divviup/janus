@@ -25,7 +25,7 @@ pub struct TaskParameters {
     pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
     pub collector_max_interval: time::Duration,
-    pub collector_max_elapsed_time: time::Duration,
+    pub collector_max_retries: usize,
 }
 
 /// Components of one aggregator's DAP endpoint.

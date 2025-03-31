@@ -349,7 +349,7 @@ where
         // Send an aggregate share request to the helper.
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff.build(),
+            self.backoff,
             Method::POST,
             task.aggregate_shares_uri()?.ok_or_else(|| {
                 Error::InvalidConfiguration("task is not leader and has no aggregate share URI")

@@ -239,7 +239,7 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
+    use backon::{ConstantBuilder, ExponentialBuilder};
     use std::time::Duration;
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
@@ -258,12 +258,13 @@ pub mod test_util {
     pub struct LimitedRetryer {}
 
     impl LimitedRetryer {
-        pub fn new(max_retries: u64) -> impl Backoff {
-            let mut retryer_vec = Vec::new();
-            for _ in 0..max_retries {
-                retryer_vec.push(Duration::ZERO)
-            }
-            retryer_vec.into_iter().build()
+        /// new should usually return self, but LimitedRetryer is a thin wrapper used only
+        /// for tests.
+        #[allow(clippy::new_ret_no_self)]
+        pub fn new(max_retries: usize) -> ConstantBuilder {
+            ConstantBuilder::new()
+                .with_delay(Duration::ZERO)
+                .with_max_times(max_retries)
         }
     }
 }
@@ -274,6 +275,7 @@ mod tests {
         retries::{retry_http_request, retry_http_request_notify, test_util::LimitedRetryer},
         test_util::install_test_trace_subscriber,
     };
+    use backon::BackoffBuilder;
     use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
     use reqwest::StatusCode;
     use std::time::Duration;
@@ -300,7 +302,7 @@ mod tests {
         // get `Err(Ok(HttpErrorResponse))`.
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::new(10),
+            LimitedRetryer::new(10).build(),
             |_, _| {
                 notify_count += 1;
             },
@@ -336,7 +338,7 @@ mod tests {
         // `reqwest::Error`.
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::new(10),
+            LimitedRetryer::new(10).build(),
             |_, _| {
                 notify_count += 1;
             },
@@ -369,7 +371,7 @@ mod tests {
 
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::new(10),
+            LimitedRetryer::new(10).build(),
             |_, _| {
                 notify_count += 1;
             },
@@ -406,7 +408,7 @@ mod tests {
 
         let mut notify_count = 0;
         retry_http_request_notify(
-            LimitedRetryer::new(10),
+            LimitedRetryer::new(10).build(),
             |_, _| {
                 notify_count += 1;
             },
@@ -443,7 +445,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = retry_http_request(LimitedRetryer::new(0), || async {
+        let err = retry_http_request(LimitedRetryer::new(0).build(), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -488,7 +490,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        retry_http_request(LimitedRetryer::new(0), || async {
+        retry_http_request(LimitedRetryer::new(0).build(), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -515,7 +517,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::new(0), || async {
+        let response = retry_http_request(LimitedRetryer::new(0).build(), || async {
             http_client.get(server.url()).send().await
         })
         .await
@@ -551,7 +553,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::new(0), || async {
+        let response = retry_http_request(LimitedRetryer::new(0).build(), || async {
             http_client.get(server.url()).send().await
         })
         .await

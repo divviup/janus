@@ -52,7 +52,7 @@ impl JanusContainerPair {
             TaskBuilder::new(batch_mode, aggregation_mode, vdaf),
             TestContext::VirtualNetwork,
             Duration::from_millis(500),
-            Duration::from_secs(60),
+            10,
         );
         let task = task_builder.build();
 
@@ -88,7 +88,7 @@ impl JanusInProcessPair {
             task_builder,
             TestContext::Host,
             Duration::from_millis(500),
-            Duration::from_secs(60),
+            10,
         );
 
         let helper = JanusInProcess::new(&task_builder.clone().build(), Role::Helper).await;
