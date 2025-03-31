@@ -254,11 +254,11 @@ pub mod test_util {
     }
 
     /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct LimitedRetryer {}
 
     impl LimitedRetryer {
-        pub fn build(max_retries: u64) -> impl Backoff {
+        pub fn new(max_retries: u64) -> impl Backoff {
             let mut retryer_vec = Vec::new();
             for _ in 0..max_retries {
                 retryer_vec.push(Duration::ZERO)
@@ -300,7 +300,7 @@ mod tests {
         // get `Err(Ok(HttpErrorResponse))`.
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::build(10),
+            LimitedRetryer::new(10),
             |_, _| {
                 notify_count += 1;
             },
@@ -336,7 +336,7 @@ mod tests {
         // `reqwest::Error`.
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::build(10),
+            LimitedRetryer::new(10),
             |_, _| {
                 notify_count += 1;
             },
@@ -369,7 +369,7 @@ mod tests {
 
         let mut notify_count = 0;
         let response = retry_http_request_notify(
-            LimitedRetryer::build(10),
+            LimitedRetryer::new(10),
             |_, _| {
                 notify_count += 1;
             },
@@ -406,7 +406,7 @@ mod tests {
 
         let mut notify_count = 0;
         retry_http_request_notify(
-            LimitedRetryer::build(10),
+            LimitedRetryer::new(10),
             |_, _| {
                 notify_count += 1;
             },
@@ -443,7 +443,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = retry_http_request(LimitedRetryer::build(0), || async {
+        let err = retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -488,7 +488,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        retry_http_request(LimitedRetryer::build(0), || async {
+        retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -515,7 +515,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::build(0), || async {
+        let response = retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(server.url()).send().await
         })
         .await
@@ -551,7 +551,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        let response = retry_http_request(LimitedRetryer::build(0), || async {
+        let response = retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(server.url()).send().await
         })
         .await

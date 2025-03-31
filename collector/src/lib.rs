@@ -1811,7 +1811,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let mut collector = setup_collector(&mut server, vdaf);
+        let collector = setup_collector(&mut server, vdaf);
         collector.collect_poll_wait_parameters.with_max_times(3);
 
         let collection_job_id: CollectionJobId = random();

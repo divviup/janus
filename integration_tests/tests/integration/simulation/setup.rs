@@ -4,7 +4,7 @@ use crate::simulation::{
     proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
     run::State,
 };
-use backoff::ExponentialBackoffBuilder;
+use backon::ExponentialBuilder;
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
@@ -321,11 +321,7 @@ impl Components {
             state.vdaf.clone(),
         )
         .with_http_request_backoff(http_request_exponential_backoff())
-        .with_collect_poll_backoff(
-            ExponentialBackoffBuilder::new()
-                .with_max_elapsed_time(Some(StdDuration::ZERO))
-                .build(),
-        )
+        .with_collect_poll_backoff(ExponentialBuilder::new().with_max_times(1))
         .build()
         .unwrap();
 

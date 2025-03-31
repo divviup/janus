@@ -1,4 +1,4 @@
-use backoff::{future::retry, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
@@ -141,32 +141,26 @@ where
     // An extra retry loop is needed here because our collect request may race against the
     // aggregation job creator, which is responsible for assigning reports to batches in fixed-
     // size tasks.
-    let backoff = ExponentialBackoffBuilder::new()
-        .with_initial_interval(time::Duration::from_millis(500))
-        .with_max_interval(time::Duration::from_millis(500))
-        .with_max_elapsed_time(Some(time::Duration::from_secs(5)))
+    let backoff = ConstantBuilder::new()
+        .with_delay(time::Duration::from_millis(500))
+        .with_max_times(10)
         .build();
-    retry(backoff, || {
+    (|| {
         let query = query.clone();
         async move {
-            match collector.collect(query, aggregation_parameter).await {
-                Ok(collection) => Ok(collection),
-                Err(janus_collector::Error::Http(error_response)) => {
-                    if let Some(DapProblemType::InvalidBatchSize) =
-                        error_response.dap_problem_type()
-                    {
-                        Err(backoff::Error::transient(janus_collector::Error::Http(
-                            error_response,
-                        )))
-                    } else {
-                        Err(backoff::Error::permanent(janus_collector::Error::Http(
-                            error_response,
-                        )))
-                    }
-                }
-                Err(error) => Err(backoff::Error::permanent(error)),
+            collector
+                .collect(query.clone(), aggregation_parameter)
+                .await
+        }
+    })
+    .retry(backoff)
+    .when(|e| {
+        if let janus_collector::Error::Http(error_response) = e {
+            if let Some(DapProblemType::InvalidBatchSize) = error_response.dap_problem_type() {
+                return true;
             }
         }
+        false
     })
     .await
 }

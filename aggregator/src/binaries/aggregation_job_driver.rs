@@ -211,7 +211,7 @@ mod tests {
                 http_request_connection_timeout_s: 30,
                 retry_initial_interval_ms: 1000,
                 retry_max_interval_ms: 30_000,
-                retry_max_elapsed_time_ms: 300_000,
+                max_retries: 10,
             },
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
