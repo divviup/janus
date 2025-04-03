@@ -251,7 +251,7 @@ pub enum ClientImplementation<V>
 where
     V: vdaf::Client<16>,
 {
-    InProcess { client: Client<V> },
+    InProcess { client: Box<Client<V>> },
     Container(Box<ContainerClientImplementation<V>>),
 }
 
@@ -280,7 +280,9 @@ where
         }
 
         let client = builder.build().await?;
-        Ok(ClientImplementation::InProcess { client })
+        Ok(ClientImplementation::InProcess {
+            client: Box::new(client),
+        })
     }
 
     pub async fn new_container(
