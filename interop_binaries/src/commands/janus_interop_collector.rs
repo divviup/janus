@@ -290,7 +290,7 @@ async fn handle_collection_start(
 
     let vdaf_instance = task_state.vdaf.clone().into();
     let task_handle = match (query, vdaf_instance) {
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Count {}) => {
+        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Count) => {
             let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -454,7 +454,7 @@ async fn handle_collection_start(
             }
         },
 
-        (ParsedQuery::LeaderSelected, VdafInstance::Prio3Count {}) => {
+        (ParsedQuery::LeaderSelected, VdafInstance::Prio3Count) => {
             let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,

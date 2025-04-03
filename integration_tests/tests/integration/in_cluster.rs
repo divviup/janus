@@ -134,6 +134,7 @@ impl InClusterJanusPair {
     ///  - `JANUS_E2E_COLLECTOR_CREDENTIAL_JSON`: JSON representation of the collector credential,
     ///    including the auth token and the HPKE private key. Example:
     ///
+    ///    ```
     ///    {
     ///      "aead": "AesGcm128",
     ///      "id": 66,
@@ -143,6 +144,7 @@ impl InClusterJanusPair {
     ///      "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU",
     ///      "token": "Krx-CLfdWo1ULAfsxhr0rA"
     ///    }
+    ///    ```
     async fn new_in_cloud(vdaf: VdafInstance, batch_mode: BatchMode) -> Self {
         let (
             divviup_api_url,
@@ -240,12 +242,12 @@ impl InClusterJanusPair {
     ///  - `JANUS_E2E_KUBECTL_CONTEXT_NAME`: The name of a context in the kubeconfig file.
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_LEADER_AGGREGATOR_API_AUTH_TOKEN`: Credential with which requests to the
-    ///     leader's aggregator API are authenticated.
+    ///    leader's aggregator API are authenticated.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
     ///  - `JANUS_E2E_HELPER_AGGREGATOR_API_AUTH_TOKEN`: Credential with which requests to the
-    ///     helper's aggregator API are authenticated.
+    ///    helper's aggregator API are authenticated.
     ///  - `JANUS_E2E_DIVVIUP_API_NAMESPACE`: The Kubernetes namespace where `divviup-api` is
-    ///     deployed.
+    ///    deployed.
     async fn new_in_kind(vdaf: VdafInstance, batch_mode: BatchMode) -> Self {
         let (
             kubeconfig_path,
