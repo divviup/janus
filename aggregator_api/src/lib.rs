@@ -145,7 +145,7 @@ async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
         return Some((Status::Unauthorized, Halt));
     };
 
-    if cfg.auth_tokens.iter().any(|key| bearer_token == *key) {
+    if cfg.auth_tokens.contains(&bearer_token) {
         // Authorization succeeds.
         None
     } else {
