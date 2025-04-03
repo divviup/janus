@@ -449,18 +449,17 @@ mod tests {
             let backoff = backoff.build();
             requests.push(tokio::spawn({
                 async move {
-                    (|| {
+                    let _ = (|| async {
                         let handler = Arc::clone(&handler);
-                        async move {
-                            let request = get("/").run_async(&handler).await;
-                            if request.status().unwrap() == Status::Ok {
-                                Ok(())
-                            } else {
-                                Err(Error::BadRequest("No worky".to_string()))
-                            }
+                        let request = get("/").run_async(&handler).await;
+                        if request.status().unwrap() == Status::Ok {
+                            Ok(())
+                        } else {
+                            Err(Error::BadRequest("No worky".to_string()))
                         }
                     })
-                    .retry(backoff);
+                    .retry(backoff)
+                    .await;
                 }
             }));
         }
