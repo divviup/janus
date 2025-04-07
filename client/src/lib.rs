@@ -39,7 +39,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use backon::{BackoffBuilder, ExponentialBuilder};
+use backon::BackoffBuilder;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
 use educe::Educe;
@@ -50,7 +50,9 @@ use itertools::Itertools;
 use janus_core::{
     hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
     http::HttpErrorResponse,
-    retries::{http_request_exponential_backoff, retry_http_request},
+    retries::{
+        http_request_exponential_backoff, retry_http_request, ExponetialWithMaxElapsedTimeBuilder,
+    },
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
     vdaf::vdaf_application_context,
@@ -151,7 +153,7 @@ struct ClientParameters {
     /// used to compute report timestamps.
     time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialBuilder,
+    http_request_retry_parameters: ExponetialWithMaxElapsedTimeBuilder,
 }
 
 impl ClientParameters {
@@ -250,7 +252,7 @@ async fn aggregator_hpke_config(
 #[tracing::instrument(err)]
 #[cfg(feature = "ohttp")]
 async fn ohttp_key_configs(
-    http_request_retry_parameters: ExponentialBuilder,
+    http_request_retry_parameters: ExponetialWithMaxElapsedTimeBuilder,
     ohttp_config: &OhttpConfig,
     http_client: &reqwest::Client,
 ) -> Result<Vec<KeyConfig>, Error> {
@@ -432,7 +434,10 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     }
 
     /// Override the exponential backoff parameters used when retrying HTTPS requests.
-    pub fn with_backoff(mut self, http_request_retry_parameters: ExponentialBuilder) -> Self {
+    pub fn with_backoff(
+        mut self,
+        http_request_retry_parameters: ExponetialWithMaxElapsedTimeBuilder,
+    ) -> Self {
         self.parameters.http_request_retry_parameters = http_request_retry_parameters;
         self
     }

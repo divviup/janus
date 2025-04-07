@@ -1,9 +1,11 @@
-use backon::{BackoffBuilder, ConstantBuilder, ExponentialBuilder, Retryable};
+use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
 use janus_core::{
-    retries::test_util::test_http_request_exponential_backoff,
+    retries::{
+        test_util::test_http_request_exponential_backoff, ExponetialWithMaxElapsedTimeBuilder,
+    },
     time::{Clock, RealClock, TimeExt},
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
 };
@@ -258,7 +260,7 @@ where
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
-        ExponentialBuilder::new()
+        ExponetialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(time::Duration::from_millis(500))
             .with_max_delay(task_parameters.collector_max_interval)
             .with_max_times(task_parameters.collector_max_retries),

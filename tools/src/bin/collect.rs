@@ -10,10 +10,13 @@ use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
 use janus_collector::{
-    default_http_client, AuthenticationToken, Collection, CollectionJob, Collector,
-    ExponentialBuilder, PollResult, PrivateCollectorCredential,
+    default_http_client, AuthenticationToken, Collection, CollectionJob, Collector, PollResult,
+    PrivateCollectorCredential,
 };
-use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
+use janus_core::{
+    hpke::{HpkeKeypair, HpkePrivateKey},
+    retries::ExponetialWithMaxElapsedTimeBuilder,
+};
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
@@ -628,7 +631,7 @@ fn new_collector<V: vdaf::Collector>(
         Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
             .with_http_client(http_client)
             .with_collect_poll_backoff(
-                ExponentialBuilder::new()
+                ExponetialWithMaxElapsedTimeBuilder::new()
                     .with_min_delay(StdDuration::from_secs(3))
                     .with_max_delay(StdDuration::from_secs(300))
                     .with_factor(1.2)

@@ -4,7 +4,6 @@ use crate::{
     ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
 };
 use anyhow::Context;
-use backon::ExponentialBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use educe::Educe;
@@ -13,10 +12,13 @@ use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
 use janus_collector::Collector;
-use janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128;
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
+use janus_core::{
+    retries::ExponetialWithMaxElapsedTimeBuilder,
+    vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+};
 use janus_messages::{
     batch_mode::BatchMode, BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
     TaskId, Time,
@@ -207,13 +209,13 @@ where
     )
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
-        ExponentialBuilder::new()
+        ExponetialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_secs(1))
             .with_max_delay(StdDuration::from_secs(1))
             .with_max_times(60),
     )
     .with_collect_poll_backoff(
-        ExponentialBuilder::new()
+        ExponetialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_millis(200))
             .with_max_delay(StdDuration::from_secs(1))
             .with_factor(1.2)

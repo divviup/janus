@@ -1,7 +1,7 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use backon::{Backoff, ExponentialBuilder, Retryable};
+use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::future::Future;
 use http::HeaderMap;
@@ -22,6 +22,67 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
     None
 }
 
+#[derive(Copy, Clone, Debug)]
+/// Extends the Backon ExponentialBackoff and ExponentialBuilder to add
+/// a `max_elapsed_time` field, which we use for deadlining.
+pub struct ExponetialWithMaxElapsedTimeBuilder {
+    pub max_elapsed_time: Option<Duration>,
+    builder: ExponentialBuilder,
+}
+
+impl Default for ExponetialWithMaxElapsedTimeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExponetialWithMaxElapsedTimeBuilder {
+    pub const fn new() -> Self {
+        Self {
+            max_elapsed_time: None,
+            builder: ExponentialBuilder::new(),
+        }
+    }
+
+    pub const fn with_min_delay(mut self, d: Duration) -> Self {
+        self.builder = self.builder.with_min_delay(d);
+        self
+    }
+
+    pub const fn with_max_delay(mut self, d: Duration) -> Self {
+        self.builder = self.builder.with_max_delay(d);
+        self
+    }
+
+    pub const fn with_factor(mut self, f: f32) -> Self {
+        self.builder = self.builder.with_factor(f);
+        self
+    }
+
+    pub const fn with_max_times(mut self, t: usize) -> Self {
+        self.builder = self.builder.with_max_times(t);
+        self
+    }
+
+    pub const fn with_jitter(mut self) -> Self {
+        self.builder = self.builder.with_jitter();
+        self
+    }
+
+    pub const fn with_max_elapsed_time(mut self, d: Duration) -> Self {
+        self.max_elapsed_time = Some(d);
+        self
+    }
+}
+
+impl BackoffBuilder for ExponetialWithMaxElapsedTimeBuilder {
+    type Backoff = ExponentialBackoff;
+
+    fn build(self) -> Self::Backoff {
+        self.builder.build()
+    }
+}
+
 /// An [`ExponentialBackoff`] with parameters suitable for most HTTP requests. The parameters are
 /// copied from the parameters used in the GCP Go SDK[1].
 ///
@@ -30,8 +91,8 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
 /// matter.
 ///
 /// [1]: https://github.com/googleapis/gax-go/blob/fbaf9882acf3297573f3a7cb832e54c7d8f40635/v2/call_option.go#L120
-pub fn http_request_exponential_backoff() -> ExponentialBuilder {
-    ExponentialBuilder::default()
+pub fn http_request_exponential_backoff() -> ExponetialWithMaxElapsedTimeBuilder {
+    ExponetialWithMaxElapsedTimeBuilder::new()
         .with_min_delay(Duration::from_secs(1))
         .with_max_delay(Duration::from_secs(30))
         .with_factor(2.0)
@@ -239,13 +300,14 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use backon::{ConstantBuilder, ExponentialBuilder};
+    use super::ExponetialWithMaxElapsedTimeBuilder;
+    use backon::ConstantBuilder;
     use std::time::Duration;
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
-    pub fn test_http_request_exponential_backoff() -> ExponentialBuilder {
-        ExponentialBuilder::default()
+    pub fn test_http_request_exponential_backoff() -> ExponetialWithMaxElapsedTimeBuilder {
+        ExponetialWithMaxElapsedTimeBuilder::default()
             .with_jitter()
             .with_min_delay(Duration::from_nanos(1))
             .with_max_delay(Duration::from_nanos(30))

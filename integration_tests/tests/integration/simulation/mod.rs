@@ -73,7 +73,7 @@
 
 use std::time::Duration;
 
-use backon::ExponentialBuilder;
+use janus_core::retries::ExponetialWithMaxElapsedTimeBuilder;
 use janus_messages::Time;
 
 const START_TIME: Time = Time::from_seconds_since_epoch(1_700_000_000);
@@ -89,10 +89,10 @@ mod setup;
 
 /// Aggressive exponential backoff parameters for this local-only test. Due to fault injection
 /// operations, we will often be hitting `max_elapsed_time`, so this value needs to be very low.
-pub(super) fn http_request_exponential_backoff() -> ExponentialBuilder {
-    ExponentialBuilder::new()
+pub(super) fn http_request_exponential_backoff() -> ExponetialWithMaxElapsedTimeBuilder {
+    ExponetialWithMaxElapsedTimeBuilder::new()
         .with_min_delay(Duration::from_millis(10))
         .with_max_delay(Duration::from_millis(50))
         .with_factor(2.0)
-        .with_max_times(5)
+        .with_max_elapsed_time(Duration::from_millis(250))
 }
