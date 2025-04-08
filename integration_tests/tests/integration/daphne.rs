@@ -34,7 +34,7 @@ async fn daphne_janus() {
         ),
         TestContext::VirtualNetwork,
         Duration::from_millis(500),
-        10,
+        Duration::from_secs(60),
     );
 
     // Daphne is hardcoded to serve from a path starting with /v09/.
@@ -80,7 +80,7 @@ async fn janus_daphne() {
         ),
         TestContext::VirtualNetwork,
         Duration::from_millis(500),
-        10,
+        Duration::from_secs(60),
     );
 
     // Daphne is hardcoded to serve from a path starting with /v09/.
@@ -126,7 +126,7 @@ async fn janus_in_process_daphne() {
         ),
         TestContext::VirtualNetwork,
         Duration::from_millis(500),
-        10,
+        Duration::from_secs(60),
     );
     task_parameters.endpoint_fragments.leader = AggregatorEndpointFragments::Localhost {
         path: "/".to_owned(),

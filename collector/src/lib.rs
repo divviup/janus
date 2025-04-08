@@ -676,10 +676,11 @@ impl<V: vdaf::Collector> Collector<V> {
         &self,
         job: &CollectionJob<V::AggregationParam, B>,
     ) -> Result<Collection<V::AggregateResult, B>, Error> {
+        let starttime = Instant::now();
         let deadline = self
             .collect_poll_wait_parameters
             .max_elapsed_time
-            .map(|duration| Instant::now() + duration);
+            .map(|duration| starttime + duration);
         let mut backoff = self.collect_poll_wait_parameters.build();
 
         loop {
@@ -689,6 +690,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 PollResult::CollectionResult(aggregate_result) => {
                     debug!(
                         job_id = %job.collection_job_id(),
+                        elapsed = ?Instant::now() - starttime,
                         "collection job complete"
                     );
                     return Ok(aggregate_result);
@@ -736,8 +738,6 @@ impl<V: vdaf::Collector> Collector<V> {
                 job_id = %job.collection_job_id(),
                 ?backoff_duration,
                 retry_after_header = ?retry_after,
-                ?deadline,
-                ?sleep_duration,
                 "collection job not ready, backing off",
             );
             sleep(sleep_duration).await;

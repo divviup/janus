@@ -118,9 +118,9 @@ retry_initial_interval_ms: 1000
 # HTTP request. (optional, default 30 seconds)
 retry_max_interval_ms: 30000
 
-# The maximum number of retries before giving up on a retryable HTTP request.
-# (optional, default 10)
-max_retries: 10
+# The maximum elapsed time, in milliseconds, to wait before giving up on
+# retrying a retryable HTTP request. (optional, default 5 minutes)
+retry_max_elapsed_time_ms: 300000
 
 # Number of sharded database records per batch aggregation. Must not be greater
 # than the equivalent setting in the collection job driver. (required)
