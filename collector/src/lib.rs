@@ -679,7 +679,7 @@ impl<V: vdaf::Collector> Collector<V> {
         let starttime = Instant::now();
         let deadline = self
             .collect_poll_wait_parameters
-            .max_elapsed_time
+            .total_delay
             .map(|duration| starttime + duration);
         let mut backoff = self.collect_poll_wait_parameters.build();
 
@@ -1851,7 +1851,8 @@ mod tests {
         let mut collector = setup_collector(&mut server, vdaf);
         collector.collect_poll_wait_parameters = collector
             .collect_poll_wait_parameters
-            .with_max_elapsed_time(std::time::Duration::from_secs(3));
+            .without_max_times()
+            .with_total_delay(Some(std::time::Duration::from_secs(3)));
 
         let collection_job_id: CollectionJobId = random();
         let collection_job_path = format!(
@@ -1957,7 +1958,7 @@ mod tests {
         // Manipulate backoff settings so that we make one or two requests and time out.
         collector.collect_poll_wait_parameters = collector
             .collect_poll_wait_parameters
-            .with_max_elapsed_time(std::time::Duration::from_millis(15))
+            .with_total_delay(Some(std::time::Duration::from_millis(15)))
             .with_min_delay(std::time::Duration::from_millis(10));
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())

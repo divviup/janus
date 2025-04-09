@@ -212,14 +212,16 @@ where
         ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_secs(1))
             .with_max_delay(StdDuration::from_secs(1))
-            .with_max_elapsed_time(StdDuration::from_secs(60)),
+            .without_max_times()
+            .with_total_delay(Some(StdDuration::from_secs(60))),
     )
     .with_collect_poll_backoff(
         ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_millis(200))
             .with_max_delay(StdDuration::from_secs(1))
             .with_factor(1.2)
-            .with_max_elapsed_time(StdDuration::from_secs(60)),
+            .without_max_times()
+            .with_total_delay(Some(StdDuration::from_secs(60))),
     )
     .build()?;
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;

@@ -635,6 +635,7 @@ fn new_collector<V: vdaf::Collector>(
                     .with_min_delay(StdDuration::from_secs(3))
                     .with_max_delay(StdDuration::from_secs(300))
                     .with_factor(1.2)
+                    .with_max_times(10)
                     .with_jitter(),
             )
             .build()

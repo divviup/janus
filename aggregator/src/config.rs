@@ -238,7 +238,7 @@ impl JobDriverConfig {
         ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(Duration::from_millis(self.retry_initial_interval_ms))
             .with_max_delay(Duration::from_millis(self.retry_max_interval_ms))
-            .with_max_elapsed_time(Duration::from_millis(self.retry_max_elapsed_time_ms))
+            .with_total_delay(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
     }
 
     fn default_http_connection_timeout_s() -> u64 {

@@ -94,5 +94,6 @@ pub(super) fn http_request_exponential_backoff() -> ExponentialWithMaxElapsedTim
         .with_min_delay(Duration::from_millis(10))
         .with_max_delay(Duration::from_millis(50))
         .with_factor(2.0)
-        .with_max_elapsed_time(Duration::from_millis(250))
+        .with_max_times(10)
+        .with_total_delay(Some(Duration::from_millis(250)))
 }

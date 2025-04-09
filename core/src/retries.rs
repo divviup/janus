@@ -7,7 +7,6 @@ use futures::future::Future;
 use http::HeaderMap;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
-use tokio::time::Instant;
 use tracing::{debug, warn};
 
 /// Traverse chain of source errors looking for an `std::io::Error`.
@@ -25,12 +24,11 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
 
 #[derive(Copy, Clone, Debug)]
 /// Extends the Backon ExponentialBackoff and ExponentialBuilder to add
-/// a `max_elapsed_time` field, which we use for deadlining. Note well
-/// that the resulting Backoff implementation _does not track time itself_,
-/// that is left to the user. Note that this implementation differs from
-/// the Backon ExponentialBackoff by defaulting to setting .without_max_times().
+/// a `total_delay` field, which we use for deadlining in the collector's
+/// `poll_until_complete` method, as the underlying Backoff implementation
+/// does not expose that delay after it's set.
 pub struct ExponentialWithMaxElapsedTimeBuilder {
-    pub max_elapsed_time: Option<Duration>,
+    pub total_delay: Option<Duration>,
     builder: ExponentialBuilder,
 }
 
@@ -43,8 +41,8 @@ impl Default for ExponentialWithMaxElapsedTimeBuilder {
 impl ExponentialWithMaxElapsedTimeBuilder {
     pub const fn new() -> Self {
         Self {
-            max_elapsed_time: None,
-            builder: ExponentialBuilder::new().without_max_times(),
+            total_delay: None,
+            builder: ExponentialBuilder::new(),
         }
     }
 
@@ -68,59 +66,28 @@ impl ExponentialWithMaxElapsedTimeBuilder {
         self
     }
 
+    pub const fn without_max_times(mut self) -> Self {
+        self.builder = self.builder.without_max_times();
+        self
+    }
+
     pub const fn with_jitter(mut self) -> Self {
         self.builder = self.builder.with_jitter();
         self
     }
 
-    pub const fn with_max_elapsed_time(mut self, d: Duration) -> Self {
-        self.max_elapsed_time = Some(d);
+    pub fn with_total_delay(mut self, d: Option<Duration>) -> Self {
+        self.total_delay = d.clone();
+        self.builder = self.builder.with_total_delay(d);
         self
     }
 }
 
 impl BackoffBuilder for ExponentialWithMaxElapsedTimeBuilder {
-    type Backoff = ExponentialBackoffWithMaxElapsedTime;
+    type Backoff = ExponentialBackoff;
 
     fn build(self) -> Self::Backoff {
-        ExponentialBackoffWithMaxElapsedTime {
-            backoff: self.builder.build(),
-            deadline: self
-                .max_elapsed_time
-                .map(|max_time| Instant::now() + max_time),
-        }
-    }
-}
-
-/// Extends the Backon ExponentialBackoff type to add a deadline, enforced
-/// when next() is called.
-pub struct ExponentialBackoffWithMaxElapsedTime {
-    /// The underlying ExponentialBackoff from Backon.
-    backoff: ExponentialBackoff,
-    /// The deadline for this task, calculated during build from the max_elapsed_time,
-    /// when set.
-    deadline: Option<Instant>,
-}
-
-impl Iterator for ExponentialBackoffWithMaxElapsedTime {
-    type Item = Duration;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let backoff_duration = self.backoff.next()?;
-        if let Some(deadline) = self.deadline {
-            let backoff_is_after_deadline = Instant::now()
-                .checked_add(backoff_duration)
-                .map_or(true, |recommendation| recommendation > deadline);
-            if backoff_is_after_deadline {
-                warn!(
-                    ?backoff_duration,
-                    ?deadline,
-                    "backoff duration will be after the deadline"
-                );
-                return None;
-            };
-        }
-        Some(backoff_duration)
+        self.builder.build()
     }
 }
 
@@ -138,7 +105,8 @@ pub fn http_request_exponential_backoff() -> ExponentialWithMaxElapsedTimeBuilde
         .with_max_delay(Duration::from_secs(30))
         .with_factor(2.0)
         .with_jitter()
-        .with_max_elapsed_time(Duration::from_secs(600))
+        .without_max_times()
+        .with_total_delay(Some(Duration::from_secs(600)))
 }
 
 /// HttpResponse represents an HTTP response. It will typically be returned from
@@ -349,11 +317,13 @@ pub mod test_util {
     /// for 10 minutes.
     pub fn test_http_request_exponential_backoff() -> ExponentialWithMaxElapsedTimeBuilder {
         ExponentialWithMaxElapsedTimeBuilder::new()
-            .with_jitter()
             .with_min_delay(Duration::from_nanos(1))
             .with_max_delay(Duration::from_nanos(30))
             .with_factor(2.0)
-            .with_max_elapsed_time(Duration::from_millis(100))
+            .without_max_times()
+            // Since the total delay is not elapsed time, choosing 100ns here gives us
+            // 7 retries.
+            .with_total_delay(Some(Duration::from_nanos(100)))
     }
 
     /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
@@ -374,6 +344,7 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use crate::retries::test_util::test_http_request_exponential_backoff;
     use crate::{
         retries::{
             retry_http_request, retry_http_request_notify, test_util::LimitedRetryer,
@@ -674,19 +645,18 @@ mod tests {
     #[tokio::test]
     async fn exponential_backoff_with_deadline() {
         let mut w_deadline = ExponentialWithMaxElapsedTimeBuilder::new()
-            .with_min_delay(Duration::from_nanos(10))
-            .with_max_delay(Duration::from_nanos(30))
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_millis(30))
             .with_factor(2.0)
-            .with_max_times(10)
-            .with_max_elapsed_time(Duration::from_millis(100))
+            .without_max_times()
+            .with_total_delay(Some(Duration::from_millis(100)))
             .build();
 
-        assert_eq!(w_deadline.next(), Some(Duration::from_nanos(10)));
-        assert_eq!(w_deadline.next(), Some(Duration::from_nanos(20)));
-        assert_eq!(w_deadline.next(), Some(Duration::from_nanos(30)));
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(w_deadline.next(), Some(Duration::from_nanos(30)));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(w_deadline.next(), Some(Duration::from_millis(10)));
+        assert_eq!(w_deadline.next(), Some(Duration::from_millis(20)));
+        assert_eq!(w_deadline.next(), Some(Duration::from_millis(30)));
+        assert_eq!(w_deadline.next(), Some(Duration::from_millis(30)));
+        // at 90 / 100 now, so that was our last result
         assert_eq!(w_deadline.next(), None);
 
         let mut no_deadline = ExponentialWithMaxElapsedTimeBuilder::new()
@@ -700,6 +670,20 @@ mod tests {
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(20)));
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(30)));
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(30)));
+        // Going to hit the max_times
         assert_eq!(no_deadline.next(), None);
+    }
+
+    #[tokio::test]
+    async fn exponential_backoff_for_http_request() {
+        let mut b = test_http_request_exponential_backoff().build();
+        assert_eq!(b.next(), Some(Duration::from_nanos(1)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(2)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(4)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(8)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(16)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(30)));
+        assert_eq!(b.next(), Some(Duration::from_nanos(30)));
+        assert_eq!(b.next(), None);
     }
 }

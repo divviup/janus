@@ -263,7 +263,8 @@ where
         ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(time::Duration::from_millis(500))
             .with_max_delay(task_parameters.collector_max_interval)
-            .with_max_elapsed_time(task_parameters.collector_max_elapsed_time),
+            .without_max_times()
+            .with_total_delay(Some(task_parameters.collector_max_elapsed_time)),
     )
     .build()
     .unwrap();
