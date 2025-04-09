@@ -2,7 +2,7 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use educe::Educe;
-use janus_core::retries::ExponetialWithMaxElapsedTimeBuilder;
+use janus_core::retries::ExponentialWithMaxElapsedTimeBuilder;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
@@ -234,8 +234,8 @@ pub struct JobDriverConfig {
 }
 
 impl JobDriverConfig {
-    pub fn retry_config(&self) -> ExponetialWithMaxElapsedTimeBuilder {
-        ExponetialWithMaxElapsedTimeBuilder::new()
+    pub fn retry_config(&self) -> ExponentialWithMaxElapsedTimeBuilder {
+        ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(Duration::from_millis(self.retry_initial_interval_ms))
             .with_max_delay(Duration::from_millis(self.retry_max_interval_ms))
             .with_max_elapsed_time(Duration::from_millis(self.retry_max_elapsed_time_ms))

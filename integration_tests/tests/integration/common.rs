@@ -4,7 +4,7 @@ use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::{
-        test_util::test_http_request_exponential_backoff, ExponetialWithMaxElapsedTimeBuilder,
+        test_util::test_http_request_exponential_backoff, ExponentialWithMaxElapsedTimeBuilder,
     },
     time::{Clock, RealClock, TimeExt},
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
@@ -45,7 +45,7 @@ pub fn build_test_task(
     mut task_builder: TaskBuilder,
     test_context: TestContext,
     collector_max_interval: time::Duration,
-    collector_max_retries: usize,
+    collector_max_elapsed_time: time::Duration,
 ) -> (TaskParameters, TaskBuilder) {
     let (leader_endpoint, helper_endpoint, endpoint_fragments) = match test_context {
         TestContext::VirtualNetwork => {
@@ -116,7 +116,7 @@ pub fn build_test_task(
         collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
         collector_auth_token: task_builder.collector_auth_token().clone(),
         collector_max_interval,
-        collector_max_retries,
+        collector_max_elapsed_time,
     };
     (task_parameters, task_builder)
 }
@@ -260,10 +260,10 @@ where
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
-        ExponetialWithMaxElapsedTimeBuilder::new()
+        ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(time::Duration::from_millis(500))
             .with_max_delay(task_parameters.collector_max_interval)
-            .with_max_times(task_parameters.collector_max_retries),
+            .with_max_elapsed_time(task_parameters.collector_max_elapsed_time),
     )
     .build()
     .unwrap();

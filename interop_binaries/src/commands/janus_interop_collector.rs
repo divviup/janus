@@ -16,7 +16,7 @@ use janus_collector::Collector;
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_core::{
-    retries::ExponetialWithMaxElapsedTimeBuilder,
+    retries::ExponentialWithMaxElapsedTimeBuilder,
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
@@ -209,17 +209,17 @@ where
     )
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
-        ExponetialWithMaxElapsedTimeBuilder::new()
+        ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_secs(1))
             .with_max_delay(StdDuration::from_secs(1))
-            .with_max_times(60),
+            .with_max_elapsed_time(StdDuration::from_secs(60)),
     )
     .with_collect_poll_backoff(
-        ExponetialWithMaxElapsedTimeBuilder::new()
+        ExponentialWithMaxElapsedTimeBuilder::new()
             .with_min_delay(StdDuration::from_millis(200))
             .with_max_delay(StdDuration::from_secs(1))
             .with_factor(1.2)
-            .with_max_times(60),
+            .with_max_elapsed_time(StdDuration::from_secs(60)),
     )
     .build()?;
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;

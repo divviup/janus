@@ -72,7 +72,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
     http::HttpErrorResponse,
     retries::{
-        http_request_exponential_backoff, retry_http_request, ExponetialWithMaxElapsedTimeBuilder,
+        http_request_exponential_backoff, retry_http_request, ExponentialWithMaxElapsedTimeBuilder,
     },
     time::{DurationExt, TimeExt},
     url_ensure_trailing_slash,
@@ -99,7 +99,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 use tokio::time::{sleep, Instant};
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 /// Errors that may occur when performing collections.
@@ -318,9 +318,9 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// HTTPS client.
     http_client: Option<reqwest::Client>,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponetialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponetialWithMaxElapsedTimeBuilder,
+    collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder,
 }
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
@@ -341,7 +341,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             vdaf,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
-            collect_poll_wait_parameters: ExponetialWithMaxElapsedTimeBuilder::new()
+            collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder::new()
                 .with_min_delay(StdDuration::from_secs(15))
                 .with_max_delay(StdDuration::from_secs(300))
                 .with_factor(1.2),
@@ -376,7 +376,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Replace the exponential backoff settings used for HTTP requests.
     pub fn with_http_request_backoff(
         mut self,
-        backoff: ExponetialWithMaxElapsedTimeBuilder,
+        backoff: ExponentialWithMaxElapsedTimeBuilder,
     ) -> Self {
         self.http_request_retry_parameters = backoff;
         self
@@ -385,7 +385,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Replace the exponential backoff settings used while polling for aggregate shares.
     pub fn with_collect_poll_backoff(
         mut self,
-        backoff: ExponetialWithMaxElapsedTimeBuilder,
+        backoff: ExponentialWithMaxElapsedTimeBuilder,
     ) -> Self {
         self.collect_poll_wait_parameters = backoff;
         self
@@ -413,9 +413,9 @@ pub struct Collector<V: vdaf::Collector> {
     #[educe(Debug(ignore))]
     http_client: reqwest::Client,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponetialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponetialWithMaxElapsedTimeBuilder,
+    collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder,
 }
 
 impl<V: vdaf::Collector> Collector<V> {
@@ -710,7 +710,12 @@ impl<V: vdaf::Collector> Collector<V> {
             let backoff_duration = if let Some(duration) = backoff.next() {
                 duration
             } else {
-                // The maximum elapsed time has expired, so return a timeout error.
+                // The maximum retries have been reached, so return a timeout
+                warn!(
+                    ?deadline,
+                    ?starttime,
+                    "max retries reached, returning timeout"
+                );
                 return Err(Error::CollectPollTimeout);
             };
 
@@ -725,6 +730,12 @@ impl<V: vdaf::Collector> Collector<V> {
                         .map_or(true, |recommendation| recommendation > deadline);
 
                     if recommendation_is_past_deadline {
+                        warn!(
+                            ?deadline,
+                            ?starttime,
+                            ?recommendation_is_past_deadline,
+                            "deadline reached, returning timeout"
+                        );
                         return Err(Error::CollectPollTimeout);
                     }
                 }

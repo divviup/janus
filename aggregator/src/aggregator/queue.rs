@@ -455,7 +455,7 @@ mod tests {
                         if request.status().unwrap() == Status::Ok {
                             Ok(())
                         } else {
-                            Err(Error::BadRequest("No worky".to_string()))
+                            Err(Error::Internal("Test error".to_string()))
                         }
                     })
                     .retry(backoff)
