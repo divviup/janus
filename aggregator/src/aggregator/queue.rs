@@ -449,7 +449,7 @@ mod tests {
             let backoff = backoff.build();
             requests.push(tokio::spawn({
                 async move {
-                    let _ = (|| async {
+                    (|| async {
                         let handler = Arc::clone(&handler);
                         let request = get("/").run_async(&handler).await;
                         if request.status().unwrap() == Status::Ok {
