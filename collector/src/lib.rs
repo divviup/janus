@@ -665,7 +665,7 @@ impl<V: vdaf::Collector> Collector<V> {
     /// to control how frequently to poll for completion.
     ///
     /// This could be accomplished using Backon's retry mechanism, but it's cumbersome to do with
-    /// the current version. See https://github.com/Xuanwo/backon/issues/150.
+    /// the current version. See <https://github.com/Xuanwo/backon/issues/150>.
     pub async fn poll_until_complete<B: BatchMode>(
         &self,
         job: &CollectionJob<V::AggregationParam, B>,

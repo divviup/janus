@@ -91,7 +91,7 @@ impl BackoffBuilder for ExponentialWithTotalDelayBuilder {
     }
 }
 
-/// An [`ExponetialBackoffWithMaxElapsedTime`] with parameters suitable for most HTTP requests.
+/// An [`ExponentialBackoff`] with parameters suitable for most HTTP requests.
 /// The parameters are copied from the parameters used in the GCP Go SDK[1].
 ///
 /// AWS doesn't give us specific guidance on what intervals to use, but the GCP implementation cites
@@ -228,7 +228,7 @@ where
 /// HTTP-level error such as a connection failure, timeout, or I/O error. Retryable failures are
 /// logged.
 ///
-/// Each retried failure notifies the provided [`Notify`] instance. Note that a permanent failure
+/// Each retried failure notifies the provided `notify` [`FnMut`]. Note that a permanent failure
 /// (either explicit, or due to too many transient failures) will _not_ notify the provided
 /// notifier.
 ///
@@ -313,7 +313,7 @@ pub mod test_util {
     use backon::ConstantBuilder;
     use std::time::Duration;
 
-    /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
+    /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
     pub fn test_http_request_exponential_backoff() -> ExponentialWithTotalDelayBuilder {
         ExponentialWithTotalDelayBuilder::new()
@@ -326,7 +326,8 @@ pub mod test_util {
             .with_total_delay(Some(Duration::from_nanos(100)))
     }
 
-    /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
+    /// A [`backon::ConstantBackoff`] that immediately retries a given number of times,
+    /// and then gives up.
     #[derive(Copy, Clone)]
     pub struct LimitedRetryer {}
 
