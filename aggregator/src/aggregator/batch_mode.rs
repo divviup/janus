@@ -175,7 +175,11 @@ impl CollectableBatchMode for TimeInterval {
             .any(|agg_param| agg_param != aggregation_param)
         {
             return Err(datastore::Error::User(
-                Error::BatchQueriedMultipleTimes(*task.id()).into(),
+                Error::InvalidMessage(
+                    Some(*task.id()),
+                    "batch has already been collected with another aggregation parameter",
+                )
+                .into(),
             ));
         }
         Ok(())
@@ -223,7 +227,11 @@ impl CollectableBatchMode for LeaderSelected {
             .any(|agg_param| agg_param != aggregation_param)
         {
             return Err(datastore::Error::User(
-                Error::BatchQueriedMultipleTimes(*task.id()).into(),
+                Error::InvalidMessage(
+                    Some(*task.id()),
+                    "batch has already been collected with another aggregation parameter",
+                )
+                .into(),
             ));
         }
         Ok(())

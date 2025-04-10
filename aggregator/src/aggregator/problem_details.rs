@@ -3,34 +3,6 @@ use serde::Serialize;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
 
-trait DapProblemTypeExt {
-    /// Returns the HTTP status code that should be used in responses whose body is a problem
-    /// document of this type.
-    fn http_status(&self) -> Status;
-}
-
-impl DapProblemTypeExt for DapProblemType {
-    /// Returns the HTTP status code that should be used in responses whose body is a problem
-    /// document of this type.
-    fn http_status(&self) -> Status {
-        match self {
-            // The HTTPS request authentication section does not specify that an authorization
-            // failure is an "abort" of the protocol, and thus we can use a non-400 error code.
-            // Therefore, we choose to use 403 Forbidden.
-            //
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.1
-            DapProblemType::UnauthorizedRequest => Status::Forbidden,
-
-            // Per the Errors section of the protocol, error responses corresponding to an "abort"
-            // in the protocol should use HTTP status code 400 Bad Request unless explicitly
-            // specified otherwise.
-            //
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.2
-            _ => Status::BadRequest,
-        }
-    }
-}
-
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
@@ -77,7 +49,12 @@ impl<'a> ProblemDocument<'a> {
         Self::new(
             error_type.type_uri(),
             error_type.description(),
-            error_type.http_status(),
+            // Per the Errors section of the protocol, error responses corresponding to an "abort"
+            // in the protocol should use HTTP status code 400 Bad Request unless explicitly
+            // specified otherwise.
+            //
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.2
+            Status::BadRequest,
         )
     }
 
@@ -156,16 +133,13 @@ mod tests {
         for problem_type in [
             DapProblemType::InvalidMessage,
             DapProblemType::UnrecognizedTask,
-            DapProblemType::MissingTaskId,
             DapProblemType::UnrecognizedAggregationJob,
             DapProblemType::OutdatedConfig,
             DapProblemType::ReportRejected,
             DapProblemType::ReportTooEarly,
             DapProblemType::BatchInvalid,
             DapProblemType::InvalidBatchSize,
-            DapProblemType::BatchQueriedMultipleTimes,
             DapProblemType::BatchMismatch,
-            DapProblemType::UnauthorizedRequest,
             DapProblemType::BatchOverlap,
         ] {
             let uri = problem_type.type_uri();
@@ -244,16 +218,12 @@ mod tests {
                     Some(DapProblemType::UnrecognizedTask),
                 ),
                 TestCase::new(
-                    Box::new(|| Error::MissingTaskId),
-                    Some(DapProblemType::MissingTaskId),
-                ),
-                TestCase::new(
                     Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
                     Some(DapProblemType::UnrecognizedAggregationJob),
                 ),
                 TestCase::new(
                     Box::new(|| Error::UnauthorizedRequest(random())),
-                    Some(DapProblemType::UnauthorizedRequest),
+                    None,
                 ),
                 TestCase::new(
                     Box::new(|| Error::InvalidBatchSize(random(), 8)),
@@ -296,10 +266,6 @@ mod tests {
                         }))
                     }),
                     Some(DapProblemType::BatchMismatch),
-                ),
-                TestCase::new(
-                    Box::new(|| Error::BatchQueriedMultipleTimes(random())),
-                    Some(DapProblemType::BatchQueriedMultipleTimes),
                 ),
             ]
             .into_iter()

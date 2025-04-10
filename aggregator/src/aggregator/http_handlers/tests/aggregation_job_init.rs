@@ -178,7 +178,7 @@ async fn aggregate_wrong_agg_auth_token() {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", task.id()),
             })

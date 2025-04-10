@@ -2,23 +2,26 @@ use std::str::FromStr;
 
 /// Representation of the different problem types defined in [DAP][1].
 ///
-/// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#table-1
+/// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-15.html#table-1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DapProblemType {
     InvalidMessage,
     UnrecognizedTask,
-    StepMismatch,
-    MissingTaskId,
     UnrecognizedAggregationJob,
     OutdatedConfig,
     ReportRejected,
     ReportTooEarly,
     BatchInvalid,
     InvalidBatchSize,
-    BatchQueriedMultipleTimes,
+    InvalidAggregationParameter,
     BatchMismatch,
-    UnauthorizedRequest,
+    StepMismatch,
     BatchOverlap,
+    UnsupportedExtension,
+    /// A task defined via Taskprov was rejected by the aggregator. Error defined by
+    /// draft-ietf-ppm-dap-taskprov ([1]).
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-taskprov-01#table-1
     InvalidTask,
 }
 
@@ -28,8 +31,6 @@ impl DapProblemType {
         match self {
             DapProblemType::InvalidMessage => "urn:ietf:params:ppm:dap:error:invalidMessage",
             DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
-            DapProblemType::StepMismatch => "urn:ietf:params:ppm:dap:error:stepMismatch",
-            DapProblemType::MissingTaskId => "urn:ietf:params:ppm:dap:error:missingTaskID",
             DapProblemType::UnrecognizedAggregationJob => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
             }
@@ -38,14 +39,15 @@ impl DapProblemType {
             DapProblemType::ReportTooEarly => "urn:ietf:params:ppm:dap:error:reportTooEarly",
             DapProblemType::BatchInvalid => "urn:ietf:params:ppm:dap:error:batchInvalid",
             DapProblemType::InvalidBatchSize => "urn:ietf:params:ppm:dap:error:invalidBatchSize",
-            DapProblemType::BatchQueriedMultipleTimes => {
-                "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes"
+            DapProblemType::InvalidAggregationParameter => {
+                "urn:ietf:params:ppm:dap:error:invalidAggregationParameter"
             }
             DapProblemType::BatchMismatch => "urn:ietf:params:ppm:dap:error:batchMismatch",
-            DapProblemType::UnauthorizedRequest => {
-                "urn:ietf:params:ppm:dap:error:unauthorizedRequest"
-            }
+            DapProblemType::StepMismatch => "urn:ietf:params:ppm:dap:error:stepMismatch",
             DapProblemType::BatchOverlap => "urn:ietf:params:ppm:dap:error:batchOverlap",
+            DapProblemType::UnsupportedExtension => {
+                "urn:ietf:params:ppm:dap:error:unsupportedExtension"
+            }
             DapProblemType::InvalidTask => "urn:ietf:params:ppm:dap:error:invalidTask",
         }
     }
@@ -58,12 +60,6 @@ impl DapProblemType {
             }
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
-            }
-            DapProblemType::StepMismatch => {
-                "The leader and helper are not on the same step of VDAF preparation."
-            }
-            DapProblemType::MissingTaskId => {
-                "HPKE configuration was requested without specifying a task ID."
             }
             DapProblemType::UnrecognizedAggregationJob => {
                 "An endpoint received a message with an unknown aggregation job ID."
@@ -79,16 +75,17 @@ impl DapProblemType {
             DapProblemType::InvalidBatchSize => {
                 "The number of reports included in the batch is invalid."
             }
-            DapProblemType::BatchQueriedMultipleTimes => {
-                "The batch described by the query has been queried already."
-            }
+            DapProblemType::InvalidAggregationParameter => "The aggregation parameter is invalid.",
             DapProblemType::BatchMismatch => {
                 "Leader and helper disagree on reports aggregated in a batch."
             }
-            DapProblemType::UnauthorizedRequest => "The request's authorization is not valid.",
+            DapProblemType::StepMismatch => {
+                "The leader and helper are not on the same step of VDAF preparation."
+            }
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."
             }
+            DapProblemType::UnsupportedExtension => "The report includes an unsupported extension.",
             DapProblemType::InvalidTask => "Aggregator has opted out of the indicated task.",
         }
     }
@@ -107,8 +104,6 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:unrecognizedTask" => {
                 Ok(DapProblemType::UnrecognizedTask)
             }
-            "urn:ietf:params:ppm:dap:error:stepMismatch" => Ok(DapProblemType::StepMismatch),
-            "urn:ietf:params:ppm:dap:error:missingTaskID" => Ok(DapProblemType::MissingTaskId),
             "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob" => {
                 Ok(DapProblemType::UnrecognizedAggregationJob)
             }
@@ -119,14 +114,12 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:invalidBatchSize" => {
                 Ok(DapProblemType::InvalidBatchSize)
             }
-            "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes" => {
-                Ok(DapProblemType::BatchQueriedMultipleTimes)
-            }
             "urn:ietf:params:ppm:dap:error:batchMismatch" => Ok(DapProblemType::BatchMismatch),
-            "urn:ietf:params:ppm:dap:error:unauthorizedRequest" => {
-                Ok(DapProblemType::UnauthorizedRequest)
-            }
+            "urn:ietf:params:ppm:dap:error:stepMismatch" => Ok(DapProblemType::StepMismatch),
             "urn:ietf:params:ppm:dap:error:batchOverlap" => Ok(DapProblemType::BatchOverlap),
+            "urn:ietf:params:ppm:dap:error:unsupportedExtension" => {
+                Ok(DapProblemType::UnsupportedExtension)
+            }
             "urn:ietf:params:ppm:dap:error:invalidTask" => Ok(DapProblemType::InvalidTask),
             _ => Err(DapProblemTypeParseError),
         }

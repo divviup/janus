@@ -220,7 +220,7 @@ async fn collection_job_put_request_unauthenticated() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -241,7 +241,7 @@ async fn collection_job_put_request_unauthenticated() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -258,7 +258,7 @@ async fn collection_job_put_request_unauthenticated() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -301,7 +301,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -321,7 +321,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -338,7 +338,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test_case.task.id()),
         })
@@ -587,8 +587,8 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes",
-            "title": "The batch described by the query has been queried already.",
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", test_case.task.id()),
         })
     );
