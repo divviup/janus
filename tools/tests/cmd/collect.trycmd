@@ -20,40 +20,40 @@ Options:
           Print version
 
 DAP Task Parameters:
-      --task-id <TASK_ID>
+  --task-id <TASK_ID>
           DAP task identifier, encoded with unpadded base64url
 
-      --leader <LEADER>
+  --leader <LEADER>
           The leader aggregator's endpoint URL
 
 Authorization:
-      --dap-auth-token <DAP_AUTH_TOKEN>
+  --dap-auth-token <DAP_AUTH_TOKEN>
           Authentication token for the DAP-Auth-Token HTTP header
           
           [env: DAP_AUTH_TOKEN]
 
-      --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
+  --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
           Authentication token for the "Authorization: Bearer ..." HTTP header
           
           [env: AUTHORIZATION_BEARER_TOKEN]
 
 HPKE Configuration:
-      --hpke-config <HPKE_CONFIG>
+  --hpke-config <HPKE_CONFIG>
           DAP message for the collector's HPKE configuration, encoded with base64url
 
-      --hpke-private-key <HPKE_PRIVATE_KEY>
+  --hpke-private-key <HPKE_PRIVATE_KEY>
           The collector's HPKE private key, encoded with base64url
           
           [env: HPKE_PRIVATE_KEY]
 
-      --collector-credential-file <COLLECTOR_CREDENTIAL_FILE>
+  --collector-credential-file <COLLECTOR_CREDENTIAL_FILE>
           Path to a file containing private collector credentials
           
           This can be obtained with the command `divviup collector-credential generate`.
           
           [aliases: hpke-config-json]
 
-      --collector-credential <COLLECTOR_CREDENTIAL>
+  --collector-credential <COLLECTOR_CREDENTIAL>
           Private collector credentials
           
           This can be obtained with the command `divviup collector-credential generate`.
@@ -61,7 +61,7 @@ HPKE Configuration:
           [env: COLLECTOR_CREDENTIAL]
 
 VDAF Algorithm and Parameters:
-      --vdaf <VDAF>
+  --vdaf <VDAF>
           VDAF algorithm
 
           Possible values:
@@ -70,20 +70,20 @@ VDAF Algorithm and Parameters:
           - sumvec:    Prio3SumVec
           - histogram: Prio3Histogram
 
-      --length <LENGTH>
+  --length <LENGTH>
           Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when used with --vdaf=histogram
 
-      --bits <BITS>
+  --bits <BITS>
           Bit length of measurements, for use with --vdaf=sumvec
 
-      --max-measurement <MAX_MEASUREMENT>
+  --max-measurement <MAX_MEASUREMENT>
           Maximum measurement value, for use with --vdaf=sum
 
 Collect Request Parameters (Time Interval):
-      --batch-interval-start <BATCH_INTERVAL_START>
+  --batch-interval-start <BATCH_INTERVAL_START>
           Start of the collection batch interval, as the number of seconds since the Unix epoch
 
-      --batch-interval-duration <BATCH_INTERVAL_DURATION>
+  --batch-interval-duration <BATCH_INTERVAL_DURATION>
           Duration of the collection batch interval, in seconds
 
 ```
