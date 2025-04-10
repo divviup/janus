@@ -374,19 +374,13 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     }
 
     /// Replace the exponential backoff settings used for HTTP requests.
-    pub fn with_http_request_backoff(
-        mut self,
-        backoff: ExponentialWithTotalDelayBuilder,
-    ) -> Self {
+    pub fn with_http_request_backoff(mut self, backoff: ExponentialWithTotalDelayBuilder) -> Self {
         self.http_request_retry_parameters = backoff;
         self
     }
 
     /// Replace the exponential backoff settings used while polling for aggregate shares.
-    pub fn with_collect_poll_backoff(
-        mut self,
-        backoff: ExponentialWithTotalDelayBuilder,
-    ) -> Self {
+    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialWithTotalDelayBuilder) -> Self {
         self.collect_poll_wait_parameters = backoff;
         self
     }

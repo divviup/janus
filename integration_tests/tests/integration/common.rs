@@ -3,9 +3,7 @@ use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
 use janus_core::{
-    retries::{
-        test_util::test_http_request_exponential_backoff, ExponentialWithTotalDelayBuilder,
-    },
+    retries::{test_util::test_http_request_exponential_backoff, ExponentialWithTotalDelayBuilder},
     time::{Clock, RealClock, TimeExt},
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
 };

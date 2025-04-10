@@ -35,8 +35,8 @@ use janus_aggregator_core::{
 use janus_client::{default_http_client, Client};
 use janus_collector::Collector;
 use janus_core::{
-    retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime,
-    time::MockClock, Runtime,
+    retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime, time::MockClock,
+    Runtime,
 };
 use prio::vdaf::prio3::Prio3Histogram;
 use std::{
