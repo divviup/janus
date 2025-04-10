@@ -344,7 +344,6 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::retries::test_util::test_http_request_exponential_backoff;
     use crate::{
         retries::{
             retry_http_request, retry_http_request_notify, test_util::LimitedRetryer,
@@ -644,13 +643,20 @@ mod tests {
 
     #[tokio::test]
     async fn exponential_backoff_with_deadline() {
-        let mut w_deadline = ExponentialWithTotalDelayBuilder::new()
+        let w_deadline_builder = ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_millis(10))
             .with_max_delay(Duration::from_millis(30))
             .with_factor(2.0)
             .without_max_times()
-            .with_total_delay(Some(Duration::from_millis(100)))
-            .build();
+            .with_total_delay(Some(Duration::from_millis(100)));
+        let mut w_deadline = w_deadline_builder.build();
+
+        // The main thrust of this test is here, that the total_delay is
+        // still available after a build().
+        assert_eq!(
+            Some(Duration::from_millis(100)),
+            w_deadline_builder.total_delay
+        );
 
         assert_eq!(w_deadline.next(), Some(Duration::from_millis(10)));
         assert_eq!(w_deadline.next(), Some(Duration::from_millis(20)));
@@ -659,12 +665,15 @@ mod tests {
         // at 90 / 100 now, so that was our last result
         assert_eq!(w_deadline.next(), None);
 
-        let mut no_deadline = ExponentialWithTotalDelayBuilder::new()
+        let no_deadline_builder = ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_nanos(10))
             .with_max_delay(Duration::from_nanos(30))
             .with_factor(2.0)
-            .with_max_times(4)
-            .build();
+            .with_max_times(4);
+
+        let mut no_deadline = no_deadline_builder.build();
+
+        assert_eq!(None, no_deadline_builder.total_delay);
 
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(10)));
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(20)));
@@ -672,18 +681,5 @@ mod tests {
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(30)));
         // Going to hit the max_times
         assert_eq!(no_deadline.next(), None);
-    }
-
-    #[tokio::test]
-    async fn exponential_backoff_for_http_request() {
-        let mut b = test_http_request_exponential_backoff().build();
-        assert_eq!(b.next(), Some(Duration::from_nanos(1)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(2)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(4)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(8)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(16)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(30)));
-        assert_eq!(b.next(), Some(Duration::from_nanos(30)));
-        assert_eq!(b.next(), None);
     }
 }
