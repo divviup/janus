@@ -236,6 +236,7 @@ pub struct JobDriverConfig {
 impl JobDriverConfig {
     pub fn retry_config(&self) -> ExponentialWithTotalDelayBuilder {
         ExponentialWithTotalDelayBuilder::new()
+            .without_max_times()
             .with_min_delay(Duration::from_millis(self.retry_initial_interval_ms))
             .with_max_delay(Duration::from_millis(self.retry_max_interval_ms))
             .with_total_delay(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
