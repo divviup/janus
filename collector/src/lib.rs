@@ -710,11 +710,12 @@ impl<V: vdaf::Collector> Collector<V> {
             let backoff_duration = if let Some(duration) = backoff.next() {
                 duration
             } else {
-                // The maximum retries have been reached, so return a timeout
+                // Either the maximum retries or the maximum delay has been reached
+                // so return a timeout.
                 warn!(
                     ?deadline,
                     ?starttime,
-                    "max retries reached, returning timeout"
+                    "backoff limits reached, returning timeout"
                 );
                 return Err(Error::CollectPollTimeout);
             };
@@ -734,7 +735,7 @@ impl<V: vdaf::Collector> Collector<V> {
                             ?deadline,
                             ?starttime,
                             ?recommendation_is_past_deadline,
-                            "deadline reached, returning timeout"
+                            "retry-after would exceed deadline, returning timeout"
                         );
                         return Err(Error::CollectPollTimeout);
                     }

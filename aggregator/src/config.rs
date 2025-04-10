@@ -224,8 +224,8 @@ pub struct JobDriverConfig {
         alias = "retry_max_interval_millis"
     )]
     pub retry_max_interval_ms: u64,
-    /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
-    /// HTTP request.
+    /// The maximum retry time, in milliseconds, to wait before giving up on retrying a retryable
+    /// HTTP request. Note this is the sum of the retry intervals, not wall-clock time.
     #[serde(
         default = "JobDriverConfig::default_retry_max_elapsed_time_ms",
         alias = "retry_max_elapsed_time_millis"

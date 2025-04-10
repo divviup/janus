@@ -3,7 +3,7 @@
 use crate::http::HttpErrorResponse;
 use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
-use futures::future::Future;
+use futures::Future;
 use http::HeaderMap;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
@@ -77,7 +77,7 @@ impl ExponentialWithMaxElapsedTimeBuilder {
     }
 
     pub fn with_total_delay(mut self, d: Option<Duration>) -> Self {
-        self.total_delay = d.clone();
+        self.total_delay = d;
         self.builder = self.builder.with_total_delay(d);
         self
     }

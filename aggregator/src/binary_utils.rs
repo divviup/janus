@@ -110,7 +110,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
         .with_max_delay(connection_pool_timeout)
         .with_factor(2.0)
         .with_jitter()
-        .with_max_times(10) // TKTK which do we want
+        .with_max_times(10)
         .build();
 
     let _ = (|| async { pool.get().await })

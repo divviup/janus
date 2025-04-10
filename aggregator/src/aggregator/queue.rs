@@ -459,7 +459,8 @@ mod tests {
                         }
                     })
                     .retry(backoff)
-                    .await;
+                    .await
+                    .unwrap();
                 }
             }));
         }
