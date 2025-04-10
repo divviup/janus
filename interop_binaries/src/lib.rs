@@ -591,8 +591,7 @@ pub mod test_util {
         let _ = (|| async {
             (|| async { http_client.post(url.clone()).send().await })
                 .retry(backoff.build())
-                .await
-                .unwrap()
+                .await?
                 .error_for_status()
         })
         .retry(backoff.build())
