@@ -35,7 +35,7 @@ use janus_aggregator_core::{
 use janus_client::{default_http_client, Client};
 use janus_collector::Collector;
 use janus_core::{
-    retries::ExponentialWithMaxElapsedTimeBuilder, test_util::runtime::TestRuntime,
+    retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime,
     time::MockClock, Runtime,
 };
 use prio::vdaf::prio3::Prio3Histogram;
@@ -324,7 +324,7 @@ impl Components {
         )
         .with_http_request_backoff(http_request_exponential_backoff())
         .with_collect_poll_backoff(
-            ExponentialWithMaxElapsedTimeBuilder::new().with_total_delay(Some(StdDuration::ZERO)),
+            ExponentialWithTotalDelayBuilder::new().with_total_delay(Some(StdDuration::ZERO)),
         )
         .build()
         .unwrap();

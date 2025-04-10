@@ -15,7 +15,7 @@ use janus_collector::{
 };
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    retries::ExponentialWithMaxElapsedTimeBuilder,
+    retries::ExponentialWithTotalDelayBuilder,
 };
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -631,7 +631,7 @@ fn new_collector<V: vdaf::Collector>(
         Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
             .with_http_client(http_client)
             .with_collect_poll_backoff(
-                ExponentialWithMaxElapsedTimeBuilder::new()
+                ExponentialWithTotalDelayBuilder::new()
                     .with_min_delay(StdDuration::from_secs(3))
                     .with_max_delay(StdDuration::from_secs(300))
                     .with_factor(1.2)

@@ -51,7 +51,7 @@ use janus_core::{
     hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
     http::HttpErrorResponse,
     retries::{
-        http_request_exponential_backoff, retry_http_request, ExponentialWithMaxElapsedTimeBuilder,
+        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
     },
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
@@ -153,7 +153,7 @@ struct ClientParameters {
     /// used to compute report timestamps.
     time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl ClientParameters {
@@ -252,7 +252,7 @@ async fn aggregator_hpke_config(
 #[tracing::instrument(err)]
 #[cfg(feature = "ohttp")]
 async fn ohttp_key_configs(
-    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     ohttp_config: &OhttpConfig,
     http_client: &reqwest::Client,
 ) -> Result<Vec<KeyConfig>, Error> {
@@ -436,7 +436,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// Override the exponential backoff parameters used when retrying HTTPS requests.
     pub fn with_backoff(
         mut self,
-        http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
+        http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     ) -> Self {
         self.parameters.http_request_retry_parameters = http_request_retry_parameters;
         self

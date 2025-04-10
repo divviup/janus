@@ -72,7 +72,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
     http::HttpErrorResponse,
     retries::{
-        http_request_exponential_backoff, retry_http_request, ExponentialWithMaxElapsedTimeBuilder,
+        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
     },
     time::{DurationExt, TimeExt},
     url_ensure_trailing_slash,
@@ -318,9 +318,9 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// HTTPS client.
     http_client: Option<reqwest::Client>,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
@@ -341,7 +341,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             vdaf,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
-            collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder::new()
+            collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder::new()
                 .with_min_delay(StdDuration::from_secs(15))
                 .with_max_delay(StdDuration::from_secs(300))
                 .with_factor(1.2),
@@ -376,7 +376,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Replace the exponential backoff settings used for HTTP requests.
     pub fn with_http_request_backoff(
         mut self,
-        backoff: ExponentialWithMaxElapsedTimeBuilder,
+        backoff: ExponentialWithTotalDelayBuilder,
     ) -> Self {
         self.http_request_retry_parameters = backoff;
         self
@@ -385,7 +385,7 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Replace the exponential backoff settings used while polling for aggregate shares.
     pub fn with_collect_poll_backoff(
         mut self,
-        backoff: ExponentialWithMaxElapsedTimeBuilder,
+        backoff: ExponentialWithTotalDelayBuilder,
     ) -> Self {
         self.collect_poll_wait_parameters = backoff;
         self
@@ -413,9 +413,9 @@ pub struct Collector<V: vdaf::Collector> {
     #[educe(Debug(ignore))]
     http_client: reqwest::Client,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponentialWithMaxElapsedTimeBuilder,
+    collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl<V: vdaf::Collector> Collector<V> {

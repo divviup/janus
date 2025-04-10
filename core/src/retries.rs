@@ -27,18 +27,18 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
 /// a `total_delay` field, which we use for deadlining in the collector's
 /// `poll_until_complete` method, as the underlying Backoff implementation
 /// does not expose that delay after it's set.
-pub struct ExponentialWithMaxElapsedTimeBuilder {
+pub struct ExponentialWithTotalDelayBuilder {
     pub total_delay: Option<Duration>,
     builder: ExponentialBuilder,
 }
 
-impl Default for ExponentialWithMaxElapsedTimeBuilder {
+impl Default for ExponentialWithTotalDelayBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ExponentialWithMaxElapsedTimeBuilder {
+impl ExponentialWithTotalDelayBuilder {
     pub const fn new() -> Self {
         Self {
             total_delay: None,
@@ -83,7 +83,7 @@ impl ExponentialWithMaxElapsedTimeBuilder {
     }
 }
 
-impl BackoffBuilder for ExponentialWithMaxElapsedTimeBuilder {
+impl BackoffBuilder for ExponentialWithTotalDelayBuilder {
     type Backoff = ExponentialBackoff;
 
     fn build(self) -> Self::Backoff {
@@ -99,8 +99,8 @@ impl BackoffBuilder for ExponentialWithMaxElapsedTimeBuilder {
 /// matter.
 ///
 /// [1]: https://github.com/googleapis/gax-go/blob/fbaf9882acf3297573f3a7cb832e54c7d8f40635/v2/call_option.go#L120
-pub fn http_request_exponential_backoff() -> ExponentialWithMaxElapsedTimeBuilder {
-    ExponentialWithMaxElapsedTimeBuilder::new()
+pub fn http_request_exponential_backoff() -> ExponentialWithTotalDelayBuilder {
+    ExponentialWithTotalDelayBuilder::new()
         .with_min_delay(Duration::from_secs(1))
         .with_max_delay(Duration::from_secs(30))
         .with_factor(2.0)
@@ -309,14 +309,14 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::ExponentialWithMaxElapsedTimeBuilder;
+    use super::ExponentialWithTotalDelayBuilder;
     use backon::ConstantBuilder;
     use std::time::Duration;
 
     /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
     /// for 10 minutes.
-    pub fn test_http_request_exponential_backoff() -> ExponentialWithMaxElapsedTimeBuilder {
-        ExponentialWithMaxElapsedTimeBuilder::new()
+    pub fn test_http_request_exponential_backoff() -> ExponentialWithTotalDelayBuilder {
+        ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_nanos(1))
             .with_max_delay(Duration::from_nanos(30))
             .with_factor(2.0)
@@ -348,7 +348,7 @@ mod tests {
     use crate::{
         retries::{
             retry_http_request, retry_http_request_notify, test_util::LimitedRetryer,
-            ExponentialWithMaxElapsedTimeBuilder,
+            ExponentialWithTotalDelayBuilder,
         },
         test_util::install_test_trace_subscriber,
     };
@@ -644,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn exponential_backoff_with_deadline() {
-        let mut w_deadline = ExponentialWithMaxElapsedTimeBuilder::new()
+        let mut w_deadline = ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_millis(10))
             .with_max_delay(Duration::from_millis(30))
             .with_factor(2.0)
@@ -659,7 +659,7 @@ mod tests {
         // at 90 / 100 now, so that was our last result
         assert_eq!(w_deadline.next(), None);
 
-        let mut no_deadline = ExponentialWithMaxElapsedTimeBuilder::new()
+        let mut no_deadline = ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_nanos(10))
             .with_max_delay(Duration::from_nanos(30))
             .with_factor(2.0)
