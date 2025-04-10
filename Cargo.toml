@@ -26,7 +26,7 @@ version = "0.8.0-prerelease-1"
 anyhow = "1"
 assert_matches = "1"
 async-trait = "0.1"
-aws-lc-rs = "1.12.6"
+aws-lc-rs = "1.13.0"
 backon = "1.5.0"
 base64 = "0.22.1"
 bhttp = "0.5.4"
@@ -36,7 +36,7 @@ cfg-if = "1.0.0"
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4.40", default-features = false }
-clap = { version = "4.5.34", features = ["cargo", "derive", "env"] }
+clap = { version = "4.5.35", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.4.1"
 constcat = "0.5"
 deadpool = "0.12.2"
