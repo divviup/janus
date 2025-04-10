@@ -1,6 +1,6 @@
 #![cfg(feature = "testcontainer")]
 
-use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ExponentialBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use fixed::types::{I1F15, I1F31};
 use futures::future::join_all;
@@ -432,10 +432,10 @@ async fn run(
 
     // Try collecting one or more times. For leader-selected tasks, a "current batch" query will
     // fail with an invalid batch until enough reports are ready.
-    let mut collect_attempt_backoff = ExponentialBackoffBuilder::new()
-        .with_initial_interval(StdDuration::from_secs(1))
-        .with_max_interval(StdDuration::from_secs(1))
-        .with_max_elapsed_time(match query_kind {
+    let mut collect_attempt_backoff = ExponentialBuilder::new()
+        .with_min_delay(StdDuration::from_secs(1))
+        .with_max_delay(StdDuration::from_secs(1))
+        .with_total_delay(match query_kind {
             QueryKind::TimeInterval => Some(StdDuration::from_secs(0)),
             QueryKind::LeaderSelected => Some(StdDuration::from_secs(15)),
         })
@@ -484,10 +484,10 @@ async fn run(
             .expect("\"handle\" value is not a string");
 
         // Send /internal/test/collection_poll requests to the collector, polling until it is completed.
-        let mut collection_poll_backoff = ExponentialBackoffBuilder::new()
-            .with_initial_interval(StdDuration::from_millis(500))
-            .with_max_interval(StdDuration::from_millis(500))
-            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+        let mut collection_poll_backoff = ExponentialBuilder::new()
+            .with_min_delay(StdDuration::from_millis(500))
+            .with_max_delay(StdDuration::from_millis(500))
+            .with_total_delay(Some(StdDuration::from_secs(60)))
             .build();
         let (status, collection_poll_response_object) = loop {
             let collection_poll_response = http_client
@@ -521,7 +521,7 @@ async fn run(
                 .as_str()
                 .expect("\"status\" value is not a string");
             if status == "in progress" {
-                if let Some(duration) = collection_poll_backoff.next_backoff() {
+                if let Some(duration) = collection_poll_backoff.next() {
                     sleep(duration).await;
                     continue;
                 } else {
@@ -532,7 +532,7 @@ async fn run(
         };
 
         if status == "error" {
-            if let Some(duration) = collect_attempt_backoff.next_backoff() {
+            if let Some(duration) = collect_attempt_backoff.next() {
                 sleep(duration).await;
                 continue;
             } else {

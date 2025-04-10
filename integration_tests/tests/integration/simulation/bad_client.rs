@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
@@ -336,7 +337,7 @@ async fn upload_report(
         .leader_aggregator_endpoint()
         .join(&format!("tasks/{task_id}/reports"))
         .unwrap();
-    retry_http_request(http_request_exponential_backoff(), || async {
+    retry_http_request(http_request_exponential_backoff().build(), || async {
         http_client
             .post(url.clone())
             .header(CONTENT_TYPE, Report::MEDIA_TYPE)
@@ -352,7 +353,7 @@ async fn aggregator_hpke_config(
     endpoint: &Url,
     http_client: &reqwest::Client,
 ) -> Result<HpkeConfig, janus_client::Error> {
-    let response = retry_http_request(http_request_exponential_backoff(), || async {
+    let response = retry_http_request(http_request_exponential_backoff().build(), || async {
         http_client
             .get(endpoint.join("hpke_config").unwrap())
             .send()

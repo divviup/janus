@@ -2,6 +2,7 @@ use crate::{
     aggregator::{http_handlers::AggregatorHandlerBuilder, test_util::default_aggregator_config},
     metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
 };
+use backon::BackoffBuilder;
 use http::StatusCode;
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
@@ -34,7 +35,7 @@ async fn prometheus_metrics_pull() {
         .build();
 
     let url = format!("http://127.0.0.1:{port}/metrics");
-    let response = retry_http_request(test_http_request_exponential_backoff(), || {
+    let response = retry_http_request(test_http_request_exponential_backoff().build(), || {
         reqwest::get(&url)
     })
     .await

@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use backoff::{future::retry, ExponentialBackoff};
+use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
@@ -105,26 +105,25 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
     //
     // Retrying if we encounter timeouts when creating a connection or connection refused errors
     // (which occur if the Cloud SQL Proxy hasn't started yet and manifest as `PoolError::Backend`)
-    let _ = retry(
-        ExponentialBackoff {
-            initial_interval: Duration::from_secs(1),
-            max_interval: connection_pool_timeout,
-            multiplier: 2.0,
-            max_elapsed_time: Some(connection_pool_timeout),
-            ..Default::default()
-        },
-        || async {
-            pool.get().await.map_err(|error| match error {
-                PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
-                    debug!(?error, "transient error connecting to database");
-                    backoff::Error::transient(error)
-                }
-                _ => backoff::Error::permanent(error),
-            })
-        },
-    )
-    .await
-    .context("couldn't make connection to database")?;
+    let backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_secs(1))
+        .with_max_delay(connection_pool_timeout)
+        .with_factor(2.0)
+        .with_jitter()
+        .with_max_times(10)
+        .build();
+
+    let _ = (|| async { pool.get().await })
+        .retry(backoff)
+        .when(|error| match error {
+            PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
+                debug!(?error, "transient error connecting to database");
+                true
+            }
+            _ => false,
+        })
+        .await
+        .context("couldn't make connection to database")?;
 
     Ok(pool)
 }
