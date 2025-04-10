@@ -298,7 +298,7 @@ async fn taskprov_aggregate_init() {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": u16::from(Status::Forbidden),
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test.task_id),
             }),
@@ -922,7 +922,7 @@ async fn taskprov_aggregate_continue() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": u16::from(Status::Forbidden),
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test.task_id),
         })
@@ -1035,7 +1035,7 @@ async fn taskprov_aggregate_share() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": u16::from(Status::Forbidden),
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
             "title": "The request's authorization is not valid.",
             "taskid": format!("{}", test.task_id),
         })

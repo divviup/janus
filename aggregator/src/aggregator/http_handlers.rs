@@ -84,9 +84,6 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::UnrecognizedTask(task_id) => conn.with_problem_document(
             &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
         ),
-        Error::MissingTaskId => {
-            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
-        }
         Error::UnrecognizedAggregationJob(task_id, _aggregation_job_id) => conn
             .with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
@@ -128,7 +125,12 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
 
         Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#unauthorized-request",
+                "The request's authorization is not valid.",
+                Status::Forbidden,
+            )
+            .with_task_id(task_id),
         ),
         Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
             &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
@@ -143,10 +145,6 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
                 .with_task_id(&inner.task_id)
                 .with_detail(&inner.to_string()),
-        ),
-        Error::BatchQueriedMultipleTimes(task_id) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::BatchQueriedMultipleTimes)
-                .with_task_id(task_id),
         ),
         Error::Hpke(_)
         | Error::Datastore(_)
