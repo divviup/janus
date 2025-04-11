@@ -145,6 +145,12 @@ where
         &self.metadata
     }
 
+    /// Return a new [`LeaderStoredReport`] with the provided report metadata.
+    #[cfg(test)]
+    pub fn with_report_metadata(self, metadata: ReportMetadata) -> Self {
+        Self { metadata, ..self }
+    }
+
     pub fn public_share(&self) -> &A::PublicShare {
         &self.public_share
     }
@@ -459,6 +465,15 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// this aggregation job.
     pub fn client_timestamp_interval(&self) -> &Interval {
         &self.client_timestamp_interval
+    }
+
+    /// Returns a new [`AggregationJob`] with the client timestamp interval set.
+    #[cfg(test)]
+    pub fn with_client_timestamp_interval(self, client_timestamp_interval: Interval) -> Self {
+        Self {
+            client_timestamp_interval,
+            ..self
+        }
     }
 
     /// Returns the state of the aggregation job.
@@ -846,6 +861,12 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
     /// Returns the client timestamp associated with this report aggregation.
     pub fn time(&self) -> &Time {
         &self.time
+    }
+
+    /// Returns a new [`ReportAggregation`] with the provided client timestamp.
+    #[cfg(test)]
+    pub fn with_time(self, time: Time) -> Self {
+        Self { time, ..self }
     }
 
     /// Returns the order of this report aggregation in its aggregation job.
@@ -1354,6 +1375,12 @@ impl ReportAggregationMetadata {
     /// Returns the client timestamp associated with this report aggregation.
     pub fn time(&self) -> &Time {
         &self.time
+    }
+
+    /// Returns a new [`ReportAggregationMetadata`] with the specified client timestamp.
+    #[cfg(test)]
+    pub fn with_time(self, time: Time) -> Self {
+        Self { time, ..self }
     }
 
     /// Returns the order of this report aggregation in its aggregation job.
