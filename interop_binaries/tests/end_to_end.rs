@@ -439,6 +439,7 @@ async fn run(
             QueryKind::TimeInterval => Some(StdDuration::from_secs(0)),
             QueryKind::LeaderSelected => Some(StdDuration::from_secs(15)),
         })
+        .without_max_times()
         .build();
     loop {
         // Send a /internal/test/collection_start request to the collector.
@@ -488,6 +489,7 @@ async fn run(
             .with_min_delay(StdDuration::from_millis(500))
             .with_max_delay(StdDuration::from_millis(500))
             .with_total_delay(Some(StdDuration::from_secs(60)))
+            .without_max_times()
             .build();
         let (status, collection_poll_response_object) = loop {
             let collection_poll_response = http_client
