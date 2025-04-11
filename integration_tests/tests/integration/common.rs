@@ -155,12 +155,7 @@ where
     })
     .retry(backoff)
     .when(|e| {
-        if let janus_collector::Error::Http(error_response) = e {
-            if let Some(DapProblemType::InvalidBatchSize) = error_response.dap_problem_type() {
-                return true;
-            }
-        }
-        false
+        matches!(e, janus_collector::Error::Http(error_response) if error_response.dap_problem_type() == Some(&DapProblemType::InvalidBatchSize))
     })
     .await
 }
