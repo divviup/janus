@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
         Datastore,
     },
-    task, TIME_HISTOGRAM_BOUNDARIES,
+    task, BoundedAggregator, BoundedAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -34,7 +34,6 @@ use opentelemetry::{
 use prio::{
     codec::{Decode, Encode},
     dp::DifferentialPrivacyStrategy,
-    vdaf,
 };
 use reqwest::Method;
 use std::{sync::Arc, time::Duration};
@@ -130,7 +129,7 @@ where
         C: Clock,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy,
-        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
+        A: BoundedAggregatorWithNoise<SEED_SIZE, S>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -502,7 +501,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,

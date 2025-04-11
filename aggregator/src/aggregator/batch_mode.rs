@@ -7,13 +7,13 @@ use janus_aggregator_core::{
     batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
     datastore::{self, models::LeaderStoredReport, Transaction},
     task::AggregatorTask,
+    BoundedAggregator,
 };
 use janus_core::time::Clock;
 use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Role,
 };
-use prio::vdaf;
 use std::hash::Hash;
 
 #[async_trait]
@@ -21,15 +21,12 @@ pub trait UploadableBatchMode: BatchMode {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), Error>
-    where
-        A::InputShare: Send + Sync,
-        A::PublicShare: Send + Sync;
+    ) -> Result<(), Error>;
 }
 
 #[async_trait]
@@ -37,16 +34,12 @@ impl UploadableBatchMode for TimeInterval {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), Error>
-    where
-        A::InputShare: Send + Sync,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Reject reports whose timestamps fall into a batch interval that has already been
         // collected.
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
@@ -74,7 +67,7 @@ impl UploadableBatchMode for LeaderSelected {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         _: &Transaction<'_, C>,
         _: &A,
@@ -96,7 +89,7 @@ pub trait CollectableBatchMode: CoreCollectableBatchMode + AccumulableBatchMode 
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
@@ -113,17 +106,14 @@ impl CollectableBatchMode for TimeInterval {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task: &AggregatorTask,
         collect_interval: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<(), datastore::Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + Hash,
-    {
+    ) -> Result<(), datastore::Error> {
         // Compute the aggregation parameters that have already been collected for.
         let mut found_overlapping_nonequal_interval = false;
         let agg_params: Vec<_> = match task.role() {
@@ -187,17 +177,14 @@ impl CollectableBatchMode for LeaderSelected {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<(), datastore::Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + Hash,
-    {
+    ) -> Result<(), datastore::Error> {
         // Compute the aggregation parameters that have already been collected for.
         let agg_params: Vec<_> = match task.role() {
             Role::Leader => tx

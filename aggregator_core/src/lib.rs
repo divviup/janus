@@ -6,6 +6,12 @@
 #![allow(clippy::single_component_path_imports)]
 
 use educe::Educe;
+use prio::{
+    codec::{Encode, ParameterizedDecode},
+    dp::DifferentialPrivacyStrategy,
+    vdaf::AggregatorWithNoise,
+};
+use std::hash::Hash;
 use tracing::{debug, info_span, Instrument, Span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
@@ -32,6 +38,70 @@ impl AsRef<[u8]> for SecretBytes {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
+}
+
+/// A trait extending [`prio::vdaf::Aggregator`] with bounds on its associated types that make it
+/// usable in Janus, saving us lots of trait bound boilerplate in many places.
+pub trait BoundedAggregator<const VERIFY_KEY_SIZE: usize>:
+    prio::vdaf::Aggregator<
+        VERIFY_KEY_SIZE,
+        16,
+        AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
+        AggregateShare: Send + Sync + PartialEq,
+        InputShare: Send + Sync + PartialEq,
+        PrepareMessage: Send + Sync + PartialEq,
+        PrepareShare: Send + Sync + PartialEq,
+        PublicShare: Send + Sync + PartialEq,
+        OutputShare: Send + Sync + PartialEq,
+        PrepareState: Send
+                          + Sync
+                          + Encode
+                          + PartialEq
+                          + for<'a> ParameterizedDecode<(&'a Self, usize)>,
+    >
+    + 'static
+    + Send
+    + Sync
+{
+}
+
+/// Blanket implementation for conforming VDAFs.
+impl<
+        const VERIFY_KEY_SIZE: usize,
+        A: prio::vdaf::Aggregator<
+                VERIFY_KEY_SIZE,
+                16,
+                AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
+                AggregateShare: Send + Sync + PartialEq,
+                InputShare: Send + Sync + PartialEq,
+                PrepareMessage: Send + Sync + PartialEq,
+                PrepareShare: Send + Sync + PartialEq,
+                PublicShare: Send + Sync + PartialEq,
+                OutputShare: Send + Sync + PartialEq,
+                PrepareState: Send
+                                  + Sync
+                                  + Encode
+                                  + PartialEq
+                                  + for<'a> ParameterizedDecode<(&'a Self, usize)>,
+            >
+            + 'static
+            + Send
+            + Sync,
+    > BoundedAggregator<VERIFY_KEY_SIZE> for A
+{
+}
+
+pub trait BoundedAggregatorWithNoise<const VERIFY_KEY_SIZE: usize, S: DifferentialPrivacyStrategy>:
+    BoundedAggregator<VERIFY_KEY_SIZE> + AggregatorWithNoise<VERIFY_KEY_SIZE, 16, S>
+{
+}
+
+impl<
+        const VERIFY_KEY_SIZE: usize,
+        S: DifferentialPrivacyStrategy,
+        A: BoundedAggregator<VERIFY_KEY_SIZE> + AggregatorWithNoise<VERIFY_KEY_SIZE, 16, S>,
+    > BoundedAggregatorWithNoise<VERIFY_KEY_SIZE, S> for A
+{
 }
 
 /// A marker trait for VDAFs that have an aggregation parameter other than the unit type.

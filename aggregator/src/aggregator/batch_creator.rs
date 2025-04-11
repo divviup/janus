@@ -2,19 +2,21 @@
 
 use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
 use futures::future::try_join_all;
-use janus_aggregator_core::datastore::{
-    models::{
-        AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
-        ReportAggregationMetadataState, UnaggregatedReport,
+use janus_aggregator_core::{
+    datastore::{
+        models::{
+            AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
+            ReportAggregationMetadataState, UnaggregatedReport,
+        },
+        Error, Transaction,
     },
-    Error, Transaction,
+    BoundedAggregator,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
     batch_mode::LeaderSelected, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId,
     Time,
 };
-use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
 use std::{
     cmp::{max, min, Ordering},
@@ -32,7 +34,7 @@ use tracing::debug;
 /// outstanding reports.
 pub struct BatchCreator<'a, const SEED_SIZE: usize, A>
 where
-    A: Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
 {
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<
@@ -61,8 +63,7 @@ struct Properties {
 
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
 where
-    A: Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'a,
-    A::PrepareState: Encode,
+    A: BoundedAggregator<SEED_SIZE, AggregationParam = ()> + 'a,
 {
     pub fn new(
         min_aggregation_job_size: usize,

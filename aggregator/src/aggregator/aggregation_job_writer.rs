@@ -15,6 +15,7 @@ use janus_aggregator_core::{
         Error, Transaction,
     },
     task::AggregatorTask,
+    BoundedAggregator,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -31,7 +32,6 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
     KeyValue,
 };
-use prio::{codec::Encode, vdaf};
 use rand::{thread_rng, Rng as _};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
@@ -41,7 +41,7 @@ use tracing::{warn, Level};
 pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
 {
     task: Arc<AggregatorTask>,
     batch_aggregation_shard_count: u64,
@@ -65,7 +65,7 @@ pub struct AggregationJobWriterMetrics {
 impl<const SEED_SIZE: usize, A, B, WT, RA> AggregationJobWriter<SEED_SIZE, B, A, WT, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
     A::AggregationParam: PartialEq + Eq,
     WT: WriteType,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
@@ -183,7 +183,7 @@ where
         skip(self, tx),
         err(level = Level::DEBUG),
     )]
-    pub async fn write<C>(
+    pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
@@ -193,13 +193,7 @@ where
             TaskAggregationCounter,
         ),
         Error,
-    >
-    where
-        C: Clock,
-        A: Send + Sync,
-        A::AggregationParam: PartialEq + Eq + Send + Sync,
-        A::PrepareState: Encode,
-    {
+    > {
         // Read & update state based on the aggregation jobs to be written. We will read batch
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
@@ -289,8 +283,7 @@ trait WriteType {
     where
         C: Clock,
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::AggregationParam: Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>;
 
     fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, B, A>(
@@ -299,7 +292,7 @@ trait WriteType {
     ) -> Result<(), Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>;
+        A: BoundedAggregator<SEED_SIZE>;
 }
 
 /// Represents the initial write of a set of aggregation jobs.
@@ -314,8 +307,7 @@ impl WriteType for InitialWrite {
     where
         C: Clock,
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::AggregationParam: Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
     {
         // These operations must occur serially since report aggregation rows have a
@@ -340,7 +332,7 @@ impl WriteType for InitialWrite {
     ) -> Result<(), Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: BoundedAggregator<SEED_SIZE>,
     {
         // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
         // aggregation_jobs_created.
@@ -379,8 +371,7 @@ impl WriteType for UpdateWrite {
     where
         C: Clock,
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::AggregationParam: Send + Sync,
+        A: BoundedAggregator<SEED_SIZE>,
         RA: ReportAggregationUpdate<SEED_SIZE, A>,
     {
         try_join!(
@@ -401,7 +392,7 @@ impl WriteType for UpdateWrite {
     ) -> Result<(), Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: BoundedAggregator<SEED_SIZE>,
     {
         // For updates of aggregation jobs into a terminal state, increment
         // aggregation_jobs_terminated. (This is safe to do since we will not process a terminal
@@ -437,8 +428,7 @@ impl WriteType for UpdateWrite {
 struct WriteState<'a, const SEED_SIZE: usize, B, A, WT, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::AggregationParam: Send + Sync,
+    A: BoundedAggregator<SEED_SIZE>,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     writer: &'a AggregationJobWriter<SEED_SIZE, B, A, WT, RA>,
@@ -452,7 +442,7 @@ where
 struct AggregationJobInfo<const SEED_SIZE: usize, B, A, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
 {
     aggregation_job: AggregationJob<SEED_SIZE, B, A>,
     report_aggregations: Vec<RA>,
@@ -462,8 +452,7 @@ where
 struct CowAggregationJobInfo<'a, const SEED_SIZE: usize, B, A, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::AggregationParam: Send + Sync,
+    A: BoundedAggregator<SEED_SIZE>,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, B, A>>,
@@ -473,8 +462,7 @@ where
 impl<'a, const SEED_SIZE: usize, B, A, WT, RA> WriteState<'a, SEED_SIZE, B, A, WT, RA>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::AggregationParam: PartialEq + Eq + Send + Sync,
+    A: BoundedAggregator<SEED_SIZE>,
     WT: WriteType,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
@@ -920,15 +908,12 @@ where
 }
 
 #[derive(Clone)]
-pub struct WritableReportAggregation<const SEED_SIZE: usize, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
+pub struct WritableReportAggregation<const SEED_SIZE: usize, A: BoundedAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
     output_share: Option<A::OutputShare>,
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: BoundedAggregator<SEED_SIZE>>
     WritableReportAggregation<SEED_SIZE, A>
 {
     /// Creates a new WritableReportAggregation.
@@ -961,7 +946,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 ///
 /// See [`ReportAggregation`] and [`ReportAggregationMetadata`].
 #[async_trait]
-pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>:
+pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: BoundedAggregator<SEED_SIZE>>:
     Clone + Send + Sync
 {
     type Borrowed: ReportAggregationUpdate<SEED_SIZE, A>;
@@ -1010,12 +995,7 @@ pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SE
 impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A>
     for WritableReportAggregation<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::InputShare: Send + Sync,
-    A::OutputShare: Send + Sync,
-    A::PrepareState: Encode + Send + Sync,
-    A::PrepareMessage: Send + Sync,
-    A::PublicShare: Send + Sync,
+    A: BoundedAggregator<SEED_SIZE>,
 {
     type Borrowed = Self;
 
@@ -1085,7 +1065,7 @@ where
 #[async_trait]
 impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A> for ReportAggregationMetadata
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
 {
     type Borrowed = Self;
 
@@ -1134,7 +1114,7 @@ where
 #[async_trait]
 impl<const SEED_SIZE: usize, A, RA> ReportAggregationUpdate<SEED_SIZE, A> for Cow<'_, RA>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: BoundedAggregator<SEED_SIZE>,
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     // All methods are implemented as a fallthrough to the implementation in `RA`.
