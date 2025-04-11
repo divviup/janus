@@ -56,6 +56,7 @@ use janus_aggregator_core::{
     },
     task::{self, AggregationMode, AggregatorTask, BatchMode},
     taskprov::PeerAggregator,
+    AsyncAggregator, AsyncAggregatorWithNoise,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -92,10 +93,7 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
     field::Field64,
     flp::gadgets::{Mul, ParallelSum},
-    vdaf::{
-        self,
-        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
-    },
+    vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
 use rand::{thread_rng, Rng};
 use reqwest::Client;
@@ -103,7 +101,6 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fmt::Debug,
-    hash::Hash,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex as SyncMutex},
@@ -1616,11 +1613,7 @@ impl VdafOps {
         report: Report,
     ) -> Result<(), Arc<Error>>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
         B: UploadableBatchMode,
     {
@@ -1792,9 +1785,8 @@ impl VdafOps {
     ) -> Result<Option<Vec<PrepareResp>>, datastore::Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
     {
         let existing_aggregation_job = match tx
             .get_aggregation_job::<SEED_SIZE, B, A>(task_id, mutating_aggregation_job.id())
@@ -1918,17 +1910,8 @@ impl VdafOps {
     ) -> Result<AggregationJobResp, Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync + PartialEq,
-        A::PrepareShare: Send + Sync + PartialEq,
-        for<'a> A::PrepareState:
-            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync + PartialEq,
     {
         // Unwrap safety: SHA-256 computed by ring should always be 32 bytes.
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
@@ -2052,17 +2035,8 @@ impl VdafOps {
     ) -> Result<AggregationJobResp, Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync + PartialEq,
-        A::PrepareShare: Send + Sync + PartialEq,
-        for<'a> A::PrepareState:
-            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync + PartialEq,
     {
         // Check if this is a repeated request, and if it is the same as before, send
         // the same response as last time.
@@ -2139,17 +2113,8 @@ impl VdafOps {
     ) -> Result<AggregationJobResp, Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync + PartialEq,
-        A::PrepareShare: Send + Sync + PartialEq,
-        for<'a> A::PrepareState:
-            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync + PartialEq,
     {
         Self::handle_aggregate_init_generic_write(
             datastore,
@@ -2187,17 +2152,8 @@ impl VdafOps {
     ) -> Result<Vec<PrepareResp>, Error>
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync + PartialEq,
-        A::PrepareShare: Send + Sync + PartialEq,
-        for<'a> A::PrepareState:
-            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync + PartialEq,
     {
         let (prepare_resps, counters) = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
@@ -2285,7 +2241,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: Arc<Datastore<C>>,
@@ -2297,18 +2253,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
         request_hash: [u8; 32],
-    ) -> Result<AggregationJobResp, Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<AggregationJobResp, Error> {
         if req.step() == AggregationJobStep::from(0) {
             return Err(Error::InvalidMessage(
                 Some(*task.id()),
@@ -2542,7 +2487,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic_sync<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<'_, C>,
@@ -2553,18 +2498,7 @@ impl VdafOps {
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(AggregationJobResp, TaskAggregationCounter), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<(AggregationJobResp, TaskAggregationCounter), Error> {
         // Compute the next aggregation step.
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         let aggregation_job = Arc::new(aggregation_job);
@@ -2597,7 +2531,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic_async<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<'_, C>,
@@ -2608,18 +2542,7 @@ impl VdafOps {
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(AggregationJobResp, TaskAggregationCounter), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<(AggregationJobResp, TaskAggregationCounter), Error> {
         report_aggregations_to_write.extend(
             report_aggregations
                 .into_iter()
@@ -2643,7 +2566,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic_write<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<'_, C>,
@@ -2653,18 +2576,7 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(Vec<PrepareResp>, TaskAggregationCounter), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<(Vec<PrepareResp>, TaskAggregationCounter), Error> {
         // Sanity-check that we have the correct number of report aggregations.
         assert_eq!(report_aggregations.len(), report_aggregations.capacity());
 
@@ -2691,7 +2603,7 @@ impl VdafOps {
     async fn handle_aggregate_get_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: Arc<Datastore<C>>,
@@ -2699,18 +2611,7 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
         step: AggregationJobStep,
-    ) -> Result<AggregationJobResp, Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<AggregationJobResp, Error> {
         Ok(datastore
             .run_tx("get_aggregation_job", |tx| {
                 let vdaf = Arc::clone(&vdaf);
@@ -2787,22 +2688,13 @@ impl VdafOps {
     async fn handle_aggregate_delete_generic<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<AggregatorTask>,
         aggregation_job_id: &AggregationJobId,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::OutputShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         Ok(datastore
             .run_tx("delete_aggregation_job", |tx| {
                 let (task_id, aggregation_job_id) = (*task.id(), *aggregation_job_id);
@@ -2868,7 +2760,7 @@ impl VdafOps {
     async fn handle_create_collection_job_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -2876,11 +2768,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-    ) -> Result<Vec<u8>, Error>
-    where
-        A::AggregationParam: 'static + Send + Sync + PartialEq + Eq + Hash,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<Vec<u8>, Error> {
         let req =
             Arc::new(CollectionJobReq::<B>::get_decoded(req_bytes).map_err(Error::MessageDecode)?);
         let aggregation_param = Arc::new(
@@ -3026,18 +2914,14 @@ impl VdafOps {
     async fn handle_get_collection_job_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Vec<u8>, Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<Vec<u8>, Error> {
         let collection_job = datastore
             .run_tx("get_collection_job", |tx| {
                 let (task, vdaf, collection_job_id) =
@@ -3170,18 +3054,14 @@ impl VdafOps {
     async fn handle_delete_collection_job_generic<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync + PartialEq + Eq,
-    {
+    ) -> Result<(), Error> {
         datastore
             .run_tx("delete_collection_job", move |tx| {
                 let (task, vdaf, collection_job_id) =
@@ -3276,7 +3156,7 @@ impl VdafOps {
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
-        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
+        A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -3287,11 +3167,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         collector_hpke_config: &HpkeConfig,
         dp_strategy: Arc<S>,
-    ) -> Result<AggregateShare, Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + Hash,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<AggregateShare, Error> {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
         let aggregate_share_req =
@@ -3517,7 +3393,7 @@ fn write_task_aggregation_counter<C: Clock>(
 fn empty_batch_aggregations<
     const SEED_SIZE: usize,
     B: CollectableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    A: AsyncAggregator<SEED_SIZE>,
 >(
     task: &AggregatorTask,
     batch_aggregation_shard_count: u64,

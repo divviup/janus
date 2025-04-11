@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
         Datastore,
     },
-    task, TIME_HISTOGRAM_BOUNDARIES,
+    task, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -130,19 +130,14 @@ where
         C: Clock,
         B: CollectableBatchMode,
         S: DifferentialPrivacyStrategy,
-        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
+        A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
         dp_strategy: S,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: 'static + Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         let collection_identifier = Arc::new(
             B::BatchIdentifier::get_decoded(lease.leased().encoded_batch_identifier())
                 .map_err(Error::MessageDecode)?,
