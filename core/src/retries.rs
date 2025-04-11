@@ -22,11 +22,10 @@ fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
     None
 }
 
+/// Extends the Backon ExponentialBackoff and ExponentialBuilder to add a `total_delay` field, which
+/// we use for deadlining in the collector's `poll_until_complete` method, as the underlying
+/// Backoff implementation does not expose that delay after it's set.
 #[derive(Copy, Clone, Debug)]
-/// Extends the Backon ExponentialBackoff and ExponentialBuilder to add
-/// a `total_delay` field, which we use for deadlining in the collector's
-/// `poll_until_complete` method, as the underlying Backoff implementation
-/// does not expose that delay after it's set.
 pub struct ExponentialWithTotalDelayBuilder {
     pub total_delay: Option<Duration>,
     builder: ExponentialBuilder,
@@ -313,8 +312,8 @@ pub mod test_util {
     use backon::ConstantBuilder;
     use std::time::Duration;
 
-    /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
-    /// for 10 minutes.
+    /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be
+    /// retrying for 10 minutes.
     pub fn test_http_request_exponential_backoff() -> ExponentialWithTotalDelayBuilder {
         ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_nanos(1))
@@ -326,14 +325,14 @@ pub mod test_util {
             .with_total_delay(Some(Duration::from_nanos(100)))
     }
 
-    /// A [`backon::ConstantBackoff`] that immediately retries a given number of times,
-    /// and then gives up.
+    /// A [`backon::ConstantBackoff`] that immediately retries a given number of times, and then
+    /// gives up.
     #[derive(Copy, Clone)]
     pub struct LimitedRetryer {}
 
     impl LimitedRetryer {
-        /// new should usually return self, but LimitedRetryer is a thin wrapper used only
-        /// for tests.
+        /// new should usually return self, but LimitedRetryer is a thin wrapper used only for
+        /// tests.
         #[allow(clippy::new_ret_no_self)]
         pub fn new(max_retries: usize) -> ConstantBuilder {
             ConstantBuilder::new()
