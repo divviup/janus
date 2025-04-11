@@ -99,7 +99,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 use tokio::time::{sleep, Instant};
-use tracing::{debug, warn};
+use tracing::debug;
 use url::Url;
 
 /// Errors that may occur when performing collections.
@@ -706,7 +706,7 @@ impl<V: vdaf::Collector> Collector<V> {
             } else {
                 // Either the maximum retries or the maximum delay has been reached
                 // so return a timeout.
-                warn!(
+                debug!(
                     ?deadline,
                     ?starttime,
                     "backoff limits reached, returning timeout"
@@ -725,7 +725,7 @@ impl<V: vdaf::Collector> Collector<V> {
                         .map_or(true, |recommendation| recommendation > deadline);
 
                     if recommendation_is_past_deadline {
-                        warn!(
+                        debug!(
                             ?deadline,
                             ?starttime,
                             ?recommendation_is_past_deadline,
