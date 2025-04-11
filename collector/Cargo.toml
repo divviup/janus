@@ -18,7 +18,7 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "prio/experiment
 test-util = []
 
 [dependencies]
-backon = { workspace = true, features = ["tokio-sleep"] }
+backon = { workspace = true }
 chrono.workspace = true
 educe.workspace = true
 fixed = { workspace = true, optional = true }

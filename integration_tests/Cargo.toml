@@ -17,7 +17,7 @@ ohttp = []
 [dependencies]
 anyhow.workspace = true
 assert_matches.workspace = true
-backon = { workspace = true, features = ["tokio-sleep"] }
+backon = { workspace = true }
 base64.workspace = true
 clap.workspace = true
 futures = { workspace = true }
