@@ -589,8 +589,9 @@ pub mod test_util {
             .with_max_times(30 * 4);
 
         let _ = (|| async {
-            (|| async { http_client.post(url.clone()).send().await })
-                .retry(backoff.build())
+            http_client
+                .post(url.clone())
+                .send()
                 .await?
                 .error_for_status()
         })
