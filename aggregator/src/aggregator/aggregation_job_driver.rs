@@ -104,7 +104,7 @@ pub struct AggregationJobDriver<B> {
 
 impl<R> AggregationJobDriver<R>
 where
-    R: BackoffBuilder + Copy + Send + Sync + 'static,
+    R: BackoffBuilder + Copy + 'static,
 {
     pub fn new(
         http_client: reqwest::Client,

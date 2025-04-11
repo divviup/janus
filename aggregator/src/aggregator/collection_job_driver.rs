@@ -60,7 +60,7 @@ pub struct CollectionJobDriver<B> {
 
 impl<R> CollectionJobDriver<R>
 where
-    R: BackoffBuilder + Copy + Send + Sync + 'static,
+    R: BackoffBuilder + Copy + 'static,
 {
     /// Create a new [`CollectionJobDriver`].
     pub fn new(
