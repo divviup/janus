@@ -1539,6 +1539,10 @@ WHERE report_aggregations.task_id = $1
             report.leader_private_extensions(),
         )?;
 
+        // If there is a conflict, the we upsert the incoming report (excluded) if the existing
+        // report is expired (virtually GCed; would be invisible to other queries that retrieve
+        // report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_client_report()
@@ -1694,8 +1698,10 @@ WHERE task_id = $1
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
-        // On conflict, we update the row to the incoming client timestamp (excluded) if the
-        // existing row is logically GCed.
+        // If there is a conflict, the we upsert the incoming report (excluded) if the existing
+        // report is expired (virtually GCed; would be invisible to other queries that retrieve
+        // report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_scrubbed_report()
@@ -2006,9 +2012,10 @@ WHERE aggregation_jobs.task_id = $4
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
-        // On conflict, we insert the incoming aggregation job (excluded) if the existing row is
-        // logically GCed (the upper end of the interval its constituent reports span is before the
-        // expiry threshold).
+        // If there is a conflict, the we upsert the incoming aggregation job (excluded) if the
+        // existing aggregation job is expired (virtually GCed; would be invisible to other queries
+        // that retrieve aggregation job rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_aggregation_job()
@@ -2568,6 +2575,10 @@ WHERE report_aggregations.task_id = $1
             .map(PrepareResp::get_encoded)
             .transpose()?;
 
+        // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
+        // existing report aggregation is expired (virtually GCed; would be invisible to other
+        // queries that retrieve report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_report_aggregation()
@@ -2662,6 +2673,10 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
+        // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
+        // existing report aggregation is expired (virtually GCed; would be invisible to other
+        // queries that retrieve report rows).
+        // https://github.com/divviup/janus/pull/2818
         match report_aggregation_metadata.state() {
             ReportAggregationMetadataState::Init => {
                 let stmt = self
