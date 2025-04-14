@@ -39,7 +39,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use backoff::ExponentialBackoff;
+use backon::BackoffBuilder;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
 use educe::Educe;
@@ -50,7 +50,9 @@ use itertools::Itertools;
 use janus_core::{
     hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
     http::HttpErrorResponse,
-    retries::{http_request_exponential_backoff, retry_http_request},
+    retries::{
+        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
+    },
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
     vdaf::vdaf_application_context,
@@ -151,7 +153,7 @@ struct ClientParameters {
     /// used to compute report timestamps.
     time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialBackoff,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl ClientParameters {
@@ -212,7 +214,7 @@ async fn aggregator_hpke_config(
 
     let request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
     let hpke_config_response = retry_http_request(
-        client_parameters.http_request_retry_parameters.clone(),
+        client_parameters.http_request_retry_parameters.build(),
         || async { http_client.get(request_url.clone()).send().await },
     )
     .await?;
@@ -250,12 +252,12 @@ async fn aggregator_hpke_config(
 #[tracing::instrument(err)]
 #[cfg(feature = "ohttp")]
 async fn ohttp_key_configs(
-    http_request_retry_parameters: ExponentialBackoff,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     ohttp_config: &OhttpConfig,
     http_client: &reqwest::Client,
 ) -> Result<Vec<KeyConfig>, Error> {
     // TODO(#3159): store/fetch OHTTP key configs in a cache-control aware persistent cache.
-    let keys_response = retry_http_request(http_request_retry_parameters, || async {
+    let keys_response = retry_http_request(http_request_retry_parameters.build(), || async {
         http_client
             .get(ohttp_config.key_configs.clone())
             .header(ACCEPT, OHTTP_KEYS_MEDIA_TYPE)
@@ -373,7 +375,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         #[cfg(feature = "ohttp")]
         let ohttp_config = if let Some(ohttp_config) = self.ohttp_config {
             let key_configs = ohttp_key_configs(
-                self.parameters.http_request_retry_parameters.clone(),
+                self.parameters.http_request_retry_parameters,
                 &ohttp_config,
                 &http_client,
             )
@@ -432,7 +434,10 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     }
 
     /// Override the exponential backoff parameters used when retrying HTTPS requests.
-    pub fn with_backoff(mut self, http_request_retry_parameters: ExponentialBackoff) -> Self {
+    pub fn with_backoff(
+        mut self,
+        http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
+    ) -> Self {
         self.parameters.http_request_retry_parameters = http_request_retry_parameters;
         self
     }
@@ -704,7 +709,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         request_body: &[u8],
     ) -> Result<StatusCode, Error> {
         Ok(retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
+            self.parameters.http_request_retry_parameters.build(),
             || async {
                 self.http_client
                     .post(upload_endpoint.clone())
@@ -758,7 +763,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         let (encapsulated_request, ohttp_response) = ohttp_request.encapsulate(&request_buf)?;
 
         let relay_response = retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
+            self.parameters.http_request_retry_parameters.build(),
             || async {
                 self.http_client
                     .post(ohttp_config.relay.clone())

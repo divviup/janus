@@ -4,7 +4,6 @@ use crate::simulation::{
     proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
     run::State,
 };
-use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
@@ -35,7 +34,10 @@ use janus_aggregator_core::{
 };
 use janus_client::{default_http_client, Client};
 use janus_collector::Collector;
-use janus_core::{test_util::runtime::TestRuntime, time::MockClock, Runtime};
+use janus_core::{
+    retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime, time::MockClock,
+    Runtime,
+};
 use prio::vdaf::prio3::Prio3Histogram;
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -322,9 +324,7 @@ impl Components {
         )
         .with_http_request_backoff(http_request_exponential_backoff())
         .with_collect_poll_backoff(
-            ExponentialBackoffBuilder::new()
-                .with_max_elapsed_time(Some(StdDuration::ZERO))
-                .build(),
+            ExponentialWithTotalDelayBuilder::new().with_total_delay(Some(StdDuration::ZERO)),
         )
         .build()
         .unwrap();

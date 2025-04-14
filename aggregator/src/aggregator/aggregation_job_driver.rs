@@ -17,7 +17,7 @@ use crate::{
     metrics::aggregated_report_share_dimension_histogram,
 };
 use anyhow::{anyhow, Result};
-use backoff::backoff::Backoff;
+use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
@@ -104,7 +104,7 @@ pub struct AggregationJobDriver<B> {
 
 impl<R> AggregationJobDriver<R>
 where
-    R: Backoff + Clone + Send + Sync + 'static,
+    R: BackoffBuilder + Copy + 'static,
 {
     pub fn new(
         http_client: reqwest::Client,
@@ -633,7 +633,7 @@ where
 
             let http_response = send_request_to_helper(
                 &self.http_client,
-                self.backoff.clone(),
+                self.backoff.build(),
                 Method::PUT,
                 task.aggregation_job_uri(aggregation_job.id(), None)?
                     .ok_or_else(|| {
@@ -840,7 +840,7 @@ where
 
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff.clone(),
+            self.backoff.build(),
             Method::POST,
             task.aggregation_job_uri(aggregation_job.id(), None)?
                 .ok_or_else(|| {
@@ -927,7 +927,7 @@ where
         // Poll the Helper for completion.
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff.clone(),
+            self.backoff.build(),
             Method::GET,
             task.aggregation_job_uri(aggregation_job.id(), Some(aggregation_job.step()))?
                 .ok_or_else(|| {
@@ -1781,7 +1781,7 @@ where
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.5.2.2-20
         let _ = send_request_to_helper(
             &self.http_client,
-            self.backoff.clone(),
+            self.backoff.build(),
             Method::DELETE,
             aggregation_job_uri?.ok_or_else(|| {
                 Error::InvalidConfiguration("task is leader and has no aggregation job URI")

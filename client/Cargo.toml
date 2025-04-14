@@ -17,7 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 ohttp = ["dep:ohttp", "dep:bhttp"]
 
 [dependencies]
-backoff = { workspace = true, features = ["tokio"] }
+backon = { workspace = true }
 bhttp = { workspace = true, features = ["bhttp", "http"], optional = true }
 educe.workspace = true
 http.workspace = true

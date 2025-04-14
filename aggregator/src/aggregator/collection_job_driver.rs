@@ -6,7 +6,7 @@ use crate::aggregator::{
     RequestBody,
 };
 use anyhow::bail;
-use backoff::backoff::Backoff;
+use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::{try_join_all, BoxFuture};
@@ -60,7 +60,7 @@ pub struct CollectionJobDriver<B> {
 
 impl<R> CollectionJobDriver<R>
 where
-    R: Backoff + Clone + Send + Sync + 'static,
+    R: BackoffBuilder + Copy + 'static,
 {
     /// Create a new [`CollectionJobDriver`].
     pub fn new(
@@ -344,7 +344,7 @@ where
         // Send an aggregate share request to the helper.
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff.clone(),
+            self.backoff,
             Method::POST,
             task.aggregate_shares_uri()?.ok_or_else(|| {
                 Error::InvalidConfiguration("task is not leader and has no aggregate share URI")

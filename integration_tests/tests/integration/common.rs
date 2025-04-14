@@ -1,9 +1,9 @@
-use backoff::{future::retry, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
 use janus_collector::{Collection, Collector};
 use janus_core::{
-    retries::test_util::test_http_request_exponential_backoff,
+    retries::{test_util::test_http_request_exponential_backoff, ExponentialWithTotalDelayBuilder},
     time::{Clock, RealClock, TimeExt},
     vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
 };
@@ -141,32 +141,21 @@ where
     // An extra retry loop is needed here because our collect request may race against the
     // aggregation job creator, which is responsible for assigning reports to batches in fixed-
     // size tasks.
-    let backoff = ExponentialBackoffBuilder::new()
-        .with_initial_interval(time::Duration::from_millis(500))
-        .with_max_interval(time::Duration::from_millis(500))
-        .with_max_elapsed_time(Some(time::Duration::from_secs(5)))
+    let backoff = ConstantBuilder::new()
+        .with_delay(time::Duration::from_millis(500))
+        .with_max_times(10)
         .build();
-    retry(backoff, || {
+    (|| {
         let query = query.clone();
         async move {
-            match collector.collect(query, aggregation_parameter).await {
-                Ok(collection) => Ok(collection),
-                Err(janus_collector::Error::Http(error_response)) => {
-                    if let Some(DapProblemType::InvalidBatchSize) =
-                        error_response.dap_problem_type()
-                    {
-                        Err(backoff::Error::transient(janus_collector::Error::Http(
-                            error_response,
-                        )))
-                    } else {
-                        Err(backoff::Error::permanent(janus_collector::Error::Http(
-                            error_response,
-                        )))
-                    }
-                }
-                Err(error) => Err(backoff::Error::permanent(error)),
-            }
+            collector
+                .collect(query.clone(), aggregation_parameter)
+                .await
         }
+    })
+    .retry(backoff)
+    .when(|e| {
+        matches!(e, janus_collector::Error::Http(error_response) if error_response.dap_problem_type() == Some(&DapProblemType::InvalidBatchSize))
     })
     .await
 }
@@ -264,11 +253,11 @@ where
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
-        ExponentialBackoffBuilder::new()
-            .with_initial_interval(time::Duration::from_millis(500))
-            .with_max_interval(task_parameters.collector_max_interval)
-            .with_max_elapsed_time(Some(task_parameters.collector_max_elapsed_time))
-            .build(),
+        ExponentialWithTotalDelayBuilder::new()
+            .with_min_delay(time::Duration::from_millis(500))
+            .with_max_delay(task_parameters.collector_max_interval)
+            .without_max_times()
+            .with_total_delay(Some(task_parameters.collector_max_elapsed_time)),
     )
     .build()
     .unwrap();

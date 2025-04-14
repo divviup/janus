@@ -1,8 +1,8 @@
 //! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use educe::Educe;
+use janus_core::retries::ExponentialWithTotalDelayBuilder;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
@@ -224,8 +224,8 @@ pub struct JobDriverConfig {
         alias = "retry_max_interval_millis"
     )]
     pub retry_max_interval_ms: u64,
-    /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
-    /// HTTP request.
+    /// The maximum retry time, in milliseconds, to wait before giving up on retrying a retryable
+    /// HTTP request. Note this is the sum of the retry intervals, not wall-clock time.
     #[serde(
         default = "JobDriverConfig::default_retry_max_elapsed_time_ms",
         alias = "retry_max_elapsed_time_millis"
@@ -234,12 +234,12 @@ pub struct JobDriverConfig {
 }
 
 impl JobDriverConfig {
-    pub fn retry_config(&self) -> ExponentialBackoff {
-        ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(self.retry_initial_interval_ms))
-            .with_max_interval(Duration::from_millis(self.retry_max_interval_ms))
-            .with_max_elapsed_time(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
-            .build()
+    pub fn retry_config(&self) -> ExponentialWithTotalDelayBuilder {
+        ExponentialWithTotalDelayBuilder::new()
+            .without_max_times()
+            .with_min_delay(Duration::from_millis(self.retry_initial_interval_ms))
+            .with_max_delay(Duration::from_millis(self.retry_max_interval_ms))
+            .with_total_delay(Some(Duration::from_millis(self.retry_max_elapsed_time_ms)))
     }
 
     fn default_http_connection_timeout_s() -> u64 {

@@ -568,35 +568,10 @@ pub fn get_rust_log_level() -> String {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use backoff::{future::retry, ExponentialBackoff};
-    use futures::{Future, TryFutureExt};
+    use backon::{BackoffBuilder, ConstantBuilder, Retryable};
     use rand::random;
-    use std::{fmt::Debug, time::Duration};
+    use std::time::Duration;
     use url::Url;
-
-    async fn await_readiness_condition<
-        I,
-        E: Debug,
-        Fn: FnMut() -> Fut,
-        Fut: Future<Output = Result<I, backoff::Error<E>>>,
-    >(
-        operation: Fn,
-    ) {
-        retry(
-            // (We use ExponentialBackoff as a constant-time backoff as the built-in Constant
-            // backoff will never time out.)
-            ExponentialBackoff {
-                initial_interval: Duration::from_millis(250),
-                max_interval: Duration::from_millis(250),
-                multiplier: 1.0,
-                max_elapsed_time: Some(Duration::from_secs(30)),
-                ..Default::default()
-            },
-            operation,
-        )
-        .await
-        .unwrap();
-    }
 
     /// Waits a while for the given IPv4 port to start responding successfully to
     /// "/internal/test/ready" HTTP requests, panicking if this doesn't happen soon enough.
@@ -608,16 +583,20 @@ pub mod test_util {
         // Explicitly connect to IPv4 localhost so that we don't accidentally try to talk to a
         // different container's IPv6 port.
         let url = Url::parse(&format!("http://127.0.0.1:{port}/internal/test/ready")).unwrap();
-        await_readiness_condition(|| async {
+
+        let backoff = ConstantBuilder::new()
+            .with_delay(Duration::from_millis(250))
+            .with_max_times(30 * 4);
+
+        let _ = (|| async {
             http_client
                 .post(url.clone())
                 .send()
-                .await
-                .map_err(backoff::Error::transient)?
+                .await?
                 .error_for_status()
-                .map_err(backoff::Error::transient)
         })
-        .await
+        .retry(backoff.build())
+        .await;
     }
 
     /// Waits a while for the given port to start responding to HTTP requests, panicking if this
@@ -628,13 +607,14 @@ pub mod test_util {
             .build()
             .unwrap();
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
-        await_readiness_condition(|| {
-            http_client
-                .get(url.clone())
-                .send()
-                .map_err(backoff::Error::transient)
-        })
-        .await
+
+        let backoff = ConstantBuilder::new()
+            .with_delay(Duration::from_millis(250))
+            .with_max_times(30 * 4);
+
+        let _ = (|| async { http_client.get(url.clone()).send().await })
+            .retry(backoff.build())
+            .await;
     }
 
     pub fn generate_network_name() -> String {

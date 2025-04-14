@@ -63,8 +63,7 @@
 
 mod credential;
 
-use backoff::backoff::Backoff;
-pub use backoff::ExponentialBackoff;
+pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use credential::PrivateCollectorCredential;
 use educe::Educe;
@@ -72,7 +71,9 @@ pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
     http::HttpErrorResponse,
-    retries::{http_request_exponential_backoff, retry_http_request},
+    retries::{
+        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
+    },
     time::{DurationExt, TimeExt},
     url_ensure_trailing_slash,
 };
@@ -317,9 +318,9 @@ pub struct CollectorBuilder<V: vdaf::Collector> {
     /// HTTPS client.
     http_client: Option<reqwest::Client>,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialBackoff,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponentialBackoff,
+    collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
@@ -340,13 +341,10 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             vdaf,
             http_client: None,
             http_request_retry_parameters: http_request_exponential_backoff(),
-            collect_poll_wait_parameters: ExponentialBackoff {
-                initial_interval: StdDuration::from_secs(15),
-                max_interval: StdDuration::from_secs(300),
-                multiplier: 1.2,
-                max_elapsed_time: None,
-                ..Default::default()
-            },
+            collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder::new()
+                .with_min_delay(StdDuration::from_secs(15))
+                .with_max_delay(StdDuration::from_secs(300))
+                .with_factor(1.2),
         }
     }
 
@@ -376,13 +374,13 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
     }
 
     /// Replace the exponential backoff settings used for HTTP requests.
-    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+    pub fn with_http_request_backoff(mut self, backoff: ExponentialWithTotalDelayBuilder) -> Self {
         self.http_request_retry_parameters = backoff;
         self
     }
 
     /// Replace the exponential backoff settings used while polling for aggregate shares.
-    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialWithTotalDelayBuilder) -> Self {
         self.collect_poll_wait_parameters = backoff;
         self
     }
@@ -409,9 +407,9 @@ pub struct Collector<V: vdaf::Collector> {
     #[educe(Debug(ignore))]
     http_client: reqwest::Client,
     /// Parameters to use when retrying HTTP requests.
-    http_request_retry_parameters: ExponentialBackoff,
+    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     /// Parameters to use when waiting for a collection job to be processed.
-    collect_poll_wait_parameters: ExponentialBackoff,
+    collect_poll_wait_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl<V: vdaf::Collector> Collector<V> {
@@ -494,7 +492,7 @@ impl<V: vdaf::Collector> Collector<V> {
         let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
         let response_res =
-            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+            retry_http_request(self.http_request_retry_parameters.build(), || async {
                 let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .put(collection_job_url.clone())
@@ -538,7 +536,7 @@ impl<V: vdaf::Collector> Collector<V> {
     ) -> Result<PollResult<V::AggregateResult, B>, Error> {
         let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
         let response_res =
-            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+            retry_http_request(self.http_request_retry_parameters.build(), || async {
                 let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .get(collection_job_url.clone())
@@ -665,15 +663,20 @@ impl<V: vdaf::Collector> Collector<V> {
     ///
     /// This uses the parameters provided via [`CollectorBuilder.with_collect_poll_wait_parameters`]
     /// to control how frequently to poll for completion.
+    ///
+    /// This could be accomplished using Backon's retry mechanism, but it's cumbersome to do with
+    /// the current version. See <https://github.com/Xuanwo/backon/issues/150>.
     pub async fn poll_until_complete<B: BatchMode>(
         &self,
         job: &CollectionJob<V::AggregationParam, B>,
     ) -> Result<Collection<V::AggregateResult, B>, Error> {
-        let mut backoff = self.collect_poll_wait_parameters.clone();
-        backoff.reset();
-        let deadline = backoff
-            .max_elapsed_time
-            .map(|duration| Instant::now() + duration);
+        let starttime = Instant::now();
+        let deadline = self
+            .collect_poll_wait_parameters
+            .total_delay
+            .map(|duration| starttime + duration);
+        let mut backoff = self.collect_poll_wait_parameters.build();
+
         loop {
             // poll_once() already retries upon server and connection errors, so propagate any error
             // received from it and return immediately.
@@ -681,7 +684,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 PollResult::CollectionResult(aggregate_result) => {
                     debug!(
                         job_id = %job.collection_job_id(),
-                        elapsed = ?backoff.get_elapsed_time(),
+                        elapsed = ?Instant::now() - starttime,
                         "collection job complete"
                     );
                     return Ok(aggregate_result);
@@ -698,10 +701,16 @@ impl<V: vdaf::Collector> Collector<V> {
                 None => None,
             };
 
-            let backoff_duration = if let Some(duration) = backoff.next_backoff() {
+            let backoff_duration = if let Some(duration) = backoff.next() {
                 duration
             } else {
-                // The maximum elapsed time has expired, so return a timeout error.
+                // Either the maximum retries or the maximum delay has been reached
+                // so return a timeout.
+                debug!(
+                    ?deadline,
+                    ?starttime,
+                    "backoff limits reached, returning timeout"
+                );
                 return Err(Error::CollectPollTimeout);
             };
 
@@ -716,6 +725,12 @@ impl<V: vdaf::Collector> Collector<V> {
                         .map_or(true, |recommendation| recommendation > deadline);
 
                     if recommendation_is_past_deadline {
+                        debug!(
+                            ?deadline,
+                            ?starttime,
+                            ?recommendation_is_past_deadline,
+                            "retry-after would exceed deadline, returning timeout"
+                        );
                         return Err(Error::CollectPollTimeout);
                     }
                 }
@@ -743,7 +758,7 @@ impl<V: vdaf::Collector> Collector<V> {
     ) -> Result<(), Error> {
         let collection_job_url = self.collection_job_uri(collection_job.collection_job_id)?;
         let response_res =
-            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+            retry_http_request(self.http_request_retry_parameters.build(), || async {
                 let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .delete(collection_job_url.clone())
@@ -1829,8 +1844,10 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
-        collector.collect_poll_wait_parameters.max_elapsed_time =
-            Some(std::time::Duration::from_secs(3));
+        collector.collect_poll_wait_parameters = collector
+            .collect_poll_wait_parameters
+            .without_max_times()
+            .with_total_delay(Some(std::time::Duration::from_secs(3)));
 
         let collection_job_id: CollectionJobId = random();
         let collection_job_path = format!(
@@ -1934,10 +1951,10 @@ mod tests {
             .await;
 
         // Manipulate backoff settings so that we make one or two requests and time out.
-        collector.collect_poll_wait_parameters.max_elapsed_time =
-            Some(std::time::Duration::from_millis(15));
-        collector.collect_poll_wait_parameters.initial_interval =
-            std::time::Duration::from_millis(10);
+        collector.collect_poll_wait_parameters = collector
+            .collect_poll_wait_parameters
+            .with_total_delay(Some(std::time::Duration::from_millis(15)))
+            .with_min_delay(std::time::Duration::from_millis(10));
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
