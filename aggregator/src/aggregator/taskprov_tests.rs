@@ -276,7 +276,7 @@ async fn taskprov_aggregate_init() {
             .primary_aggregator_auth_token()
             .request_authentication();
 
-        let mut test_conn = put(test
+        let status = put(test
             .task
             .aggregation_job_uri(&aggregation_job_id, None)
             .unwrap()
@@ -292,18 +292,10 @@ async fn taskprov_aggregate_init() {
         )
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
-        .await;
-        assert_eq!(test_conn.status(), Some(Status::Forbidden), "{}", name);
-        assert_eq!(
-            take_problem_details(&mut test_conn).await,
-            json!({
-                "status": u16::from(Status::Forbidden),
-                "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
-                "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", test.task_id),
-            }),
-            "{name}",
-        );
+        .await
+        .status()
+        .unwrap();
+        assert_eq!(status, Status::Forbidden, "{}", name);
 
         let mut test_conn = put(test
             .task
@@ -681,6 +673,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
             "status": Status::BadRequest as u16,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "derived taskprov task ID does not match task config",
             "taskid": format!("{}", test.task_id),
         })
     );
@@ -899,7 +892,7 @@ async fn taskprov_aggregate_continue() {
         .request_authentication();
 
     // Attempt using the wrong credentials, should reject.
-    let mut test_conn = post(
+    let status = post(
         test.task
             .aggregation_job_uri(&aggregation_job_id, None)
             .unwrap()
@@ -916,17 +909,10 @@ async fn taskprov_aggregate_continue() {
     )
     .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::Forbidden));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": u16::from(Status::Forbidden),
-            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test.task_id),
-        })
-    );
+    .await
+    .status()
+    .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     let mut test_conn = post(
         test.task
@@ -1017,7 +1003,7 @@ async fn taskprov_aggregate_share() {
         .request_authentication();
 
     // Attempt using the wrong credentials, should reject.
-    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
+    let status = post(test.task.aggregate_shares_uri().unwrap().path())
         .with_request_header(auth.0, "Bearer invalid_token")
         .with_request_header(
             KnownHeaderName::ContentType,
@@ -1029,17 +1015,10 @@ async fn taskprov_aggregate_share() {
         )
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
-        .await;
-    assert_eq!(test_conn.status(), Some(Status::Forbidden));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": u16::from(Status::Forbidden),
-            "type": "https://docs.divviup.org/references/janus-errors#unauthorized-request",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test.task_id),
-        })
-    );
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
         .with_request_header(auth.0, auth.1)

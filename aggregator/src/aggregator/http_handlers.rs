@@ -71,10 +71,13 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                     .with_detail(rejection.reason().detail()),
             ),
         },
-        Error::InvalidMessage(task_id, _) => {
+        Error::InvalidMessage(task_id, detail) => {
             let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
             if let Some(task_id) = task_id {
                 doc = doc.with_task_id(task_id);
+            }
+            if !detail.is_empty() {
+                doc = doc.with_detail(detail);
             }
             conn.with_problem_document(&doc)
         }
@@ -123,15 +126,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             .with_collection_job_id(collection_job_id),
         ),
         Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
-
-        Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#unauthorized-request",
-                "The request's authorization is not valid.",
-                Status::Forbidden,
-            )
-            .with_task_id(task_id),
-        ),
+        Error::UnauthorizedRequest(..) => conn.with_status(Status::Forbidden),
         Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
             &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
         ),

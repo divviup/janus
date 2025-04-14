@@ -1714,6 +1714,7 @@ async fn aggregate_continue_unexpected_transition() {
         Status::BadRequest,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
+        Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
         None,
     )
     .await;
@@ -1873,6 +1874,7 @@ async fn aggregate_continue_out_of_order_transition() {
         Status::BadRequest,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
+        Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
         None,
     )
     .await;
@@ -1972,6 +1974,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         Status::BadRequest,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
+        Some("leader sent prepare step for non-CONTINUE report aggregation"),
         None,
     )
     .await;

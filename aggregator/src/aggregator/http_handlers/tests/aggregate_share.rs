@@ -597,6 +597,7 @@ async fn aggregate_share_request() {
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "batch has already been collected with another aggregation parameter",
                 "taskid": format!("{}", task.id()),
             })
         );

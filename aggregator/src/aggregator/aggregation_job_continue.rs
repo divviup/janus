@@ -279,6 +279,7 @@ pub mod test_util {
         want_status: Status,
         want_error_type: &str,
         want_error_title: &str,
+        want_detail: Option<&str>,
         want_aggregation_job_id: Option<&AggregationJobId>,
     ) {
         let mut test_conn = post_aggregation_job_expecting_status(
@@ -297,11 +298,15 @@ pub mod test_util {
             "taskid": format!("{}", task.id()),
         });
 
-        if let Some(job_id) = want_aggregation_job_id {
-            assert_matches!(expected_problem_details, serde_json::Value::Object(ref mut map) => {
-                map.insert("aggregation_job_id".into(), format!("{}", job_id).into());
-            });
-        }
+        assert_matches!(expected_problem_details, serde_json::Value::Object(ref mut map) => {
+            if let Some(job_id) = want_aggregation_job_id {
+                map.insert("aggregation_job_id".into(), job_id.to_string().into());
+            }
+
+            if let Some(detail) = want_detail {
+                map.insert("detail".into(), detail.to_string().into());
+            }
+        });
 
         assert_eq!(
             take_problem_details(&mut test_conn).await,
@@ -551,6 +556,7 @@ mod tests {
             "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             "An endpoint received a message with an unknown task ID.",
             None,
+            None,
         )
         .await;
     }
@@ -620,6 +626,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
+            Some("aggregation job cannot be advanced to step 0"),
             None,
         )
         .await;
@@ -796,6 +803,7 @@ mod tests {
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
             None,
+            None,
         )
         .await;
     }
@@ -822,6 +830,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
+            None,
             None,
         )
         .await;
@@ -909,6 +918,7 @@ mod tests {
             Status::Gone,
             "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
             "The aggregation job has been deleted.",
+            None,
             Some(&test_case.aggregation_job_id),
         )
         .await;
