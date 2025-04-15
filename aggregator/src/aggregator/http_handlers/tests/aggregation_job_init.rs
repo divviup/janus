@@ -171,19 +171,8 @@ async fn aggregate_wrong_agg_auth_token() {
             test_conn = test_conn.with_request_header(auth_header, auth_value);
         }
 
-        let mut test_conn = test_conn.run_async(&handler).await;
-
-        let want_status = u16::from(Status::Forbidden);
-        assert_eq!(
-            take_problem_details(&mut test_conn).await,
-            json!({
-                "status": want_status,
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-                "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
-        assert_eq!(want_status, test_conn.status().unwrap() as u16);
+        let status = test_conn.run_async(&handler).await.status().unwrap();
+        assert_eq!(status, Status::Forbidden);
     }
 }
 
@@ -1148,6 +1137,7 @@ async fn aggregate_init_duplicated_report_id() {
             "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "aggregate request contains duplicate report IDs",
             "taskid": format!("{}", task.id()),
         })
     );

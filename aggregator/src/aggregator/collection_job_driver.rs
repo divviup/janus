@@ -1248,9 +1248,9 @@ mod tests {
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_body(leader_request.get_encoded().unwrap())
-            .with_status(500)
+            .with_status(400)
             .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes\"}")
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\"}")
             .create_async()
             .await;
 
@@ -1261,8 +1261,8 @@ mod tests {
         assert_matches!(
             error,
             Error::Http(error_response) => {
-                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::BatchQueriedMultipleTimes));
-                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::InvalidMessage));
+                assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             }
         );
 

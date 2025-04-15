@@ -595,8 +595,9 @@ async fn aggregate_share_request() {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes",
-                "title": "The batch described by the query has been queried already.",
+                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "batch has already been collected with another aggregation parameter",
                 "taskid": format!("{}", task.id()),
             })
         );

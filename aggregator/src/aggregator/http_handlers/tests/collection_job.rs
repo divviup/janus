@@ -211,59 +211,32 @@ async fn collection_job_put_request_unauthenticated() {
     );
 
     // Incorrect authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     // Aggregator authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .put_collection_job_with_auth_token(
             &collection_job_id,
             &req,
             Some(test_case.task.aggregator_auth_token()),
         )
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     // Missing authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .put_collection_job_with_auth_token(&collection_job_id, &req, None)
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 }
 
 #[tokio::test]
@@ -292,58 +265,31 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     assert_eq!(test_conn.status().unwrap(), Status::Created);
 
     // Incorrect authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .get_collection_job_with_auth_token(&collection_job_id, Some(&random()))
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     // Aggregator authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .get_collection_job_with_auth_token(
             &collection_job_id,
             Some(test_case.task.aggregator_auth_token()),
         )
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 
     // Missing authentication token.
-    let mut test_conn = test_case
+    let status = test_case
         .get_collection_job_with_auth_token(&collection_job_id, None)
-        .await;
-
-    let want_status = u16::from(Status::Forbidden);
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": want_status,
-            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-            "title": "The request's authorization is not valid.",
-            "taskid": format!("{}", test_case.task.id()),
-        })
-    );
-    assert_eq!(want_status, test_conn.status().unwrap());
+        .await
+        .status()
+        .unwrap();
+    assert_eq!(status, Status::Forbidden);
 }
 
 #[tokio::test]
@@ -587,8 +533,9 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:batchQueriedMultipleTimes",
-            "title": "The batch described by the query has been queried already.",
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
+            "detail": "batch has already been collected with another aggregation parameter",
             "taskid": format!("{}", test_case.task.id()),
         })
     );

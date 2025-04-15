@@ -54,9 +54,6 @@ pub enum Error {
     /// Corresponds to `unrecognizedTask` in DAP.
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
-    /// Corresponds to `missingTaskID` in DAP.
-    #[error("no task ID in request")]
-    MissingTaskId,
     /// An attempt was made to act on an unknown aggregation job.
     #[error("task {0}: unrecognized aggregation job: {1}")]
     UnrecognizedAggregationJob(TaskId, AggregationJobId),
@@ -99,10 +96,6 @@ pub enum Error {
     /// sets of reports were aggregated.
     #[error("{0}")]
     BatchMismatch(Box<BatchMismatch>),
-    /// Corresponds to `batchQueriedMultipleTimes` in DAP. A collect or aggregate share request was
-    /// rejected because there was already a distinct query against the relevant batch.
-    #[error("task {0}: batch queried multiple times")]
-    BatchQueriedMultipleTimes(TaskId),
     /// A collect or aggregate share request was rejected because the batch overlaps with a
     /// previously collected one.
     #[error("task {0}: queried batch {1} overlaps with previously collected batch(es)")]
@@ -140,7 +133,7 @@ pub enum Error {
     BadRequest(String),
     /// Corresponds to taskprov `invalidTask`. See the [Taskprov specification][1] for details.
     ///
-    /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#name-conventions-and-definitions
+    /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-taskprov-01#table-1
     #[error("aggregator has opted out of the indicated task: {1}")]
     InvalidTask(TaskId, OptOutReason),
     /// An error occurred when trying to ensure differential privacy.
@@ -292,7 +285,6 @@ impl Error {
             Error::InvalidMessage(_, _) => "unrecognized_message",
             Error::StepMismatch { .. } => "step_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
-            Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
             Error::AbandonedAggregationJob(_, _) => "abandoned_aggregation_job",
             Error::DeletedAggregationJob(_, _) => "deleted_aggregation_job",
@@ -306,7 +298,6 @@ impl Error {
             Error::InvalidBatchSize(_, _) => "invalid_batch_size",
             Error::Url(_) => "url",
             Error::BatchMismatch { .. } => "batch_mismatch",
-            Error::BatchQueriedMultipleTimes(_) => "batch_queried_multiple_times",
             Error::BatchOverlap(_, _) => "batch_overlap",
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
