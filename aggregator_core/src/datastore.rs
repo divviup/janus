@@ -1312,10 +1312,10 @@ FROM unaggregated_client_report_ids",
         task_id: &TaskId,
         report_id: &ReportId,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let stmt = self
@@ -1349,10 +1349,10 @@ WHERE client_reports.task_id = $1
         task_id: &TaskId,
         report_id: &ReportId,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let stmt = self
@@ -1517,10 +1517,10 @@ WHERE report_aggregations.task_id = $1
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
     {
-        let task_info = match self.task_info_for(report.task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(report.task_id())
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let mut encoded_public_extensions = Vec::new();
@@ -1539,6 +1539,10 @@ WHERE report_aggregations.task_id = $1
             report.leader_private_extensions(),
         )?;
 
+        // If there is a conflict, the we upsert the incoming report (excluded) if the existing
+        // report is expired (virtually GCed; would be invisible to other queries that retrieve
+        // report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_client_report()
@@ -1600,10 +1604,10 @@ ON CONFLICT(task_id, report_id) DO UPDATE
         task_id: &TaskId,
         report_id: &ReportId,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let stmt = self
@@ -1688,15 +1692,16 @@ WHERE task_id = $1
         report_id: &ReportId,
         client_timestamp: &Time,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
-        // On conflict, we update the row, but only if the incoming client timestamp (excluded)
-        // matches the existing one. This lets us detect whether there's a row with a mismatching
-        // timestamp through the number of rows modified by the statement.
+        // If there is a conflict, the we upsert the incoming report (excluded) if the existing
+        // report is expired (virtually GCed; would be invisible to other queries that retrieve
+        // report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_scrubbed_report()
@@ -1945,10 +1950,10 @@ RETURNING tasks.task_id, tasks.batch_mode, tasks.vdaf,
         lease: &Lease<AcquiredAggregationJob>,
         reacquire_delay: Option<&StdDuration>,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(lease.leased().task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(lease.leased().task_id())
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let lease_expiration = reacquire_delay
@@ -2001,12 +2006,16 @@ WHERE aggregation_jobs.task_id = $4
         &self,
         aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(aggregation_job.task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(aggregation_job.task_id())
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
+        // If there is a conflict, the we upsert the incoming aggregation job (excluded) if the
+        // existing aggregation job is expired (virtually GCed; would be invisible to other queries
+        // that retrieve aggregation job rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_aggregation_job()
@@ -2063,10 +2072,10 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
         &self,
         aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
     ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(aggregation_job.task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+        let task_info = self
+            .task_info_for(aggregation_job.task_id())
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         let stmt = self
@@ -2566,6 +2575,10 @@ WHERE report_aggregations.task_id = $1
             .map(PrepareResp::get_encoded)
             .transpose()?;
 
+        // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
+        // existing report aggregation is expired (virtually GCed; would be invisible to other
+        // queries that retrieve report rows).
+        // https://github.com/divviup/janus/pull/2818
         let stmt = self
             .prepare_cached(
                 "-- put_report_aggregation()
@@ -2604,7 +2617,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $24",
+           WHERE id = report_aggregations.aggregation_job_id) < $24",
             )
             .await?;
         check_insert(
@@ -2654,15 +2667,16 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         &self,
         report_aggregation_metadata: &ReportAggregationMetadata,
     ) -> Result<(), Error> {
-        let task_info = match self
+        let task_info = self
             .task_info_for(report_aggregation_metadata.task_id())
             .await?
-        {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
+            .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
+        // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
+        // existing report aggregation is expired (virtually GCed; would be invisible to other
+        // queries that retrieve report rows).
+        // https://github.com/divviup/janus/pull/2818
         match report_aggregation_metadata.state() {
             ReportAggregationMetadataState::Init => {
                 let stmt = self
@@ -2706,7 +2720,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
         FROM aggregation_jobs
-        WHERE id = report_aggregations.aggregation_job_id) >= $9",
+        WHERE id = report_aggregations.aggregation_job_id) < $9",
                     )
                     .await?;
                 check_insert(
@@ -2768,7 +2782,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) >= $10",
+           WHERE id = report_aggregations.aggregation_job_id) < $10",
                     )
                     .await?;
                 check_insert(

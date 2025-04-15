@@ -1506,19 +1506,22 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 #[tokio::test]
 async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+    let clock = MockClock::default();
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
+    let report_expiry_age = Duration::from_seconds(60);
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_report_expiry_age(Some(report_expiry_age))
     .build()
     .leader_view()
     .unwrap();
 
     let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    let client_timestamp = Time::from_seconds_since_epoch(12345);
+    let client_timestamp = clock.now();
 
     ds.run_tx("test-put-report-share", |tx| {
         let task = task.clone();
@@ -1613,6 +1616,43 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
     assert!(got_leader_private_extensions.is_none());
     assert!(got_leader_input_share.is_none());
     assert!(got_helper_input_share.is_none());
+
+    // Advance the clock well past the report expiry age.
+    clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
+    let unexpired_timestamp = clock.now();
+
+    // Make a "new" scrubbed report with the same ID, but which is not expired. It should get
+    // upserted, replacing the effectively GCed report.
+    ds.run_unnamed_tx(|tx| {
+        let task = task.clone();
+        Box::pin(async move {
+            tx.put_scrubbed_report(task.id(), &report_id, &unexpired_timestamp)
+                .await
+                .unwrap();
+
+            let row = tx
+                .query_one(
+                    "--
+SELECT client_reports.client_timestamp
+FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
+WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
+                    &[
+                        /* task_id */ &task.id().as_ref(),
+                        /* report_id */ &report_id.as_ref(),
+                    ],
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                unexpired_timestamp,
+                Time::from_naive_date_time(&row.get("client_timestamp"))
+            );
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -1841,6 +1881,38 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
     assert_eq!(None, got_leader_aggregation_job);
     assert_eq!(None, got_helper_aggregation_job);
+
+    // Make a "new" aggregation job with the same ID, but that is not expired. It should get
+    // upserted, replacing the effectively GCed job.
+    ds.run_unnamed_tx(|tx| {
+        let unexpired_aggregation_job = leader_aggregation_job
+            .clone()
+            .with_client_timestamp_interval(
+                Interval::new(clock.now(), Duration::from_seconds(1)).unwrap(),
+            );
+        Box::pin(async move {
+            tx.put_aggregation_job(&unexpired_aggregation_job)
+                .await
+                .unwrap();
+
+            let aggregation_job_again = tx
+                .get_aggregation_job::<0, LeaderSelected, dummy::Vdaf>(
+                    unexpired_aggregation_job.task_id(),
+                    unexpired_aggregation_job.id(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                unexpired_aggregation_job.client_timestamp_interval(),
+                aggregation_job_again.client_timestamp_interval(),
+            );
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -2516,18 +2588,37 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         .build()
         .view_for_role(role)
         .unwrap();
+
         let aggregation_job_id = random();
         let report_id = random();
 
+        let report_aggregation = ReportAggregation::new(
+            *task.id(),
+            aggregation_job_id,
+            report_id,
+            OLDEST_ALLOWED_REPORT_TIMESTAMP,
+            ord.try_into().unwrap(),
+            Some(PrepareResp::new(
+                report_id,
+                PrepareStepResult::Continue {
+                    message: PingPongMessage::Continue {
+                        prep_msg: format!("prep_msg_{ord}").into(),
+                        prep_share: format!("prep_share_{ord}").into(),
+                    },
+                },
+            )),
+            state,
+        );
+
         let want_report_aggregation = ds
             .run_tx("test-put-report-aggregations", |tx| {
-                let (task, state, aggregation_param) =
-                    (task.clone(), state.clone(), aggregation_param);
+                let (task, report_aggregation, aggregation_param) =
+                    (task.clone(), report_aggregation.clone(), aggregation_param);
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
-                        aggregation_job_id,
+                        *report_aggregation.aggregation_job_id(),
                         aggregation_param,
                         (),
                         Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
@@ -2541,23 +2632,6 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                         .await
                         .unwrap();
 
-                    let report_aggregation = ReportAggregation::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        report_id,
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                        ord.try_into().unwrap(),
-                        Some(PrepareResp::new(
-                            report_id,
-                            PrepareStepResult::Continue {
-                                message: PingPongMessage::Continue {
-                                    prep_msg: format!("prep_msg_{ord}").into(),
-                                    prep_share: format!("prep_share_{ord}").into(),
-                                },
-                            },
-                        )),
-                        state,
-                    );
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();
@@ -2590,13 +2664,14 @@ WHERE client_report_id = $1",
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
+                let report_aggregation = report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        &aggregation_job_id,
+                        report_aggregation.aggregation_job_id(),
                         &report_id,
                         &aggregation_param,
                     )
@@ -2659,13 +2734,14 @@ SELECT updated_at, updated_by FROM report_aggregations
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
+                let report_aggregation = report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        &aggregation_job_id,
+                        report_aggregation.aggregation_job_id(),
                         &report_id,
                         &aggregation_param,
                     )
@@ -2683,13 +2759,14 @@ SELECT updated_at, updated_by FROM report_aggregations
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
+                let report_aggregation = report_aggregation.clone();
 
                 Box::pin(async move {
                     tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
-                        &aggregation_job_id,
+                        report_aggregation.aggregation_job_id(),
                         &report_id,
                         &aggregation_param,
                     )
@@ -2699,6 +2776,32 @@ SELECT updated_at, updated_by FROM report_aggregations
             .await
             .unwrap();
         assert_eq!(None, got_report_aggregation);
+
+        // Make a "new" report aggregation with the same ID, but which is not expired. It should get
+        // upserted, replacing the effectively GCed report aggregation.
+        ds.run_unnamed_tx(|tx| {
+            let unexpired_report_aggregation = report_aggregation.clone().with_time(clock.now());
+            Box::pin(async move {
+                tx.put_report_aggregation(&unexpired_report_aggregation)
+                    .await
+                    .unwrap();
+
+                let row = tx
+                    .query_one(
+                        "SELECT client_timestamp FROM report_aggregations WHERE client_report_id = $1",
+                        &[&report_id.as_ref()],
+                    )
+                    .await
+                    .unwrap();
+                let client_timestamp = Time::from_naive_date_time(&row.get("client_timestamp"));
+
+                assert_eq!(unexpired_report_aggregation.time(), &client_timestamp);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 }
 
@@ -2900,8 +3003,33 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn create_report_aggregation_from_client_reports_table_state_init(
+    ephemeral_datastore: EphemeralDatastore,
+) {
+    create_report_aggregation_from_client_reports_table(
+        ephemeral_datastore,
+        ReportAggregationMetadataState::Init,
+    )
+    .await
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn create_report_aggregation_from_client_reports_table_state_failed(
+    ephemeral_datastore: EphemeralDatastore,
+) {
+    create_report_aggregation_from_client_reports_table(
+        ephemeral_datastore,
+        ReportAggregationMetadataState::Failed {
+            report_error: ReportError::InvalidMessage,
+        },
+    )
+    .await
+}
+
 async fn create_report_aggregation_from_client_reports_table(
     ephemeral_datastore: EphemeralDatastore,
+    state: ReportAggregationMetadataState,
 ) {
     install_test_trace_subscriber();
 
@@ -2931,87 +3059,94 @@ async fn create_report_aggregation_from_client_reports_table(
     .build()
     .leader_view()
     .unwrap();
-    let aggregation_job_id = random();
+
+    let aggregation_job = AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+        *task.id(),
+        random(),
+        aggregation_param,
+        (),
+        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
+        AggregationJobState::Active,
+        AggregationJobStep::from(0),
+    );
+    let leader_stored_report = LeaderStoredReport::<0, dummy::Vdaf>::new(
+        *task.id(),
+        ReportMetadata::new(
+            report_id,
+            clock.now(),
+            Vec::from([Extension::new(
+                ExtensionType::Tbd,
+                "public_extension_tbd".into(),
+            )]),
+        ),
+        (),
+        Vec::from([Extension::new(
+            ExtensionType::Taskbind,
+            "leader_private_extension_taskbind".into(),
+        )]),
+        vdaf_transcript.leader_input_share,
+        HpkeCiphertext::new(
+            HpkeConfigId::from(9),
+            Vec::from(b"encapsulated"),
+            Vec::from(b"encrypted helper share"),
+        ),
+    );
+
+    let expected_report_aggregation_state = match state {
+        ReportAggregationMetadataState::Init => {
+            ReportAggregationState::<0, dummy::Vdaf>::LeaderInit {
+                public_extensions: leader_stored_report.metadata().public_extensions().to_vec(),
+                public_share: *leader_stored_report.public_share(),
+                leader_private_extensions: leader_stored_report
+                    .leader_private_extensions()
+                    .to_vec(),
+                leader_input_share: *leader_stored_report.leader_input_share(),
+                helper_encrypted_input_share: leader_stored_report
+                    .helper_encrypted_input_share()
+                    .clone(),
+            }
+        }
+        ReportAggregationMetadataState::Failed { report_error } => {
+            ReportAggregationState::Failed { report_error }
+        }
+    };
+    let report_aggregation_metadata = ReportAggregationMetadata::new(
+        *task.id(),
+        *aggregation_job.id(),
+        report_id,
+        clock.now(),
+        0,
+        state,
+    );
+
     let want_report_aggregations = ds
         .run_unnamed_tx(|tx| {
             let clock = clock.clone();
             let task = task.clone();
-            let vdaf_transcript = vdaf_transcript.clone();
+            let aggregation_job = aggregation_job.clone();
+            let leader_stored_report = leader_stored_report.clone();
+            let report_aggregation_metadata = report_aggregation_metadata.clone();
+            let expected_report_aggregation_state = expected_report_aggregation_state.clone();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    aggregation_param,
-                    (),
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::Active,
-                    AggregationJobStep::from(0),
-                ))
-                .await
-                .unwrap();
+                tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
-                let report_id = random();
                 let timestamp = clock.now();
-                let leader_stored_report = LeaderStoredReport::<0, dummy::Vdaf>::new(
-                    *task.id(),
-                    ReportMetadata::new(
-                        report_id,
-                        timestamp,
-                        Vec::from([Extension::new(
-                            ExtensionType::Tbd,
-                            "public_extension_tbd".into(),
-                        )]),
-                    ),
-                    (),
-                    Vec::from([Extension::new(
-                        ExtensionType::Taskbind,
-                        "leader_private_extension_taskbind".into(),
-                    )]),
-                    vdaf_transcript.leader_input_share,
-                    HpkeCiphertext::new(
-                        HpkeConfigId::from(9),
-                        Vec::from(b"encapsulated"),
-                        Vec::from(b"encrypted helper share"),
-                    ),
-                );
                 tx.put_client_report(&leader_stored_report).await.unwrap();
 
-                let report_aggregation_metadata = ReportAggregationMetadata::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    report_id,
-                    timestamp,
-                    0,
-                    ReportAggregationMetadataState::Init,
-                );
                 tx.put_leader_report_aggregation(&report_aggregation_metadata)
                     .await
                     .unwrap();
 
                 Ok(Vec::from([ReportAggregation::new(
                     *task.id(),
-                    aggregation_job_id,
+                    *aggregation_job.id(),
                     report_id,
                     timestamp,
                     0,
                     None,
-                    ReportAggregationState::<0, dummy::Vdaf>::LeaderInit {
-                        public_extensions: leader_stored_report
-                            .metadata()
-                            .public_extensions()
-                            .to_vec(),
-                        public_share: *leader_stored_report.public_share(),
-                        leader_private_extensions: leader_stored_report
-                            .leader_private_extensions()
-                            .to_vec(),
-                        leader_input_share: *leader_stored_report.leader_input_share(),
-                        helper_encrypted_input_share: leader_stored_report
-                            .helper_encrypted_input_share()
-                            .clone(),
-                    },
+                    expected_report_aggregation_state,
                 )]))
             })
         })
@@ -3022,12 +3157,13 @@ async fn create_report_aggregation_from_client_reports_table(
         .run_unnamed_tx(|tx| {
             let vdaf = vdaf.clone();
             let task = task.clone();
+            let aggregation_job = aggregation_job.clone();
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
                     &Role::Leader,
                     task.id(),
-                    &aggregation_job_id,
+                    aggregation_job.id(),
                     &aggregation_param,
                 )
                 .await
@@ -3036,6 +3172,38 @@ async fn create_report_aggregation_from_client_reports_table(
         .await
         .unwrap();
     assert_eq!(want_report_aggregations, got_report_aggregations);
+
+    // Advance the clock to logically GC existing rows
+    clock.advance(&REPORT_EXPIRY_AGE.add(&REPORT_EXPIRY_AGE).unwrap());
+
+    ds.run_unnamed_tx(|tx| {
+        let unexpired_report_aggregation_metadata =
+            report_aggregation_metadata.clone().with_time(clock.now());
+
+        Box::pin(async move {
+            // Upsert a new aggregation job with the same ID but unexpired
+            tx.put_leader_report_aggregation(&unexpired_report_aggregation_metadata)
+                .await
+                .unwrap();
+
+            let row = tx
+                .query_one(
+                    "SELECT client_timestamp FROM report_aggregations WHERE client_report_id = $1",
+                    &[&report_id.as_ref()],
+                )
+                .await
+                .unwrap();
+            let client_timestamp = Time::from_naive_date_time(&row.get("client_timestamp"));
+
+            assert_eq!(
+                unexpired_report_aggregation_metadata.time(),
+                &client_timestamp
+            );
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -7706,6 +7874,35 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
                     .await
                     .unwrap()
                     .is_none());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    // Make a "new" report with the same ID, but which is not expired. It should get upserted,
+    // replacing the effectively GCed report.
+    datastore
+        .run_unnamed_tx(|tx| {
+            let unexpired_report = report.clone().with_report_metadata(ReportMetadata::new(
+                *report.metadata().id(),
+                clock.now(),
+                Vec::new(),
+            ));
+            Box::pin(async move {
+                tx.put_client_report(&unexpired_report).await.unwrap();
+                let report_again = tx
+                    .get_client_report(
+                        &dummy::Vdaf::default(),
+                        unexpired_report.task_id(),
+                        unexpired_report.metadata().id(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_eq!(unexpired_report, report_again);
 
                 Ok(())
             })
