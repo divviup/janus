@@ -1,4 +1,7 @@
-use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
+use crate::{
+    aggregator::{Config, TimeExt},
+    binaries::aggregator::parse_pem_ec_private_key,
+};
 use aws_lc_rs::signature::EcdsaKeyPair;
 use janus_aggregator_core::{
     datastore::{models::TaskAggregationCounter, Datastore},
@@ -6,12 +9,12 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
-    time::MockClock,
+    time::{Clock, MockClock},
     vdaf::{vdaf_application_context, VdafInstance},
 };
 use janus_messages::{
-    Extension, HpkeConfig, InputShareAad, PlaintextInputShare, Report, ReportId, ReportMetadata,
-    ReportShare, Role, TaskId, Time,
+    Duration as janusDuration, Extension, HpkeConfig, InputShareAad, PlaintextInputShare, Report,
+    ReportId, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     codec::Encode,
@@ -198,5 +201,17 @@ pub async fn assert_task_aggregation_counter(
             assert_eq!(counters, expected_counters);
         }
         sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Extension methods on [`Clock`].
+pub trait ClockExt: Sized {
+    fn now_at_batch_interval_start(&self, time_precision: &janusDuration) -> Time;
+}
+
+impl<C: Clock> ClockExt for C {
+    fn now_at_batch_interval_start(&self, time_precision: &janusDuration) -> Time {
+        // This unwrap is unsafe, and must only be used for tests.
+        self.now().to_batch_interval_start(time_precision).unwrap()
     }
 }
