@@ -170,8 +170,12 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
-    let before_timestamp =
-        submit_measurements_generic(&test_case.measurements, client_implementation).await;
+    let before_timestamp = submit_measurements_generic(
+        &test_case.measurements,
+        client_implementation,
+        &task_parameters.time_precision,
+    )
+    .await;
 
     verify_aggregate_generic(
         task_parameters,
@@ -186,6 +190,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 pub async fn submit_measurements_generic<V>(
     measurements: &[V::Measurement],
     client_implementation: &ClientImplementation<V>,
+    time_precision: &Duration,
 ) -> Time
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
@@ -196,7 +201,10 @@ where
     let time = RealClock::default().now();
     for measurement in measurements.iter() {
         client_implementation
-            .upload(measurement, time)
+            .upload(
+                measurement,
+                time.to_batch_interval_start(time_precision).unwrap(),
+            )
             .await
             .unwrap();
     }
