@@ -575,6 +575,7 @@ mod tests {
             test_util::{decode_response_body, take_problem_details},
             AggregatorHandlerBuilder,
         },
+        test_util::ClockExt,
         Config,
     };
     use assert_matches::assert_matches;
@@ -590,7 +591,7 @@ mod tests {
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-        time::{Clock, MockClock, TimeExt as _},
+        time::{MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -705,6 +706,8 @@ mod tests {
             AggregationMode::Synchronous,
             vdaf_instance,
         )
+        .with_time_precision(Duration::from_seconds(100))
+        .with_tolerable_clock_skew(Duration::from_seconds(500))
         .with_aggregator_auth_token(auth_token)
         .build();
         let helper_task = task.helper_view().unwrap();
@@ -1003,7 +1006,7 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now()
+                                .now_at_batch_interval_start(test_case.task.time_precision())
                                 .add(test_case.task.tolerable_clock_skew())
                                 .unwrap(),
                             Vec::new(),
@@ -1019,10 +1022,10 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now()
+                                .now_at_batch_interval_start(test_case.task.time_precision())
                                 .add(test_case.task.tolerable_clock_skew())
                                 .unwrap()
-                                .add(&Duration::from_seconds(1))
+                                .add(test_case.task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
