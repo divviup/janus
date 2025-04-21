@@ -207,7 +207,7 @@ async fn upload_batch() {
             &hpke_keypair,
             clock
                 .now()
-                .to_batch_interval_start(&task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         )
     })
