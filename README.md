@@ -14,6 +14,8 @@ Janus is currently in active development.
 <!--toc:start-->
 - [janus](#janus)
   - [Draft versions and release branches](#draft-versions-and-release-branches)
+    - [`draft-ietf-ppm-dap-07` errata](#draft-ietf-ppm-dap-07-errata)
+    - [`draft-ietf-ppm-dap-09` errata](#draft-ietf-ppm-dap-09-errata)
   - [Versioning and Stability](#versioning-and-stability)
   - [Building](#building)
     - [Container image](#container-image)
@@ -124,15 +126,15 @@ preceding minor versions.
 Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
-running. CI tests currently use [`kind` 0.20.0][kind-release] and the
-corresponding Kubernetes 1.26 node image
-(kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb).
+running. CI tests currently use [`kind` 0.27.0][kind-release] and the
+corresponding Kubernetes 1.32 node image
+(kindest/node:v1.32.2@sha256:f226345927d7e348497136874b6d207e0b32cc52154ad8323129352923a3142f).
 Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`. To run tests on Docker images, execute
 `cargo xtask test-docker`.
 
-[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.20.0
+[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.27.0
 
 Note that `podman` is not an acceptable substitute for `docker`. There are
 subtle incompatibilities between the two that will cause tests to fail.
