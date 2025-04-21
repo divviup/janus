@@ -1951,10 +1951,16 @@ mod tests {
             .await;
 
         // Manipulate backoff settings so that we make one or two requests and time out.
+        collector.http_request_retry_parameters = collector
+            .http_request_retry_parameters
+            .with_total_delay(Some(std::time::Duration::from_millis(3)))
+            .with_min_delay(std::time::Duration::from_millis(2))
+            .with_max_delay(std::time::Duration::from_millis(2));
         collector.collect_poll_wait_parameters = collector
             .collect_poll_wait_parameters
             .with_total_delay(Some(std::time::Duration::from_millis(15)))
-            .with_min_delay(std::time::Duration::from_millis(10));
+            .with_min_delay(std::time::Duration::from_millis(10))
+            .with_max_delay(std::time::Duration::from_millis(10));
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
