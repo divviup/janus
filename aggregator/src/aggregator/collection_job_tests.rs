@@ -24,7 +24,7 @@ use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, IntervalExt, MockClock},
+    time::{IntervalExt, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -46,7 +46,7 @@ use trillium_testing::{
     TestConn,
 };
 
-use super::http_handlers::AggregatorHandlerBuilder;
+use super::{http_handlers::AggregatorHandlerBuilder, test_util::ClockExt};
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
@@ -309,7 +309,9 @@ async fn setup_leader_selected_current_batch_collection_job_test_case(
 
     // Fill the datastore with the necessary data so that there are two outstanding batches to be
     // collected.
-    let time = test_case.clock.now();
+    let time = test_case
+        .clock
+        .now_at_batch_interval_start(test_case.task.time_precision());
     let batch_id_1 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;
