@@ -83,7 +83,7 @@ quickcheck = { version = "1.0.3", default-features = false }
 quickcheck_macros = "1.0.0"
 rand = "0.8"
 rayon = "1.10.0"
-reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls"] }
 regex = "1.11.1"
 retry-after = "0.4.0"
 rstest = "0.22.0"
