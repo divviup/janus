@@ -2580,7 +2580,6 @@ WHERE report_aggregations.task_id = $1
             .map(PrepareResp::get_encoded)
             .transpose()?;
 
-        // TKTK do we need this?
         report_aggregation
             .time()
             .validate_precision(&task_info.time_precision)?;
