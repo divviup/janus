@@ -220,7 +220,7 @@ impl EphemeralCluster {
 impl Drop for EphemeralCluster {
     fn drop(&mut self) {
         // Delete the cluster that was created when we created the EphemeralCluster.
-        assert!(Command::new("kind")
+        let output = Command::new("kind")
             .args([
                 "delete",
                 "cluster",
@@ -230,11 +230,17 @@ impl Drop for EphemeralCluster {
                 &self.kind_cluster_name,
             ])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "`kind delete cluster` failed\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 }
 
