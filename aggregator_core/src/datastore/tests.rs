@@ -507,6 +507,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(report_expiry_age))
+    .with_time_precision(Duration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -583,7 +584,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
                     task_id,
                     ReportMetadata::new(
                         report_id,
-                        Time::from_seconds_since_epoch(54321),
+                        Time::from_seconds_since_epoch(54300),
                         Vec::new(),
                     ),
                     (), // public share
@@ -698,6 +699,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -706,6 +708,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -717,7 +720,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     let expired_report = LeaderStoredReport::new_dummy(
         *task.id(),
         OLDEST_ALLOWED_REPORT_TIMESTAMP
-            .sub(&Duration::from_seconds(1))
+            .sub(&Duration::from_seconds(100))
             .unwrap(),
     );
     let aggregated_report =
@@ -920,6 +923,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -928,18 +932,19 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
 
     let first_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12345));
+        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12300));
     let second_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12346));
+        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12400));
     let aggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12347));
+        LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12500));
     let unrelated_report =
-        LeaderStoredReport::new_dummy(*unrelated_task.id(), Time::from_seconds_since_epoch(12348));
+        LeaderStoredReport::new_dummy(*unrelated_task.id(), Time::from_seconds_since_epoch(12600));
 
     // Set up state.
     ds.run_unnamed_tx(|tx| {
@@ -1225,6 +1230,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1233,6 +1239,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1241,6 +1248,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1364,6 +1372,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1374,6 +1383,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -2585,6 +2595,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             VdafInstance::Fake { rounds: 2 },
         )
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+        .with_time_precision(Duration::from_seconds(100))
         .build()
         .view_for_role(role)
         .unwrap();
@@ -2883,6 +2894,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
         VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .helper_view()
     .unwrap();
@@ -3056,6 +3068,7 @@ async fn create_report_aggregation_from_client_reports_table(
         VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -3259,6 +3272,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -3482,6 +3496,7 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -4898,6 +4913,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .with_time_precision(Duration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -4915,6 +4931,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -5109,6 +5126,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .build()
                 .helper_view()
@@ -5282,6 +5300,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .build()
                 .helper_view()
@@ -5438,6 +5457,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .build()
                 .leader_view()
@@ -5492,6 +5512,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .build()
                 .leader_view()
@@ -5809,6 +5830,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .with_report_expiry_age(Some(report_expiry_age))
                 .build()
                 .leader_view()
@@ -5818,6 +5840,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -5912,6 +5935,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
+                .with_time_precision(Duration::from_seconds(100))
                 .with_report_expiry_age(None)
                 .build()
                 .leader_view()
@@ -5921,7 +5945,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
                 let old_report = LeaderStoredReport::new_dummy(
                     *task.id(),
                     OLDEST_ALLOWED_REPORT_TIMESTAMP
-                        .sub(&Duration::from_seconds(1))
+                        .sub(task.time_precision())
                         .unwrap(),
                 );
                 let new_report =
@@ -6060,6 +6084,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6069,6 +6094,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6080,6 +6106,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6091,6 +6118,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                .with_time_precision(Duration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -7811,6 +7839,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(report_expiry_age))
+    .with_time_precision(Duration::from_seconds(10))
     .build()
     .leader_view()
     .unwrap();
