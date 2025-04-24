@@ -15,7 +15,16 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time, truncated to the provided time precision. The answer will
     /// be between now and now()-time_precision.
     #[cfg(feature = "test-util")]
-    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time;
+    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
+        let seconds = self.now().as_seconds_since_epoch();
+        // These unwraps are unsafe, and must only be used for tests.
+        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
+
+        seconds
+            .checked_sub(rem)
+            .map(Time::from_seconds_since_epoch)
+            .unwrap()
+    }
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
@@ -31,18 +40,6 @@ impl Clock for RealClock {
                 .try_into()
                 .expect("invalid or out-of-range timestamp"),
         )
-    }
-
-    #[cfg(feature = "test-util")]
-    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
-        let seconds = self.now().as_seconds_since_epoch();
-        // These unwraps are unsafe, and must only be used for tests.
-        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
-
-        seconds
-            .checked_sub(rem)
-            .map(Time::from_seconds_since_epoch)
-            .unwrap()
     }
 }
 
@@ -87,18 +84,6 @@ impl Clock for MockClock {
     fn now(&self) -> Time {
         let current_time = self.current_time.lock().unwrap();
         *current_time
-    }
-
-    #[cfg(feature = "test-util")]
-    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
-        let seconds = self.now().as_seconds_since_epoch();
-        // These unwraps are unsafe, and must only be used for tests.
-        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
-
-        seconds
-            .checked_sub(rem)
-            .map(Time::from_seconds_since_epoch)
-            .unwrap()
     }
 }
 
@@ -405,7 +390,7 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{DurationExt, IntervalExt, TimeExt};
+    use crate::time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt};
     use janus_messages::{Duration, Interval, Time};
 
     #[test]
@@ -539,6 +524,24 @@ mod tests {
                 true => assert!(result.is_ok(), "{label}"),
                 false => assert!(result.is_err(), "{label}"),
             }
+        }
+    }
+
+    #[test]
+    fn now_aligned_to_precision() {
+        for (label, timestamp, timestamp_precision, expected) in [
+            ("aligned", 1533415320, 60, 1533415320),
+            ("off by 1", 1533415321, 60, 1533415320),
+            ("aligned large", 1533414000, 6000, 1533414000),
+            ("off by 100", 1533414100, 6000, 1533414000),
+        ] {
+            let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
+            let precision = Duration::from_seconds(timestamp_precision);
+
+            let result = clock
+                .now_aligned_to_precision(&precision)
+                .as_seconds_since_epoch();
+            assert_eq!(expected, result, "{label}");
         }
     }
 }
