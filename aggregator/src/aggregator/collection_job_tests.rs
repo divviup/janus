@@ -24,7 +24,7 @@ use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{IntervalExt, MockClock},
+    time::{Clock, IntervalExt, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -46,7 +46,7 @@ use trillium_testing::{
     TestConn,
 };
 
-use super::{http_handlers::AggregatorHandlerBuilder, test_util::ClockExt};
+use super::http_handlers::AggregatorHandlerBuilder;
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,

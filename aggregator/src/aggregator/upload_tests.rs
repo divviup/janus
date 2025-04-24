@@ -1,6 +1,6 @@
 use crate::aggregator::{
     error::ReportRejectionReason,
-    test_util::{create_report, create_report_custom, default_aggregator_config, ClockExt},
+    test_util::{create_report, create_report_custom, default_aggregator_config},
     Aggregator, Config, Error,
 };
 use assert_matches::assert_matches;

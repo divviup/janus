@@ -11,6 +11,11 @@ use std::{
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> Time;
+
+    /// Get the current time, truncated to the provided time precision. The answer will
+    /// be between now and now()-time_precision.
+    #[cfg(feature = "test-util")]
+    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time;
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
@@ -26,6 +31,18 @@ impl Clock for RealClock {
                 .try_into()
                 .expect("invalid or out-of-range timestamp"),
         )
+    }
+
+    #[cfg(feature = "test-util")]
+    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
+        let seconds = self.now().as_seconds_since_epoch();
+        // These unwraps are unsafe, and must only be used for tests.
+        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
+
+        seconds
+            .checked_sub(rem)
+            .map(Time::from_seconds_since_epoch)
+            .unwrap()
     }
 }
 
@@ -70,6 +87,18 @@ impl Clock for MockClock {
     fn now(&self) -> Time {
         let current_time = self.current_time.lock().unwrap();
         *current_time
+    }
+
+    #[cfg(feature = "test-util")]
+    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
+        let seconds = self.now().as_seconds_since_epoch();
+        // These unwraps are unsafe, and must only be used for tests.
+        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
+
+        seconds
+            .checked_sub(rem)
+            .map(Time::from_seconds_since_epoch)
+            .unwrap()
     }
 }
 

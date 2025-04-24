@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
-use janus_aggregator::aggregator::{http_handlers::AggregatorHandlerBuilder, test_util::ClockExt};
+use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
     task::{
@@ -15,7 +15,7 @@ use janus_core::{
     http::HttpErrorResponse,
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{RealClock, TimeExt},
+    time::{Clock, RealClock, TimeExt},
     vdaf::{vdaf_application_context, vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
 };
 use janus_messages::{

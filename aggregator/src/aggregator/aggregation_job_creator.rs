@@ -900,7 +900,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::test_util::ClockExt;
     use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
 
     use super::AggregationJobCreator;

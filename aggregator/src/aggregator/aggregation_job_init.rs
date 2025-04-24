@@ -575,7 +575,6 @@ mod tests {
             test_util::{decode_response_body, take_problem_details},
             AggregatorHandlerBuilder,
         },
-        test_util::ClockExt,
         Config,
     };
     use assert_matches::assert_matches;
@@ -591,7 +590,7 @@ mod tests {
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-        time::{MockClock, TimeExt as _},
+        time::{Clock, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
