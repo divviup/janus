@@ -17,7 +17,7 @@ use janus_aggregator_core::{
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, DurationExt, MockClock, TimeExt},
+    time::{Clock, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -80,13 +80,18 @@ async fn upload_handler() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(1000))
     .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
     .build();
 
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
     for _ in 0..2 {
@@ -117,7 +122,7 @@ async fn upload_handler() {
     // Verify that new reports using an existing report ID are also accepted as a duplicate.
     let duplicate_id_report = create_report_custom(
         &leader_task,
-        clock.now(),
+        clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         &hpke_keypair,
     );
@@ -135,7 +140,7 @@ async fn upload_handler() {
         ReportMetadata::new(
             random(),
             clock
-                .now()
+                .now_aligned_to_precision(task.time_precision())
                 .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
@@ -193,10 +198,10 @@ async fn upload_handler() {
 
     // Reports from the future should be rejected.
     let bad_report_time = clock
-        .now()
-        .add(&Duration::from_minutes(10).unwrap())
-        .unwrap()
-        .add(&Duration::from_seconds(1))
+        .now_aligned_to_precision(task.time_precision())
+        .add(&Duration::from_seconds(
+            task.time_precision().as_seconds() * 2,
+        ))
         .unwrap();
     let bad_report = Report::new(
         ReportMetadata::new(
@@ -229,7 +234,12 @@ async fn upload_handler() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_task_end(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
+    .with_task_end(Some(
+        clock
+            .now_aligned_to_precision(task.time_precision())
+            .add(&Duration::from_seconds(60))
+            .unwrap(),
+    ))
     .build();
     let leader_task_end_soon = task_end_soon.leader_view().unwrap();
     datastore
@@ -485,7 +495,11 @@ async fn upload_handler_error_fanout() {
     url.set_port(Some(socket_addr.port())).unwrap();
 
     // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
-    let report: Report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report: Report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     let response = client
         .post(url.clone())
         .header("Content-Type", Report::MEDIA_TYPE)
@@ -583,9 +597,17 @@ async fn upload_client_early_disconnect() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let report_1 = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report_1 = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     let encoded_report_1 = report_1.get_encoded().unwrap();
-    let report_2 = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report_2 = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     let encoded_report_2 = report_2.get_encoded().unwrap();
 
     let stopper = Stopper::new();

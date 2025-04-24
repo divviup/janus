@@ -309,7 +309,9 @@ async fn setup_leader_selected_current_batch_collection_job_test_case(
 
     // Fill the datastore with the necessary data so that there are two outstanding batches to be
     // collected.
-    let time = test_case.clock.now();
+    let time = test_case
+        .clock
+        .now_aligned_to_precision(test_case.task.time_precision());
     let batch_id_1 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;

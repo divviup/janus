@@ -965,7 +965,12 @@ async fn in_cluster_histogram_dp_noise() {
         )
         .await
         .unwrap();
-    let before_timestamp = submit_measurements_generic(&measurements, &client_implementation).await;
+    let before_timestamp = submit_measurements_generic(
+        &measurements,
+        &client_implementation,
+        &janus_pair.task_parameters.time_precision,
+    )
+    .await;
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         &janus_pair.task_parameters,
         janus_pair.leader.port(),
@@ -1033,7 +1038,12 @@ async fn in_cluster_sumvec_dp_noise() {
         )
         .await
         .unwrap();
-    let before_timestamp = submit_measurements_generic(&measurements, &client_implementation).await;
+    let before_timestamp = submit_measurements_generic(
+        &measurements,
+        &client_implementation,
+        &janus_pair.task_parameters.time_precision,
+    )
+    .await;
     let (report_count, aggregate_result) = collect_aggregate_result_generic(
         &janus_pair.task_parameters,
         janus_pair.leader.port(),

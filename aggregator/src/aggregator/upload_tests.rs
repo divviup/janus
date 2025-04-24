@@ -113,7 +113,11 @@ async fn upload() {
     .await;
 
     let leader_task = task.leader_view().unwrap();
-    let report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
@@ -142,7 +146,7 @@ async fn upload() {
     // is stored.
     let mutated_report = create_report_custom(
         &leader_task,
-        clock.now(),
+        clock.now_aligned_to_precision(task.time_precision()),
         *report.metadata().id(),
         &hpke_keypair,
     );
@@ -198,7 +202,14 @@ async fn upload_batch() {
     .await;
 
     let reports: Vec<_> = iter::repeat_with(|| {
-        create_report(&task.leader_view().unwrap(), &hpke_keypair, clock.now())
+        create_report(
+            &task.leader_view().unwrap(),
+            &hpke_keypair,
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        )
     })
     .take(BATCH_SIZE)
     .collect();
@@ -260,7 +271,11 @@ async fn upload_wrong_hpke_config_id() {
     )
     .await;
     let leader_task = task.leader_view().unwrap();
-    let report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     let unused_hpke_config_id =
         HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
@@ -327,7 +342,12 @@ async fn upload_report_in_the_future_boundary_condition() {
     let report = create_report(
         &task.leader_view().unwrap(),
         &hpke_keypair,
-        clock.now().add(task.tolerable_clock_skew()).unwrap(),
+        clock
+            .now()
+            .add(task.tolerable_clock_skew())
+            .unwrap()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap(),
     );
 
     aggregator
@@ -435,7 +455,11 @@ async fn upload_report_for_collected_batch() {
         runtime_manager.with_label("aggregator"),
     )
     .await;
-    let report = create_report(&task.leader_view().unwrap(), &hpke_keypair, clock.now());
+    let report = create_report(
+        &task.leader_view().unwrap(),
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     // Insert a collection job for the batch interval including our report.
     let batch_interval = Interval::new(
@@ -534,7 +558,11 @@ async fn upload_report_task_not_started() {
     .unwrap();
     datastore.put_aggregator_task(&task).await.unwrap();
 
-    let report = create_report(&task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator
@@ -599,8 +627,12 @@ async fn upload_report_task_ended() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Advance the clock to end the task.
-    clock.advance(&Duration::from_seconds(1));
-    let report = create_report(&task, &hpke_keypair, clock.now());
+    clock.advance(task.time_precision());
+    let report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator
@@ -664,7 +696,11 @@ async fn upload_report_report_expired() {
     .unwrap();
     datastore.put_aggregator_task(&task).await.unwrap();
 
-    let report = create_report(&task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     // Advance the clock to expire the report.
     clock.advance(&Duration::from_seconds(61));

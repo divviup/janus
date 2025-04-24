@@ -11,6 +11,20 @@ use std::{
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> Time;
+
+    /// Get the current time, truncated to the provided time precision. The answer will
+    /// be between now and now()-time_precision.
+    #[cfg(feature = "test-util")]
+    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
+        let seconds = self.now().as_seconds_since_epoch();
+        // These unwraps are unsafe, and must only be used for tests.
+        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
+
+        seconds
+            .checked_sub(rem)
+            .map(Time::from_seconds_since_epoch)
+            .unwrap()
+    }
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
@@ -184,6 +198,9 @@ pub trait TimeExt: Sized {
         time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error>;
 
+    /// Confirm that the time is a multiple of the task time precision.
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
+
     /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
     fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error>;
 
@@ -228,6 +245,24 @@ impl TimeExt for Time {
             .ok_or(janus_messages::Error::IllegalTimeArithmetic(
                 "operation would underflow",
             ))
+    }
+
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+        let is_multiple_of_time_precision = self
+            .as_seconds_since_epoch()
+            .checked_rem(time_precision.as_seconds())
+            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
+                "remainder cannot be zero",
+            ))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(janus_messages::Error::InvalidParameter(
+                "timestamp is not a multiple of the time precision",
+            ))
+        }
     }
 
     fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error> {
@@ -355,7 +390,7 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{DurationExt, IntervalExt};
+    use crate::time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt};
     use janus_messages::{Duration, Interval, Time};
 
     #[test]
@@ -468,6 +503,45 @@ mod tests {
                 }
                 None => assert!(result.is_err(), "{label}"),
             }
+        }
+    }
+
+    #[test]
+    fn validate_time_precision() {
+        for (label, timestamp, timestamp_precision, expected) in [
+            ("aligned", 1533415320, 60, true),
+            ("off by 1", 1533415321, 60, false),
+            ("aligned large", 1533414000, 6000, true),
+            ("off by 100", 1533414100, 6000, false),
+            ("zero time precision", 1533414000, 0, false),
+            ("zero time on a zero timestamp", 0, 0, false),
+        ] {
+            let time = Time::from_seconds_since_epoch(timestamp);
+            let precision = Duration::from_seconds(timestamp_precision);
+
+            let result = time.validate_precision(&precision);
+            match expected {
+                true => assert!(result.is_ok(), "{label}"),
+                false => assert!(result.is_err(), "{label}"),
+            }
+        }
+    }
+
+    #[test]
+    fn now_aligned_to_precision() {
+        for (label, timestamp, timestamp_precision, expected) in [
+            ("aligned", 1533415320, 60, 1533415320),
+            ("off by 1", 1533415321, 60, 1533415320),
+            ("aligned large", 1533414000, 6000, 1533414000),
+            ("off by 100", 1533414100, 6000, 1533414000),
+        ] {
+            let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
+            let precision = Duration::from_seconds(timestamp_precision);
+
+            let result = clock
+                .now_aligned_to_precision(&precision)
+                .as_seconds_since_epoch();
+            assert_eq!(expected, result, "{label}");
         }
     }
 }

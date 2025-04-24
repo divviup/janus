@@ -435,7 +435,7 @@ async fn bad_client_report_validity() {
         .with_prebound_server(server)
         .spawn(handler);
 
-    let report_time = clock.now();
+    let report_time = clock.now_aligned_to_precision(task.time_precision());
     upload_replay_report(0, &task, &vdaf, &report_time, &http_client)
         .await
         .unwrap();

@@ -55,6 +55,7 @@ async fn aggregate_continue_sync() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
 
@@ -403,6 +404,7 @@ async fn aggregate_continue_async() {
         AggregationMode::Asynchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
 
@@ -653,6 +655,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id_0 = random();
@@ -1336,6 +1339,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
@@ -1351,7 +1355,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-        Time::from_seconds_since_epoch(54321),
+        Time::from_seconds_since_epoch(54320),
         Vec::new(),
     );
 
@@ -1450,6 +1454,7 @@ async fn aggregate_continue_prep_step_fails() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let vdaf = dummy::Vdaf::new(2);
@@ -1465,7 +1470,7 @@ async fn aggregate_continue_prep_step_fails() {
     );
     let aggregation_job_id = random();
     let report_metadata =
-        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321), Vec::new());
+        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54320), Vec::new());
     let helper_report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata.clone(),
@@ -1631,6 +1636,7 @@ async fn aggregate_continue_unexpected_transition() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
@@ -1645,7 +1651,7 @@ async fn aggregate_continue_unexpected_transition() {
     );
     let aggregation_job_id = random();
     let report_metadata =
-        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321), Vec::new());
+        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54320), Vec::new());
 
     // Setup datastore.
     datastore
@@ -1742,6 +1748,7 @@ async fn aggregate_continue_out_of_order_transition() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id_0 = random();
@@ -1756,7 +1763,7 @@ async fn aggregate_continue_out_of_order_transition() {
     );
     let report_metadata_0 = ReportMetadata::new(
         report_id_0,
-        Time::from_seconds_since_epoch(54321),
+        Time::from_seconds_since_epoch(54320),
         Vec::new(),
     );
     let report_id_1 = random();
@@ -1770,7 +1777,7 @@ async fn aggregate_continue_out_of_order_transition() {
     );
     let report_metadata_1 = ReportMetadata::new(
         report_id_1,
-        Time::from_seconds_since_epoch(54321),
+        Time::from_seconds_since_epoch(54320),
         Vec::new(),
     );
     let aggregation_job_id = random();
@@ -1902,12 +1909,13 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(10))
     .build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-        Time::from_seconds_since_epoch(54321),
+        Time::from_seconds_since_epoch(54320),
         Vec::new(),
     );
 

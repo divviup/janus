@@ -223,13 +223,14 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .with_time_precision(Duration::from_seconds(10))
                     .build()
                     .leader_view()
                     .unwrap();
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
+                    let client_timestamp = clock.now().sub(&Duration::from_seconds(10)).unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -378,13 +379,14 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .with_time_precision(Duration::from_seconds(10))
                     .build()
                     .helper_view()
                     .unwrap();
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
+                    let client_timestamp = clock.now().sub(&Duration::from_seconds(10)).unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
@@ -559,6 +561,7 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .with_time_precision(Duration::from_seconds(10))
                     .build()
                     .leader_view()
                     .unwrap();
@@ -569,7 +572,7 @@ mod tests {
                         .now()
                         .sub(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(2))
+                        .sub(&Duration::from_seconds(10))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
@@ -730,6 +733,7 @@ mod tests {
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
+                    .with_time_precision(Duration::from_seconds(10))
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build()
                     .helper_view()
@@ -741,7 +745,7 @@ mod tests {
                         .now()
                         .sub(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(2))
+                        .sub(&Duration::from_seconds(10))
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),

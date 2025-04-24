@@ -1539,6 +1539,11 @@ WHERE report_aggregations.task_id = $1
             report.leader_private_extensions(),
         )?;
 
+        report
+            .metadata()
+            .time()
+            .validate_precision(&task_info.time_precision)?;
+
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
         // report is expired (virtually GCed; would be invisible to other queries that retrieve
         // report rows).
@@ -2574,6 +2579,10 @@ WHERE report_aggregations.task_id = $1
             .last_prep_resp()
             .map(PrepareResp::get_encoded)
             .transpose()?;
+
+        report_aggregation
+            .time()
+            .validate_precision(&task_info.time_precision)?;
 
         // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -5676,7 +5685,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
         let stmt = self
             .prepare_cached(
                 "-- task_info_for()
-SELECT id, report_expiry_age FROM tasks WHERE tasks.task_id = $1",
+SELECT id, report_expiry_age, time_precision FROM tasks WHERE tasks.task_id = $1",
             )
             .await?;
         let mut rows = self
@@ -5702,9 +5711,11 @@ SELECT id, report_expiry_age FROM tasks WHERE tasks.task_id = $1",
                     .ok_or_else(|| Error::TimeOverflow("overflow computing report expiry age"))
             })
             .transpose()?;
+        let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let task_info = TaskInfo {
             pkey,
             report_expiry_age,
+            time_precision,
         };
 
         // unwrap safety: mutex poisoning
@@ -5722,6 +5733,9 @@ struct TaskInfo {
 
     /// The task's report expiry age, corresponding to the tasks.report_expiry_age column.
     report_expiry_age: Option<chrono::Duration>,
+
+    /// The task's time precision
+    time_precision: Duration,
 }
 
 impl TaskInfo {

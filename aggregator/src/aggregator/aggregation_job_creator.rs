@@ -1171,8 +1171,8 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
-        let first_report_time = clock.now();
-        let second_report_time = clock.now().add(task.time_precision()).unwrap();
+        let first_report_time = clock.now_aligned_to_precision(task.time_precision());
+        let second_report_time = first_report_time.add(task.time_precision()).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat(first_report_time)
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
@@ -1356,7 +1356,7 @@ mod tests {
             .unwrap(),
         );
 
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
@@ -1573,7 +1573,7 @@ mod tests {
         );
 
         // Create a min-size batch.
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
@@ -1760,7 +1760,7 @@ mod tests {
 
         // Create 2 * MIN_BATCH_SIZE reports. We expect aggregation jobs to be created containing
         // these reports.
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
@@ -1959,7 +1959,7 @@ mod tests {
 
         // Create a small number of reports. No batches or aggregation jobs should be created, and
         // the reports should remain "unaggregated".
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
@@ -2122,7 +2122,7 @@ mod tests {
 
         // Create enough reports to produce two batches, but not enough to meet the minimum number
         // of reports for the second batch.
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
@@ -2385,7 +2385,7 @@ mod tests {
 
         // Create enough reports to produce two batches, and produce a non-maximum size aggregation
         // job with the remainder of the reports.
-        let report_time = clock.now();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let reports: Arc<Vec<_>> = Arc::new(
@@ -2656,8 +2656,16 @@ mod tests {
         );
 
         // Create 2 * MIN_BATCH_SIZE reports in two different time buckets.
-        let report_time_1 = clock.now().sub(&batch_time_window_size).unwrap();
-        let report_time_2 = clock.now();
+        let report_time_1 = clock
+            .now()
+            .to_batch_interval_start(&batch_time_window_size)
+            .unwrap()
+            .sub(&batch_time_window_size)
+            .unwrap();
+        let report_time_2 = clock
+            .now()
+            .to_batch_interval_start(&batch_time_window_size)
+            .unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -2900,7 +2908,7 @@ mod tests {
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch. This should result in one
         // aggregation job per overlapping collection job for these reports. (and there is one such
         // collection job)
-        let report_time = clock.now().sub(task.time_precision()).unwrap();
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
         let batch_1_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
