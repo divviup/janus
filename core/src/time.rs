@@ -185,7 +185,7 @@ pub trait TimeExt: Sized {
     ) -> Result<Self, janus_messages::Error>;
 
     /// Confirm that the time is a multiple of the task time precision.
-    fn validate_precision(&self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
 
     /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
     fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error>;
@@ -233,7 +233,7 @@ impl TimeExt for Time {
             ))
     }
 
-    fn validate_precision(&self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
         let is_multiple_of_time_precision = self
             .as_seconds_since_epoch()
             .checked_rem(time_precision.as_seconds())
@@ -243,7 +243,7 @@ impl TimeExt for Time {
             .is_ok_and(|rem| rem == 0);
 
         if is_multiple_of_time_precision {
-            Ok(*self)
+            Ok(self)
         } else {
             Err(janus_messages::Error::InvalidParameter(
                 "timestamp is not a multiple of the time precision",

@@ -206,11 +206,11 @@ pub async fn assert_task_aggregation_counter(
 
 /// Extension methods on [`Clock`].
 pub trait ClockExt: Sized {
-    fn now_at_batch_interval_start(&self, time_precision: &janusDuration) -> Time;
+    fn now_aligned_to_precision(&self, time_precision: &janusDuration) -> Time;
 }
 
 impl<C: Clock> ClockExt for C {
-    fn now_at_batch_interval_start(&self, time_precision: &janusDuration) -> Time {
+    fn now_aligned_to_precision(&self, time_precision: &janusDuration) -> Time {
         // This unwrap is unsafe, and must only be used for tests.
         self.now().to_batch_interval_start(time_precision).unwrap()
     }

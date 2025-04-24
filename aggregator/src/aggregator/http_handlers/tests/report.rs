@@ -90,7 +90,7 @@ async fn upload_handler() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
@@ -122,7 +122,7 @@ async fn upload_handler() {
     // Verify that new reports using an existing report ID are also accepted as a duplicate.
     let duplicate_id_report = create_report_custom(
         &leader_task,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         &hpke_keypair,
     );
@@ -140,7 +140,7 @@ async fn upload_handler() {
         ReportMetadata::new(
             random(),
             clock
-                .now_at_batch_interval_start(task.time_precision())
+                .now_aligned_to_precision(task.time_precision())
                 .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
@@ -198,7 +198,7 @@ async fn upload_handler() {
 
     // Reports from the future should be rejected.
     let bad_report_time = clock
-        .now_at_batch_interval_start(task.time_precision())
+        .now_aligned_to_precision(task.time_precision())
         .add(&Duration::from_seconds(
             task.time_precision().as_seconds() * 2,
         ))
@@ -236,7 +236,7 @@ async fn upload_handler() {
     )
     .with_task_end(Some(
         clock
-            .now_at_batch_interval_start(task.time_precision())
+            .now_aligned_to_precision(task.time_precision())
             .add(&Duration::from_seconds(60))
             .unwrap(),
     ))
@@ -498,7 +498,7 @@ async fn upload_handler_error_fanout() {
     let report: Report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
     let response = client
         .post(url.clone())
@@ -600,13 +600,13 @@ async fn upload_client_early_disconnect() {
     let report_1 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
     let encoded_report_1 = report_1.get_encoded().unwrap();
     let report_2 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
     let encoded_report_2 = report_2.get_encoded().unwrap();
 

@@ -1006,7 +1006,7 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now_at_batch_interval_start(test_case.task.time_precision())
+                                .now_aligned_to_precision(test_case.task.time_precision())
                                 .add(test_case.task.tolerable_clock_skew())
                                 .unwrap(),
                             Vec::new(),
@@ -1022,7 +1022,7 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now_at_batch_interval_start(test_case.task.time_precision())
+                                .now_aligned_to_precision(test_case.task.time_precision())
                                 .add(test_case.task.tolerable_clock_skew())
                                 .unwrap()
                                 .add(test_case.task.time_precision())

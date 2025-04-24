@@ -311,7 +311,7 @@ async fn setup_leader_selected_current_batch_collection_job_test_case(
     // collected.
     let time = test_case
         .clock
-        .now_at_batch_interval_start(test_case.task.time_precision());
+        .now_aligned_to_precision(test_case.task.time_precision());
     let batch_id_1 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;

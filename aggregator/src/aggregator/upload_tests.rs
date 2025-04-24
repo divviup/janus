@@ -116,7 +116,7 @@ async fn upload() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     aggregator
@@ -146,7 +146,7 @@ async fn upload() {
     // is stored.
     let mutated_report = create_report_custom(
         &leader_task,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
         *report.metadata().id(),
         &hpke_keypair,
     );
@@ -274,7 +274,7 @@ async fn upload_wrong_hpke_config_id() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     let unused_hpke_config_id =
@@ -458,7 +458,7 @@ async fn upload_report_for_collected_batch() {
     let report = create_report(
         &task.leader_view().unwrap(),
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     // Insert a collection job for the batch interval including our report.
@@ -561,7 +561,7 @@ async fn upload_report_task_not_started() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     // Try to upload the report, verify that we get the expected error.
@@ -631,7 +631,7 @@ async fn upload_report_task_ended() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     // Try to upload the report, verify that we get the expected error.
@@ -699,7 +699,7 @@ async fn upload_report_report_expired() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_at_batch_interval_start(task.time_precision()),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
 
     // Advance the clock to expire the report.
