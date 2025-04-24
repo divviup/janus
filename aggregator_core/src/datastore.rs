@@ -23,7 +23,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, TimeExt},
+    time::{Clock, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -790,6 +790,16 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
    WHERE task_id = $4",
             )
             .await?;
+
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
+
+        if let Some(end) = task_end {
+            end.validate_precision(&task_info.time_precision)?;
+        }
+
         check_single_row_mutation(
             self.execute(
                 &stmt,
@@ -1392,6 +1402,8 @@ WHERE client_reports.task_id = $1
             None => return Ok(false),
         };
 
+        batch_interval.validate_precision(&task_info.time_precision)?;
+
         let stmt = self
             .prepare_cached(
                 "-- interval_has_unaggregated_reports()
@@ -1432,6 +1444,8 @@ SELECT EXISTS(
             Some(task_info) => task_info,
             None => return Ok(0),
         };
+
+        batch_interval.validate_precision(&task_info.time_precision)?;
 
         let stmt = self
             .prepare_cached(
@@ -1701,6 +1715,8 @@ WHERE task_id = $1
             .task_info_for(task_id)
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
+
+        client_timestamp.validate_precision(&task_info.time_precision)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
@@ -2682,6 +2698,10 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
+        report_aggregation_metadata
+            .time()
+            .validate_precision(&task_info.time_precision)?;
+
         // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
         // queries that retrieve report rows).
@@ -3096,6 +3116,8 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
+
+        batch_interval.validate_precision(&task_info.time_precision)?;
 
         let stmt = self
             .prepare_cached(
@@ -4048,6 +4070,13 @@ WHERE task_id = $1
             B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
+        // This validates _only_ the start time of the interval, not the duration, as these
+        // client_timestamp_intervals' durations must exclude the next batch interval.
+        batch_aggregation
+            .client_timestamp_interval()
+            .start()
+            .validate_precision(&task_info.time_precision)?;
+
         let stmt = self
             .prepare_cached(
                 "-- put_batch_aggregation()
@@ -4267,6 +4296,8 @@ WHERE task_id = $1
             None => return Ok(Vec::new()),
         };
 
+        interval.validate_precision(&task_info.time_precision)?;
+
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_jobs_intersecting_interval()
@@ -4451,9 +4482,15 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
+
         let now = self.clock.now().as_naive_date_time()?;
-        let batch_interval =
-            B::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
+        let batch_interval_msg = B::to_batch_interval(aggregate_share_job.batch_identifier());
+
+        if let Some(int) = batch_interval_msg {
+            int.validate_precision(&task_info.time_precision)?;
+        }
+
+        let batch_interval = batch_interval_msg.map(SqlInterval::from);
 
         let stmt = self
             .prepare_cached(
@@ -4516,6 +4553,11 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
+
+        if let Some(start) = time_bucket_start {
+            start.validate_precision(&task_info.time_precision)?;
+        }
+
         let now = self.clock.now().as_naive_date_time()?;
 
         // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which

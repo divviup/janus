@@ -57,6 +57,7 @@ struct Properties {
     task_id: TaskId,
     task_min_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
+    task_time_precision: Duration,
 }
 
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
@@ -70,6 +71,7 @@ where
         task_id: TaskId,
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
+        task_time_precision: Duration,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
@@ -85,6 +87,7 @@ where
                 task_id,
                 task_min_batch_size,
                 task_batch_time_window_size,
+                task_time_precision,
             },
             aggregation_job_writer,
             buckets: HashMap::new(),
@@ -225,6 +228,7 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
+                            properties.task_time_precision,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -253,6 +257,7 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
+                            properties.task_time_precision,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -294,6 +299,7 @@ where
                     &mut bucket.unaggregated_reports,
                     aggregation_job_writer,
                     report_ids_to_scrub,
+                    properties.task_time_precision,
                 )?;
 
                 // Loop to the top of this method to create more aggregation jobs in this newly
@@ -320,6 +326,7 @@ where
             ReportAggregationMetadata,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
+        time_precision: Duration,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
         debug!(
@@ -358,7 +365,7 @@ where
         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let client_timestamp_interval = Interval::new(
-            min_client_timestamp,
+            min_client_timestamp.to_batch_interval_start(&time_precision)?,
             max_client_timestamp
                 .difference(&min_client_timestamp)?
                 .add(&Duration::from_seconds(1))?,

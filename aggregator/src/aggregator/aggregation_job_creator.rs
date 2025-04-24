@@ -883,6 +883,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         *task.id(),
                         task_min_batch_size,
                         task_batch_time_window_size,
+                        task.time_precision().to_owned(),
                         &mut aggregation_job_writer,
                     );
 
@@ -927,8 +928,8 @@ mod tests {
     use janus_messages::{
         batch_mode::{LeaderSelected, TimeInterval},
         codec::ParameterizedDecode,
-        AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskId, Time,
+        AggregationJobStep, Duration as JanusDuration, Interval, Query, ReportError, ReportId,
+        ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
         self, dummy,
@@ -1753,6 +1754,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
+            .with_time_precision(JanusDuration::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -1812,7 +1814,7 @@ mod tests {
             noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
@@ -2115,6 +2117,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
+            .with_time_precision(JanusDuration::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -2174,7 +2177,7 @@ mod tests {
             meter,
             BATCH_AGGREGATION_SHARD_COUNT,
             Duration::from_secs(3600),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
