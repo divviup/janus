@@ -1,6 +1,7 @@
 //! Testing framework for functionality that interacts with Kubernetes.
 
 use anyhow::Context;
+use backon::{BackoffBuilder, BlockingRetryable, ConstantBuilder};
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{Pod, Service};
 use kube::{
@@ -219,22 +220,37 @@ impl EphemeralCluster {
 
 impl Drop for EphemeralCluster {
     fn drop(&mut self) {
+        let backoff = ConstantBuilder::new().build();
+
         // Delete the cluster that was created when we created the EphemeralCluster.
-        assert!(Command::new("kind")
-            .args([
-                "delete",
-                "cluster",
-                "--kubeconfig",
-                &self.cluster.kubeconfig_path.to_string_lossy(),
-                "--name",
-                &self.kind_cluster_name,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success())
+        let output = (|| {
+            Command::new("kind")
+                .args([
+                    "delete",
+                    "cluster",
+                    "--kubeconfig",
+                    &self.cluster.kubeconfig_path.to_string_lossy(),
+                    "--name",
+                    &self.kind_cluster_name,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+        })
+        .retry(backoff)
+        .notify(|e, d| {
+            error!("kind delete cluster failed {:?}, retrying after {:?}", e, d);
+        })
+        .call()
+        .unwrap();
+
+        assert!(
+            output.status.success(),
+            "`kind delete cluster` failed\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 }
 
