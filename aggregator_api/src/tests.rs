@@ -752,6 +752,7 @@ async fn patch_task(#[case] role: Role) {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_task_end(Some(Time::from_seconds_since_epoch(1000)))
     .build()
     .view_for_role(role)
@@ -811,6 +812,18 @@ async fn patch_task(#[case] role: Role) {
         .await
         .unwrap();
     assert_eq!(task.unwrap().task_end(), None);
+
+    // Verify: patching the task with a task end time that isn't a multiple of the time precision
+    // returns an error.
+    assert_status!(
+        patch(format!("/tasks/{}", task_id))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_body(r#"{"task_end": 1337}"#)
+            .run_async(&handler)
+            .await,
+        Status::BadRequest
+    );
 
     // Verify: patching the task with a task end time returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000));
