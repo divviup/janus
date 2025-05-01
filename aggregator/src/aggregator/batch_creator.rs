@@ -368,7 +368,8 @@ where
             min_client_timestamp.to_batch_interval_start(&time_precision)?,
             max_client_timestamp
                 .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?,
+                .add(&Duration::from_seconds(1))?
+                .round_up(&time_precision)?,
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
             task_id,
