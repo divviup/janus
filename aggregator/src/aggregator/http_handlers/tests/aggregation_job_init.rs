@@ -28,10 +28,9 @@ use janus_core::{
 };
 use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
-    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-    ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector,
-    PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
-    Role, Time,
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Extension, ExtensionType,
+    HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector, PrepareInit,
+    PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
 };
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
@@ -883,7 +882,7 @@ async fn aggregate_init_batch_already_collected() {
             let task = task.clone();
             let timestamp = *prepare_init.report_share().metadata().time();
             Box::pin(async move {
-                let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
+                let interval = Interval::new(timestamp, *task.time_precision()).unwrap();
 
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.
