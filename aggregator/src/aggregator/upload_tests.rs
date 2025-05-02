@@ -63,6 +63,7 @@ impl UploadTest {
             AggregationMode::Synchronous,
             VdafInstance::Prio3Count,
         )
+        .with_time_precision(Duration::from_seconds(100))
         .build();
 
         let leader_task = task.leader_view().unwrap();
@@ -550,6 +551,7 @@ async fn upload_report_task_not_started() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_task_start(Some(
         clock.now().add(&Duration::from_seconds(3600)).unwrap(),
     ))
@@ -620,7 +622,10 @@ async fn upload_report_task_ended() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_task_end(Some(clock.now()))
+    .with_time_precision(Duration::from_seconds(100))
+    .with_task_end(Some(
+        clock.now_aligned_to_precision(&Duration::from_seconds(100)),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -690,6 +695,7 @@ async fn upload_report_report_expired() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(60)))
     .build()
     .leader_view()

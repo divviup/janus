@@ -653,6 +653,17 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
         let now = self.clock.now().as_naive_date_time()?;
+
+        if let Some(start) = task.task_start() {
+            start
+                .validate_precision(task.time_precision())
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+        if let Some(end) = task.task_end() {
+            end.validate_precision(task.time_precision())
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+
         // Main task insert.
         let stmt = self
             .prepare_cached(

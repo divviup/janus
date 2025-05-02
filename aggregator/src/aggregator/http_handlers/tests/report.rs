@@ -234,10 +234,16 @@ async fn upload_handler() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    // Since HttpHandlerTest's clock instance is a copy of ours, we can't simply
+    // advance it, and we have to instead tolerate skew.
+    .with_tolerable_clock_skew(Duration::from_seconds(
+        task.time_precision().as_seconds() * 2,
+    ))
+    .with_time_precision(task.time_precision().clone())
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(&Duration::from_seconds(60))
+            .add(&task.time_precision())
             .unwrap(),
     ))
     .build();
@@ -249,7 +255,12 @@ async fn upload_handler() {
     let report_2 = create_report(
         &leader_task_end_soon,
         &hpke_keypair,
-        clock.now().add(&Duration::from_seconds(120)).unwrap(),
+        clock
+            .now_aligned_to_precision(task.time_precision())
+            .add(&Duration::from_seconds(
+                task.time_precision().as_seconds() * 2,
+            ))
+            .unwrap(),
     );
     let mut test_conn = post(task_end_soon.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -408,6 +419,7 @@ async fn upload_handler_helper() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -472,6 +484,7 @@ async fn upload_handler_error_fanout() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
     .build();
 
@@ -592,6 +605,7 @@ async fn upload_client_early_disconnect() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .build();
     let task_id = *task.id();
     let leader_task = task.leader_view().unwrap();
