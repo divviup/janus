@@ -239,11 +239,11 @@ async fn upload_handler() {
     .with_tolerable_clock_skew(Duration::from_seconds(
         task.time_precision().as_seconds() * 2,
     ))
-    .with_time_precision(task.time_precision().clone())
+    .with_time_precision(*task.time_precision())
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(&task.time_precision())
+            .add(task.time_precision())
             .unwrap(),
     ))
     .build();
