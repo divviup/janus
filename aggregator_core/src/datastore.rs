@@ -4508,16 +4508,9 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
-
         let now = self.clock.now().as_naive_date_time()?;
-        let batch_interval_msg = B::to_batch_interval(aggregate_share_job.batch_identifier());
-
-        if let Some(int) = batch_interval_msg {
-            int.validate_precision(&task_info.time_precision)
-                .map_err(|_| Error::TimeUnaligned)?;
-        }
-
-        let batch_interval = batch_interval_msg.map(SqlInterval::from);
+        let batch_interval =
+            B::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
             .prepare_cached(
