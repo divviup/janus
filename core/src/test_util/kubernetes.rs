@@ -177,28 +177,37 @@ impl EphemeralCluster {
         // Choose a cluster name.
         let kind_cluster_name = format!("janus-ephemeral-{}", hex::encode(random::<[u8; 4]>()));
 
+        let backoff = ConstantBuilder::new().build();
+
         // Use kind to start the cluster, with the node image from kind v0.27.0 for Kubernetes 1.32,
         // matching current regular GKE release channel. This image version should be bumped in
         // lockstep with the version of kind installed by the ci-build workflow.
         // https://github.com/kubernetes-sigs/kind/releases/tag/v0.27.0
         // https://cloud.google.com/kubernetes-engine/docs/release-notes#regular-channel
-        let output = Command::new("kind")
-            .args([
-                "create",
-                "cluster",
-                "--kubeconfig",
-                &kubeconfig_path.to_string_lossy(),
-                "--name",
-                &kind_cluster_name,
-                "--image",
-                "kindest/node:v1.32.2@sha256:\
-                 f226345927d7e348497136874b6d207e0b32cc52154ad8323129352923a3142f",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .unwrap();
+        let output = (|| {
+            Command::new("kind")
+                .args([
+                    "create",
+                    "cluster",
+                    "--kubeconfig",
+                    &kubeconfig_path.to_string_lossy(),
+                    "--name",
+                    &kind_cluster_name,
+                    "--image",
+                    "kindest/node:v1.32.2@sha256:\
+                                 f226345927d7e348497136874b6d207e0b32cc52154ad8323129352923a3142f",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+        })
+        .retry(backoff)
+        .notify(|e, d| {
+            error!("kind create cluster failed {:?}, retrying after {:?}", e, d);
+        })
+        .call()
+        .unwrap();
         assert!(
             output.status.success(),
             "`kind create cluster` failed\nstdout: {}\nstderr: {}",
