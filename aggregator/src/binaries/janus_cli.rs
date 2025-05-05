@@ -1,5 +1,5 @@
 use crate::{
-    binary_utils::{database_pool, datastore, initialize_rustls, read_config, CommonBinaryOptions},
+    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
@@ -18,6 +18,7 @@ use janus_core::{
     auth_tokens::AuthenticationToken,
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
     hpke::HpkeKeypair,
+    initialize_rustls,
     time::{Clock, RealClock},
 };
 use janus_messages::{
@@ -751,7 +752,7 @@ mod tests {
             fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
             LazyKubeClient,
         },
-        binary_utils::{initialize_rustls, CommonBinaryOptions},
+        binary_utils::CommonBinaryOptions,
         config::{
             default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
@@ -769,6 +770,7 @@ mod tests {
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::HpkeKeypair,
+        initialize_rustls,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
         vdaf::{vdaf_dp_strategies, VdafInstance},

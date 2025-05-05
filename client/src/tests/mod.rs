@@ -3,7 +3,8 @@ use assert_matches::assert_matches;
 use hex_literal::hex;
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
-    hpke::HpkeKeypair, retries::test_util::test_http_request_exponential_backoff,
+    hpke::HpkeKeypair, initialize_rustls,
+    retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
 use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
@@ -56,6 +57,7 @@ fn aggregator_endpoints_end_in_slash() {
 #[tokio::test]
 async fn upload_prio3_count() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
@@ -78,6 +80,7 @@ async fn upload_prio3_count() {
 #[tokio::test]
 async fn upload_prio3_invalid_measurement() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let server = mockito::Server::new_async().await;
     let vdaf = Prio3::new_sum(2, 16).unwrap();
     let client = setup_client(&server, vdaf).await;
@@ -91,6 +94,7 @@ async fn upload_prio3_invalid_measurement() {
 #[tokio::test]
 async fn upload_prio3_http_status_code() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
@@ -118,6 +122,7 @@ async fn upload_prio3_http_status_code() {
 #[tokio::test]
 async fn upload_problem_details() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
@@ -159,6 +164,7 @@ async fn upload_problem_details() {
 #[tokio::test]
 async fn upload_bad_time_precision() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let client = Client::builder(
         random(),
@@ -179,6 +185,7 @@ async fn upload_bad_time_precision() {
 #[tokio::test]
 async fn report_timestamp() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let server = mockito::Server::new_async().await;
     let vdaf = Prio3::new_count(2).unwrap();
     let mut client = setup_client(&server, vdaf).await;
@@ -215,6 +222,7 @@ async fn report_timestamp() {
 #[tokio::test]
 async fn aggregator_hpke() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let server_url = Url::parse(&server.url()).unwrap();
     let http_client = &default_http_client().unwrap();
@@ -260,6 +268,7 @@ async fn aggregator_hpke() {
 #[tokio::test]
 async fn unsupported_hpke_algorithms() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let server_url = Url::parse(&server.url()).unwrap();
     let http_client = &default_http_client().unwrap();

@@ -31,6 +31,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::HpkeKeypair,
+    initialize_rustls,
     report_id::ReportIdChecksumExt,
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
@@ -72,6 +73,7 @@ async fn aggregation_job_driver() {
 
     // Setup.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let mut runtime_manager = TestRuntimeManager::new();
@@ -364,6 +366,7 @@ async fn aggregation_job_driver() {
 async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -809,6 +812,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
 async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -1081,6 +1085,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 
     // Setup: insert an "old" and "new" client report, and add them to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -1463,6 +1468,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -1774,6 +1780,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
 async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -2046,6 +2053,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     // Setup: insert a client report and add it to an aggregation job whose state has already
     // been stepped once.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -2391,6 +2399,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     // Setup: insert a client report and add it to an aggregation job whose state has already
     // been stepped once.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -2690,6 +2699,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
 async fn leader_async_aggregation_job_init_to_pending() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -2949,6 +2959,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
 async fn leader_async_aggregation_job_init_to_pending_two_step() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -3208,6 +3219,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
 async fn leader_async_aggregation_job_continue_to_pending() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -3469,6 +3481,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
 async fn leader_async_aggregation_job_init_poll_to_pending() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -3720,6 +3733,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
 async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -3971,6 +3985,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
 async fn leader_async_aggregation_job_init_poll_to_finished() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -4227,6 +4242,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
 async fn leader_async_aggregation_job_init_poll_to_continue() {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -4489,6 +4505,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     // Setup: insert a client report and add it to an aggregation job whose state has already
     // been stepped once.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -4742,6 +4759,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     // Setup: insert a client report and add it to an aggregation job whose state has already
     // been stepped once.
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -4997,6 +5015,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
 async fn helper_async_init_processing_to_finished() {
     // Setup: insert an aggregation job with a report aggregation in state HelperInitProcessing.
     install_test_trace_subscriber();
+    initialize_rustls();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -5231,6 +5250,7 @@ async fn helper_async_init_processing_to_finished() {
 async fn helper_async_init_processing_to_continue() {
     // Setup: insert an aggregation job with a report aggregation in state HelperInitProcessing.
     install_test_trace_subscriber();
+    initialize_rustls();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -5467,6 +5487,7 @@ async fn helper_async_init_processing_to_continue() {
 async fn helper_async_continue_processing_to_finished() {
     // Setup: insert an aggregation job with a report aggregation in state HelperContinueProcessing.
     install_test_trace_subscriber();
+    initialize_rustls();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -5711,6 +5732,7 @@ struct CancelAggregationJobTestCase {
 async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
     // Setup: insert a client report and add it to a new aggregation job.
     install_test_trace_subscriber();
+    initialize_rustls();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -5984,6 +6006,7 @@ async fn cancel_aggregation_job_helper_aggregation_job_deletion_fails() {
 #[tokio::test]
 async fn abandon_failing_aggregation_job_with_retryable_error() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let mut runtime_manager = TestRuntimeManager::new();
@@ -6236,6 +6259,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
 #[tokio::test]
 async fn abandon_failing_aggregation_job_with_fatal_error() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
     let clock = MockClock::default();
     let mut runtime_manager = TestRuntimeManager::new();

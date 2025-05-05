@@ -17,7 +17,7 @@ use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
-use janus_core::time::Clock;
+use janus_core::{initialize_rustls, time::Clock};
 use opentelemetry::metrics::Meter;
 use opentelemetry_sdk::metrics::MetricError;
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
@@ -532,13 +532,6 @@ fn initialize_rayon(stack_size: Option<usize>) -> Result<(), ThreadPoolBuildErro
         builder = builder.stack_size(stack_size);
     }
     builder.build_global()
-}
-
-pub(crate) fn initialize_rustls() {
-    // Choose aws-lc-rs as the default rustls crypto provider. This is what's currently enabled by
-    // the default Cargo feature. Specifying a default provider here prevents runtime errors if
-    // another dependency also enables the ring feature.
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 #[cfg(test)]

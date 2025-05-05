@@ -13,6 +13,7 @@ use janus_aggregator_core::{
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::HttpErrorResponse,
+    initialize_rustls,
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, RealClock, TimeExt},
@@ -375,6 +376,7 @@ async fn aggregator_hpke_config(
 #[tokio::test(flavor = "multi_thread")]
 async fn bad_client_report_validity() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let clock = RealClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;

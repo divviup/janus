@@ -718,6 +718,8 @@ mod tests {
     use janus_core::{
         auth_tokens::{BearerToken, DapAuthToken},
         hpke::HpkeKeypair,
+        initialize_rustls,
+        test_util::install_test_trace_subscriber,
     };
     use janus_messages::TaskId;
     use prio::codec::Encode;
@@ -744,6 +746,9 @@ mod tests {
 
     #[tokio::test]
     async fn argument_handling() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+
         let hpke_keypair = HpkeKeypair::test();
         let encoded_hpke_config =
             URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());

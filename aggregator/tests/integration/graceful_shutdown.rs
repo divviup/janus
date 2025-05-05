@@ -27,8 +27,8 @@ use janus_aggregator_core::{
     task::{test_util::TaskBuilder, AggregationMode, BatchMode},
 };
 use janus_core::{
-    hpke::HpkeCiphersuite, test_util::install_test_trace_subscriber, time::RealClock,
-    vdaf::VdafInstance,
+    hpke::HpkeCiphersuite, initialize_rustls, test_util::install_test_trace_subscriber,
+    time::RealClock, vdaf::VdafInstance,
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
 use reqwest::Url;
@@ -126,6 +126,7 @@ fn forward_stdout_stderr(
 
 async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut config: C) {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     // This datastore will be used indirectly by the child process, which
     // will connect to its backing database separately.

@@ -1,5 +1,5 @@
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::{test_util::install_test_trace_subscriber, time::TimeExt};
+use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
 use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
@@ -12,6 +12,7 @@ use crate::simulation::{
 #[test]
 fn successful_collection_time_interval() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let collection_job_id = random();
     let input = Input {
@@ -85,6 +86,7 @@ fn successful_collection_time_interval() {
 #[test]
 fn successful_collection_leader_selected() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let collection_job_id = random();
     let input = Input {
@@ -146,6 +148,7 @@ fn successful_collection_leader_selected() {
 #[test]
 fn successful_collection_asynchronous() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let collection_job_id = random();
     let input = Input {
@@ -240,6 +243,7 @@ fn successful_collection_asynchronous() {
 /// Regression test for https://github.com/divviup/janus/issues/2442.
 fn repro_gc_changes_aggregation_job_retry_time_interval() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let input = Input {
         is_leader_selected: false,
@@ -280,6 +284,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
 /// Regression test for https://github.com/divviup/janus/issues/2442.
 fn repro_gc_changes_aggregation_job_retry_leader_selected() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let input = Input {
         is_leader_selected: true,
@@ -320,6 +325,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
 /// Regression test for https://github.com/divviup/janus/issues/2464.
 fn repro_recreate_gcd_batch_job_count_underflow() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let input = Input {
         is_leader_selected: false,
@@ -358,6 +364,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
 #[ignore = "failing test"]
 fn repro_abandoned_aggregation_job_batch_mismatch() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let collection_job_id = random();
     let input = Input {
@@ -408,6 +415,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
 /// Reproduction of the issue fixed by https://github.com/divviup/janus/pull/2355.
 fn repro_helper_accumulate_on_retried_request() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let input = Input {
         is_leader_selected: false,

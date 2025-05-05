@@ -810,6 +810,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::{Clock, IntervalExt, MockClock, TimeExt},
@@ -978,6 +979,7 @@ mod tests {
     #[tokio::test]
     async fn drive_collection_job() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -1457,6 +1459,7 @@ mod tests {
     async fn abandon_collection_job() {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -1515,6 +1518,7 @@ mod tests {
     #[tokio::test]
     async fn abandon_failing_collection_job_with_fatal_error() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
@@ -1611,6 +1615,7 @@ mod tests {
     #[tokio::test]
     async fn abandon_failing_collection_job_with_retryable_error() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
@@ -1714,6 +1719,7 @@ mod tests {
     async fn delete_collection_job() {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;

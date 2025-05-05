@@ -798,6 +798,7 @@ mod tests {
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+        initialize_rustls,
         retries::test_util::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
@@ -918,6 +919,8 @@ mod tests {
 
     #[test]
     fn leader_endpoint_end_in_slash() {
+        install_test_trace_subscriber();
+        initialize_rustls();
         let hpke_keypair = HpkeKeypair::test();
         let collector = Collector::new(
             random(),
@@ -948,6 +951,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_count() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
@@ -1055,6 +1059,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_sum() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_sum(2, 255).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &144);
@@ -1123,6 +1128,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_histogram(2, 4, 2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &3);
@@ -1192,6 +1198,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_fixedpoint_boundedl2_vec_sum() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_fixedpoint_boundedl2_vec_sum(2, 3).unwrap();
         const FP32_4_INV: I1F31 = I1F31::lit("0.25");
@@ -1271,6 +1278,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_leader_selected() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
@@ -1334,6 +1342,7 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_authentication_bearer() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
@@ -1417,6 +1426,7 @@ mod tests {
     #[tokio::test]
     async fn failed_collect_start() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
@@ -1508,6 +1518,7 @@ mod tests {
     #[tokio::test]
     async fn failed_collect_poll() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
@@ -1748,6 +1759,7 @@ mod tests {
     #[tokio::test]
     async fn collect_poll_retry_after() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
@@ -1841,6 +1853,7 @@ mod tests {
         // the amount of time that poll_until_complete() sleeps. `tokio::time::pause()` cannot be
         // used for this because hyper uses `tokio::time::Interval` internally, see issue #234.
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
@@ -1982,6 +1995,7 @@ mod tests {
     #[tokio::test]
     async fn successful_delete() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = dummy::Vdaf::new(1);
         let collector = setup_collector(&mut server, vdaf);
@@ -2019,6 +2033,7 @@ mod tests {
     #[tokio::test]
     async fn failed_delete() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = dummy::Vdaf::new(1);
         let collector = setup_collector(&mut server, vdaf);
@@ -2052,6 +2067,7 @@ mod tests {
     #[tokio::test]
     async fn poll_content_length_header() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);

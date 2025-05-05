@@ -904,6 +904,7 @@ pub mod test_util {
     };
     use janus_core::{
         hpke::HpkeKeypair,
+        initialize_rustls,
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::MockClock,
     };
@@ -947,6 +948,7 @@ pub mod test_util {
     impl HttpHandlerTest {
         pub async fn new() -> Self {
             install_test_trace_subscriber();
+            initialize_rustls();
             let clock = MockClock::default();
             let ephemeral_datastore = ephemeral_datastore().await;
             let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);

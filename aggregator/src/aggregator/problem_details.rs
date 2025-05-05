@@ -116,7 +116,9 @@ mod tests {
     use http::Method;
     use janus_aggregator_core::{test_util::noop_meter, TIME_HISTOGRAM_BOUNDARIES};
     use janus_core::{
+        initialize_rustls,
         retries::test_util::LimitedRetryer,
+        test_util::install_test_trace_subscriber,
         time::{Clock, RealClock},
     };
     use janus_messages::{
@@ -150,6 +152,8 @@ mod tests {
 
     #[tokio::test]
     async fn problem_details_round_trip() {
+        install_test_trace_subscriber();
+        initialize_rustls();
         let request_histogram = noop_meter()
             .f64_histogram("janus_http_request_duration")
             .with_unit("s")

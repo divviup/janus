@@ -16,6 +16,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, MockClock, TimeExt},
     vdaf::VdafInstance,
@@ -447,6 +448,7 @@ async fn upload_handler_helper() {
 #[tokio::test(flavor = "multi_thread")]
 async fn upload_handler_error_fanout() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let clock = MockClock::default();
     let ephemeral_datastore = EphemeralDatastoreBuilder::new()
         .with_database_pool_wait_timeout(Some(StdDuration::from_millis(100)))

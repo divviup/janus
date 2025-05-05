@@ -345,6 +345,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
+        initialize_rustls,
         retries::{
             retry_http_request, retry_http_request_notify, test_util::LimitedRetryer,
             ExponentialWithTotalDelayBuilder,
@@ -361,6 +362,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_client_error() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         let mock_404 = server
@@ -396,6 +398,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_server_error() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         let mock_500 = server
@@ -434,6 +437,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_server_error_unimplemented() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         let mock_501 = server
@@ -465,6 +469,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_server_error_eventually_succeeds() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         let mock_500 = server
@@ -501,6 +506,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_timeout() {
         install_test_trace_subscriber();
+        initialize_rustls();
 
         let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_port = tcp_listener.local_addr().unwrap().port();
@@ -536,6 +542,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_connection_reset() {
         install_test_trace_subscriber();
+        initialize_rustls();
 
         let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_port = tcp_listener.local_addr().unwrap().port();
@@ -580,6 +587,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_server_json_problem() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         let mock_problem = server
@@ -611,6 +619,7 @@ mod tests {
     #[tokio::test]
     async fn http_retry_server_json_problem_versioned_doc() {
         install_test_trace_subscriber();
+        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
 
         // Ensure that even with a complex media type, we parse a problem

@@ -1,7 +1,7 @@
 use std::{env, sync::Arc};
 
 use janus_aggregator_core::datastore::test_util::EphemeralDatabase;
-use janus_core::test_util::install_test_trace_subscriber;
+use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber};
 use quickcheck::{Gen, QuickCheck, TestResult};
 use tokio::runtime::Runtime;
 
@@ -17,6 +17,7 @@ use crate::simulation::{
 #[ignore = "slow quickcheck test"]
 fn simulation_test_time_interval_no_fault_injection() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let _ephemeral_database = DatabaseHandle::new();
 
@@ -29,6 +30,7 @@ fn simulation_test_time_interval_no_fault_injection() {
 #[ignore = "slow quickcheck test"]
 fn simulation_test_leader_selected_no_fault_injection() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let _ephemeral_database = DatabaseHandle::new();
 
@@ -42,6 +44,7 @@ fn simulation_test_leader_selected_no_fault_injection() {
 #[ignore = "slow quickcheck test"]
 fn simulation_test_time_interval_with_fault_injection() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let _ephemeral_database = DatabaseHandle::new();
 
@@ -55,6 +58,7 @@ fn simulation_test_time_interval_with_fault_injection() {
 #[ignore = "slow quickcheck test"]
 fn simulation_test_leader_selected_with_fault_injection() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let _ephemeral_database = DatabaseHandle::new();
 
@@ -68,6 +72,7 @@ fn simulation_test_leader_selected_with_fault_injection() {
 #[ignore = "slow quickcheck test"]
 fn simulation_test_key_rotator() {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let _ephemeral_database = DatabaseHandle::new();
 
