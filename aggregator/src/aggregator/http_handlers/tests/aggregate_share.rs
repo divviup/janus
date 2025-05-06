@@ -115,7 +115,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                clock.now(),
+                clock.now_aligned_to_precision(task.time_precision()),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(task.time_precision().as_seconds() - 1),
             )

@@ -23,7 +23,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, TimeExt},
+    time::{Clock, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -653,6 +653,17 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
         let now = self.clock.now().as_naive_date_time()?;
+
+        if let Some(start) = task.task_start() {
+            start
+                .validate_precision(task.time_precision())
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+        if let Some(end) = task.task_end() {
+            end.validate_precision(task.time_precision())
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+
         // Main task insert.
         let stmt = self
             .prepare_cached(
@@ -790,6 +801,17 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
    WHERE task_id = $4",
             )
             .await?;
+
+        let task_info = self
+            .task_info_for(task_id)
+            .await?
+            .ok_or(Error::MutationTargetNotFound)?;
+
+        if let Some(end) = task_end {
+            end.validate_precision(&task_info.time_precision)
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+
         check_single_row_mutation(
             self.execute(
                 &stmt,
@@ -1392,6 +1414,10 @@ WHERE client_reports.task_id = $1
             None => return Ok(false),
         };
 
+        batch_interval
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
+
         let stmt = self
             .prepare_cached(
                 "-- interval_has_unaggregated_reports()
@@ -1432,6 +1458,10 @@ SELECT EXISTS(
             Some(task_info) => task_info,
             None => return Ok(0),
         };
+
+        batch_interval
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -1542,7 +1572,8 @@ WHERE report_aggregations.task_id = $1
         report
             .metadata()
             .time()
-            .validate_precision(&task_info.time_precision)?;
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
         // report is expired (virtually GCed; would be invisible to other queries that retrieve
@@ -1701,6 +1732,10 @@ WHERE task_id = $1
             .task_info_for(task_id)
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
+
+        client_timestamp
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
@@ -2582,7 +2617,8 @@ WHERE report_aggregations.task_id = $1
 
         report_aggregation
             .time()
-            .validate_precision(&task_info.time_precision)?;
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -2681,6 +2717,11 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
+
+        report_aggregation_metadata
+            .time()
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -3096,6 +3137,10 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
+
+        batch_interval
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -4048,6 +4093,14 @@ WHERE task_id = $1
             B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
+        // This validates _only_ the start time of the interval, not the duration, as these
+        // client_timestamp_intervals' durations must exclude the next batch interval.
+        batch_aggregation
+            .client_timestamp_interval()
+            .start()
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
+
         let stmt = self
             .prepare_cached(
                 "-- put_batch_aggregation()
@@ -4266,6 +4319,10 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
+
+        interval
+            .validate_precision(&task_info.time_precision)
+            .map_err(|_| Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -4516,6 +4573,13 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
+
+        if let Some(start) = time_bucket_start {
+            start
+                .validate_precision(&task_info.time_precision)
+                .map_err(|_| Error::TimeUnaligned)?;
+        }
+
         let now = self.clock.now().as_naive_date_time()?;
 
         // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
@@ -6025,6 +6089,9 @@ pub enum Error {
     /// An invalid parameter was provided.
     #[error("invalid parameter: {0}")]
     InvalidParameter(&'static str),
+    /// A time type (duration, interval, timestamp) was not aligned to the task precision.
+    #[error("time unaligned to task precision")]
+    TimeUnaligned,
     /// An error occurred while manipulating timestamps or durations.
     #[error("{0}")]
     TimeOverflow(&'static str),
