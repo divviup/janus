@@ -10,3 +10,4 @@ listen_address: 0.0.0.0:8081
 max_upload_batch_size: 100
 max_upload_batch_write_delay_ms: 100
 batch_aggregation_shard_count: 32
+key_rotator: null
