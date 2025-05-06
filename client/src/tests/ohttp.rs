@@ -8,7 +8,7 @@ use assert_matches::assert_matches;
 use bhttp::{Message, Mode, StatusCode};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use janus_core::{
-    hpke::HpkeKeypair, http::HttpErrorResponse,
+    hpke::HpkeKeypair, http::HttpErrorResponse, initialize_rustls,
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
@@ -73,6 +73,7 @@ async fn mocked_ohttp_keys(server: &mut mockito::ServerGuard) -> (mockito::Mock,
 #[tokio::test]
 async fn successful_upload() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let (mocked_ohttp_keys, ohttp_server) = mocked_ohttp_keys(&mut server).await;
@@ -150,6 +151,7 @@ async fn successful_upload() {
 #[tokio::test]
 async fn ohttp_keyconfigs_http_error() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let mocked_ohttp_keys = server
@@ -170,6 +172,7 @@ async fn ohttp_keyconfigs_http_error() {
 #[tokio::test]
 async fn ohttp_keyconfigs_malformed_response_body() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let mocked_ohttp_keys = server
@@ -193,6 +196,7 @@ async fn ohttp_keyconfigs_malformed_response_body() {
 #[tokio::test]
 async fn ohttp_keyconfigs_wrong_content_type() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let key_config = KeyConfig::new(
@@ -223,6 +227,7 @@ async fn ohttp_keyconfigs_wrong_content_type() {
 #[tokio::test]
 async fn http_client_error_from_relay() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let (mocked_ohttp_keys, _) = mocked_ohttp_keys(&mut server).await;
@@ -250,6 +255,7 @@ async fn http_client_error_from_relay() {
 #[tokio::test]
 async fn http_client_error_from_target() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let (mocked_ohttp_keys, ohttp_server) = mocked_ohttp_keys(&mut server).await;
@@ -289,6 +295,7 @@ async fn http_client_error_from_target() {
 #[tokio::test]
 async fn encapsulated_server_message_is_http_request() {
     install_test_trace_subscriber();
+    initialize_rustls();
     let mut server = mockito::Server::new_async().await;
 
     let (mocked_ohttp_keys, ohttp_server) = mocked_ohttp_keys(&mut server).await;

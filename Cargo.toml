@@ -83,7 +83,7 @@ quickcheck = { version = "1.0.3", default-features = false }
 quickcheck_macros = "1.0.0"
 rand = "0.8"
 rayon = "1.10.0"
-reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
 regex = "1.11.1"
 retry-after = "0.4.0"
 rstest = "0.22.0"
@@ -105,7 +105,7 @@ signal-hook-tokio = "0.3.1"
 sqlx = { version = "0.8.5", default-features = false }
 stopper = "0.2.8"
 tempfile = "3.19.1"
-testcontainers = "0.23.3"
+testcontainers = { version = "0.24.0", default-features = false, features = ["aws-lc-rs"] }
 thiserror = "2.0"
 tracing = "0.1.41"
 tracing-chrome = "0.7.2"

@@ -5,6 +5,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use fixed::types::{I1F15, I1F31};
 use futures::future::join_all;
 use janus_core::{
+    initialize_rustls,
     test_util::install_test_trace_subscriber,
     time::{Clock, RealClock, TimeExt},
     vdaf::VERIFY_KEY_LENGTH_PRIO3,
@@ -46,6 +47,7 @@ async fn run(
     aggregation_parameter: &[u8],
 ) -> serde_json::Value {
     install_test_trace_subscriber();
+    initialize_rustls();
 
     let batch_mode_json = match query_kind {
         QueryKind::TimeInterval => {

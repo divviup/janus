@@ -19,6 +19,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    initialize_rustls,
     test_util::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
@@ -55,6 +56,7 @@ impl UploadTest {
         R: Runtime + Send + Sync + 'static,
     {
         install_test_trace_subscriber();
+        initialize_rustls();
 
         let clock = MockClock::default();
         let vdaf = Prio3Count::new_count(2).unwrap();

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use janus_core::initialize_rustls;
 use janus_interop_binaries::commands::{
     janus_interop_aggregator, janus_interop_client, janus_interop_collector,
 };
@@ -31,6 +32,7 @@ enum Nested {
 }
 
 fn main() -> Result<(), anyhow::Error> {
+    initialize_rustls();
     match Options::parse() {
         Options::Client(options) | Options::Default(Nested::Client(options)) => options.run(),
         Options::Aggregator(options) | Options::Default(Nested::Aggregator(options)) => {
