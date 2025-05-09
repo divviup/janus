@@ -2876,7 +2876,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            leader_state: transcript.leader_prepare_transitions[0]
+            state: transcript.leader_prepare_transitions[0]
                 .prepare_state()
                 .clone(),
         },
@@ -3137,7 +3137,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            leader_state: transcript.leader_prepare_transitions[0]
+            state: transcript.leader_prepare_transitions[0]
                 .prepare_state()
                 .clone(),
         },
@@ -3559,7 +3559,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { leader_state },
+                    ReportAggregationState::LeaderPollInit { state },
                 ))
                 .await
                 .unwrap();
@@ -3656,7 +3656,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            leader_state: transcript.leader_prepare_transitions[0]
+            state: transcript.leader_prepare_transitions[0]
                 .prepare_state()
                 .clone(),
         },
@@ -3814,7 +3814,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { leader_state },
+                    ReportAggregationState::LeaderPollInit { state },
                 ))
                 .await
                 .unwrap();
@@ -3911,7 +3911,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         0,
         None,
         ReportAggregationState::LeaderPollInit {
-            leader_state: transcript.leader_prepare_transitions[0]
+            state: transcript.leader_prepare_transitions[0]
                 .prepare_state()
                 .clone(),
         },
@@ -4069,7 +4069,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { leader_state },
+                    ReportAggregationState::LeaderPollInit { state },
                 ))
                 .await
                 .unwrap();
@@ -4327,7 +4327,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit { leader_state },
+                    ReportAggregationState::LeaderPollInit { state },
                 ))
                 .await
                 .unwrap();

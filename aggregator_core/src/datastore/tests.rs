@@ -2517,9 +2517,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::LeaderPollInit {
-                leader_state: vdaf_transcript.leader_prepare_transitions[0]
-                    .prepare_state()
-                    .clone(),
+                state: vdaf_transcript.leader_prepare_transitions[0].state.clone(),
             },
         ),
         (

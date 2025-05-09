@@ -2198,7 +2198,7 @@ dependencies = [
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "rand_core 0.6.4",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "subtle",
  "x25519-dalek",
  "zeroize",
@@ -2221,7 +2221,7 @@ dependencies = [
  "p384",
  "p521",
  "rand_core 0.6.4",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "subtle",
  "x25519-dalek",
  "zeroize",
@@ -3922,7 +3922,7 @@ checksum = "934cd7631c050f4674352a6e835d5f6711ffbfb9345c2fc0107155ac495ae293"
 dependencies = [
  "once_cell",
  "pest",
- "sha2 0.10.8",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4115,7 +4115,7 @@ dependencies = [
  "md-5",
  "memchr",
  "rand 0.9.0",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "stringprep",
 ]
 
@@ -4199,7 +4199,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_core 0.6.4",
  "serde",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "sha3",
  "subtle",
  "thiserror 1.0.69",
@@ -4208,8 +4208,6 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.17.0-alpha.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73b19b2345e231fb86cd581c8a19708390922b4a40f76153ee63f7e6c3c0581e"
 dependencies = [
  "aes 0.8.4",
  "bitvec",
@@ -4226,14 +4224,14 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "rand_core 0.6.4",
+ "rand_distr",
  "rayon",
  "serde",
  "serde_json",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "sha3",
  "subtle",
  "thiserror 2.0.12",
- "zipf",
 ]
 
 [[package]]
@@ -4407,6 +4405,16 @@ checksum = "b08f3c9802962f7e1b25113931d94f43ed9725bebc59db9d0c3e9a23b67e15ff"
 dependencies = [
  "getrandom 0.3.1",
  "zerocopy 0.8.14",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -5054,9 +5062,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.8"
+version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.12",
@@ -5301,7 +5309,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "smallvec",
  "thiserror 2.0.12",
  "tokio",
@@ -5339,7 +5347,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "sqlx-core",
  "sqlx-postgres",
  "syn 2.0.87",
@@ -5380,7 +5388,7 @@ dependencies = [
  "rand 0.8.5",
  "rsa",
  "sha1",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -5417,7 +5425,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "sha2 0.10.8",
+ "sha2 0.10.9",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -7325,13 +7333,4 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "zipf"
-version = "7.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "390e51da0ed8cc3ade001d15fa5ba6f966b99c858fb466ec6b06d1682f1f94dd"
-dependencies = [
- "rand 0.8.5",
 ]

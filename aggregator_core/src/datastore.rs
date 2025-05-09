@@ -40,7 +40,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongState, PingPongTransition},
     vdaf,
 };
 use rand::random;
@@ -2493,12 +2493,14 @@ WHERE report_aggregations.task_id = $1
                                 .to_string(),
                         )
                     })?;
-                let leader_state = A::PrepareState::get_decoded_with_param(
+                let leader_state = PingPongState::get_decoded_with_param(
                     &(vdaf, 0 /* leader */),
                     &leader_prep_state_bytes,
                 )?;
 
-                ReportAggregationState::LeaderPollInit { leader_state }
+                ReportAggregationState::LeaderPollInit {
+                    state: leader_state,
+                }
             }
 
             ReportAggregationStateCode::PollContinue => {

@@ -14,7 +14,7 @@ use janus_messages::{PrepareResp, PrepareStepResult, Role};
 use opentelemetry::metrics::Counter;
 use prio::{
     codec::{Encode, ParameterizedDecode},
-    topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology as _},
+    topology::ping_pong::{PingPongState, PingPongTopology as _},
     vdaf,
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};

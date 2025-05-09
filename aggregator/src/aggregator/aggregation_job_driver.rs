@@ -52,7 +52,7 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode, Encode},
-    topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
+    topology::ping_pong::{PingPongState, PingPongTopology},
     vdaf,
 };
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
@@ -518,7 +518,7 @@ where
                             )
                         })
                     }) {
-                        Ok((ping_pong_state, ping_pong_message)) => {
+                        Ok(ref ping_pong_state @ PingPongState::Continued(_, ref ping_pong_message)) => {
                             pi_and_sa_sender.send((
                                 report_aggregation.ord(),
                                 PrepareInit::new(
@@ -531,13 +531,16 @@ where
                                         public_share_bytes,
                                         helper_encrypted_input_share.clone(),
                                     ),
-                                    ping_pong_message,
+                                    ping_pong_message.clone(),
                                 ),
                                 SteppedAggregation {
                                     report_aggregation,
-                                    leader_state: ping_pong_state,
+                                    leader_state: ping_pong_state.clone(),
                                 },
                             )).map_err(|_| ())
+                        }
+                        Ok(_) => {
+                            panic!("unexpected non-continue state returned from leader_initialized")
                         }
                         Err(report_error) => {
                             ra_sender.send(WritableReportAggregation::new(
@@ -857,16 +860,12 @@ where
 
         for report_aggregation in report_aggregations {
             let leader_state = match report_aggregation.state() {
-                ReportAggregationState::LeaderPollInit { leader_state } => {
-                    PingPongState::Continued(leader_state.clone())
-                }
-                ReportAggregationState::LeaderPollContinue {
-                    leader_state: leader_transition,
-                } => {
+                ReportAggregationState::LeaderPollInit { state } => state.clone(),
+                ReportAggregationState::LeaderPollContinue { leader_state } => {
                     // If we're here, then the transition we are evaluating has previously been
                     // successfully evaluated, and so we never expect it to fail, and so represent
                     // it as Error::Internal.
-                    let (state, _) = leader_transition
+                    let state = leader_state
                         .evaluate(&vdaf_application_context(task.id()), &vdaf)
                         .map_err(|e| Error::Internal(e.to_string()))?;
                     state
@@ -986,28 +985,14 @@ where
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error> {
-        // Any non-failed report aggregations are set to the Poll state, allowing them to be polled
-        // when the aggregation job is next picked up.
+        // Any non-failed report aggregations are set to the corresponding Poll state, allowing them
+        // to be polled when the aggregation job is next picked up.
         report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
             |stepped_aggregation| {
                 let polling_state = match stepped_aggregation.report_aggregation.state() {
                     ReportAggregationState::LeaderInit { .. } => {
-                        // TODO(timg): this is ugly: we can't directly serialize PingPongState
-                        // because it doesn't have Encode/Decode impls. So we have to poke at its
-                        // insides to get at the A::PrepareState... but that means we have to tease
-                        // out the Continue variant, but if we're here, the state should only ever
-                        // be continue. It sucks that we have to poke at the internals of this
-                        // object when we really want to treat it opaquely.
-                        // Can fix this with appropriate Encode/Decode impls on PingPongState.
-                        let prepare_state = if let PingPongState::Continued(prepare_state) =
-                            stepped_aggregation.leader_state
-                        {
-                            prepare_state
-                        } else {
-                            panic!("unexpected stepped aggregation in non continue state")
-                        };
                         ReportAggregationState::LeaderPollInit {
-                            leader_state: prepare_state,
+                            state: stepped_aggregation.leader_state,
                         }
                     }
                     ReportAggregationState::LeaderContinue { transition } => {
@@ -1015,6 +1000,7 @@ where
                             leader_state: transition.clone(),
                         }
                     }
+                    // We were already polling, so keep polling
                     s @ ReportAggregationState::LeaderPollInit { .. }
                     | s @ ReportAggregationState::LeaderPollContinue { .. } => s.clone(),
                     s => panic!("cannot transition to polling state from state {s:?}"),

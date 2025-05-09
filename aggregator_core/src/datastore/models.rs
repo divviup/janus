@@ -24,7 +24,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::{encode_u16_items, Encode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::{PingPongState, PingPongTransition},
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -976,13 +976,13 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
     LeaderPollInit {
         /// Leader's current aggregation state.
         #[educe(Debug(ignore))]
-        leader_state: A::PrepareState,
+        state: PingPongState<SEED_SIZE, 16, A>,
     },
 
     /// The Leader received a "processing" response from a previous aggregation continuation
     /// request, and is ready to poll for completion.
     LeaderPollContinue {
-        /// Leader's current aggregation state.
+        /// Transition that evaluates to the Leader's current aggregation state.
         #[educe(Debug(ignore))]
         leader_state: PingPongTransition<SEED_SIZE, 16, A>,
     },
@@ -1093,7 +1093,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 }
             }
 
-            ReportAggregationState::LeaderPollInit { leader_state } => {
+            ReportAggregationState::LeaderPollInit { state: leader_state } => {
                 EncodedReportAggregationStateValues {
                     leader_prep_state: Some(leader_state.get_encoded()?),
                     ..Default::default()
@@ -1246,10 +1246,10 @@ where
 
             (
                 Self::LeaderPollInit {
-                    leader_state: lhs_leader_state,
+                    state: lhs_leader_state,
                 },
                 Self::LeaderPollInit {
-                    leader_state: rhs_leader_state,
+                    state: rhs_leader_state,
                 },
             ) => lhs_leader_state == rhs_leader_state,
 
