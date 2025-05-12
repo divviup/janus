@@ -251,7 +251,10 @@ async fn taskprov_aggregate_init() {
         PartialBatchSelector::new_leader_selected(batch_id_1),
         Vec::from([PrepareInit::new(
             report_share_1.clone(),
-            transcript_1.leader_prepare_transitions[0].message.clone(),
+            transcript_1.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let aggregation_job_id_1: AggregationJobId = random();
@@ -263,7 +266,10 @@ async fn taskprov_aggregate_init() {
         PartialBatchSelector::new_leader_selected(batch_id_2),
         Vec::from([PrepareInit::new(
             report_share_2.clone(),
-            transcript_2.leader_prepare_transitions[0].message.clone(),
+            transcript_2.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let aggregation_job_id_2: AggregationJobId = random();
@@ -395,7 +401,10 @@ async fn taskprov_aggregate_init_missing_extension() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let aggregation_job_id: AggregationJobId = random();
@@ -482,7 +491,10 @@ async fn taskprov_aggregate_init_malformed_extension() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let aggregation_job_id: AggregationJobId = random();
@@ -569,7 +581,10 @@ async fn taskprov_opt_out_task_ended() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -623,7 +638,10 @@ async fn taskprov_opt_out_mismatched_task_id() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -691,7 +709,10 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -757,7 +778,10 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -883,7 +907,10 @@ async fn taskprov_aggregate_continue() {
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *report_share.metadata().id(),
-            transcript.leader_prepare_transitions[1].message.clone(),
+            transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -1076,7 +1103,10 @@ async fn end_to_end() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -1113,13 +1143,19 @@ async fn end_to_end() {
         prepare_resp.result(),
         PrepareStepResult::Continue { message } => message.clone()
     );
-    assert_eq!(message, transcript.helper_prepare_transitions[0].message,);
+    assert_eq!(
+        &message,
+        transcript.helper_prepare_transitions[0].message().unwrap()
+    );
 
     let aggregation_job_continue_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *report_share.metadata().id(),
-            transcript.leader_prepare_transitions[1].message.clone(),
+            transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -1226,7 +1262,10 @@ async fn end_to_end_sumvec_hmac() {
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
 
@@ -1260,7 +1299,10 @@ async fn end_to_end_sumvec_hmac() {
     let prepare_resp = &prepare_resps[0];
     assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     let message = assert_matches!(prepare_resp.result(), PrepareStepResult::Continue { message } => message.clone());
-    assert_eq!(message, transcript.helper_prepare_transitions[0].message);
+    assert_eq!(
+        &message,
+        transcript.helper_prepare_transitions[0].message().unwrap()
+    );
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(

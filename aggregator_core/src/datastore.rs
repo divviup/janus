@@ -40,7 +40,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::PingPongContinuation,
 };
 use rand::random;
 use std::{
@@ -2471,13 +2471,13 @@ WHERE report_aggregations.task_id = $1
                                         .to_string(),
                                 )
                             })?;
-                        let ping_pong_transition = PingPongTransition::get_decoded_with_param(
+                        let ping_pong_transition = PingPongContinuation::get_decoded_with_param(
                             &(vdaf, 0 /* leader */),
                             &leader_prep_transition_bytes,
                         )?;
 
                         ReportAggregationState::LeaderContinue {
-                            transition: ping_pong_transition,
+                            continuation: ping_pong_transition,
                         }
                     }
                     Role::Helper => {
@@ -2558,7 +2558,7 @@ WHERE report_aggregations.task_id = $1
                     })
                     .and_then(|encoded| {
                         Ok(ReportAggregationState::LeaderPollContinue {
-                            transition: PingPongTransition::get_decoded_with_param(
+                            continuation: PingPongContinuation::get_decoded_with_param(
                                 &(vdaf, 0 /* leader */),
                                 &encoded,
                             )?,
@@ -2695,7 +2695,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,
                     /* leader_prep_transition */
-                    &encoded_state_values.leader_prep_transition,
+                    &encoded_state_values.leader_prep_continuation,
                     /* leader_prep_state */ &encoded_state_values.leader_prep_state,
                     /* prepare_init */ &encoded_state_values.prepare_init,
                     /* require_taskbind_extension */
@@ -2933,7 +2933,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* helper_encrypted_input_share */
                     &encoded_state_values.helper_encrypted_input_share,
                     /* leader_prep_transition */
-                    &encoded_state_values.leader_prep_transition,
+                    &encoded_state_values.leader_prep_continuation,
                     /* leader_prep_state */ &encoded_state_values.leader_prep_state,
                     /* prepare_init */ &encoded_state_values.prepare_init,
                     /* require_taskbind_extension */
