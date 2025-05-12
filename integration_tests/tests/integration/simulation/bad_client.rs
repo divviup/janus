@@ -25,7 +25,7 @@ use janus_messages::{
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
-    field::{random_vector, Field128, FieldElement},
+    field::{Field128, FieldElement},
     flp::{gadgets::ParallelSum, types::Histogram, Flp},
     vdaf::{
         prio3::{optimal_chunk_length, Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare},
@@ -473,7 +473,7 @@ fn shard_encoded_measurement_correct() {
     // Check the circuit output first.
     let histogram =
         Histogram::<Field128, ParallelSum<_, _>>::new(MAX_REPORTS, chunk_length).unwrap();
-    let joint_rand = random_vector(histogram.joint_rand_len());
+    let joint_rand = Field128::random_vector(histogram.joint_rand_len());
     let circuit_output = histogram
         .valid(
             &mut histogram.gadget(),

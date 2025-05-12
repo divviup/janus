@@ -262,7 +262,8 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
     'INIT_PROCESSING',      -- the aggregator is processing an aggregation initialization request asynchronously
     'CONTINUE',             -- the aggregator is ready for an aggregation continuation step
     'CONTINUE_PROCESSING',  -- the aggregator is processing an aggregation continuation request asynchronously
-    'POLL',                 -- the aggregator is polling for completion of a previous operation
+    'POLL_INIT',            -- the aggregator is polling for completion of a previous initialization operation
+    'POLL_CONTINUE',        -- the aggregator is polling for completion of a previous continuation operation
     'FINISHED',             -- the aggregator has completed the preparation process successfully
     'FAILED'                -- the aggregator has completed the preparation process unsuccessfully
 );
@@ -292,7 +293,6 @@ CREATE TABLE report_aggregations(
 
     -- Additional data for state LeaderPoll.
     leader_prep_state    BYTEA,  -- the current prepare state (opaque VDAF message)
-    leader_output_share  BYTEA,  -- the leader's recovered output share (opaque VDAF message)
 
     -- Additional data for state HelperInitProcessing.
     prepare_init  BYTEA,                  -- the preparation initialization message received from the Leader (opaque DAP message)
