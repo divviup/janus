@@ -32,7 +32,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask},
-    TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -51,7 +51,7 @@ use opentelemetry::{
     KeyValue,
 };
 use prio::{
-    codec::{Decode, Encode, ParameterizedDecode},
+    codec::{Decode, Encode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
     vdaf,
 };
@@ -193,26 +193,14 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
         hpke_keypairs: Arc<HpkeKeypairCache>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        for<'a> A::PrepareState:
-            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations) = datastore
             .run_tx("step_aggregation_job_generic", |tx| {
@@ -291,7 +279,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -300,19 +288,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        for<'a> A::PrepareState:
-            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Figure out the next step based on the non-error report aggregation states, and dispatch
         // accordingly.
         let mut saw_init = false;
@@ -401,7 +377,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -410,17 +386,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
@@ -694,7 +660,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -703,17 +669,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
@@ -885,7 +841,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -894,17 +850,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PrepareShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Only process non-failed report aggregations; convert non-failed report aggregations into
         // stepped aggregations to be compatible with `process_response_from_helper`.
         let stepped_aggregations: Vec<_> = report_aggregations
@@ -970,7 +916,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -982,17 +928,7 @@ where
         report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
         helper_resp: AggregationJobResp,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + PartialEq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         match helper_resp {
             AggregationJobResp::Processing => {
                 self.step_aggregation_job_leader_process_response_processing(
@@ -1028,7 +964,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1039,17 +975,7 @@ where
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + PartialEq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Any non-failed report aggregations are set to the Poll state, allowing them to be polled
         // when the aggregation job is next picked up.
         report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
@@ -1116,7 +1042,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1127,17 +1053,7 @@ where
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         prepare_resps: Vec<PrepareResp>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync + Eq + PartialEq,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Handle response, computing the new report aggregations to be stored.
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
@@ -1342,7 +1258,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1352,19 +1268,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        for<'a> A::PrepareState:
-            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Figure out the next step based on the non-error report aggregation states, and dispatch
         // accordingly.
         let mut saw_init = false;
@@ -1444,7 +1348,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1454,19 +1358,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        for<'a> A::PrepareState:
-            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Only process report aggregations in the HelperInitProcessing state.
         let report_aggregations = report_aggregations
             .into_iter()
@@ -1550,7 +1442,7 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -1559,19 +1451,7 @@ where
         task: AggregatorTask,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::AggregateShare: Send + Sync,
-        A::OutputShare: PartialEq + Eq + Send + Sync,
-        for<'a> A::PrepareState:
-            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::PrepareShare: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
-        A::PublicShare: PartialEq + Send + Sync,
-    {
+    ) -> Result<(), Error> {
         // Only process report aggregations in the HelperContinueProcessing state.
         let report_aggregations = report_aggregations
             .into_iter()
@@ -1684,23 +1564,13 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: CollectableBatchMode,
-        A,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: A,
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-        A::AggregateShare: Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::InputShare: Send + Sync,
-        A::OutputShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-        A::PublicShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         let vdaf = Arc::new(vdaf);
         let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
         let (aggregation_job_uri, aggregator_auth_token) = datastore

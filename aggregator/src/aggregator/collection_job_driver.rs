@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
         Datastore,
     },
-    task, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
+    task, AsyncAggregator, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -34,7 +34,6 @@ use opentelemetry::{
 use prio::{
     codec::{Decode, Encode},
     dp::DifferentialPrivacyStrategy,
-    vdaf,
 };
 use reqwest::Method;
 use std::{sync::Arc, time::Duration};
@@ -497,17 +496,13 @@ where
         const SEED_SIZE: usize,
         C: Clock,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<(), Error> {
         datastore
             .run_tx("abandon_collection_job", |tx| {
                 let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
