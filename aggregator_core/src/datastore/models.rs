@@ -24,7 +24,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::{encode_u16_items, Encode},
-    topology::ping_pong::PingPongTransition,
+    topology::ping_pong::PingPongContinuation,
     vdaf::Aggregatable,
 };
 use rand::{distr::StandardUniform, prelude::Distribution};
@@ -874,9 +874,9 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     },
     /// The Leader is ready to send an aggregation continue request to the Helper.
     LeaderContinue {
-        /// Most recent transition for this report aggregation.
+        /// Most recent continuation for this report aggregation.
         #[educe(Debug(ignore))]
-        transition: PingPongTransition<SEED_SIZE, 16, A>,
+        continuation: PingPongContinuation<SEED_SIZE, 16, A>,
     },
     /// The Leader received a "processing" response from a previous aggregation initialization
     /// request, and is ready to poll for completion.
@@ -889,9 +889,9 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     /// The Leader received a "processing" response from a previous aggregation continue
     /// request, and is ready to poll for completion.
     LeaderPollContinue {
-        /// Transition that evaluates to the Leader's current aggregation state.
+        /// Continuation that evaluates to the Leader's current aggregation state.
         #[educe(Debug(ignore))]
-        transition: PingPongTransition<SEED_SIZE, 16, A>,
+        continuation: PingPongContinuation<SEED_SIZE, 16, A>,
     },
 
     //
@@ -1002,26 +1002,20 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregationSta
                 }
             }
 
-            ReportAggregationState::LeaderContinue {
-                transition: continuation,
-            } => EncodedReportAggregationStateValues {
-                leader_prep_transition: Some(continuation.get_encoded()?),
-                ..Default::default()
-            },
+            ReportAggregationState::LeaderContinue { continuation }
+            | ReportAggregationState::LeaderPollContinue { continuation } => {
+                EncodedReportAggregationStateValues {
+                    leader_prep_continuation: Some(continuation.get_encoded()?),
+                    ..Default::default()
+                }
+            }
 
-            ReportAggregationState::LeaderPollInit {
-                prepare_state: leader_state,
-            } => EncodedReportAggregationStateValues {
-                leader_prep_state: Some(leader_state.get_encoded()?),
-                ..Default::default()
-            },
-
-            ReportAggregationState::LeaderPollContinue {
-                transition: leader_state,
-            } => EncodedReportAggregationStateValues {
-                leader_prep_transition: Some(leader_state.get_encoded()?),
-                ..Default::default()
-            },
+            ReportAggregationState::LeaderPollInit { prepare_state } => {
+                EncodedReportAggregationStateValues {
+                    leader_prep_state: Some(prepare_state.get_encoded()?),
+                    ..Default::default()
+                }
+            }
 
             ReportAggregationState::HelperInitProcessing {
                 prepare_init,
@@ -1070,7 +1064,7 @@ pub(super) struct EncodedReportAggregationStateValues {
     pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
 
     // State for LeaderContinue or LeaderPollContinue.
-    pub(super) leader_prep_transition: Option<Vec<u8>>,
+    pub(super) leader_prep_continuation: Option<Vec<u8>>,
 
     // State for LeaderPollInit.
     pub(super) leader_prep_state: Option<Vec<u8>>,
@@ -1147,12 +1141,12 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
 
             (
                 Self::LeaderContinue {
-                    transition: lhs_transition,
+                    continuation: lhs_continuation,
                 },
                 Self::LeaderContinue {
-                    transition: rhs_transition,
+                    continuation: rhs_continuation,
                 },
-            ) => lhs_transition == rhs_transition,
+            ) => lhs_continuation == rhs_continuation,
 
             (
                 Self::LeaderPollInit {
@@ -1165,12 +1159,12 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> PartialEq
 
             (
                 Self::LeaderPollContinue {
-                    transition: lhs_transition,
+                    continuation: lhs_continuation,
                 },
                 Self::LeaderPollContinue {
-                    transition: rhs_transition,
+                    continuation: rhs_continuation,
                 },
-            ) => lhs_transition == rhs_transition,
+            ) => lhs_continuation == rhs_continuation,
 
             (
                 Self::HelperInitProcessing {

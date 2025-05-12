@@ -404,17 +404,9 @@ pub(crate) fn handle_ping_pong_error(
             format!("Couldn't decode {peer_role} prepare message"),
             format!("{peer_role}_prep_message_decode_failure"),
         ),
-        ref error @ PingPongError::HostStateMismatch { .. } => (
-            format!("{error}"),
-            format!("{role}_ping_pong_host_state_mismatch"),
-        ),
         ref error @ PingPongError::PeerMessageMismatch { .. } => (
             format!("{error}"),
             format!("{peer_role}_ping_pong_message_mismatch"),
-        ),
-        PingPongError::InternalError(desc) => (
-            desc.to_string(),
-            "vdaf_ping_pong_internal_error".to_string(),
         ),
         // enum PingPongError is non_exhaustive so we need a catch-all case
         error => panic!("unhandled PingPongError: {error:?}"),

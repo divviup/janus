@@ -83,7 +83,9 @@ async fn aggregate_continue_sync() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -142,7 +144,9 @@ async fn aggregate_continue_sync() {
         &measurement,
     );
     let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_2 = &transcript_2.leader_prepare_transitions[1].message;
+    let leader_prep_message_2 = transcript_2.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -431,7 +435,9 @@ async fn aggregate_continue_async() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -687,7 +693,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -713,7 +721,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_1 = &transcript_1.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_1 = transcript_1.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_1.clone(),
@@ -742,7 +752,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_2 = &transcript_2.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_2 = transcript_2.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -1043,7 +1055,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_3 = transcript_3.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_3 = &transcript_3.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_3 = transcript_3.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_3.clone(),
@@ -1072,7 +1086,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_4 = transcript_4.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_4 = &transcript_4.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_4 = transcript_4.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_4 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_4.clone(),
@@ -1101,7 +1117,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_5 = transcript_5.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_5 = &transcript_5.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_5 = transcript_5.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_5.clone(),

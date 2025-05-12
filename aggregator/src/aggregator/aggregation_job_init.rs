@@ -29,7 +29,7 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode as _, Encode, ParameterizedDecode},
-    topology::ping_pong::{PingPongState, PingPongTopology as _},
+    topology::ping_pong::{Continued, PingPongState, PingPongTopology as _},
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{collections::HashMap, panic, sync::Arc};
@@ -356,7 +356,7 @@ where
                                     &input_share,
                                     prepare_init.message(),
                                 )
-                                .and_then(|transition| transition.evaluate(&ctx, &vdaf))
+                                .and_then(|continuation| continuation.evaluate(&ctx, &vdaf))
                                 .map_err(|error| {
                                     handle_ping_pong_error(
                                         task.id(),
@@ -371,24 +371,36 @@ where
 
                         let (report_aggregation_state, prepare_step_result, output_share) =
                             match init_rslt {
-                                Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
-                                    // Helper is not finished. Await the next message from the Leader to advance to
-                                    // the next step.
+                                // Helper is not finished. Store the new prepare state, respond to
+                                // the leader with the outgoing message and await the next message
+                                // from the Leader to advance to the next step.
+                                Ok(PingPongState::Continued(Continued{prepare_state, message})) => {
                                     (
                                         ReportAggregationState::HelperContinue { prepare_state },
-                                        PrepareStepResult::Continue {
-                                            message: outgoing_message,
-                                        },
+                                        PrepareStepResult::Continue { message },
                                         None,
                                     )
                                 }
-                                Ok((PingPongState::Finished(output_share), outgoing_message)) => (
+
+                                // Helper is finished with an outbound message. Commit to the output
+                                // share and respond to the leader with the outgoing message.
+                                Ok(PingPongState::FinishedWithOutbound{output_share, message}) => (
                                     ReportAggregationState::Finished,
-                                    PrepareStepResult::Continue {
-                                        message: outgoing_message,
-                                    },
+                                    PrepareStepResult::Continue { message },
                                     Some(output_share),
                                 ),
+
+                                // Helper cannot finish at this stage
+                                Ok(_) => (
+                                    ReportAggregationState::Failed {
+                                        report_error: ReportError::VdafPrepError,
+                                    },
+                                    PrepareStepResult::Reject(ReportError::VdafPrepError),
+                                    None,
+                                ),
+
+                                // Report was rejected. Respond to the leader with a rejection and
+                                // abort further processing.
                                 Err(report_error) => (
                                     ReportAggregationState::Failed { report_error },
                                     PrepareStepResult::Reject(report_error),
@@ -522,7 +534,10 @@ pub mod test_util {
             (
                 PrepareInit::new(
                     report_share,
-                    transcript.leader_prepare_transitions[0].message.clone(),
+                    transcript.leader_prepare_transitions[0]
+                        .message()
+                        .unwrap()
+                        .clone(),
                 ),
                 transcript,
             )

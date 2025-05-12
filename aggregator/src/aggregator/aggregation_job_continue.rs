@@ -13,7 +13,7 @@ use janus_aggregator_core::{
 use janus_core::vdaf::vdaf_application_context;
 use janus_messages::{PrepareResp, PrepareStepResult, Role};
 use opentelemetry::metrics::Counter;
-use prio::topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology as _};
+use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{panic, sync::Arc};
 use tokio::sync::mpsc;
@@ -104,50 +104,46 @@ where
                                 // Continue with the incoming message.
                                 vdaf.helper_continued(
                                     &ctx,
-                                    PingPongState::Continued(prepare_state.clone()),
                                     aggregation_job.aggregation_parameter(),
+                                    prepare_state.clone(),
                                     prepare_continue.message(),
                                 )
-                                .and_then(|continued_value| {
-                                    match continued_value {
-                                        PingPongContinuedValue::WithMessage { transition } => {
-                                            let (new_state, message) =
-                                                transition.evaluate(&ctx, vdaf.as_ref())?;
-                                            let (report_aggregation_state, output_share) =
-                                                match new_state {
-                                                    // Helper did not finish. Store the new
-                                                    // state and await the next message from
-                                                    // the Leader to advance preparation.
-                                                    PingPongState::Continued(prepare_state) => (
-                                                        ReportAggregationState::HelperContinue {
-                                                            prepare_state,
-                                                        },
-                                                        None,
-                                                    ),
-                                                    // Helper finished. Commit the output
-                                                    // share.
-                                                    PingPongState::Finished(output_share) => (
-                                                        ReportAggregationState::Finished,
-                                                        Some(output_share),
-                                                    ),
-                                                };
+                                .and_then(|continuation| {
+                                    Ok(match continuation.evaluate(&ctx, vdaf.as_ref())? {
+                                        // Helper did not finish. Store the new state, respond to
+                                        // the leader with the message, and await the next message
+                                        // from the Leader to advance preparation.
+                                        PingPongState::Continued(Continued {
+                                            prepare_state,
+                                            message,
+                                        }) => (
+                                            ReportAggregationState::HelperContinue {
+                                                prepare_state,
+                                            },
+                                            PrepareStepResult::Continue { message },
+                                            None,
+                                        ),
 
-                                            Ok((
-                                                report_aggregation_state,
-                                                // Helper has an outgoing message for Leader
-                                                PrepareStepResult::Continue { message },
-                                                output_share,
-                                            ))
-                                        }
-
-                                        PingPongContinuedValue::FinishedNoMessage {
+                                        // Helper finished with an outbound message. Commit the
+                                        // output share and respond to the leader with the final
+                                        // message.
+                                        PingPongState::FinishedWithOutbound {
                                             output_share,
-                                        } => Ok((
+                                            message,
+                                        } => (
+                                            ReportAggregationState::Finished,
+                                            PrepareStepResult::Continue { message },
+                                            Some(output_share),
+                                        ),
+
+                                        // Helper finished. Commit the output share and respond to
+                                        // the leader with a finished message.
+                                        PingPongState::Finished { output_share } => (
                                             ReportAggregationState::Finished,
                                             PrepareStepResult::Finished,
                                             Some(output_share),
-                                        )),
-                                    }
+                                        ),
+                                    })
                                 })
                             })
                             .map_err(|error| {
@@ -457,7 +453,10 @@ mod tests {
             AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *prepare_init.report_share().metadata().id(),
-                transcript.leader_prepare_transitions[1].message.clone(),
+                transcript.leader_prepare_transitions[1]
+                    .message()
+                    .unwrap()
+                    .clone(),
             )]),
         );
 
@@ -700,7 +699,8 @@ mod tests {
             Vec::from([PrepareContinue::new(
                 *unrelated_prepare_init.report_share().metadata().id(),
                 unrelated_transcript.leader_prepare_transitions[1]
-                    .message
+                    .message()
+                    .unwrap()
                     .clone(),
             )]),
         );
