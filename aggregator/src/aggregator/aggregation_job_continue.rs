@@ -689,7 +689,6 @@ mod tests {
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
-                            &test_case.aggregation_parameter,
                         )
                         .await
                         .unwrap();
@@ -742,7 +741,6 @@ mod tests {
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
-                            &test_case.aggregation_parameter,
                         )
                         .await
                         .unwrap();

@@ -28,7 +28,9 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
-    test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
+    test_util::{
+        install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript,
+    },
     time::{Clock, DurationExt, MockClock, TimeExt},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };

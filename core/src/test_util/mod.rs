@@ -27,6 +27,14 @@ pub struct LeaderPrepareTransition<
     pub message: PingPongMessage,
 }
 
+impl<const VERIFY_KEY_LENGTH: usize, V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>>
+    LeaderPrepareTransition<VERIFY_KEY_LENGTH, V>
+{
+    pub fn prepare_state(&self) -> &V::PrepareState {
+        self.state.prepare_state()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HelperPrepareTransition<
     const VERIFY_KEY_LENGTH: usize,
@@ -41,7 +49,19 @@ impl<const VERIFY_KEY_LENGTH: usize, V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>>
     HelperPrepareTransition<VERIFY_KEY_LENGTH, V>
 {
     pub fn prepare_state(&self) -> &V::PrepareState {
-        assert_matches!(self.state, PingPongState::Continued(ref state) => state)
+        self.state.prepare_state()
+    }
+}
+
+pub trait PingPongStateExt<T> {
+    fn prepare_state(&self) -> &T;
+}
+
+impl<const VERIFY_KEY_LENGTH: usize, V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>>
+    PingPongStateExt<V::PrepareState> for PingPongState<VERIFY_KEY_LENGTH, 16, V>
+{
+    fn prepare_state(&self) -> &V::PrepareState {
+        assert_matches!(self, PingPongState::Continued(ref state) => state)
     }
 }
 

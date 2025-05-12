@@ -236,7 +236,6 @@ where
                             &Role::Leader,
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id(),
-                            aggregation_job.aggregation_parameter(),
                         )
                         .await?;
 
@@ -299,7 +298,8 @@ where
             match report_aggregation.state() {
                 ReportAggregationState::LeaderInit { .. } => saw_init = true,
                 ReportAggregationState::LeaderContinue { .. } => saw_continue = true,
-                ReportAggregationState::LeaderPoll { .. } => saw_poll = true,
+                ReportAggregationState::LeaderPollInit { .. }
+                | ReportAggregationState::LeaderPollContinue { .. } => saw_poll = true,
 
                 ReportAggregationState::HelperInitProcessing { .. } => {
                     return Err(Error::Internal(
@@ -853,22 +853,32 @@ where
     ) -> Result<(), Error> {
         // Only process non-failed report aggregations; convert non-failed report aggregations into
         // stepped aggregations to be compatible with `process_response_from_helper`.
-        let stepped_aggregations: Vec<_> = report_aggregations
-            .into_iter()
-            .filter_map(|report_aggregation| {
-                let leader_state = match report_aggregation.state() {
-                    ReportAggregationState::LeaderPoll { leader_state } => {
-                        Some(leader_state.clone())
-                    }
-                    _ => None,
-                };
+        let mut stepped_aggregations = Vec::new();
 
-                leader_state.map(|leader_state| SteppedAggregation {
-                    report_aggregation,
-                    leader_state,
-                })
+        for report_aggregation in report_aggregations {
+            let leader_state = match report_aggregation.state() {
+                ReportAggregationState::LeaderPollInit { leader_state } => {
+                    PingPongState::Continued(leader_state.clone())
+                }
+                ReportAggregationState::LeaderPollContinue {
+                    leader_state: leader_transition,
+                } => {
+                    // If we're here, then the transition we are evaluating has previously been
+                    // successfully evaluated, and so we never expect it to fail, and so represent
+                    // it as Error::Internal.
+                    let (state, _) = leader_transition
+                        .evaluate(&vdaf_application_context(task.id()), &vdaf)
+                        .map_err(|e| Error::Internal(e.to_string()))?;
+                    state
+                }
+                _ => continue,
+            };
+
+            stepped_aggregations.push(SteppedAggregation {
+                report_aggregation,
+                leader_state,
             })
-            .collect();
+        }
 
         // Poll the Helper for completion.
         let http_response = send_request_to_helper(
@@ -980,12 +990,39 @@ where
         // when the aggregation job is next picked up.
         report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
             |stepped_aggregation| {
+                let polling_state = match stepped_aggregation.report_aggregation.state() {
+                    ReportAggregationState::LeaderInit { .. } => {
+                        // TODO(timg): this is ugly: we can't directly serialize PingPongState
+                        // because it doesn't have Encode/Decode impls. So we have to poke at its
+                        // insides to get at the A::PrepareState... but that means we have to tease
+                        // out the Continue variant, but if we're here, the state should only ever
+                        // be continue. It sucks that we have to poke at the internals of this
+                        // object when we really want to treat it opaquely.
+                        // Can fix this with appropriate Encode/Decode impls on PingPongState.
+                        let prepare_state = if let PingPongState::Continued(prepare_state) =
+                            stepped_aggregation.leader_state
+                        {
+                            prepare_state
+                        } else {
+                            panic!("unexpected stepped aggregation in non continue state")
+                        };
+                        ReportAggregationState::LeaderPollInit {
+                            leader_state: prepare_state,
+                        }
+                    }
+                    ReportAggregationState::LeaderContinue { transition } => {
+                        ReportAggregationState::LeaderPollContinue {
+                            leader_state: transition.clone(),
+                        }
+                    }
+                    s @ ReportAggregationState::LeaderPollInit { .. }
+                    | s @ ReportAggregationState::LeaderPollContinue { .. } => s.clone(),
+                    s => panic!("cannot transition to polling state from state {s:?}"),
+                };
                 WritableReportAggregation::new(
-                    stepped_aggregation.report_aggregation.with_state(
-                        ReportAggregationState::LeaderPoll {
-                            leader_state: stepped_aggregation.leader_state,
-                        },
-                    ),
+                    stepped_aggregation
+                        .report_aggregation
+                        .with_state(polling_state),
                     // Even if we have recovered an output share (i.e.,
                     // `stepped_aggregation.leader_state` is Finished), we don't include it here: we
                     // aren't done with aggregation until we receive a response from the Helper, so
@@ -1288,11 +1325,17 @@ where
                             .to_string(),
                     ));
                 }
-                ReportAggregationState::LeaderPoll { .. } => {
+                ReportAggregationState::LeaderPollInit { .. } => {
                     return Err(Error::Internal(
-                        "Leader encountered unexpected ReportAggregationState::LeaderPoll"
+                        "Helper encountered unexpected ReportAggregationState::LeaderPollInit"
                             .to_string(),
                     ));
+                }
+                ReportAggregationState::LeaderPollContinue { .. } => {
+                    return Err(Error::Internal(
+                        "Helper encountered unexpected ReportAggregationState::LeaderPollContinue"
+                            .to_string(),
+                    ))
                 }
 
                 ReportAggregationState::HelperInitProcessing { .. } => saw_init = true,
@@ -1614,7 +1657,6 @@ where
                             &Role::Leader,
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id(),
-                            aggregation_job.aggregation_parameter(),
                         )
                         .await?
                         .into_iter()

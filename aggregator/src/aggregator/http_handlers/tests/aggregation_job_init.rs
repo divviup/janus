@@ -772,7 +772,6 @@ async fn aggregate_init_async() {
                             &Role::Helper,
                             task.id(),
                             &aggregation_job_id,
-                            &aggregation_param,
                         )
                         .await
                         .unwrap(),

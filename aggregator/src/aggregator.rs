@@ -1810,7 +1810,6 @@ impl VdafOps {
                         &Role::Helper,
                         task_id,
                         mutating_aggregation_job.id(),
-                        existing_aggregation_job.aggregation_parameter(),
                     )
                     .await?
                     .iter()
@@ -1882,7 +1881,6 @@ impl VdafOps {
                 &Role::Helper,
                 task_id,
                 existing_aggregation_job.id(),
-                existing_aggregation_job.aggregation_parameter(),
             )
             .await?
             .iter()
@@ -2287,7 +2285,6 @@ impl VdafOps {
                             &Role::Helper,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                         )
                         .await?;
 
@@ -2635,7 +2632,6 @@ impl VdafOps {
                             &Role::Helper,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                         )
                         .await?;
 

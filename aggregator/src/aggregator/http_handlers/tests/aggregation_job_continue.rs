@@ -313,7 +313,6 @@ async fn aggregate_continue_sync() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -577,7 +576,6 @@ async fn aggregate_continue_async() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -1571,7 +1569,6 @@ async fn aggregate_continue_prep_step_fails() {
                         task.id(),
                         &aggregation_job_id,
                         report_metadata.id(),
-                        &aggregation_param,
                     )
                     .await
                     .unwrap()

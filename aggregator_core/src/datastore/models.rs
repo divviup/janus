@@ -24,7 +24,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::{encode_u16_items, Encode},
-    topology::ping_pong::{PingPongState, PingPongTransition},
+    topology::ping_pong::PingPongTransition,
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -971,12 +971,20 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
         #[educe(Debug(ignore))]
         transition: PingPongTransition<SEED_SIZE, 16, A>,
     },
-    /// The Leader received a "processing" response from a previous aggregation initialization or
-    /// continuation request, and is ready to poll for completion.
-    LeaderPoll {
+    /// The Leader received a "processing" response from a previous aggregation initialization
+    /// request, and is ready to poll for completion.
+    LeaderPollInit {
         /// Leader's current aggregation state.
         #[educe(Debug(ignore))]
-        leader_state: PingPongState<SEED_SIZE, 16, A>,
+        leader_state: A::PrepareState,
+    },
+
+    /// The Leader received a "processing" response from a previous aggregation continuation
+    /// request, and is ready to poll for completion.
+    LeaderPollContinue {
+        /// Leader's current aggregation state.
+        #[educe(Debug(ignore))]
+        leader_state: PingPongTransition<SEED_SIZE, 16, A>,
     },
 
     //
@@ -1023,7 +1031,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
         match self {
             ReportAggregationState::LeaderInit { .. } => ReportAggregationStateCode::Init,
             ReportAggregationState::LeaderContinue { .. } => ReportAggregationStateCode::Continue,
-            ReportAggregationState::LeaderPoll { .. } => ReportAggregationStateCode::Poll,
+            ReportAggregationState::LeaderPollInit { .. } => ReportAggregationStateCode::PollInit,
+            ReportAggregationState::LeaderPollContinue { .. } => {
+                ReportAggregationStateCode::PollContinue
+            }
 
             ReportAggregationState::HelperInitProcessing { .. } => {
                 ReportAggregationStateCode::InitProcessing
@@ -1074,24 +1085,24 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     ..Default::default()
                 }
             }
+
             ReportAggregationState::LeaderContinue { transition } => {
                 EncodedReportAggregationStateValues {
                     leader_prep_transition: Some(transition.get_encoded()?),
                     ..Default::default()
                 }
             }
-            ReportAggregationState::LeaderPoll { leader_state } => {
-                let (encoded_leader_prep_state, encoded_leader_output_share) = match leader_state {
-                    PingPongState::Continued(prepare_state) => {
-                        (Some(prepare_state.get_encoded()?), None)
-                    }
-                    PingPongState::Finished(output_share) => {
-                        (None, Some(output_share.get_encoded()?))
-                    }
-                };
+
+            ReportAggregationState::LeaderPollInit { leader_state } => {
                 EncodedReportAggregationStateValues {
-                    leader_prep_state: encoded_leader_prep_state,
-                    leader_output_share: encoded_leader_output_share,
+                    leader_prep_state: Some(leader_state.get_encoded()?),
+                    ..Default::default()
+                }
+            }
+
+            ReportAggregationState::LeaderPollContinue { leader_state } => {
+                EncodedReportAggregationStateValues {
+                    leader_prep_state: Some(leader_state.get_encoded()?),
                     ..Default::default()
                 }
             }
@@ -1145,9 +1156,8 @@ pub(super) struct EncodedReportAggregationStateValues {
     // State for LeaderContinue.
     pub(super) leader_prep_transition: Option<Vec<u8>>,
 
-    // State for LeaderPoll.
+    // State for LeaderPollInit or LeaderPollContinue.
     pub(super) leader_prep_state: Option<Vec<u8>>,
-    pub(super) leader_output_share: Option<Vec<u8>>,
 
     // State for HelperInitProcessing.
     pub(super) prepare_init: Option<Vec<u8>>,
@@ -1177,8 +1187,10 @@ pub(super) enum ReportAggregationStateCode {
     Continue,
     #[postgres(name = "CONTINUE_PROCESSING")]
     ContinueProcessing,
-    #[postgres(name = "POLL")]
-    Poll,
+    #[postgres(name = "POLL_INIT")]
+    PollInit,
+    #[postgres(name = "POLL_CONTINUE")]
+    PollContinue,
     #[postgres(name = "FINISHED")]
     Finished,
     #[postgres(name = "FAILED")]
@@ -1233,23 +1245,22 @@ where
             ) => lhs_transition == rhs_transition,
 
             (
-                Self::LeaderPoll {
+                Self::LeaderPollInit {
                     leader_state: lhs_leader_state,
                 },
-                Self::LeaderPoll {
+                Self::LeaderPollInit {
                     leader_state: rhs_leader_state,
                 },
-            ) => match (lhs_leader_state, rhs_leader_state) {
-                (
-                    PingPongState::Continued(lhs_prepare_state),
-                    PingPongState::Continued(rhs_prepare_state),
-                ) => lhs_prepare_state == rhs_prepare_state,
-                (
-                    PingPongState::Finished(lhs_output_share),
-                    PingPongState::Finished(rhs_output_share),
-                ) => lhs_output_share == rhs_output_share,
-                _ => false,
-            },
+            ) => lhs_leader_state == rhs_leader_state,
+
+            (
+                Self::LeaderPollContinue {
+                    leader_state: lhs_leader_state,
+                },
+                Self::LeaderPollContinue {
+                    leader_state: rhs_leader_state,
+                },
+            ) => lhs_leader_state == rhs_leader_state,
 
             (
                 Self::HelperInitProcessing {
