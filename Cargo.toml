@@ -104,7 +104,7 @@ signal-hook-tokio = "0.3.1"
 # https://github.com/divviup/janus/security/dependabot/29
 sqlx = { version = "0.8.5", default-features = false }
 stopper = "0.2.8"
-tempfile = "3.19.1"
+tempfile = "3.20.0"
 testcontainers = { version = "0.24.0", default-features = false, features = ["aws-lc-rs"] }
 thiserror = "2.0"
 tracing = "0.1.41"
