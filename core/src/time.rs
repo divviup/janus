@@ -1,7 +1,6 @@
 //! Utilities for timestamps and durations.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-
 use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
@@ -127,7 +126,7 @@ pub trait DurationExt: Sized {
     fn round_up(&self, time_precision: &Duration) -> Result<Self, Error>;
 
     /// Confirm that this duration is a multiple of the task time precision.
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error>;
 }
 
 impl DurationExt for Duration {
