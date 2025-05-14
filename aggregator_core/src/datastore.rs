@@ -657,11 +657,11 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
         if let Some(start) = task.task_start() {
             start
                 .validate_precision(task.time_precision())
-                .map_err(|_| Error::TimeUnaligned)?;
+                .map_err(Error::TimeUnaligned)?;
         }
         if let Some(end) = task.task_end() {
             end.validate_precision(task.time_precision())
-                .map_err(|_| Error::TimeUnaligned)?;
+                .map_err(Error::TimeUnaligned)?;
         }
 
         // Main task insert.
@@ -809,7 +809,7 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
 
         if let Some(end) = task_end {
             end.validate_precision(&task_info.time_precision)
-                .map_err(|_| Error::TimeUnaligned)?;
+                .map_err(Error::TimeUnaligned)?;
         }
 
         check_single_row_mutation(
@@ -1416,7 +1416,7 @@ WHERE client_reports.task_id = $1
 
         batch_interval
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -1461,7 +1461,7 @@ SELECT EXISTS(
 
         batch_interval
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -1573,7 +1573,7 @@ WHERE report_aggregations.task_id = $1
             .metadata()
             .time()
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
         // report is expired (virtually GCed; would be invisible to other queries that retrieve
@@ -1735,7 +1735,7 @@ WHERE task_id = $1
 
         client_timestamp
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
         let now = self.clock.now().as_naive_date_time()?;
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
@@ -2618,7 +2618,7 @@ WHERE report_aggregations.task_id = $1
         report_aggregation
             .time()
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -2721,7 +2721,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         report_aggregation_metadata
             .time()
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -3140,7 +3140,7 @@ WHERE task_id = $1
 
         batch_interval
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -4099,7 +4099,7 @@ WHERE task_id = $1
             .client_timestamp_interval()
             .start()
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -4322,7 +4322,7 @@ WHERE task_id = $1
 
         interval
             .validate_precision(&task_info.time_precision)
-            .map_err(|_| Error::TimeUnaligned)?;
+            .map_err(Error::TimeUnaligned)?;
 
         let stmt = self
             .prepare_cached(
@@ -4577,7 +4577,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
         if let Some(start) = time_bucket_start {
             start
                 .validate_precision(&task_info.time_precision)
-                .map_err(|_| Error::TimeUnaligned)?;
+                .map_err(Error::TimeUnaligned)?;
         }
 
         let now = self.clock.now().as_naive_date_time()?;
@@ -6090,8 +6090,8 @@ pub enum Error {
     #[error("invalid parameter: {0}")]
     InvalidParameter(&'static str),
     /// A time type (duration, interval, timestamp) was not aligned to the task precision.
-    #[error("time unaligned to task precision")]
-    TimeUnaligned,
+    #[error("time unaligned: {0}")]
+    TimeUnaligned(janus_messages::Error),
     /// An error occurred while manipulating timestamps or durations.
     #[error("{0}")]
     TimeOverflow(&'static str),

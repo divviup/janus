@@ -815,14 +815,15 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with a task end time that isn't a multiple of the time precision
     // returns BadRequest.
-    assert_status!(
+    assert_response!(
         patch(format!("/tasks/{}", task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_body(r#"{"task_end": 1337}"#)
             .run_async(&handler)
             .await,
-        Status::BadRequest
+        Status::BadRequest,
+        "time unaligned: timestamp is not a multiple of the time precision"
     );
 
     // Verify: patching the task with a task end time returns the expected result.
