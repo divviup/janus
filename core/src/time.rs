@@ -465,6 +465,70 @@ mod tests {
     }
 
     #[test]
+    fn interval_merge() {
+        for (label, i1_start, i1_dur, i2_start, i2_dur, expected) in [
+            ("contiguous", 0, 100, 100, 100, Some((0, 200))),
+            ("gap", 0, 100, 200, 100, Some((0, 300))),
+            ("i1 zero duration", 0, 0, 200, 100, Some((200, 100))),
+            ("i2 zero duration", 0, 100, 200, 0, Some((0, 100))),
+        ] {
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start),
+                Duration::from_seconds(i1_dur),
+            )
+            .unwrap();
+            let i2 = Interval::new(
+                Time::from_seconds_since_epoch(i2_start),
+                Duration::from_seconds(i2_dur),
+            )
+            .unwrap();
+            let result = i1.merge(&i2);
+            match expected {
+                Some((expected_start, expected_duration)) => {
+                    let result = result.unwrap();
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start),
+                        Duration::from_seconds(expected_duration),
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected, "{label}");
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
+        }
+    }
+
+    #[test]
+    fn interval_merged_with() {
+        for (label, i1_start, i1_dur, i2, expected) in [
+            ("contiguous aligned", 0, 100, 200, Some((0, 201))),
+            ("contiguous unaligned", 0, 100, 234, Some((0, 235))),
+            ("gap aligned", 0, 100, 200, Some((0, 201))),
+            ("gap wider aligned", 0, 100, 300, Some((0, 301))),
+            ("gap wider unaligned", 0, 100, 1010, Some((0, 1011))),
+        ] {
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start),
+                Duration::from_seconds(i1_dur),
+            )
+            .unwrap();
+            let result = i1.merged_with(&Time::from_seconds_since_epoch(i2));
+            match expected {
+                Some((expected_start, expected_duration)) => {
+                    let result = result.unwrap();
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start),
+                        Duration::from_seconds(expected_duration),
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected, "{label}");
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
+        }
+    }
+
+    #[test]
     fn interval_align_to_time_precision() {
         for (label, interval_start, interval_duration, time_precision, expected) in [
             ("already aligned", 0, 100, 100, Some((0, 100))),
