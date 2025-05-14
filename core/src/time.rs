@@ -360,17 +360,7 @@ impl IntervalExt for Interval {
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        // When we want to merge only the provided instant
-        // in time and no further, we need to use a non-existant
-        // duration, so that we don't always extend our time
-        // bound by 1 second and cause a round-up during alignment.
-        let other = &Self::new(*time, Duration::ZERO)?;
-
-        let max_time = std::cmp::max(self.end(), other.end());
-        let min_time = std::cmp::min(self.start(), other.start());
-
-        // This can't actually fail for any valid Intervals
-        Self::new(*min_time, max_time.difference(min_time)?)
+        self.merge(&Self::from_time(time)?)
     }
 
     fn from_time(time: &Time) -> Result<Self, Error> {
@@ -511,11 +501,11 @@ mod tests {
     #[test]
     fn interval_merged_with() {
         for (label, i1_start, i1_dur, i2, expected) in [
-            ("contiguous aligned", 0, 100, 200, Some((0, 200))),
-            ("contiguous unaligned", 0, 100, 234, Some((0, 234))),
-            ("gap aligned", 0, 100, 200, Some((0, 200))),
-            ("gap wider aligned", 0, 100, 300, Some((0, 300))),
-            ("gap wider unaligned", 0, 100, 1010, Some((0, 1010))),
+            ("contiguous aligned", 0, 100, 200, Some((0, 201))),
+            ("contiguous unaligned", 0, 100, 234, Some((0, 235))),
+            ("gap aligned", 0, 100, 200, Some((0, 201))),
+            ("gap wider aligned", 0, 100, 300, Some((0, 301))),
+            ("gap wider unaligned", 0, 100, 1010, Some((0, 1011))),
         ] {
             let i1 = Interval::new(
                 Time::from_seconds_since_epoch(i1_start),
