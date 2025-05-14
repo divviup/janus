@@ -360,7 +360,17 @@ impl IntervalExt for Interval {
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        self.merge(&Self::from_time(time)?)
+        // When we want to merge only the provided instant
+        // in time and no further, we need to use a non-existant
+        // duration, so that we don't always extend our time
+        // bound by 1 second and cause a round-up during alignment.
+        let other = &Self::new(*time, Duration::ZERO)?;
+
+        let max_time = std::cmp::max(self.end(), other.end());
+        let min_time = std::cmp::min(self.start(), other.start());
+
+        // This can't actually fail for any valid Intervals
+        Self::new(*min_time, max_time.difference(min_time)?)
     }
 
     fn from_time(time: &Time) -> Result<Self, Error> {
@@ -461,6 +471,70 @@ mod tests {
             ("empty", Interval::EMPTY, Interval::EMPTY, Interval::EMPTY),
         ] {
             assert_eq!(want, lhs.merge(&rhs).unwrap(), "{label}");
+        }
+    }
+
+    #[test]
+    fn interval_merge() {
+        for (label, i1_start, i1_dur, i2_start, i2_dur, expected) in [
+            ("contiguous", 0, 100, 100, 100, Some((0, 200))),
+            ("gap", 0, 100, 200, 100, Some((0, 300))),
+            ("i1 zero duration", 0, 0, 200, 100, Some((200, 100))),
+            ("i2 zero duration", 0, 100, 200, 0, Some((0, 100))),
+        ] {
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start),
+                Duration::from_seconds(i1_dur),
+            )
+            .unwrap();
+            let i2 = Interval::new(
+                Time::from_seconds_since_epoch(i2_start),
+                Duration::from_seconds(i2_dur),
+            )
+            .unwrap();
+            let result = i1.merge(&i2);
+            match expected {
+                Some((expected_start, expected_duration)) => {
+                    let result = result.unwrap();
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start),
+                        Duration::from_seconds(expected_duration),
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected, "{label}");
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
+        }
+    }
+
+    #[test]
+    fn interval_merged_with() {
+        for (label, i1_start, i1_dur, i2, expected) in [
+            ("contiguous aligned", 0, 100, 200, Some((0, 200))),
+            ("contiguous unaligned", 0, 100, 234, Some((0, 234))),
+            ("gap aligned", 0, 100, 200, Some((0, 200))),
+            ("gap wider aligned", 0, 100, 300, Some((0, 300))),
+            ("gap wider unaligned", 0, 100, 1010, Some((0, 1010))),
+        ] {
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start),
+                Duration::from_seconds(i1_dur),
+            )
+            .unwrap();
+            let result = i1.merged_with(&Time::from_seconds_since_epoch(i2));
+            match expected {
+                Some((expected_start, expected_duration)) => {
+                    let result = result.unwrap();
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start),
+                        Duration::from_seconds(expected_duration),
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected, "{label}");
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
         }
     }
 
