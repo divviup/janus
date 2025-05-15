@@ -2067,6 +2067,13 @@ WHERE aggregation_jobs.task_id = $4
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().as_naive_date_time()?;
 
+        aggregation_job
+            .client_timestamp_interval()
+            .validate_precision(&task_info.time_precision)
+            .map_err(|e| {
+                Self::unaligned_time_error(aggregation_job.task_id(), &task_info.time_precision, e)
+            })?;
+
         // If there is a conflict, the we upsert the incoming aggregation job (excluded) if the
         // existing aggregation job is expired (virtually GCed; would be invisible to other queries
         // that retrieve aggregation job rows).
@@ -4218,6 +4225,17 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
         };
         let now = self.clock.now().as_naive_date_time()?;
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
+
+        batch_aggregation
+            .client_timestamp_interval()
+            .validate_precision(&task_info.time_precision)
+            .map_err(|e| {
+                Self::unaligned_time_error(
+                    batch_aggregation.task_id(),
+                    &task_info.time_precision,
+                    e,
+                )
+            })?;
 
         let stmt = self
             .prepare_cached(
