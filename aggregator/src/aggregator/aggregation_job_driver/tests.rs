@@ -3229,6 +3229,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
+    let time_precision = task.time_precision().clone();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3276,8 +3277,11 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::from_time_with_precision(
+                        &Time::from_seconds_since_epoch(0),
+                        &time_precision,
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -3301,7 +3305,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                     batch_identifier,
                     aggregation_param,
                     0,
-                    Interval::from_time(&time).unwrap(),
+                    Interval::from_time_with_precision(&time, &time_precision).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -4808,8 +4812,11 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::from_time_with_precision(
+                        &Time::from_seconds_since_epoch(0),
+                        task.time_precision(),
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -4833,7 +4840,11 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
                     active_batch_identifier,
                     aggregation_param,
                     0,
-                    Interval::from_time(report.metadata().time()).unwrap(),
+                    Interval::from_time_with_precision(
+                        report.metadata().time(),
+                        task.time_precision(),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -4913,7 +4924,11 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        Interval::from_time_with_precision(
+            &Time::from_seconds_since_epoch(0),
+            task.time_precision(),
+        )
+        .unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(2),
     );
@@ -5014,6 +5029,7 @@ async fn helper_async_init_processing_to_finished() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
+    let time_precision = task.time_precision().clone();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5059,8 +5075,11 @@ async fn helper_async_init_processing_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::from_time_with_precision(
+                        &Time::from_seconds_since_epoch(0),
+                        &time_precision,
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -5087,7 +5106,7 @@ async fn helper_async_init_processing_to_finished() {
                     active_batch_identifier,
                     aggregation_param,
                     0,
-                    Interval::from_time(&report_timestamp).unwrap(),
+                    Interval::from_time_with_precision(&report_timestamp, &time_precision).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -5142,7 +5161,11 @@ async fn helper_async_init_processing_to_finished() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        Interval::from_time_with_precision(
+            &Time::from_seconds_since_epoch(0),
+            task.time_precision(),
+        )
+        .unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(0),
     );
@@ -5167,7 +5190,11 @@ async fn helper_async_init_processing_to_finished() {
             active_batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(report_share.metadata().time()).unwrap(),
+            Interval::from_time_with_precision(
+                report_share.metadata().time(),
+                task.time_precision(),
+            )
+            .unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: Some(transcript.helper_aggregate_share),
                 report_count: 1,
@@ -5248,6 +5275,7 @@ async fn helper_async_init_processing_to_continue() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
+    let time_precision = task.time_precision().clone();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5293,8 +5321,11 @@ async fn helper_async_init_processing_to_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::from_time_with_precision(
+                        &Time::from_seconds_since_epoch(0),
+                        &time_precision,
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -5321,7 +5352,7 @@ async fn helper_async_init_processing_to_continue() {
                     active_batch_identifier,
                     aggregation_param,
                     0,
-                    Interval::from_time(&report_timestamp).unwrap(),
+                    Interval::from_time_with_precision(&report_timestamp, &time_precision).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -5376,7 +5407,11 @@ async fn helper_async_init_processing_to_continue() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        Interval::from_time_with_precision(
+            &Time::from_seconds_since_epoch(0),
+            task.time_precision(),
+        )
+        .unwrap(),
         AggregationJobState::AwaitingRequest,
         AggregationJobStep::from(0),
     );
@@ -5403,7 +5438,11 @@ async fn helper_async_init_processing_to_continue() {
             active_batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(report_share.metadata().time()).unwrap(),
+            Interval::from_time_with_precision(
+                report_share.metadata().time(),
+                task.time_precision(),
+            )
+            .unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -5484,6 +5523,7 @@ async fn helper_async_continue_processing_to_finished() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
+    let time_precision = task.time_precision().clone();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5530,8 +5570,11 @@ async fn helper_async_continue_processing_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::from_time_with_precision(
+                        &Time::from_seconds_since_epoch(0),
+                        &time_precision,
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -5558,7 +5601,7 @@ async fn helper_async_continue_processing_to_finished() {
                     active_batch_identifier,
                     aggregation_param,
                     0,
-                    Interval::from_time(&report_timestamp).unwrap(),
+                    Interval::from_time_with_precision(&report_timestamp, &time_precision).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -5613,7 +5656,11 @@ async fn helper_async_continue_processing_to_finished() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        Interval::from_time_with_precision(
+            &Time::from_seconds_since_epoch(0),
+            task.time_precision(),
+        )
+        .unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     );
@@ -5636,7 +5683,11 @@ async fn helper_async_continue_processing_to_finished() {
             active_batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(report_share.metadata().time()).unwrap(),
+            Interval::from_time_with_precision(
+                report_share.metadata().time(),
+                task.time_precision(),
+            )
+            .unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: Some(transcript.helper_aggregate_share),
                 report_count: 1,
@@ -5759,7 +5810,11 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
         aggregation_job_id,
         (),
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+        Interval::from_time_with_precision(
+            &Time::from_seconds_since_epoch(0),
+            task.time_precision(),
+        )
+        .unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -5880,7 +5935,11 @@ async fn cancel_aggregation_job() {
         test_case.batch_identifier,
         (),
         0,
-        Interval::from_time(test_case.report_aggregation.time()).unwrap(),
+        Interval::from_time_with_precision(
+            test_case.report_aggregation.time(),
+            test_case.task.time_precision(),
+        )
+        .unwrap(),
         BatchAggregationState::Aggregating {
             aggregate_share: None,
             report_count: 0,
@@ -6051,8 +6110,11 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
                 aggregation_job_id,
                 (),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Interval::from_time_with_precision(
+                    &Time::from_seconds_since_epoch(0),
+                    task.time_precision(),
+                )
+                .unwrap(),
                 AggregationJobState::Active,
                 AggregationJobStep::from(0),
             ))
@@ -6074,7 +6136,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time(&time).unwrap(),
+                Interval::from_time_with_precision(&time, task.time_precision()).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -6303,8 +6365,11 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
                 aggregation_job_id,
                 (),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Interval::from_time_with_precision(
+                    &Time::from_seconds_since_epoch(0),
+                    task.time_precision(),
+                )
+                .unwrap(),
                 AggregationJobState::Active,
                 AggregationJobStep::from(0),
             ))
