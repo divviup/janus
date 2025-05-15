@@ -400,6 +400,28 @@ async fn upload_handler() {
         &test_conn,
         "access-control-allow-origin" => "https://example.com/"
     );
+
+    // Reports that aren't aligned to the task time precision must be rejected
+    clock.advance(&Duration::from_seconds(1));
+    let bad_leader_time_alignment_report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now(), /* not aligned! */
+    );
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+        .with_request_body(bad_leader_time_alignment_report.get_encoded().unwrap())
+        .run_async(&handler)
+        .await;
+    check_response(
+        &mut test_conn,
+        Status::BadRequest,
+        "invalid_message",
+        "Time unaligned.",
+        leader_task.id(),
+        Some("time is unaligned (precision = 1000 seconds, inner error = timestamp is not a multiple of the time precision)"),
+    )
+    .await;
 }
 
 // Helper should not expose `tasks/{task-id}/reports` endpoint.
@@ -423,7 +445,11 @@ async fn upload_handler_helper() {
     .build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
-    let report = create_report(&helper_task, &hpke_keypair, clock.now());
+    let report = create_report(
+        &helper_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
 
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
