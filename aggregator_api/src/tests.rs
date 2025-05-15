@@ -823,7 +823,7 @@ async fn patch_task(#[case] role: Role) {
             .run_async(&handler)
             .await,
         Status::BadRequest,
-        "time unaligned: timestamp is not a multiple of the time precision"
+        "time is unaligned (precision = 100 seconds, inner error = timestamp is not a multiple of the time precision)"
     );
 
     // Verify: patching the task with a task end time returns the expected result.
