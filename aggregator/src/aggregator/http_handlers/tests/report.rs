@@ -406,7 +406,7 @@ async fn upload_handler() {
     let bad_leader_time_alignment_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now(), /* not aligned! */
+        clock.now().add(&Duration::from_seconds(1)).unwrap(), /* not aligned! */
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -419,7 +419,10 @@ async fn upload_handler() {
         "invalid_message",
         "Time unaligned.",
         leader_task.id(),
-        Some("time is unaligned (precision = 1000 seconds, inner error = timestamp is not a multiple of the time precision)"),
+        Some(
+            "time is unaligned (precision = 1000 seconds, \
+            inner error = timestamp is not a multiple of the time precision)",
+        ),
     )
     .await;
 }

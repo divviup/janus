@@ -47,7 +47,7 @@ use rand::random;
 use std::{
     collections::HashMap,
     convert::TryFrom,
-    fmt::{Debug, Display, Formatter, Result as fmtResult},
+    fmt::{Debug, Display},
     future::Future,
     io::Cursor,
     mem::size_of,
@@ -655,11 +655,11 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
         time_precision: &Duration,
         inner_error: janus_messages::Error,
     ) -> Error {
-        Error::TimeUnaligned(Box::new(TimeUnaligned {
+        Error::TimeUnaligned {
             task_id: *task_id,
             time_precision: *time_precision,
             inner_error,
-        }))
+        }
     }
 
     /// Writes a task into the datastore.
@@ -6123,8 +6123,12 @@ pub enum Error {
     #[error("invalid parameter: {0}")]
     InvalidParameter(&'static str),
     /// A time type (duration, interval, timestamp) was not aligned to the task precision.
-    #[error("{0}")]
-    TimeUnaligned(Box<TimeUnaligned>),
+    #[error("time is unaligned (precision = {time_precision}, inner error = {inner_error})")]
+    TimeUnaligned {
+        task_id: TaskId,
+        time_precision: Duration,
+        inner_error: janus_messages::Error,
+    },
     /// An error occurred while manipulating timestamps or durations.
     #[error("{0}")]
     TimeOverflow(&'static str),
@@ -6143,23 +6147,5 @@ pub enum Error {
 impl From<aws_lc_rs::error::Unspecified> for Error {
     fn from(_: aws_lc_rs::error::Unspecified) -> Self {
         Error::Crypt
-    }
-}
-
-/// Details of a [`Error::TimeUnaligned`] error.
-#[derive(Debug)]
-pub struct TimeUnaligned {
-    pub task_id: TaskId,
-    pub time_precision: Duration,
-    pub inner_error: janus_messages::Error,
-}
-
-impl Display for TimeUnaligned {
-    fn fmt(&self, f: &mut Formatter) -> fmtResult {
-        write!(
-            f,
-            "time is unaligned (precision = {0}, inner error = {1})",
-            self.time_precision, self.inner_error
-        )
     }
 }
