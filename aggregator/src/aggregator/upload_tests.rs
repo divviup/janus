@@ -65,6 +65,7 @@ impl UploadTest {
             AggregationMode::Synchronous,
             VdafInstance::Prio3Count,
         )
+        .with_time_precision(Duration::from_seconds(100))
         .build();
 
         let leader_task = task.leader_view().unwrap();
@@ -552,6 +553,7 @@ async fn upload_report_task_not_started() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_task_start(Some(
         clock.now().add(&Duration::from_seconds(3600)).unwrap(),
     ))
@@ -622,7 +624,10 @@ async fn upload_report_task_ended() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_task_end(Some(clock.now()))
+    .with_time_precision(Duration::from_seconds(100))
+    .with_task_end(Some(
+        clock.now_aligned_to_precision(&Duration::from_seconds(100)),
+    ))
     .build()
     .leader_view()
     .unwrap();
@@ -672,6 +677,51 @@ async fn upload_report_task_ended() {
 }
 
 #[tokio::test]
+async fn upload_report_unaligned_time() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(Duration::from_seconds(42))
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Ensure the time is unaligned
+    clock.advance(&Duration::from_seconds(100));
+    // Now don't align the report's clock, just take it as-is
+    let report = create_report(&task, &hpke_keypair, clock.now());
+
+    // Try to upload the report, verify that we get the expected error.
+    let error = aggregator
+        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.as_ref(),
+        Error::Datastore(x) => {
+            assert_eq!(x.to_string(), "time is unaligned (precision = 42 seconds, inner error = timestamp is not a multiple of the time precision)");
+        }
+    );
+}
+
+#[tokio::test]
 async fn upload_report_report_expired() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {
@@ -692,6 +742,7 @@ async fn upload_report_report_expired() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
+    .with_time_precision(Duration::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(60)))
     .build()
     .leader_view()
