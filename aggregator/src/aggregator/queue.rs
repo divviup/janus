@@ -1,3 +1,6 @@
+use itertools::Itertools;
+use opentelemetry::metrics::Meter;
+use opentelemetry_sdk::metrics::MetricError;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -5,10 +8,6 @@ use std::{
         Arc,
     },
 };
-
-use itertools::Itertools;
-use opentelemetry::metrics::Meter;
-use opentelemetry_sdk::metrics::MetricError;
 use tokio::{
     select,
     sync::{
@@ -70,7 +69,7 @@ impl LIFORequestQueue {
         let max_outstanding_requests =
             u64::try_from(usize::try_from(concurrency).unwrap() + depth).unwrap();
         let metrics = Metrics::new(meter, meter_prefix, max_outstanding_requests)
-            .map_err(|e| Error::Internal(e.to_string()))?;
+            .map_err(|e| Error::Internal(e.into()))?;
         Self::dispatcher(message_rx, concurrency, depth, metrics);
 
         Ok(Self {
@@ -182,7 +181,7 @@ impl LIFORequestQueue {
             .send(DispatcherMessage::Enqueue(id, PermitTx(permit_tx)))
             // We don't necessarily panic because the dispatcher task could be shutdown as part of
             // process shutdown, while a request is in flight.
-            .map_err(|_| Error::Internal("dispatcher task died".to_string()))?;
+            .map_err(|_| Error::Internal("dispatcher task died".into()))?;
 
         /// Sends a cancellation message over the given channel when the guard is dropped, unless
         /// [`Self::disarm`] is called.
@@ -225,7 +224,7 @@ impl LIFORequestQueue {
         // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
         // causes the rx channel to be dropped, we shouldn't reach this error because the overall
         // future would have been dropped.
-        permit.map_err(|_| Error::Internal("rx channel dropped".to_string()))?
+        permit.map_err(|_| Error::Internal("rx channel dropped".into()))?
     }
 }
 
@@ -455,7 +454,7 @@ mod tests {
                         if request.status().unwrap() == Status::Ok {
                             Ok(())
                         } else {
-                            Err(Error::Internal("Test error".to_string()))
+                            Err(Error::Internal("Test error".into()))
                         }
                     })
                     .retry(backoff)

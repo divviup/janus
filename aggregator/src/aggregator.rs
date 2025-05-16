@@ -346,7 +346,7 @@ impl<C: Clock> Aggregator<C> {
             .as_ref()
             .map(|key| key.sign(&SystemRandom::new(), &encoded_hpke_config_list))
             .transpose()
-            .map_err(|_| Error::Internal("HPKE config list signing error".to_string()))?;
+            .map_err(|_| Error::Internal("HPKE config list signing error".into()))?;
 
         Ok((encoded_hpke_config_list, signature))
     }
@@ -412,9 +412,10 @@ impl<C: Clock> Aggregator<C> {
                     ?task_id,
                     "taskprov: opt-in successful, retrying task acquisition"
                 );
-                self.task_aggregators.get(task_id).await?.ok_or_else(|| {
-                    Error::Internal("unexpectedly failed to create task".to_string())
-                })?
+                self.task_aggregators
+                    .get(task_id)
+                    .await?
+                    .ok_or_else(|| Error::Internal("unexpectedly failed to create task".into()))?
             }
             _ => {
                 return Err(Error::UnrecognizedTask(*task_id));
@@ -504,7 +505,7 @@ impl<C: Clock> Aggregator<C> {
         }
         if task_aggregator.task.aggregation_mode() != Some(&AggregationMode::Asynchronous) {
             return Err(Error::BadRequest(
-                "aggregation job GET for a synchronous task".to_string(),
+                "aggregation job GET for a synchronous task".into(),
             ));
         }
 
@@ -672,33 +673,32 @@ impl<C: Clock> Aggregator<C> {
 
         // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
         // have to use the peer aggregator's collector config rather than the main task.
-        let collector_hpke_config =
-            if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-                let (peer_aggregator, _, _) = self
-                    .taskprov_authorize_request(
-                        &Role::Leader,
-                        task_id,
-                        taskprov_task_config.unwrap(),
-                        auth_token.as_ref(),
-                    )
-                    .await?;
+        let collector_hpke_config = if self.cfg.taskprov_config.enabled
+            && taskprov_task_config.is_some()
+        {
+            let (peer_aggregator, _, _) = self
+                .taskprov_authorize_request(
+                    &Role::Leader,
+                    task_id,
+                    taskprov_task_config.unwrap(),
+                    auth_token.as_ref(),
+                )
+                .await?;
 
-                peer_aggregator.collector_hpke_config()
-            } else {
-                if !task_aggregator
-                    .task
-                    .check_aggregator_auth_token(auth_token.as_ref())
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
-                }
+            peer_aggregator.collector_hpke_config()
+        } else {
+            if !task_aggregator
+                .task
+                .check_aggregator_auth_token(auth_token.as_ref())
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
 
-                task_aggregator
-                    .task
-                    .collector_hpke_config()
-                    .ok_or_else(|| {
-                        Error::Internal("task is missing collector_hpke_config".to_string())
-                    })?
-            };
+            task_aggregator
+                .task
+                .collector_hpke_config()
+                .ok_or_else(|| Error::Internal("task is missing collector_hpke_config".into()))?
+        };
 
         task_aggregator
             .handle_aggregate_share(
@@ -752,7 +752,7 @@ impl<C: Clock> Aggregator<C> {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {
                             Error::Internal(
-                                "peer aggregator has no aggregation mode specified".to_string(),
+                                "peer aggregator has no aggregation mode specified".into(),
                             )
                         },
                     )?,
@@ -2015,7 +2015,7 @@ impl VdafOps {
                 .await
             }
 
-            None => Err(Error::Internal("task has no aggregation mode".to_string())),
+            None => Err(Error::Internal("task has no aggregation mode".into())),
         }
     }
 
@@ -2312,7 +2312,7 @@ impl VdafOps {
                                         "aggregation job {aggregation_job_id} is on step {} but \
                                          has no last request hash",
                                         aggregation_job.step(),
-                                    ))
+                                    ).into())
                                     .into(),
                                 ));
                             }
@@ -2344,7 +2344,7 @@ impl VdafOps {
                             }
                             None => {
                                 return Err(datastore::Error::User(
-                                    Error::Internal("task has no aggregation mode".to_string())
+                                    Error::Internal("task has no aggregation mode".into())
                                         .into(),
                                 ))
                             }
@@ -2472,7 +2472,7 @@ impl VdafOps {
                             report_aggregations,
                         ).await,
 
-                        None => Err(Error::Internal("task has no aggregation mode".to_string())),
+                        None => Err(Error::Internal("task has no aggregation mode".into())),
                     }.map_err(|err| datastore::Error::User(err.into()))
                 })
             })

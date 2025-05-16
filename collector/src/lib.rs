@@ -63,6 +63,7 @@
 
 mod credential;
 
+use anyhow::Context;
 pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use credential::PrivateCollectorCredential;
@@ -134,7 +135,7 @@ pub enum Error {
     #[error("message error: {0}")]
     Message(#[from] janus_messages::Error),
     #[error("the response from the server was invalid: {0}")]
-    BadResponse(String),
+    BadResponse(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<HttpErrorResponse> for Error {
@@ -574,9 +575,8 @@ impl<V: vdaf::Collector> Collector<V> {
         let mime: Mime = content_type
             .to_str()?
             .parse()
-            .map_err(|e: mime::FromStrError| {
-                Error::BadResponse(format!("failed to parse Content-Type header: {e}"))
-            })?;
+            .context("failed to parse Content-Type header")
+            .map_err(|e| Error::BadResponse(e.into()))?;
         if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
