@@ -8,6 +8,7 @@ use crate::{
     },
     Config, ConnExt, Error,
 };
+use anyhow::Context;
 use aws_lc_rs::digest::{digest, SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
@@ -74,7 +75,8 @@ pub(super) async fn get_task_ids<C: Clock>(
         .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
         .map(|(_, v)| TaskId::from_str(v))
         .transpose()
-        .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
+        .context("Couldn't parse pagination_token")
+        .map_err(|err| Error::BadRequest(err.into()))?;
 
     let task_ids = ds
         .run_tx("get_task_ids", |tx| {
@@ -94,27 +96,31 @@ pub(super) async fn post_task<C: Clock>(
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
 ) -> Result<Json<TaskResp>, Error> {
     if !matches!(req.role, Role::Leader | Role::Helper) {
-        return Err(Error::BadRequest(format!("invalid role {}", req.role)));
+        return Err(Error::BadRequest(
+            format!("invalid role {}", req.role).into(),
+        ));
     }
 
     let vdaf_verify_key_bytes = URL_SAFE_NO_PAD
         .decode(&req.vdaf_verify_key)
-        .map_err(|err| {
-            Error::BadRequest(format!("Invalid base64 value for vdaf_verify_key: {err}"))
-        })?;
+        .context("Invalid base64 value for vdaf_verify_key")
+        .map_err(|err| Error::BadRequest(err.into()))?;
     if vdaf_verify_key_bytes.len() != req.vdaf.verify_key_length() {
-        return Err(Error::BadRequest(format!(
-            "Wrong VDAF verify key length, expected {}, got {}",
-            req.vdaf.verify_key_length(),
-            vdaf_verify_key_bytes.len()
-        )));
+        return Err(Error::BadRequest(
+            format!(
+                "Wrong VDAF verify key length, expected {}, got {}",
+                req.vdaf.verify_key_length(),
+                vdaf_verify_key_bytes.len()
+            )
+            .into(),
+        ));
     }
 
     // DAP recommends deriving the task ID from the VDAF verify key. We deterministically obtain a
     // 32 byte task ID by taking SHA-256(VDAF verify key).
     // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-04#name-verification-key-requiremen
     let task_id = TaskId::try_from(digest(&SHA256, &vdaf_verify_key_bytes).as_ref())
-        .map_err(|err| Error::Internal(err.to_string()))?;
+        .map_err(|err| Error::Internal(err.into()))?;
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
@@ -123,13 +129,13 @@ pub(super) async fn post_task<C: Clock>(
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::BadRequest(
                     "aggregator acting in leader role must be provided an aggregator auth token"
-                        .to_string(),
+                        .into(),
                 )
             })?;
             let collector_auth_token_hash = req.collector_auth_token_hash.ok_or_else(|| {
                 Error::BadRequest(
                     "aggregator acting in leader role must be provided a collector auth token hash"
-                        .to_string(),
+                        .into(),
                 )
             })?;
             (
@@ -146,7 +152,7 @@ pub(super) async fn post_task<C: Clock>(
             if req.aggregator_auth_token.is_some() {
                 return Err(Error::BadRequest(
                     "aggregator acting in helper role cannot be given an aggregator auth token"
-                        .to_string(),
+                        .into(),
                 ));
             }
 
@@ -160,7 +166,7 @@ pub(super) async fn post_task<C: Clock>(
                     aggregation_mode: req.aggregation_mode.ok_or_else(|| {
                         Error::BadRequest(
                             "aggregator acting in helper role must be provided an aggregation mode"
-                                .to_string(),
+                                .into(),
                         )
                     })?,
                 },
@@ -187,7 +193,8 @@ pub(super) async fn post_task<C: Clock>(
             Duration::from_seconds(60), // 1 minute,
             aggregator_parameters,
         )
-        .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
+        .context("Error constructing task")
+        .map_err(|err| Error::BadRequest(err.into()))?,
     );
 
     ds.run_tx("post_task", |tx| {
@@ -221,7 +228,7 @@ pub(super) async fn post_task<C: Clock>(
     .await?;
 
     let mut task_resp =
-        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.to_string()))?;
+        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.into()))?;
 
     // When creating a new task in the helper, we must put the unhashed aggregator auth token in the
     // response so that divviup-api can later provide it to the leader, but the helper doesn't store
@@ -245,7 +252,7 @@ pub(super) async fn get_task<C: Clock>(
         .ok_or(Error::NotFound)?;
 
     Ok(Json(
-        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.to_string()))?,
+        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.into()))?,
     ))
 }
 
@@ -283,7 +290,7 @@ pub(super) async fn patch_task<C: Clock>(
         .ok_or(Error::NotFound)?;
 
     Ok(Json(
-        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.to_string()))?,
+        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.into()))?,
     ))
 }
 
@@ -380,7 +387,7 @@ pub(super) async fn put_hpke_config<C: Clock>(
             })
         })
         .await?
-        .ok_or_else(|| Error::Internal("Newly inserted key disappeared".to_string()))?;
+        .ok_or_else(|| Error::Internal("Newly inserted key disappeared".into()))?;
 
     Ok((
         Status::Created,
@@ -457,7 +464,8 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
     )
-    .map_err(|e| Error::BadRequest(format!("Invalid request: {e}")))?;
+    .context("Invalid request")
+    .map_err(|e| Error::BadRequest(e.into()))?;
 
     let inserted = ds
         .run_tx("post_taskprov_peer_aggregator", |tx| {
@@ -470,7 +478,7 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         })
         .await?
         .map(TaskprovPeerAggregatorResp::from)
-        .ok_or_else(|| Error::Internal("Newly inserted peer aggregator disappeared".to_string()))?;
+        .ok_or_else(|| Error::Internal("Newly inserted peer aggregator disappeared".into()))?;
 
     Ok((Status::Created, Json(inserted)))
 }

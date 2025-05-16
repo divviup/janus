@@ -113,7 +113,7 @@ impl HpkeKeypairCache {
             sleep(Self::WAIT_RETRY_INTERVAL).await;
         }
         Err(Error::Internal(
-            "no active HPKE keys present in database".to_string(),
+            "no active HPKE keys present in database".into(),
         ))
     }
 

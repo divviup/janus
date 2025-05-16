@@ -121,7 +121,7 @@ pub enum Error {
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
-    Internal(String),
+    Internal(Box<dyn std::error::Error + Send + Sync>),
     /// A client attempted to mutate an immutable object.
     #[error("forbidden mutation of {resource_type} {identifier}")]
     ForbiddenMutation {
@@ -130,7 +130,7 @@ pub enum Error {
     },
     /// A catch-all error representing an issue with a request.
     #[error("request error: {0}")]
-    BadRequest(String),
+    BadRequest(Box<dyn std::error::Error + Send + Sync>),
     /// Corresponds to taskprov `invalidTask`. See the [Taskprov specification][1] for details.
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-taskprov-01#table-1
@@ -334,7 +334,11 @@ impl From<datastore::Error> for Error {
 
 impl From<TryFromIntError> for Error {
     fn from(err: TryFromIntError) -> Self {
-        Error::Internal(format!("couldn't convert numeric type: {err:?}"))
+        Error::Internal(
+            anyhow::Error::new(err)
+                .context("couldn't convert numeric type")
+                .into(),
+        )
     }
 }
 

@@ -162,7 +162,7 @@ async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
 enum Error {
     /// Errors that should never happen under expected behavior.
     #[error("Internal error: {0}")]
-    Internal(String),
+    Internal(Box<dyn std::error::Error + Send + Sync>),
     /// A datastore error. The related HTTP status code depends on the type of datastore error.
     #[error(transparent)]
     Db(#[from] datastore::Error),
@@ -174,7 +174,7 @@ enum Error {
     Conflict(String),
     /// Errors that should return HTTP 400.
     #[error("{0}")]
-    BadRequest(String),
+    BadRequest(Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     Url(#[from] url::ParseError),
     #[error(transparent)]
@@ -236,17 +236,17 @@ impl ConnExt for Conn {
     fn task_id_param(&self) -> Result<TaskId, Error> {
         TaskId::from_str(
             self.param("task_id")
-                .ok_or_else(|| Error::Internal("Missing task_id parameter".to_string()))?,
+                .ok_or_else(|| Error::Internal("Missing task_id parameter".into()))?,
         )
-        .map_err(|err| Error::BadRequest(format!("{:?}", err)))
+        .map_err(|err| Error::BadRequest(err.into()))
     }
 
     fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Error> {
         Ok(HpkeConfigId::from(
             self.param("config_id")
-                .ok_or_else(|| Error::Internal("Missing config_id parameter".to_string()))?
+                .ok_or_else(|| Error::Internal("Missing config_id parameter".into()))?
                 .parse::<u8>()
-                .map_err(|_| Error::BadRequest("Invalid config_id parameter".to_string()))?,
+                .map_err(|_| Error::BadRequest("Invalid config_id parameter".into()))?,
         ))
     }
 }

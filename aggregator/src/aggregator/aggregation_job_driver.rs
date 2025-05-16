@@ -16,7 +16,7 @@ use crate::{
     cache::HpkeKeypairCache,
     metrics::aggregated_report_share_dimension_histogram,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
@@ -271,7 +271,9 @@ where
                 .await
             }
 
-            _ => Err(Error::Internal(format!("unexpected role {}", task.role()))),
+            _ => Err(Error::Internal(
+                format!("unexpected role {}", task.role()).into(),
+            )),
         }
     }
 
@@ -304,19 +306,19 @@ where
                 ReportAggregationState::HelperInitProcessing { .. } => {
                     return Err(Error::Internal(
                         "Leader encountered unexpected ReportAggregationState::HelperInitProcessing"
-                            .to_string()
+                            .into()
                     ));
                 }
                 ReportAggregationState::HelperContinue { .. } => {
                     return Err(Error::Internal(
                         "Leader encountered unexpected ReportAggregationState::HelperContinue"
-                            .to_string(),
+                            .into(),
                     ));
                 }
                 ReportAggregationState::HelperContinueProcessing { .. } => {
                     return Err(Error::Internal(
                         "Leader encountered unexpected ReportAggregationState::HelperContinueProcessing"
-                            .to_string()
+                            .into()
                     ));
                 }
 
@@ -364,11 +366,14 @@ where
                 .await
             }
 
-            _ => Err(Error::Internal(format!(
-                "unexpected combination of report aggregation states (saw_init = {saw_init}, \
+            _ => Err(Error::Internal(
+                format!(
+                    "unexpected combination of report aggregation states (saw_init = {saw_init}, \
                 saw_continue = {saw_continue}, saw_poll = {saw_poll}, \
                 saw_finished = {saw_finished})",
-            ))),
+                )
+                .into(),
+            )),
         }
     }
 
@@ -410,7 +415,8 @@ where
         let aggregation_job = Arc::new(aggregation_job);
         let verify_key = task
             .vdaf_verify_key()
-            .map_err(|_| Error::Internal("VDAF verification key has wrong length".to_string()))?;
+            .context("VDAF verification key has wrong length")
+            .map_err(|e| Error::Internal(e.into()))?;
         let producer_task = tokio::task::spawn_blocking({
             let parent_span = Span::current();
             let vdaf = Arc::clone(&vdaf);
@@ -1059,8 +1065,7 @@ where
             report_aggregations_to_write.len() + stepped_aggregations.len();
         if stepped_aggregations.len() != prepare_resps.len() {
             return Err(Error::Internal(
-                "missing, duplicate, out-of-order, or unexpected prepare steps in response"
-                    .to_string(),
+                "missing, duplicate, out-of-order, or unexpected prepare steps in response".into(),
             ));
         }
         for (stepped_aggregation, helper_prep_resp) in
@@ -1069,7 +1074,7 @@ where
             if stepped_aggregation.report_aggregation.report_id() != helper_prep_resp.report_id() {
                 return Err(Error::Internal(
                     "missing, duplicate, out-of-order, or unexpected prepare steps in response"
-                        .to_string(),
+                        .into(),
                 ));
             }
         }
@@ -1278,20 +1283,18 @@ where
             match report_aggregation.state() {
                 ReportAggregationState::LeaderInit { .. } => {
                     return Err(Error::Internal(
-                        "Helper encountered unexpected ReportAggregationState::LeaderInit"
-                            .to_string(),
+                        "Helper encountered unexpected ReportAggregationState::LeaderInit".into(),
                     ));
                 }
                 ReportAggregationState::LeaderContinue { .. } => {
                     return Err(Error::Internal(
                         "Helper encountered unexpected ReportAggregationState::LeaderContinue"
-                            .to_string(),
+                            .into(),
                     ));
                 }
                 ReportAggregationState::LeaderPoll { .. } => {
                     return Err(Error::Internal(
-                        "Leader encountered unexpected ReportAggregationState::LeaderPoll"
-                            .to_string(),
+                        "Leader encountered unexpected ReportAggregationState::LeaderPoll".into(),
                     ));
                 }
 
@@ -1299,7 +1302,7 @@ where
                 ReportAggregationState::HelperContinue { .. } => {
                     return Err(Error::Internal(
                         "Helper encountered unexpected ReportAggregationState::HelperContinue"
-                            .to_string(),
+                            .into(),
                     ));
                 }
                 ReportAggregationState::HelperContinueProcessing { .. } => saw_continue = true,
@@ -1337,10 +1340,13 @@ where
                 .await
             }
 
-            _ => Err(Error::Internal(format!(
-                "unexpected combination of report aggregation states (saw_init = {saw_init}, \
+            _ => Err(Error::Internal(
+                format!(
+                    "unexpected combination of report aggregation states (saw_init = {saw_init}, \
                 saw_continue = {saw_continue}, saw_finished = {saw_finished})",
-            ))),
+                )
+                .into(),
+            )),
         }
     }
 
@@ -1812,7 +1818,8 @@ struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE,
 
 fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {
     RetryAfter::try_from(header_value)
-        .map_err(|err| Error::BadRequest(format!("couldn't parse retry-after header: {err}")))
+        .context("couldn't parse retry-after header")
+        .map_err(|err| Error::BadRequest(err.into()))
 }
 
 fn retry_after_to_duration<C: Clock>(
@@ -1828,7 +1835,8 @@ fn retry_after_to_duration<C: Clock>(
             }
             next_retry_time
                 .duration_since(now)
-                .map_err(|err| Error::Internal(format!("computing retry-after duration: {err}")))
+                .context("computing retry-after duration")
+                .map_err(|err| Error::Internal(err.into()))
         }
     }
 }

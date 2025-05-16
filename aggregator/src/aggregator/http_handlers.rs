@@ -4,6 +4,7 @@ use super::{
     Aggregator, Config, Error,
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
+use anyhow::Context;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
@@ -23,7 +24,7 @@ use janus_messages::{
     AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, CollectionJobId,
     CollectionJobReq, CollectionJobResp, HpkeConfigList, Report, TaskId,
 };
-use mime::{FromStrError, Mime};
+use mime::Mime;
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
@@ -161,7 +162,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "Bad Request.",
                 Status::BadRequest,
             )
-            .with_detail(detail),
+            .with_detail(&detail.to_string()),
         ),
         Error::InvalidTask(task_id, _) => conn.with_problem_document(
             &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
@@ -617,7 +618,7 @@ async fn aggregation_jobs_get<C: Clock>(
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let step = parse_step(conn)?
-        .ok_or_else(|| Error::BadRequest("missing step query parameter".to_string()))?;
+        .ok_or_else(|| Error::BadRequest("missing step query parameter".into()))?;
 
     let response = conn
         .cancel_on_disconnect(aggregator.handle_aggregate_get(
@@ -756,20 +757,21 @@ fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Resu
     let content_type = conn
         .request_headers()
         .get(KnownHeaderName::ContentType)
-        .ok_or_else(|| Error::BadRequest("no Content-Type header".to_owned()))?;
+        .ok_or_else(|| Error::BadRequest("no Content-Type header".into()))?;
 
-    let mime_str = content_type.as_str().ok_or(Error::BadRequest(format!(
-        "invalid Content-Type header: {content_type}"
-    )))?;
+    let mime_str = content_type.as_str().ok_or(Error::BadRequest(
+        format!("invalid Content-Type header: {content_type}").into(),
+    ))?;
 
-    let mime: Mime = mime_str.parse().map_err(|e: FromStrError| {
-        Error::BadRequest(format!("failed to parse Content-Type header: {e}"))
-    })?;
+    let mime: Mime = mime_str
+        .parse()
+        .context("failed to parse Content-Type header")
+        .map_err(|e| Error::BadRequest(e.into()))?;
 
     if mime.essence_str() != expected_media_type {
-        return Err(Error::BadRequest(format!(
-            "unexpected Content-Type header: {mime}"
-        )));
+        return Err(Error::BadRequest(
+            format!("unexpected Content-Type header: {mime}").into(),
+        ));
     }
 
     Ok(())
@@ -779,30 +781,30 @@ fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Resu
 fn parse_task_id(conn: &Conn) -> Result<TaskId, Error> {
     let encoded = conn
         .param("task_id")
-        .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".to_string()))?;
+        .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".into()))?;
     encoded
         .parse()
-        .map_err(|_| Error::BadRequest("invalid TaskId".to_owned()))
+        .map_err(|_| Error::BadRequest("invalid TaskId".into()))
 }
 
 /// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
 fn parse_aggregation_job_id(conn: &Conn) -> Result<AggregationJobId, Error> {
     let encoded = conn.param("aggregation_job_id").ok_or_else(|| {
-        Error::Internal("aggregation_job_id parameter is missing from captures".to_string())
+        Error::Internal("aggregation_job_id parameter is missing from captures".into())
     })?;
     encoded
         .parse()
-        .map_err(|_| Error::BadRequest("invalid AggregationJobId".to_owned()))
+        .map_err(|_| Error::BadRequest("invalid AggregationJobId".into()))
 }
 
 /// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
 fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
     let encoded = conn.param("collection_job_id").ok_or_else(|| {
-        Error::Internal("collection_job_id parameter is missing from captures".to_string())
+        Error::Internal("collection_job_id parameter is missing from captures".into())
     })?;
     encoded
         .parse()
-        .map_err(|_| Error::BadRequest("invalid CollectionJobId".to_owned()))
+        .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))
 }
 
 /// Get an [`AuthenticationToken`] from the request.
@@ -818,7 +820,8 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
         .get(DAP_AUTH_HEADER)
         .map(|value| {
             AuthenticationToken::new_dap_auth_token_from_bytes(value.as_ref())
-                .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
+                .context("bad DAP-Auth-Token header")
+                .map_err(|e| Error::BadRequest(e.into()))
         })
         .transpose()
 }
@@ -869,7 +872,7 @@ fn parse_step(conn: &Conn) -> Result<Option<AggregationJobStep>, Error> {
         .find(|(key, _)| *key == STEP_KEY)
         .map(|(_, val)| val.parse::<u16>().map(AggregationJobStep::from))
         .transpose()
-        .map_err(|err| Error::BadRequest(format!("couldn't parse step: {err}")))
+        .map_err(|err| Error::BadRequest(format!("couldn't parse step: {err}").into()))
 }
 
 struct BodyBytes(Vec<u8>);
@@ -886,7 +889,7 @@ impl TryFromConn for BodyBytes {
             .map(BodyBytes)
             .map_err(|error| match error {
                 trillium::Error::Io(_) | trillium::Error::Closed => Error::ClientDisconnected,
-                _ => Error::BadRequest(error.to_string()),
+                _ => Error::BadRequest(error.into()),
             })
     }
 }
