@@ -142,19 +142,16 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 .with_task_id(&inner.task_id)
                 .with_detail(&inner.to_string()),
         ),
-        Error::Datastore(
-            error @ datastoreError::TimeUnaligned {
-                task_id, ...
-            },
-        ) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "urn:ietf:params:ppm:dap:error:invalid_message",
-                "Time unaligned.",
-                Status::BadRequest,
-            )
-            .with_task_id(task_id)
-            .with_detail(&error.to_string()),
-        ),
+        Error::Datastore(error @ datastoreError::TimeUnaligned { task_id, .. }) => conn
+            .with_problem_document(
+                &ProblemDocument::new(
+                    "urn:ietf:params:ppm:dap:error:invalid_message",
+                    "Time unaligned.",
+                    Status::BadRequest,
+                )
+                .with_task_id(task_id)
+                .with_detail(&error.to_string()),
+            ),
         Error::Datastore(_) => conn.with_status(Status::InternalServerError),
         Error::Hpke(_)
         | Error::Vdaf(_)
