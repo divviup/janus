@@ -144,9 +144,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         ),
         Error::Datastore(
             error @ datastoreError::TimeUnaligned {
-                task_id,
-                time_precision: _,
-                inner_error: _,
+                task_id, ...
             },
         ) => conn.with_problem_document(
             &ProblemDocument::new(
