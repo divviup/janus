@@ -21,7 +21,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask},
-    TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -43,7 +43,6 @@ use opentelemetry::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
-    codec::Encode,
     field::Field64,
     flp::gadgets::{Mul, ParallelSum},
     vdaf::{
@@ -548,14 +547,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync + PartialEq,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PublicShare: Send + Sync + PartialEq,
-        A::OutputShare: Send + Sync,
+        A: AsyncAggregator<SEED_SIZE, AggregationParam = ()>,
     {
         Ok(self
             .datastore
@@ -720,13 +712,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter + Send + Sync + 'static,
-        A::AggregateShare: Send + Sync,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::OutputShare: Send + Sync,
-        A::AggregationParam: Send + Sync + Eq + std::hash::Hash,
+        A: AsyncAggregator<SEED_SIZE> + VdafHasAggregationParameter,
     {
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
@@ -843,14 +829,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task_batch_time_window_size: Option<janus_messages::Duration>,
     ) -> anyhow::Result<bool>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'static,
-        A::AggregateShare: Send + Sync,
-        A::InputShare: Send + Sync + PartialEq,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareShare: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::PublicShare: Send + Sync + PartialEq,
-        A::OutputShare: Send + Sync,
+        A: AsyncAggregator<SEED_SIZE, AggregationParam = ()>,
     {
         let task_min_batch_size = usize::try_from(task.min_batch_size())?;
         Ok(self
@@ -918,6 +897,7 @@ mod tests {
         },
         task::{test_util::TaskBuilder, AggregationMode, BatchMode as TaskBatchMode},
         test_util::noop_meter,
+        AsyncAggregator,
     };
     use janus_core::{
         hpke::HpkeKeypair,
@@ -927,19 +907,17 @@ mod tests {
     };
     use janus_messages::{
         batch_mode::{LeaderSelected, TimeInterval},
-        codec::ParameterizedDecode,
         AggregationJobStep, Duration as JanusDuration, Interval, Query, ReportError, ReportId,
         ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
-        self, dummy,
+        dummy,
         prio3::{Prio3, Prio3Count},
     };
     use rand::random;
     use std::{
-        any::{Any, TypeId},
+        any::TypeId,
         collections::{HashMap, HashSet},
-        hash::Hash,
         iter,
         sync::Arc,
         time::Duration,
@@ -3192,15 +3170,8 @@ mod tests {
     )
     where
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
-        A::AggregationParam: Ord,
-        A::InputShare: PartialEq,
-        A::OutputShare: PartialEq,
-        A::PrepareShare: PartialEq,
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-        A::PublicShare: PartialEq,
-        A::AggregationParam: Hash + Eq + PartialEq + Any + std::clone::Clone + std::fmt::Debug,
     {
         let (agg_jobs_and_report_ids, batch_aggregations) = try_join!(
             try_join_all(

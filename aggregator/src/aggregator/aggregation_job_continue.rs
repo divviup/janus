@@ -8,15 +8,12 @@ use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
     task::AggregatorTask,
+    AsyncAggregator,
 };
 use janus_core::vdaf::vdaf_application_context;
 use janus_messages::{PrepareResp, PrepareStepResult, Role};
 use opentelemetry::metrics::Counter;
-use prio::{
-    codec::{Encode, ParameterizedDecode},
-    topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology as _},
-    vdaf,
-};
+use prio::topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{panic, sync::Arc};
 use tokio::sync::mpsc;
@@ -65,15 +62,7 @@ pub async fn compute_helper_aggregate_continue<const SEED_SIZE: usize, B, A>(
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 ) -> Vec<WritableReportAggregation<SEED_SIZE, A>>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-    A::AggregationParam: Send + Sync + PartialEq + Eq,
-    A::AggregateShare: Send + Sync,
-    A::InputShare: Send + Sync,
-    for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
-    A::PrepareShare: Send + Sync,
-    A::PrepareMessage: Send + Sync,
-    A::PublicShare: Send + Sync,
-    A::OutputShare: Send + Sync,
+    A: AsyncAggregator<SEED_SIZE>,
     B: AccumulableBatchMode,
 {
     let report_aggregation_count = report_aggregations.len();

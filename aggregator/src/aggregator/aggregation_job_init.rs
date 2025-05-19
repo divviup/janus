@@ -12,6 +12,7 @@ use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
     task::AggregatorTask,
+    AsyncAggregator,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
@@ -26,7 +27,6 @@ use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{
     codec::{Decode as _, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongState, PingPongTopology as _},
-    vdaf,
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{collections::HashMap, panic, sync::Arc};
@@ -78,16 +78,8 @@ pub async fn compute_helper_aggregate_init<const SEED_SIZE: usize, B, A, C>(
 ) -> Result<Vec<WritableReportAggregation<SEED_SIZE, A>>, Error>
 where
     B: AccumulableBatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+    A: AsyncAggregator<SEED_SIZE>,
     C: Clock,
-    A::AggregationParam: Send + Sync + PartialEq + Eq,
-    A::AggregateShare: Send + Sync,
-    A::InputShare: Send + Sync,
-    A::PrepareMessage: Send + Sync + PartialEq,
-    A::PrepareShare: Send + Sync + PartialEq,
-    for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-    A::PublicShare: Send + Sync,
-    A::OutputShare: Send + Sync + PartialEq,
 {
     let verify_key = task.vdaf_verify_key()?;
     let report_aggregation_count = report_aggregations.len();
