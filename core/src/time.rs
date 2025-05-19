@@ -124,6 +124,9 @@ pub trait DurationExt: Sized {
     /// Return a duration representing this duration rounded up to the next largest multiple of
     /// `time_precision`, or the same duration if it already a multiple.
     fn round_up(&self, time_precision: &Duration) -> Result<Self, Error>;
+
+    /// Confirm that this duration is a multiple of the task time precision.
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error>;
 }
 
 impl DurationExt for Duration {
@@ -187,6 +190,24 @@ impl DurationExt for Duration {
         )?);
 
         self.add(&rem_inv)
+    }
+
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+        let is_multiple_of_time_precision = self
+            .as_seconds()
+            .checked_rem(time_precision.as_seconds())
+            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
+                "remainder cannot be zero",
+            ))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(janus_messages::Error::InvalidParameter(
+                "duration is not a multiple of the time precision",
+            ))
+        }
     }
 }
 
@@ -333,9 +354,15 @@ pub trait IntervalExt: Sized {
     /// Returns a 0-length `[Interval]` that contains exactly the provided [`Time`].
     fn from_time(time: &Time) -> Result<Self, Error>;
 
+    /// Returns a `time_precision`-length `[Interval]` that contains the provided [`Time`].
+    fn from_time_with_precision(time: &Time, time_precision: &Duration) -> Result<Self, Error>;
+
     /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
     /// are multiples of `time_precision`.
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error>;
+
+    /// Confirm that this interval's start and duration are both multiples of the task time precision.
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
 }
 
 impl IntervalExt for Interval {
@@ -369,6 +396,10 @@ impl IntervalExt for Interval {
         Self::new(*time, Duration::from_seconds(1))
     }
 
+    fn from_time_with_precision(time: &Time, time_precision: &Duration) -> Result<Self, Error> {
+        Self::new(*time, *time_precision)
+    }
+
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {
         // Round the interval start *down* to the time precision
         let aligned_start = self.start().to_batch_interval_start(time_precision)?;
@@ -385,6 +416,12 @@ impl IntervalExt for Interval {
         } else {
             Ok(aligned_interval)
         }
+    }
+
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+        self.start().validate_precision(time_precision)?;
+        self.duration().validate_precision(time_precision)?;
+        Ok(self)
     }
 }
 
@@ -564,9 +601,33 @@ mod tests {
                             >= interval.end().as_seconds_since_epoch(),
                         "{label}"
                     );
+                    assert!(
+                        result.validate_precision(&time_precision).is_ok(),
+                        "{label} precision is not correct"
+                    );
                 }
                 None => assert!(result.is_err(), "{label}"),
             }
+        }
+    }
+
+    #[test]
+    fn interval_validate_time_precision() {
+        for (label, interval_start, interval_duration, time_precision, expected) in [
+            ("already aligned", 0, 100, 10, true),
+            ("unaligned durations are bad", 0, 75, 10, false),
+            ("unaligned starts are bad", 25, 100, 10, false),
+            ("unaligned everything is bad", 15, 35, 10, false),
+        ] {
+            let interval = Interval::new(
+                Time::from_seconds_since_epoch(interval_start),
+                Duration::from_seconds(interval_duration),
+            )
+            .unwrap();
+            let time_precision = Duration::from_seconds(time_precision);
+            let result = interval.validate_precision(&time_precision);
+
+            assert_eq!(expected, result.is_ok(), "{label}");
         }
     }
 

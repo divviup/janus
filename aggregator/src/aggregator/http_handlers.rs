@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    datastore::Datastore, instrumented, taskprov::taskprov_task_id, TIME_HISTOGRAM_BOUNDARIES,
+    datastore::Datastore, datastore::Error as datastoreError, instrumented,
+    taskprov::taskprov_task_id, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
@@ -142,8 +143,18 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 .with_task_id(&inner.task_id)
                 .with_detail(&inner.to_string()),
         ),
+        Error::Datastore(error @ datastoreError::TimeUnaligned { task_id, .. }) => conn
+            .with_problem_document(
+                &ProblemDocument::new(
+                    "urn:ietf:params:ppm:dap:error:invalid_message",
+                    "Time unaligned.",
+                    Status::BadRequest,
+                )
+                .with_task_id(task_id)
+                .with_detail(&error.to_string()),
+            ),
+        Error::Datastore(_) => conn.with_status(Status::InternalServerError),
         Error::Hpke(_)
-        | Error::Datastore(_)
         | Error::Vdaf(_)
         | Error::Internal(_)
         | Error::Url(_)
