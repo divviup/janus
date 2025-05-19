@@ -57,7 +57,6 @@ use prio::{
     },
 };
 use rand::random;
-use rustls::time_provider;
 use std::{sync::Arc, time::Duration as StdDuration};
 use tokio::time::timeout;
 use trillium_tokio::Stopper;
@@ -89,7 +88,7 @@ async fn aggregation_job_driver() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -386,7 +385,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -836,7 +835,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -1115,7 +1114,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .with_time_precision(TIME_PRECISION)
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
@@ -1503,7 +1502,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let report_metadata = ReportMetadata::new(
@@ -1820,7 +1819,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let report_metadata = ReportMetadata::new(
@@ -2096,7 +2095,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let time = clock
         .now()
@@ -2450,7 +2449,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
 
     let leader_task = task.leader_view().unwrap();
     let report_metadata = ReportMetadata::new(
@@ -2754,7 +2753,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -3018,7 +3017,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -3289,7 +3288,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3549,7 +3548,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -3805,7 +3804,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -4061,7 +4060,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -4322,7 +4321,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock
@@ -4589,7 +4588,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let time = clock
         .now()
@@ -5120,7 +5119,7 @@ async fn helper_async_init_processing_to_finished() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5367,7 +5366,7 @@ async fn helper_async_init_processing_to_continue() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5616,7 +5615,7 @@ async fn helper_async_continue_processing_to_finished() {
         .now()
         .to_batch_interval_start(task.time_precision())
         .unwrap();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -6153,7 +6152,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let agg_auth_token = task.aggregator_auth_token();
     let aggregation_job_id = random();
@@ -6410,7 +6409,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = task.time_precision().clone();
+    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let agg_auth_token = task.aggregator_auth_token();
     let aggregation_job_id = random();

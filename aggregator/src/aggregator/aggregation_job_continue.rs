@@ -381,7 +381,7 @@ mod tests {
             VdafInstance::Fake { rounds: 2 },
         )
         .build();
-        let time_precision = task.time_precision().clone();
+        let time_precision = *task.time_precision();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -422,7 +422,7 @@ mod tests {
                         aggregation_parameter,
                         (),
                         Interval::from_time_with_precision(
-                            &prepare_init.report_share().metadata().time(),
+                            prepare_init.report_share().metadata().time(),
                             &time_precision,
                         )
                         .unwrap(),
