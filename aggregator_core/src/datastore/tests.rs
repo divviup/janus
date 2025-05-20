@@ -1085,7 +1085,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 (),
                 Interval::from_time_with_precision(
                     &Time::from_seconds_since_epoch(0),
-                    &task.time_precision(),
+                    task.time_precision(),
                 )
                 .unwrap(),
                 AggregationJobState::Active,
@@ -1455,7 +1455,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     batch_id,
                     Interval::from_time_with_precision(
                         &Time::from_seconds_since_epoch(0),
-                        &task.time_precision(),
+                        task.time_precision(),
                     )
                     .unwrap(),
                     AggregationJobState::Active,
@@ -2048,7 +2048,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 (),
                 Interval::from_time_with_precision(
                     &Time::from_seconds_since_epoch(0),
-                    &leader_task.time_precision(),
+                    leader_task.time_precision(),
                 )
                 .unwrap(),
                 AggregationJobState::Active,
@@ -2408,7 +2408,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         Interval::from_time_with_precision(
             &Time::from_seconds_since_epoch(0),
-            &task.time_precision(),
+            task.time_precision(),
         )
         .unwrap(),
         AggregationJobState::Active,
@@ -2421,7 +2421,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         Interval::from_time_with_precision(
             &Time::from_seconds_since_epoch(0),
-            &task.time_precision(),
+            task.time_precision(),
         )
         .unwrap(),
         AggregationJobState::Active,
@@ -2434,7 +2434,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         Interval::from_time_with_precision(
             &Time::from_seconds_since_epoch(0),
-            &task.time_precision(),
+            task.time_precision(),
         )
         .unwrap(),
         AggregationJobState::Active,
@@ -2477,7 +2477,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
                 random(),
                 Interval::from_time_with_precision(
                     &Time::from_seconds_since_epoch(0),
-                    &task.time_precision(),
+                    task.time_precision(),
                 )
                 .unwrap(),
                 AggregationJobState::Active,
@@ -2672,7 +2672,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                         (),
                         Interval::from_time_with_precision(
                             &OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                            &task.time_precision(),
+                            task.time_precision(),
                         )
                         .unwrap(),
                         AggregationJobState::Active,
@@ -5543,7 +5543,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     0,
                     Interval::from_time_with_precision(
                         &OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                        &task_1.time_precision(),
+                        task_1.time_precision(),
                     )
                     .unwrap(),
                     BatchAggregationState::Aggregating {
@@ -5563,7 +5563,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     1,
                     Interval::from_time_with_precision(
                         &OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                        &task_1.time_precision(),
+                        task_1.time_precision(),
                     )
                     .unwrap(),
                     BatchAggregationState::Aggregating {
@@ -5604,7 +5604,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     0,
                     Interval::from_time_with_precision(
                         &OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                        &task_2.time_precision(),
+                        task_2.time_precision(),
                     )
                     .unwrap(),
                     BatchAggregationState::Aggregating {
@@ -5633,7 +5633,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     Interval::from_time_with_precision(
                         &Time::from_seconds_since_epoch(0),
-                        &task_1.time_precision(),
+                        task_1.time_precision(),
                     )
                     .unwrap(),
                     AggregationJobState::Finished,
@@ -5683,7 +5683,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     Interval::from_time_with_precision(
                         &Time::from_seconds_since_epoch(0),
-                        &task_1.time_precision(),
+                        task_1.time_precision(),
                     )
                     .unwrap(),
                     AggregationJobState::Finished,
@@ -5726,7 +5726,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_2,
                     Interval::from_time_with_precision(
                         &Time::from_seconds_since_epoch(0),
-                        &task_2.time_precision(),
+                        task_2.time_precision(),
                     )
                     .unwrap(),
                     AggregationJobState::Finished,
