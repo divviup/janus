@@ -1947,7 +1947,8 @@ impl VdafOps {
             min_client_timestamp,
             max_client_timestamp
                 .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?,
+                .add(&Duration::from_seconds(1))?
+                .round_up(task.time_precision())?,
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
             *task.id(),

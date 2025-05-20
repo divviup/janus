@@ -658,7 +658,10 @@ where
                         batch_identifier.clone(),
                         aggregation_parameter.clone(),
                         self.batch_aggregation_ord,
-                        Interval::from_time(report_aggregation.time())?,
+                        Interval::from_time_with_precision(
+                            report_aggregation.time(),
+                            self.writer.task.time_precision(),
+                        )?,
                         if let Some(output_share) = report_aggregation.is_finished() {
                             is_finished = true;
                             BatchAggregationState::Aggregating {

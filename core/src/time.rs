@@ -397,7 +397,7 @@ impl IntervalExt for Interval {
     }
 
     fn from_time_with_precision(time: &Time, time_precision: &Duration) -> Result<Self, Error> {
-        Self::new(*time, *time_precision)
+        Self::new(*time, *time_precision)?.align_to_time_precision(time_precision)
     }
 
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {

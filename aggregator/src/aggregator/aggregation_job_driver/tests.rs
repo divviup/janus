@@ -161,7 +161,7 @@ async fn aggregation_job_driver() {
                 batch_identifier,
                 aggregation_param,
                 0,
-                Interval::from_time(&time).unwrap(),
+                Interval::from_time_with_precision(&time, &time_precision).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1389,7 +1389,11 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
             (),
             Interval::new(
                 gc_eligible_time,
-                gc_ineligible_time.difference(&gc_eligible_time).unwrap(),
+                gc_ineligible_time
+                    .difference(&gc_eligible_time)
+                    .unwrap()
+                    .round_up(&time_precision)
+                    .unwrap(),
             )
             .unwrap(),
             AggregationJobState::Finished,
@@ -2103,12 +2107,12 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
         .unwrap();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let other_batch_identifier = Interval::new(
-        active_batch_identifier
+    let other_batch_identifier = Interval::from_time_with_precision(
+        &active_batch_identifier
             .start()
             .add(task.time_precision())
             .unwrap(),
-        *task.time_precision(),
+        task.time_precision(),
     )
     .unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
