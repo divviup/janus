@@ -880,7 +880,11 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&report_timestamp).unwrap(),
+                        Interval::from_time_with_precision(
+                            &report_timestamp,
+                            task.time_precision(),
+                        )
+                        .unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -1028,7 +1032,8 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&report_timestamp).unwrap(),
+                        Interval::from_time_with_precision(&report_timestamp, &time_precision)
+                            .unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -1052,10 +1057,12 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::from_time_with_precision(&clock.now(), &time_precision)
+                                .unwrap(),
                             aggregation_param,
                             0,
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::from_time_with_precision(&clock.now(), &time_precision)
+                                .unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1071,16 +1078,16 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
-                                time_precision,
+                            Interval::from_time_with_precision(
+                                &clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                &time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
-                            Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
-                                time_precision,
+                            Interval::from_time_with_precision(
+                                &clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                &time_precision,
                             )
                             .unwrap(),
                             BatchAggregationState::Aggregating {
