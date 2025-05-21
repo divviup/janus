@@ -19,11 +19,7 @@ use janus_aggregator_core::{
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-use janus_core::{
-    report_id::ReportIdChecksumExt as _,
-    time::{Clock, IntervalExt},
-    vdaf::VdafInstance,
-};
+use janus_core::{report_id::ReportIdChecksumExt as _, time::Clock, vdaf::VdafInstance};
 use janus_messages::{
     AggregationJobId, Interval, PrepareResp, PrepareStepResult, ReportError, ReportId,
     ReportIdChecksum, Time,
@@ -658,9 +654,9 @@ where
                         batch_identifier.clone(),
                         aggregation_parameter.clone(),
                         self.batch_aggregation_ord,
-                        Interval::from_time_with_precision(
-                            report_aggregation.time(),
-                            self.writer.task.time_precision(),
+                        Interval::new(
+                            *report_aggregation.time(),
+                            *self.writer.task.time_precision(),
                         )?,
                         if let Some(output_share) = report_aggregation.is_finished() {
                             is_finished = true;

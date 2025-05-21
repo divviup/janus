@@ -354,9 +354,6 @@ pub trait IntervalExt: Sized {
     /// Returns a 0-length `[Interval]` that contains exactly the provided [`Time`].
     fn from_time(time: &Time) -> Result<Self, Error>;
 
-    /// Returns a `time_precision`-length `[Interval]` that contains the provided [`Time`].
-    fn from_time_with_precision(time: &Time, time_precision: &Duration) -> Result<Self, Error>;
-
     /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
     /// are multiples of `time_precision`.
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error>;
@@ -394,10 +391,6 @@ impl IntervalExt for Interval {
         // Recall that Interval is defined to exclude the end of the interval, so an interval of
         // length 1 only contains its start.
         Self::new(*time, Duration::from_seconds(1))
-    }
-
-    fn from_time_with_precision(time: &Time, time_precision: &Duration) -> Result<Self, Error> {
-        Self::new(*time, *time_precision)?.align_to_time_precision(time_precision)
     }
 
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {

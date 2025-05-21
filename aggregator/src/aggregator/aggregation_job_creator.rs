@@ -904,7 +904,7 @@ mod tests {
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
     };
     use janus_messages::{
@@ -1108,8 +1108,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time_with_precision(&report_time, leader_task.time_precision())
-                    .unwrap(),
+                Interval::new(report_time, *leader_task.time_precision()).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1293,8 +1292,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&task, &(), &first_report_time).unwrap(),
                     (),
                     0,
-                    Interval::from_time_with_precision(&first_report_time, task.time_precision())
-                        .unwrap(),
+                    Interval::new(first_report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1308,8 +1306,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&task, &(), &second_report_time).unwrap(),
                     (),
                     0,
-                    Interval::from_time_with_precision(&second_report_time, task.time_precision())
-                        .unwrap(),
+                    Interval::new(second_report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1523,7 +1520,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time_with_precision(&report_time, task.time_precision()).unwrap(),
+                Interval::new(report_time, *task.time_precision()).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1606,8 +1603,7 @@ mod tests {
                     batch_identifier,
                     (),
                     0,
-                    Interval::from_time_with_precision(&report_time, task.time_precision())
-                        .unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -1705,7 +1701,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time_with_precision(&report_time, task.time_precision()).unwrap(),
+                Interval::new(report_time, *task.time_precision()).unwrap(),
                 BatchAggregationState::Collected {
                     aggregate_share: None,
                     report_count: 0,
@@ -1900,8 +1896,7 @@ mod tests {
                     *batch_id,
                     (),
                     0,
-                    Interval::from_time_with_precision(&report_time, task.time_precision())
-                        .unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -2846,8 +2841,7 @@ mod tests {
                     *outstanding_batch.id(),
                     (),
                     0,
-                    Interval::from_time_with_precision(&report_time, task.time_precision())
-                        .unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,

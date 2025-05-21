@@ -248,9 +248,9 @@ async fn aggregate_continue_sync() {
                     empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::from_time_with_precision(
-                            &Time::from_seconds_since_epoch(0),
-                            helper_task.time_precision(),
+                        &Interval::new(
+                            Time::from_seconds_since_epoch(0),
+                            *helper_task.time_precision(),
                         )
                         .unwrap(),
                         &aggregation_param,
@@ -762,7 +762,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         *task.time_precision(),
     )
     .unwrap();
-    let first_batch_interval = Interval::from_time_with_precision(&report_time_0, &time_precision)
+    let first_batch_interval = Interval::new(report_time_0, time_precision)
         .unwrap()
         .merged_with(&report_time_1)
         .unwrap();
@@ -841,11 +841,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_0,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(
-                        &Time::from_seconds_since_epoch(0),
-                        &time_precision,
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1158,11 +1154,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_1,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(
-                        &Time::from_seconds_since_epoch(0),
-                        &time_precision,
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))

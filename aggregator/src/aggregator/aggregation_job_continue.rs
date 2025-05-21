@@ -334,7 +334,7 @@ mod tests {
     };
     use janus_core::{
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-        time::{IntervalExt, MockClock},
+        time::MockClock,
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -421,9 +421,9 @@ mod tests {
                         aggregation_job_id,
                         aggregation_parameter,
                         (),
-                        Interval::from_time_with_precision(
-                            prepare_init.report_share().metadata().time(),
-                            &time_precision,
+                        Interval::new(
+                            *prepare_init.report_share().metadata().time(),
+                            time_precision,
                         )
                         .unwrap(),
                         AggregationJobState::Active,

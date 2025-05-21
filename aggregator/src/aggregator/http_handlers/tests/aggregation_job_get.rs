@@ -13,7 +13,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     test_util::run_vdaf,
-    time::{Clock as _, IntervalExt, TimeExt as _},
+    time::{Clock as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -92,8 +92,7 @@ async fn aggregation_job_get_ready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(report_metadata.time(), &time_precision)
-                        .unwrap(),
+                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -221,8 +220,7 @@ async fn aggregation_job_get_unready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(report_metadata.time(), &time_precision)
-                        .unwrap(),
+                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -329,8 +327,7 @@ async fn aggregation_job_get_wrong_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(report_metadata.time(), &time_precision)
-                        .unwrap(),
+                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -439,8 +436,7 @@ async fn aggregation_job_get_missing_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(report_metadata.time(), &time_precision)
-                        .unwrap(),
+                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -543,8 +539,7 @@ async fn aggregation_job_get_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::from_time_with_precision(report_metadata.time(), &time_precision)
-                        .unwrap(),
+                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))

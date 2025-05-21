@@ -134,7 +134,7 @@ impl CollectionJobTestCase {
                 let task = self.task.clone();
                 Box::pin(async move {
                     let client_timestamp_interval =
-                        Interval::from_time_with_precision(&time, task.time_precision()).unwrap();
+                        Interval::new(time, *task.time_precision()).unwrap();
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
@@ -199,11 +199,8 @@ impl CollectionJobTestCase {
                 let task = self.task.clone();
                 Box::pin(async move {
                     let report = LeaderStoredReport::new_dummy(*task.id(), time);
-                    let client_timestamp_interval = Interval::from_time_with_precision(
-                        report.metadata().time(),
-                        task.time_precision(),
-                    )
-                    .unwrap();
+                    let client_timestamp_interval =
+                        Interval::new(*report.metadata().time(), *task.time_precision()).unwrap();
                     let batch_interval = client_timestamp_interval
                         .align_to_time_precision(task.time_precision())
                         .unwrap();
@@ -322,8 +319,7 @@ async fn setup_leader_selected_current_batch_collection_job_test_case(
     let batch_id_2 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;
-    let client_timestamp_interval =
-        Interval::from_time_with_precision(&time, test_case.task.time_precision()).unwrap();
+    let client_timestamp_interval = Interval::new(time, *test_case.task.time_precision()).unwrap();
 
     (test_case, batch_id_1, batch_id_2, client_timestamp_interval)
 }
