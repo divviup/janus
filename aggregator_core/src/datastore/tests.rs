@@ -5575,7 +5575,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     None,
                     // Counted among max_size.
                     ReportAggregationState::LeaderContinue {
-                        continuation: transcript.helper_prepare_transitions[0].continuation.clone(),
+                        continuation: transcript.helper_prepare_transitions[0]
+                            .continuation
+                            .clone(),
                     },
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy::Vdaf>::new(
