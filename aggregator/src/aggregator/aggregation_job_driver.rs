@@ -896,7 +896,7 @@ where
                             continuation
                                 .clone()
                                 .evaluate(&vdaf_application_context(task.id()), &vdaf)
-                                .map_err(|e| Error::Internal(e.to_string()))?,
+                                .map_err(|e| Error::Internal(e.into()))?,
                         ),
                         leader_prepare_state: None,
                     }
@@ -1411,7 +1411,7 @@ where
                 ReportAggregationState::LeaderPollContinue { .. } => {
                     return Err(Error::Internal(
                         "Helper encountered unexpected ReportAggregationState::LeaderPollContinue"
-                            .to_string(),
+                            .into(),
                     ))
                 }
 

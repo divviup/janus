@@ -4209,6 +4209,7 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.17.0-alpha.0"
+source = "git+https://github.com/divviup/libprio-rs.git?branch=timg/merge-outbound-keep-init-message#505554f857838f83e3822f9efe890108caf4f96d"
 dependencies = [
  "aes 0.8.4",
  "bitvec",
