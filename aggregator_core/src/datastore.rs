@@ -4127,11 +4127,8 @@ WHERE task_id = $1
             B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
-        // This validates _only_ the start time of the interval, not the duration, as these
-        // client_timestamp_intervals' durations must exclude the next batch interval.
         batch_aggregation
             .client_timestamp_interval()
-            .start()
             .validate_precision(&task_info.time_precision)
             .map_err(|e| {
                 Self::unaligned_time_error(
