@@ -1475,20 +1475,7 @@ mod tests {
             .unwrap();
 
         // Verify -- we haven't received enough reports yet, so we don't create anything.
-        let want_ra_states: Arc<HashMap<_, _>> = Arc::new(
-            [&first_report]
-                .iter()
-                .map(|report| {
-                    (
-                        (*report.metadata().id(), ()),
-                        report
-                            .as_start_leader_report_aggregation(random(), 0)
-                            .state()
-                            .clone(),
-                    )
-                })
-                .collect(),
-        );
+        let want_ra_states: Arc<HashMap<_, _>> = Arc::new(HashMap::new());
         let (agg_jobs, batch_aggregations) = job_creator
             .datastore
             .run_unnamed_tx(|tx| {
@@ -1581,6 +1568,163 @@ mod tests {
                 *second_report.metadata().id()
             ])
         );
+
+        assert_eq!(
+            batch_aggregations,
+            Vec::from([BatchAggregation::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                0,
+                Interval::from_time(&report_time).unwrap(),
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 1,
+                    aggregation_jobs_terminated: 0
+                }
+            )])
+        );
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_late_report_grace_period() {
+        // Setup.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let task = Arc::new(
+            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
+        );
+        let late_report_grace_period = janus_messages::Duration::from_hours(24).unwrap();
+        assert!(late_report_grace_period >= *task.time_precision());
+
+        let report_time = clock.now();
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+        let helper_hpke_keypair = HpkeKeypair::test();
+
+        let report_metadata = ReportMetadata::new(random(), report_time);
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
+            &(),
+            report_metadata.id(),
+            &false,
+        );
+        let report = Arc::new(LeaderStoredReport::generate(
+            *task.id(),
+            report_metadata,
+            helper_hpke_keypair.config(),
+            Vec::new(),
+            &transcript,
+        ));
+
+        ds.run_unnamed_tx(|tx| {
+            let task = Arc::clone(&task);
+            let report = Arc::clone(&report);
+
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await.unwrap();
+                tx.put_client_report(&report).await.unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run.
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            Arc::new(ds),
+            noop_meter(),
+            BATCH_AGGREGATION_SHARD_COUNT,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            2,
+            100,
+            5000,
+            late_report_grace_period,
+        ));
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify -- we haven't received enough reports yet, so we don't create anything.
+        let want_ra_states = Arc::new(HashMap::new());
+        let (agg_jobs, batch_aggregations) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
+
+                Box::pin(async move {
+                    Ok(read_and_verify_aggregate_info_for_task::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        _,
+                        _,
+                    >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
+                    .await)
+                })
+            })
+            .await
+            .unwrap();
+        assert!(agg_jobs.is_empty());
+        assert!(batch_aggregations.is_empty());
+
+        // Advance time.
+        clock.advance(&late_report_grace_period);
+
+        // Run.
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify -- waiting until the grace period passes allows an aggregation job to be created.
+        let want_ra_states = Arc::new(HashMap::from([(
+            (*report.metadata().id(), ()),
+            report
+                .as_start_leader_report_aggregation(random(), 0)
+                .state()
+                .clone(),
+        )]));
+        let (agg_jobs, batch_aggregations) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
+
+                Box::pin(async move {
+                    Ok(read_and_verify_aggregate_info_for_task::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        _,
+                        _,
+                    >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
+                    .await)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(agg_jobs.len(), 1);
+        let report_ids: HashSet<_> = agg_jobs
+            .into_iter()
+            .next()
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|ra| *ra.report_id())
+            .collect();
+        assert_eq!(report_ids, HashSet::from([*report.metadata().id()]));
 
         assert_eq!(
             batch_aggregations,
