@@ -351,9 +351,6 @@ pub trait IntervalExt: Sized {
     // Returns a new minimal [`Interval`] that contains both this interval and the given time.
     fn merged_with(&self, time: &Time) -> Result<Self, Error>;
 
-    /// Returns a 0-length `[Interval]` that contains exactly the provided [`Time`].
-    fn from_time(time: &Time) -> Result<Self, Error>;
-
     /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
     /// are multiples of `time_precision`.
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error>;
@@ -384,13 +381,7 @@ impl IntervalExt for Interval {
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        self.merge(&Self::from_time(time)?)
-    }
-
-    fn from_time(time: &Time) -> Result<Self, Error> {
-        // Recall that Interval is defined to exclude the end of the interval, so an interval of
-        // length 1 only contains its start.
-        Self::new(*time, Duration::from_seconds(1))
+        self.merge(&Self::new(*time, Duration::from_seconds(1))?)
     }
 
     fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {
@@ -536,6 +527,7 @@ mod tests {
             ("gap aligned", 0, 100, 200, Some((0, 201))),
             ("gap wider aligned", 0, 100, 300, Some((0, 301))),
             ("gap wider unaligned", 0, 100, 1010, Some((0, 1011))),
+            ("overlap", 0, 100, 0, Some((0, 100))),
         ] {
             let i1 = Interval::new(
                 Time::from_seconds_since_epoch(i1_start),
