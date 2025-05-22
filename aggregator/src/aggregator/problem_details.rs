@@ -106,10 +106,7 @@ impl ProblemDetailsConnExt for Conn {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        error::{BatchMismatch, ReportRejection, ReportRejectionReason},
-        send_request_to_helper, Error, RequestBody,
-    };
+    use crate::aggregator::{error::BatchMismatch, send_request_to_helper, Error, RequestBody};
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::future::join_all;
@@ -136,9 +133,6 @@ mod tests {
             DapProblemType::InvalidMessage,
             DapProblemType::UnrecognizedTask,
             DapProblemType::UnrecognizedAggregationJob,
-            DapProblemType::OutdatedConfig,
-            DapProblemType::ReportRejected,
-            DapProblemType::ReportTooEarly,
             DapProblemType::BatchInvalid,
             DapProblemType::InvalidBatchSize,
             DapProblemType::BatchMismatch,
@@ -180,39 +174,6 @@ mod tests {
         join_all(
             [
                 TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
-                TestCase::new(
-                    Box::new(|| {
-                        Error::ReportRejected(ReportRejection::new(
-                            random(),
-                            random(),
-                            RealClock::default().now(),
-                            ReportRejectionReason::TaskEnded
-                        ))
-                    }),
-                    Some(DapProblemType::ReportRejected),
-                ),
-                TestCase::new(
-                    Box::new(|| {
-                        Error::ReportRejected(ReportRejection::new(
-                            random(),
-                            random(),
-                            RealClock::default().now(),
-                            ReportRejectionReason::TooEarly
-                        ))
-                    }),
-                    Some(DapProblemType::ReportTooEarly),
-                ),
-                TestCase::new(
-                    Box::new(|| {
-                        Error::ReportRejected(ReportRejection::new(
-                            random(),
-                            random(),
-                            RealClock::default().now(),
-                            ReportRejectionReason::OutdatedHpkeConfig(random()),
-                        ))
-                    }),
-                    Some(DapProblemType::OutdatedConfig),
-                ),
                 TestCase::new(
                     Box::new(|| Error::InvalidMessage(Some(random()), "test")),
                     Some(DapProblemType::InvalidMessage),
