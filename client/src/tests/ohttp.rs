@@ -12,7 +12,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Duration, Report};
+use janus_messages::{Duration, Report, UploadRequest};
 use ohttp::{
     hpke::{Aead, Kdf},
     KeyConfig, SymmetricSuite,
@@ -127,7 +127,7 @@ async fn successful_upload() {
                     .header()
                     .get(b"content-type")
                     .map(|a| String::from_utf8(a.to_vec()).unwrap()),
-                Some(Report::MEDIA_TYPE.to_string()),
+                Some(UploadRequest::MEDIA_TYPE.to_string()),
             );
 
             Report::get_decoded(bin_request.content()).unwrap();
@@ -142,7 +142,7 @@ async fn successful_upload() {
         .create_async()
         .await;
 
-    client.upload(&true).await.unwrap();
+    client.upload(&[true]).await.unwrap();
 
     mocked_ohttp_keys.assert_async().await;
     mocked_ohttp_upload.assert_async().await;
@@ -242,7 +242,7 @@ async fn http_client_error_from_relay() {
         .create_async()
         .await;
 
-    let error = client.upload(&true).await.unwrap_err();
+    let error = client.upload(&[true]).await.unwrap_err();
 
     assert_matches!(error, Error::Http(boxed) => {
         assert_matches!(boxed.as_ref(), HttpErrorResponse {..});
@@ -282,7 +282,7 @@ async fn http_client_error_from_target() {
         .create_async()
         .await;
 
-    let error = client.upload(&true).await.unwrap_err();
+    let error = client.upload(&[true]).await.unwrap_err();
 
     assert_matches!(error, Error::Http(boxed) => {
         assert_matches!(boxed.as_ref(), HttpErrorResponse {..});
@@ -327,7 +327,7 @@ async fn encapsulated_server_message_is_http_request() {
         .create_async()
         .await;
 
-    let error = client.upload(&true).await.unwrap_err();
+    let error = client.upload(&[true]).await.unwrap_err();
 
     assert_matches!(error, Error::UnexpectedServerResponse(_));
 
