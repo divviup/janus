@@ -250,6 +250,7 @@ impl Components {
             input.config.min_aggregation_job_size,
             input.config.max_aggregation_job_size,
             5000,
+            input.config.late_report_grace_period,
         ));
 
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
