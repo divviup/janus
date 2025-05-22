@@ -82,7 +82,9 @@ async fn aggregate_continue_sync() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -141,7 +143,9 @@ async fn aggregate_continue_sync() {
         &measurement,
     );
     let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_2 = &transcript_2.leader_prepare_transitions[1].message;
+    let leader_prep_message_2 = transcript_2.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -313,7 +317,6 @@ async fn aggregate_continue_sync() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -431,7 +434,9 @@ async fn aggregate_continue_async() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let leader_prep_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let leader_prep_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -577,7 +582,6 @@ async fn aggregate_continue_async() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -688,7 +692,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_0 = &transcript_0.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_0 = transcript_0.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_0 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_0.clone(),
@@ -714,7 +720,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_1 = &transcript_1.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_1 = transcript_1.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_1 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_1.clone(),
@@ -743,7 +751,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_2 = &transcript_2.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_2 = transcript_2.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_2 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_2.clone(),
@@ -1045,7 +1055,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_3 = transcript_3.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_3 = &transcript_3.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_3 = transcript_3.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_3.clone(),
@@ -1074,7 +1086,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_4 = transcript_4.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_4 = &transcript_4.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_4 = transcript_4.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_4 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_4.clone(),
@@ -1103,7 +1117,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &measurement,
     );
     let helper_prep_state_5 = transcript_5.helper_prepare_transitions[0].prepare_state();
-    let ping_pong_leader_message_5 = &transcript_5.leader_prepare_transitions[1].message;
+    let ping_pong_leader_message_5 = transcript_5.leader_prepare_transitions[1]
+        .message()
+        .unwrap();
     let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata_5.clone(),
@@ -1412,7 +1428,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
             *report_metadata.id(),
             // An AggregationJobContinueReq should only ever contain Continue or Finished
             PingPongMessage::Initialize {
-                prep_share: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1532,8 +1548,8 @@ async fn aggregate_continue_prep_step_fails() {
         Vec::from([PrepareContinue::new(
             *report_metadata.id(),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1571,7 +1587,6 @@ async fn aggregate_continue_prep_step_fails() {
                         task.id(),
                         &aggregation_job_id,
                         report_metadata.id(),
-                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -1706,8 +1721,8 @@ async fn aggregate_continue_unexpected_transition() {
                 [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
             ),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1860,15 +1875,15 @@ async fn aggregate_continue_out_of_order_transition() {
             PrepareContinue::new(
                 *report_metadata_1.id(),
                 PingPongMessage::Continue {
-                    prep_msg: Vec::new(),
-                    prep_share: Vec::new(),
+                    prepare_message: Vec::new(),
+                    prepare_share: Vec::new(),
                 },
             ),
             PrepareContinue::new(
                 *report_metadata_0.id(),
                 PingPongMessage::Continue {
-                    prep_msg: Vec::new(),
-                    prep_share: Vec::new(),
+                    prepare_message: Vec::new(),
+                    prepare_share: Vec::new(),
                 },
             ),
         ]),
@@ -1969,8 +1984,8 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         Vec::from([PrepareContinue::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );

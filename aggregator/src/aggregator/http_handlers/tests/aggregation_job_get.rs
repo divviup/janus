@@ -67,7 +67,7 @@ async fn aggregation_job_get_ready() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = &transcript.helper_prepare_transitions[0].message;
+    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -185,7 +185,7 @@ async fn aggregation_job_get_unready() {
         report_metadata.id(),
         &measurement,
     );
-    let leader_message = &transcript.leader_prepare_transitions[0].message;
+    let leader_message = transcript.leader_prepare_transitions[0].message().unwrap();
     let report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata.clone(),
@@ -300,7 +300,7 @@ async fn aggregation_job_get_wrong_step() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = &transcript.helper_prepare_transitions[0].message;
+    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -408,7 +408,7 @@ async fn aggregation_job_get_missing_step() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = &transcript.helper_prepare_transitions[0].message;
+    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
@@ -510,7 +510,7 @@ async fn aggregation_job_get_sync() {
         report_metadata.id(),
         &measurement,
     );
-    let helper_message = &transcript.helper_prepare_transitions[0].message;
+    let helper_message = transcript.helper_prepare_transitions[0].message().unwrap();
 
     datastore
         .run_unnamed_tx(|tx| {
