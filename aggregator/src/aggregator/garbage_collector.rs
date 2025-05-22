@@ -187,7 +187,7 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{Clock, IntervalExt, MockClock, TimeExt},
+        time::{Clock, MockClock, TimeExt},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -241,7 +241,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ))
@@ -255,7 +255,8 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    let batch_identifier = Interval::from_time(&client_timestamp).unwrap(); // unrealistic, but induces GC
+                    let batch_identifier =
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(); // unrealistic, but induces GC
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
@@ -415,7 +416,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ))
@@ -435,11 +436,8 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    let batch_identifier = Interval::from_time_with_precision(
-                        &client_timestamp,
-                        task.time_precision(),
-                    )
-                    .unwrap(); // unrealistic, but induces GC
+                    let batch_identifier =
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(); // unrealistic, but induces GC
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
@@ -593,7 +591,7 @@ mod tests {
                         random(),
                         aggregation_param,
                         batch_id,
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     );
@@ -612,7 +610,7 @@ mod tests {
                             batch_id,
                             dummy::AggregationParam(0),
                             0,
-                            Interval::from_time(&client_timestamp).unwrap(),
+                            Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                             BatchAggregationState::Collected {
                                 aggregate_share: Some(dummy::AggregateShare(11)),
                                 report_count: 1,
@@ -781,7 +779,7 @@ mod tests {
                         random(),
                         aggregation_param,
                         batch_id,
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     );
@@ -807,7 +805,7 @@ mod tests {
                             batch_id,
                             dummy::AggregationParam(0),
                             0,
-                            Interval::from_time(&client_timestamp).unwrap(),
+                            Interval::new(client_timestamp, *task.time_precision()).unwrap(),
                             BatchAggregationState::Collected {
                                 aggregate_share: Some(dummy::AggregateShare(11)),
                                 report_count: 1,

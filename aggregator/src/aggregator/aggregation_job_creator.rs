@@ -646,7 +646,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 *min_client_timestamp,
                                 max_client_timestamp
                                     .difference(min_client_timestamp)?
-                                    .add(&DurationMsg::from_seconds(1))?,
+                                    .add(&DurationMsg::from_seconds(1))?
+                                    .round_up(task.time_precision())?,
                             )?;
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
@@ -783,7 +784,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 *min_client_timestamp,
                                 max_client_timestamp
                                     .difference(min_client_timestamp)?
-                                    .add(&DurationMsg::from_seconds(1))?,
+                                    .add(&DurationMsg::from_seconds(1))?
+                                    .round_up(task.time_precision())?,
                             )?;
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
@@ -902,7 +904,7 @@ mod tests {
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
     };
     use janus_messages::{
@@ -1106,7 +1108,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time(&report_time).unwrap(),
+                Interval::new(report_time, *leader_task.time_precision()).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1290,7 +1292,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&task, &(), &first_report_time).unwrap(),
                     (),
                     0,
-                    Interval::from_time(&first_report_time).unwrap(),
+                    Interval::new(first_report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1304,7 +1306,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&task, &(), &second_report_time).unwrap(),
                     (),
                     0,
-                    Interval::from_time(&second_report_time).unwrap(),
+                    Interval::new(second_report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1518,7 +1520,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time(&report_time).unwrap(),
+                Interval::new(report_time, *task.time_precision()).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1601,7 +1603,7 @@ mod tests {
                     batch_identifier,
                     (),
                     0,
-                    Interval::from_time(&report_time).unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -1699,7 +1701,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::from_time(&report_time).unwrap(),
+                Interval::new(report_time, *task.time_precision()).unwrap(),
                 BatchAggregationState::Collected {
                     aggregate_share: None,
                     report_count: 0,
@@ -1894,7 +1896,7 @@ mod tests {
                     *batch_id,
                     (),
                     0,
-                    Interval::from_time(&report_time).unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -2839,7 +2841,7 @@ mod tests {
                     *outstanding_batch.id(),
                     (),
                     0,
-                    Interval::from_time(&report_time).unwrap(),
+                    Interval::new(report_time, *task.time_precision()).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,

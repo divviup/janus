@@ -808,7 +808,7 @@ mod tests {
         initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
-        time::{Clock, IntervalExt, MockClock, TimeExt},
+        time::{Clock, MockClock, TimeExt},
         vdaf::VdafInstance,
         Runtime,
     };
@@ -880,7 +880,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&report_timestamp).unwrap(),
+                        Interval::new(report_timestamp, *task.time_precision()).unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -1028,7 +1028,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(&report_timestamp).unwrap(),
+                        Interval::new(report_timestamp, time_precision).unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))

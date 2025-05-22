@@ -49,13 +49,14 @@ async fn aggregate_continue_sync() {
         ..
     } = HttpHandlerTest::new().await;
 
+    let time_precision = Duration::from_seconds(10);
     let aggregation_job_id = random();
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
 
@@ -194,8 +195,7 @@ async fn aggregate_continue_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -330,7 +330,7 @@ async fn aggregate_continue_sync() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -399,12 +399,13 @@ async fn aggregate_continue_async() {
     } = HttpHandlerTest::new().await;
 
     let aggregation_job_id = random();
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
 
@@ -502,8 +503,7 @@ async fn aggregate_continue_async() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -594,7 +594,7 @@ async fn aggregate_continue_async() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
             AggregationJobState::Active,
             AggregationJobStep::from(1),
         )
@@ -650,12 +650,13 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         ..
     } = HttpHandlerTest::new().await;
 
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id_0 = random();
@@ -761,7 +762,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         *task.time_precision(),
     )
     .unwrap();
-    let first_batch_interval = Interval::from_time(&report_time_0)
+    let first_batch_interval = Interval::new(report_time_0, time_precision)
         .unwrap()
         .merged_with(&report_time_1)
         .unwrap();
@@ -840,8 +841,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_0,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1154,8 +1154,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_1,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1334,12 +1333,13 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
@@ -1381,8 +1381,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1449,12 +1448,13 @@ async fn aggregate_continue_prep_step_fails() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let vdaf = dummy::Vdaf::new(2);
@@ -1502,8 +1502,7 @@ async fn aggregate_continue_prep_step_fails() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1589,7 +1588,7 @@ async fn aggregate_continue_prep_step_fails() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -1631,12 +1630,13 @@ async fn aggregate_continue_unexpected_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id = random();
@@ -1674,8 +1674,7 @@ async fn aggregate_continue_unexpected_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1743,12 +1742,13 @@ async fn aggregate_continue_out_of_order_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 2 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let report_id_0 = random();
@@ -1814,8 +1814,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1904,12 +1903,13 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
+    let time_precision = Duration::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(time_precision)
     .build();
     let helper_task = task.helper_view().unwrap();
     let aggregation_job_id = random();
@@ -1939,8 +1939,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     aggregation_job_id,
                     dummy::AggregationParam(0),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
