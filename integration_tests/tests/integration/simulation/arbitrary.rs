@@ -25,6 +25,7 @@ impl Arbitrary for Config {
         aggregation_job_size_limits.sort();
 
         let time_precision = Duration::from_seconds(3600);
+        let late_report_grace_period = Duration::from_seconds(3600);
 
         Self {
             time_precision,
@@ -37,6 +38,7 @@ impl Arbitrary for Config {
                 .then_some(Duration::from_seconds(u16::arbitrary(g).into())),
             min_aggregation_job_size: aggregation_job_size_limits[0].into(),
             max_aggregation_job_size: aggregation_job_size_limits[1].into(),
+            late_report_grace_period,
         }
     }
 
