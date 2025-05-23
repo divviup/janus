@@ -69,7 +69,6 @@ use trillium_tokio::{CloneCounterObserver, Stopper};
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Arc<Datastore<C>>,
-    meter: Meter,
 
     // Configuration values.
     /// The number of batch aggregation shards to use per batch.
@@ -88,6 +87,12 @@ pub struct AggregationJobCreator<C: Clock> {
     max_aggregation_job_size: usize,
     /// Maximum number of reports to load at a time when creating aggregation jobs.
     aggregation_job_creation_report_window: usize,
+
+    // Metrics instruments.
+    /// Time spent updating tasks.
+    task_update_time_histogram: Histogram<f64>,
+    /// Time spent creating aggregation jobs.
+    job_creation_time_histogram: Histogram<f64>,
 }
 
 impl<C: Clock + 'static> AggregationJobCreator<C> {
@@ -109,34 +114,34 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             max_aggregation_job_size > 0,
             "invalid configuration: max_aggregation_job_size cannot be zero"
         );
+
+        // Create metrics instruments.
+        let task_update_time_histogram = meter
+            .f64_histogram("janus_task_update_time")
+            .with_description("Time spent updating tasks.")
+            .with_unit("s")
+            .init();
+        let job_creation_time_histogram = meter
+            .f64_histogram("janus_job_creation_time")
+            .with_description("Time spent creating aggregation jobs.")
+            .with_unit("s")
+            .init();
+
         AggregationJobCreator {
             datastore,
-            meter,
             batch_aggregation_shard_count,
             tasks_update_frequency,
             aggregation_job_creation_interval,
             min_aggregation_job_size,
             max_aggregation_job_size,
             aggregation_job_creation_report_window,
+            task_update_time_histogram,
+            job_creation_time_histogram,
         }
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
         // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
-
-        // Create metric instruments.
-        let task_update_time_histogram = self
-            .meter
-            .f64_histogram("janus_task_update_time")
-            .with_description("Time spent updating tasks.")
-            .with_unit("s")
-            .init();
-        let job_creation_time_histogram = self
-            .meter
-            .f64_histogram("janus_job_creation_time")
-            .with_description("Time spent creating aggregation jobs.")
-            .with_unit("s")
-            .init();
 
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
@@ -160,11 +165,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let start = Instant::now();
 
             let result = self
-                .update_tasks(
-                    &mut job_creation_task_shutdown_handles,
-                    &job_creation_time_histogram,
-                    &observer,
-                )
+                .update_tasks(&mut job_creation_task_shutdown_handles, &observer)
                 .await;
 
             let status = match result {
@@ -175,7 +176,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 }
             };
 
-            task_update_time_histogram.record(
+            self.task_update_time_histogram.record(
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );
@@ -191,7 +192,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     async fn update_tasks(
         self: &Arc<Self>,
         job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
-        job_creation_time_histogram: &Histogram<f64>,
         observer: &CloneCounterObserver,
     ) -> Result<(), datastore::Error> {
         debug!("Updating tasks");
@@ -229,13 +229,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let task_stopper = Stopper::new();
             job_creation_task_shutdown_handles.insert(task_id, task_stopper.clone());
             tokio::task::spawn({
-                let (this, job_creation_time_histogram) =
-                    (Arc::clone(self), job_creation_time_histogram.clone());
+                let this = Arc::clone(self);
                 let counter = observer.counter();
                 async move {
                     let _counter = counter;
-                    this.run_for_task(task_stopper, job_creation_time_histogram, Arc::new(task))
-                        .await
+                    this.run_for_task(task_stopper, Arc::new(task)).await
                 }
             });
         }
@@ -243,16 +241,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(())
     }
 
-    #[tracing::instrument(
-        name = "AggregationJobCreator::run_for_task",
-        skip(self, stopper, job_creation_time_histogram)
-    )]
-    async fn run_for_task(
-        self: Arc<Self>,
-        stopper: Stopper,
-        job_creation_time_histogram: Histogram<f64>,
-        task: Arc<AggregatorTask>,
-    ) {
+    #[tracing::instrument(name = "AggregationJobCreator::run_for_task", skip(self, stopper))]
+    async fn run_for_task(self: Arc<Self>, stopper: Stopper, task: Arc<AggregatorTask>) {
         debug!(task_id = %task.id(), "Job creation worker started");
         let mut next_run_instant = Instant::now();
         if !self.aggregation_job_creation_interval.is_zero() {
@@ -288,7 +278,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     next_run_instant = Instant::now() + self.aggregation_job_creation_interval;
                 }
             }
-            job_creation_time_histogram.record(
+            self.job_creation_time_histogram.record(
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );
