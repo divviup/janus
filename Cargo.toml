@@ -42,7 +42,7 @@ constcat = "0.5"
 deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
-educe = { version = "0.6.0", default-features = false, features = ["Debug"] }
+educe = { version = "0.6.0", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
 fixed = "1.29"
 futures = "0.3.31"
 git-version = "0.3.9"

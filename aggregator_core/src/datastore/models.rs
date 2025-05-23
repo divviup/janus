@@ -98,7 +98,7 @@ impl From<&AuthenticationTokenHash> for AuthenticationTokenType {
 /// Represents a report as it is stored in the Leader's database, corresponding to an unscrubbed row
 /// in `client_reports`.
 #[derive(Clone, Educe)]
-#[educe(Debug)]
+#[educe(Debug, PartialEq, Eq)]
 pub struct LeaderStoredReport<const SEED_SIZE: usize, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -283,46 +283,6 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, A> PartialEq for LeaderStoredReport<SEED_SIZE, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::InputShare: PartialEq,
-    A::PublicShare: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let LeaderStoredReport {
-            task_id: self_task_id,
-            metadata: self_metadata,
-            public_share: self_public_share,
-            leader_private_extensions: self_leader_private_extensions,
-            leader_input_share: self_leader_input_share,
-            helper_encrypted_input_share: self_helper_encrypted_input_share,
-        } = self;
-        let LeaderStoredReport {
-            task_id: other_task_id,
-            metadata: other_metadata,
-            public_share: other_public_share,
-            leader_private_extensions: other_leader_private_extensions,
-            leader_input_share: other_leader_input_share,
-            helper_encrypted_input_share: other_helper_encrypted_input_share,
-        } = other;
-        self_task_id == other_task_id
-            && self_metadata == other_metadata
-            && self_public_share == other_public_share
-            && self_leader_private_extensions == other_leader_private_extensions
-            && self_leader_input_share == other_leader_input_share
-            && self_helper_encrypted_input_share == other_helper_encrypted_input_share
-    }
-}
-
-impl<const SEED_SIZE: usize, A> Eq for LeaderStoredReport<SEED_SIZE, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::InputShare: Eq,
-    A::PublicShare: PartialEq,
-{
-}
-
 #[cfg(feature = "test-util")]
 impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
     pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
@@ -404,7 +364,7 @@ impl AggregatorRole {
 
 /// AggregationJob represents an aggregation job from the DAP specification.
 #[derive(Clone, Educe)]
-#[educe(Debug)]
+#[educe(Debug, PartialEq, Eq)]
 pub struct AggregationJob<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     /// The ID of the task this aggregation job belongs to.
@@ -538,50 +498,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn batch_id(&self) -> &BatchId {
         self.partial_batch_identifier()
     }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for AggregationJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let AggregationJob {
-            task_id: self_task_id,
-            aggregation_job_id: self_aggregation_job_id,
-            aggregation_parameter: self_aggregation_parameter,
-            batch_id: self_batch_id,
-            client_timestamp_interval: self_client_timestamp_interval,
-            state: self_state,
-            step: self_step,
-            last_request_hash: self_last_request_hash,
-        } = self;
-        let AggregationJob {
-            task_id: other_task_id,
-            aggregation_job_id: other_aggregation_job_id,
-            aggregation_parameter: other_aggregation_parameter,
-            batch_id: other_batch_id,
-            client_timestamp_interval: other_client_timestamp_interval,
-            state: other_state,
-            step: other_step,
-            last_request_hash: other_last_request_hash,
-        } = other;
-        self_task_id == other_task_id
-            && self_aggregation_job_id == other_aggregation_job_id
-            && self_aggregation_parameter == other_aggregation_parameter
-            && self_batch_id == other_batch_id
-            && self_client_timestamp_interval == other_client_timestamp_interval
-            && self_state == other_state
-            && self_step == other_step
-            && self_last_request_hash == other_last_request_hash
-    }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for AggregationJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: Eq,
-{
 }
 
 /// AggregationJobState represents the state of an aggregation job. It corresponds to the
@@ -847,6 +763,11 @@ impl AcquiredCollectionJob {
 
 /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
 #[derive(Clone, Debug)]
+// PartialEq and Eq are gated on the `test-util` feature  as we do not wish to compare preparation
+// states in non-test code, since doing so would require a constant-time comparison to avoid risking
+// leaking information about the preparation state.
+#[cfg_attr(feature = "test-util", derive(Educe))]
+#[cfg_attr(feature = "test-util", educe(PartialEq, Eq))]
 pub struct ReportAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     task_id: TaskId,
     aggregation_job_id: AggregationJobId,
@@ -934,63 +855,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
     pub fn with_state(self, state: ReportAggregationState<SEED_SIZE, A>) -> Self {
         Self { state, ..self }
     }
-}
-
-// This trait implementation is gated on the `test-util` feature as we do not wish to compare
-// preparation states in non-test code, since doing so would require a constant-time comparison to
-// avoid risking leaking information about the preparation state.
-#[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for ReportAggregation<SEED_SIZE, A>
-where
-    A::InputShare: PartialEq,
-    A::PrepareShare: PartialEq,
-    A::PrepareState: PartialEq,
-    A::PublicShare: PartialEq,
-    A::OutputShare: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let ReportAggregation {
-            task_id: self_task_id,
-            aggregation_job_id: self_aggregation_job_id,
-            report_id: self_report_id,
-            time: self_time,
-            ord: self_ord,
-            last_prep_resp: self_last_prep_resp,
-            state: self_state,
-        } = self;
-        let ReportAggregation {
-            task_id: other_task_id,
-            aggregation_job_id: other_aggregation_job_id,
-            report_id: other_report_id,
-            time: other_time,
-            ord: other_ord,
-            last_prep_resp: other_last_prep_resp,
-            state: other_state,
-        } = other;
-        self_task_id == other_task_id
-            && self_aggregation_job_id == other_aggregation_job_id
-            && self_report_id == other_report_id
-            && self_time == other_time
-            && self_ord == other_ord
-            && self_last_prep_resp == other_last_prep_resp
-            && self_state == other_state
-    }
-}
-
-// This trait implementation is gated on the `test-util` feature as we do not wish to compare
-// preparation states in non-test code, since doing so would require a constant-time comparison to
-// avoid risking leaking information about the preparation state.
-#[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for ReportAggregation<SEED_SIZE, A>
-where
-    A::InputShare: Eq,
-    A::PrepareShare: Eq,
-    A::PrepareState: Eq,
-    A::PublicShare: Eq,
-    A::OutputShare: Eq,
-{
 }
 
 /// ReportAggregationState represents the state of a single report aggregation. It corresponds
@@ -1463,6 +1327,7 @@ impl ReportAggregationMetadata {
 /// consists of one or more `BatchAggregation`s merged together.
 #[derive(Clone, Educe)]
 #[educe(Debug)]
+#[cfg_attr(feature = "test-util", educe(PartialEq, Eq))]
 pub struct BatchAggregation<
     const SEED_SIZE: usize,
     B: BatchMode,
@@ -1659,48 +1524,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn batch_id(&self) -> &BatchId {
         self.batch_identifier()
     }
-}
-
-#[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for BatchAggregation<SEED_SIZE, B, A>
-where
-    A::AggregationParam: PartialEq,
-    A::AggregateShare: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let BatchAggregation {
-            task_id: self_task_id,
-            batch_identifier: self_batch_identifier,
-            aggregation_parameter: self_aggregation_parameter,
-            ord: self_ord,
-            client_timestamp_interval: self_client_timestamp_interval,
-            state: self_state,
-        } = self;
-        let BatchAggregation {
-            task_id: other_task_id,
-            batch_identifier: other_batch_identifier,
-            aggregation_parameter: other_aggregation_parameter,
-            ord: other_ord,
-            client_timestamp_interval: other_client_timestamp_interval,
-            state: other_state,
-        } = other;
-        self_task_id == other_task_id
-            && self_batch_identifier == other_batch_identifier
-            && self_aggregation_parameter == other_aggregation_parameter
-            && self_ord == other_ord
-            && self_client_timestamp_interval == other_client_timestamp_interval
-            && self_state == other_state
-    }
-}
-
-#[cfg(feature = "test-util")]
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for BatchAggregation<SEED_SIZE, B, A>
-where
-    A::AggregationParam: Eq,
-    A::AggregateShare: Eq,
-{
 }
 
 /// Represents the state of a batch aggregation.
@@ -1939,7 +1762,7 @@ where
 /// CollectionJob represents a row in the `collection_jobs` table, used by leaders to represent
 /// running collection jobs and store the results of completed ones.
 #[derive(Clone, Educe)]
-#[educe(Debug)]
+#[educe(Debug, PartialEq, Eq)]
 pub struct CollectionJob<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     /// The task ID for this collection job.
     task_id: TaskId,
@@ -2040,46 +1863,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn batch_id(&self) -> &BatchId {
         self.batch_identifier()
     }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for CollectionJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: PartialEq,
-    CollectionJobState<SEED_SIZE, A>: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let CollectionJob {
-            task_id: self_task_id,
-            collection_job_id: self_collection_job_id,
-            query: self_query,
-            aggregation_parameter: self_aggregation_parameter,
-            batch_identifier: self_batch_identifier,
-            state: self_state,
-        } = self;
-        let CollectionJob {
-            task_id: other_task_id,
-            collection_job_id: other_collection_job_id,
-            query: other_query,
-            aggregation_parameter: other_aggregation_parameter,
-            batch_identifier: other_batch_identifier,
-            state: other_state,
-        } = other;
-        self_task_id == other_task_id
-            && self_collection_job_id == other_collection_job_id
-            && self_query == other_query
-            && self_batch_identifier == other_batch_identifier
-            && self_aggregation_parameter == other_aggregation_parameter
-            && self_state == other_state
-    }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for CollectionJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: Eq,
-    CollectionJobState<SEED_SIZE, A>: Eq,
-{
 }
 
 #[derive(Clone, Educe)]
@@ -2188,7 +1971,7 @@ pub enum CollectionJobStateCode {
 /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
 /// store the results of handling an AggregateShareReq from the leader.
 #[derive(Clone, Educe)]
-#[educe(Debug)]
+#[educe(Debug, PartialEq, Eq)]
 pub struct AggregateShareJob<
     const SEED_SIZE: usize,
     B: BatchMode,
@@ -2285,46 +2068,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn batch_id(&self) -> &BatchId {
         self.batch_identifier()
     }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for AggregateShareJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: PartialEq,
-    A::AggregateShare: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        let AggregateShareJob {
-            task_id: self_task_id,
-            batch_identifier: self_batch_identifier,
-            aggregation_parameter: self_aggregation_parameter,
-            helper_aggregate_share: self_helper_aggregate_share,
-            report_count: self_report_count,
-            checksum: self_checksum,
-        } = self;
-        let AggregateShareJob {
-            task_id: other_task_id,
-            batch_identifier: other_batch_identifier,
-            aggregation_parameter: other_aggregation_parameter,
-            helper_aggregate_share: other_helper_aggregate_share,
-            report_count: other_report_count,
-            checksum: other_checksum,
-        } = other;
-        self_task_id == other_task_id
-            && self_batch_identifier == other_batch_identifier
-            && self_aggregation_parameter == other_aggregation_parameter
-            && self_helper_aggregate_share == other_helper_aggregate_share
-            && self_report_count == other_report_count
-            && self_checksum == other_checksum
-    }
-}
-
-impl<const SEED_SIZE: usize, B: BatchMode, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for AggregateShareJob<SEED_SIZE, B, A>
-where
-    A::AggregationParam: Eq,
-    A::AggregateShare: Eq,
-{
 }
 
 /// An outstanding batch, which is a batch which has not yet started collection. Such a batch may
