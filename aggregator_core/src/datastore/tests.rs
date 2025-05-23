@@ -3859,7 +3859,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
     )]);
     let batch_interval = Interval::new(
         Time::from_seconds_since_epoch(0),
-        Duration::from_seconds(100),
+        Duration::from_hours(8).unwrap(),
     )
     .unwrap();
     let aggregation_job_id = random();
@@ -4286,7 +4286,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
     let aggregation_job_ids: [_; 2] = random();
     let batch_interval = Interval::new(
         Time::from_seconds_since_epoch(0),
-        Duration::from_seconds(100),
+        Duration::from_hours(8).unwrap(),
     )
     .unwrap();
     let aggregation_jobs = Vec::from([
@@ -6551,7 +6551,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             .iter()
             .fold(Interval::EMPTY, |left, right| {
                 left.merged_with(right).unwrap()
-            });
+            })
+            .align_to_time_precision(task.time_precision())
+            .unwrap();
 
         let batch_aggregation = BatchAggregation::<0, B, dummy::Vdaf>::new(
             *task.id(),
@@ -7161,6 +7163,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
 
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(&TIME_PRECISION);
 
     // Run.
     let deleted_batch_counts = ds
