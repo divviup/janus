@@ -2052,7 +2052,7 @@ where
         let CollectionJob {
             task_id: self_task_id,
             collection_job_id: self_collection_job_id,
-            query: _self_query,
+            query: self_query,
             aggregation_parameter: self_aggregation_parameter,
             batch_identifier: self_batch_identifier,
             state: self_state,
@@ -2060,13 +2060,14 @@ where
         let CollectionJob {
             task_id: other_task_id,
             collection_job_id: other_collection_job_id,
-            query: _other_query,
+            query: other_query,
             aggregation_parameter: other_aggregation_parameter,
             batch_identifier: other_batch_identifier,
             state: other_state,
         } = other;
         self_task_id == other_task_id
             && self_collection_job_id == other_collection_job_id
+            && self_query == other_query
             && self_batch_identifier == other_batch_identifier
             && self_aggregation_parameter == other_aggregation_parameter
             && self_state == other_state
