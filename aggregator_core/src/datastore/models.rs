@@ -290,12 +290,28 @@ where
     A::PublicShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.metadata == other.metadata
-            && self.public_share == other.public_share
-            && self.leader_private_extensions == other.leader_private_extensions
-            && self.leader_input_share == other.leader_input_share
-            && self.helper_encrypted_input_share == other.helper_encrypted_input_share
+        let LeaderStoredReport {
+            task_id: self_task_id,
+            metadata: self_metadata,
+            public_share: self_public_share,
+            leader_private_extensions: self_leader_private_extensions,
+            leader_input_share: self_leader_input_share,
+            helper_encrypted_input_share: self_helper_encrypted_input_share,
+        } = self;
+        let LeaderStoredReport {
+            task_id: other_task_id,
+            metadata: other_metadata,
+            public_share: other_public_share,
+            leader_private_extensions: other_leader_private_extensions,
+            leader_input_share: other_leader_input_share,
+            helper_encrypted_input_share: other_helper_encrypted_input_share,
+        } = other;
+        self_task_id == other_task_id
+            && self_metadata == other_metadata
+            && self_public_share == other_public_share
+            && self_leader_private_extensions == other_leader_private_extensions
+            && self_leader_input_share == other_leader_input_share
+            && self_helper_encrypted_input_share == other_helper_encrypted_input_share
     }
 }
 
@@ -530,14 +546,34 @@ where
     A::AggregationParam: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.aggregation_job_id == other.aggregation_job_id
-            && self.aggregation_parameter == other.aggregation_parameter
-            && self.batch_id == other.batch_id
-            && self.client_timestamp_interval == other.client_timestamp_interval
-            && self.state == other.state
-            && self.step == other.step
-            && self.last_request_hash == other.last_request_hash
+        let AggregationJob {
+            task_id: self_task_id,
+            aggregation_job_id: self_aggregation_job_id,
+            aggregation_parameter: self_aggregation_parameter,
+            batch_id: self_batch_id,
+            client_timestamp_interval: self_client_timestamp_interval,
+            state: self_state,
+            step: self_step,
+            last_request_hash: self_last_request_hash,
+        } = self;
+        let AggregationJob {
+            task_id: other_task_id,
+            aggregation_job_id: other_aggregation_job_id,
+            aggregation_parameter: other_aggregation_parameter,
+            batch_id: other_batch_id,
+            client_timestamp_interval: other_client_timestamp_interval,
+            state: other_state,
+            step: other_step,
+            last_request_hash: other_last_request_hash,
+        } = other;
+        self_task_id == other_task_id
+            && self_aggregation_job_id == other_aggregation_job_id
+            && self_aggregation_parameter == other_aggregation_parameter
+            && self_batch_id == other_batch_id
+            && self_client_timestamp_interval == other_client_timestamp_interval
+            && self_state == other_state
+            && self_step == other_step
+            && self_last_request_hash == other_last_request_hash
     }
 }
 
@@ -914,13 +950,31 @@ where
     A::OutputShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.aggregation_job_id == other.aggregation_job_id
-            && self.report_id == other.report_id
-            && self.time == other.time
-            && self.ord == other.ord
-            && self.last_prep_resp == other.last_prep_resp
-            && self.state == other.state
+        let ReportAggregation {
+            task_id: self_task_id,
+            aggregation_job_id: self_aggregation_job_id,
+            report_id: self_report_id,
+            time: self_time,
+            ord: self_ord,
+            last_prep_resp: self_last_prep_resp,
+            state: self_state,
+        } = self;
+        let ReportAggregation {
+            task_id: other_task_id,
+            aggregation_job_id: other_aggregation_job_id,
+            report_id: other_report_id,
+            time: other_time,
+            ord: other_ord,
+            last_prep_resp: other_last_prep_resp,
+            state: other_state,
+        } = other;
+        self_task_id == other_task_id
+            && self_aggregation_job_id == other_aggregation_job_id
+            && self_report_id == other_report_id
+            && self_time == other_time
+            && self_ord == other_ord
+            && self_last_prep_resp == other_last_prep_resp
+            && self_state == other_state
     }
 }
 
@@ -1615,12 +1669,28 @@ where
     A::AggregateShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.batch_identifier == other.batch_identifier
-            && self.aggregation_parameter == other.aggregation_parameter
-            && self.ord == other.ord
-            && self.client_timestamp_interval == other.client_timestamp_interval
-            && self.state == other.state
+        let BatchAggregation {
+            task_id: self_task_id,
+            batch_identifier: self_batch_identifier,
+            aggregation_parameter: self_aggregation_parameter,
+            ord: self_ord,
+            client_timestamp_interval: self_client_timestamp_interval,
+            state: self_state,
+        } = self;
+        let BatchAggregation {
+            task_id: other_task_id,
+            batch_identifier: other_batch_identifier,
+            aggregation_parameter: other_aggregation_parameter,
+            ord: other_ord,
+            client_timestamp_interval: other_client_timestamp_interval,
+            state: other_state,
+        } = other;
+        self_task_id == other_task_id
+            && self_batch_identifier == other_batch_identifier
+            && self_aggregation_parameter == other_aggregation_parameter
+            && self_ord == other_ord
+            && self_client_timestamp_interval == other_client_timestamp_interval
+            && self_state == other_state
     }
 }
 
@@ -1979,11 +2049,27 @@ where
     CollectionJobState<SEED_SIZE, A>: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.collection_job_id == other.collection_job_id
-            && self.batch_identifier == other.batch_identifier
-            && self.aggregation_parameter == other.aggregation_parameter
-            && self.state == other.state
+        let CollectionJob {
+            task_id: self_task_id,
+            collection_job_id: self_collection_job_id,
+            query: _self_query,
+            aggregation_parameter: self_aggregation_parameter,
+            batch_identifier: self_batch_identifier,
+            state: self_state,
+        } = self;
+        let CollectionJob {
+            task_id: other_task_id,
+            collection_job_id: other_collection_job_id,
+            query: _other_query,
+            aggregation_parameter: other_aggregation_parameter,
+            batch_identifier: other_batch_identifier,
+            state: other_state,
+        } = other;
+        self_task_id == other_task_id
+            && self_collection_job_id == other_collection_job_id
+            && self_batch_identifier == other_batch_identifier
+            && self_aggregation_parameter == other_aggregation_parameter
+            && self_state == other_state
     }
 }
 
@@ -2207,12 +2293,28 @@ where
     A::AggregateShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.batch_identifier == other.batch_identifier
-            && self.aggregation_parameter == other.aggregation_parameter
-            && self.helper_aggregate_share == other.helper_aggregate_share
-            && self.report_count == other.report_count
-            && self.checksum == other.checksum
+        let AggregateShareJob {
+            task_id: self_task_id,
+            batch_identifier: self_batch_identifier,
+            aggregation_parameter: self_aggregation_parameter,
+            helper_aggregate_share: self_helper_aggregate_share,
+            report_count: self_report_count,
+            checksum: self_checksum,
+        } = self;
+        let AggregateShareJob {
+            task_id: other_task_id,
+            batch_identifier: other_batch_identifier,
+            aggregation_parameter: other_aggregation_parameter,
+            helper_aggregate_share: other_helper_aggregate_share,
+            report_count: other_report_count,
+            checksum: other_checksum,
+        } = other;
+        self_task_id == other_task_id
+            && self_batch_identifier == other_batch_identifier
+            && self_aggregation_parameter == other_aggregation_parameter
+            && self_helper_aggregate_share == other_helper_aggregate_share
+            && self_report_count == other_report_count
+            && self_checksum == other_checksum
     }
 }
 
