@@ -302,7 +302,7 @@ async fn aggregation_job_driver() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: Some(transcript.leader_aggregate_share),
                 report_count: 1,
@@ -684,7 +684,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         batch_identifier,
         (),
         0,
-        Interval::from_time(&time).unwrap(),
+        Interval::new(time, *task.time_precision()).unwrap(),
         BatchAggregationState::Aggregating {
             aggregate_share: Some(transcript.leader_output_share.clone().into()),
             report_count: 1,
@@ -1015,7 +1015,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -1417,7 +1417,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
         gc_ineligible_batch_identifier,
         (),
         0,
-        Interval::from_time(&gc_ineligible_time).unwrap(),
+        Interval::new(gc_ineligible_time, *task.time_precision()).unwrap(),
         BatchAggregationState::Aggregating {
             aggregate_share: Some(gc_ineligible_transcript.leader_output_share.clone().into()),
             report_count: 1,
@@ -2897,7 +2897,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -3156,7 +3156,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -3669,7 +3669,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -3920,7 +3920,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -4176,7 +4176,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: Some(transcript.leader_output_share.into()),
                 report_count: 1,
@@ -4437,7 +4437,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
             batch_identifier,
             aggregation_param,
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, *task.time_precision()).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -6244,7 +6244,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
             batch_identifier,
             (),
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, time_precision).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,
@@ -6490,7 +6490,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
             batch_identifier,
             (),
             0,
-            Interval::from_time(&time).unwrap(),
+            Interval::new(time, time_precision).unwrap(),
             BatchAggregationState::Aggregating {
                 aggregate_share: None,
                 report_count: 0,

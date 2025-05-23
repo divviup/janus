@@ -225,7 +225,7 @@ where
 }
 
 /// The result of a collection operation.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Collection<T, B>
 where
     B: BatchMode,
@@ -281,26 +281,6 @@ where
             aggregate_result,
         }
     }
-}
-
-impl<T, B> PartialEq for Collection<T, B>
-where
-    T: PartialEq,
-    B: BatchMode,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_batch_selector == other.partial_batch_selector
-            && self.report_count == other.report_count
-            && self.interval == other.interval
-            && self.aggregate_result == other.aggregate_result
-    }
-}
-
-impl<T, B> Eq for Collection<T, B>
-where
-    T: Eq,
-    B: BatchMode,
-{
 }
 
 /// Builder for configuring a [`Collector`].
