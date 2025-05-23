@@ -293,6 +293,10 @@ pub(crate) fn aggregated_report_share_dimension_histogram(meter: &Meter) -> Hist
         .build()
 }
 
+/// These boundaries are for the number of reports in an aggregation job.
+pub(crate) const AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES: &[f64] =
+    &[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0];
+
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     let aggregate_step_failure_counter = meter
         .u64_counter("janus_step_failures")
