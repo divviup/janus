@@ -36,6 +36,9 @@ pub(super) struct Config {
 
     /// Aggregation job creator configuration: maximum aggregation job size.
     pub(super) max_aggregation_job_size: usize,
+
+    /// Aggregation job creator configuration: late report grace period.
+    pub(super) late_report_grace_period: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
