@@ -14,6 +14,7 @@ use janus_messages::{
     query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId,
     ReportMetadata, TaskId, Time,
 };
+use opentelemetry::metrics::Histogram;
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
 use std::{
@@ -58,6 +59,7 @@ struct Properties {
     task_min_batch_size: usize,
     effective_task_max_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
+    aggregation_job_size_histogram: Histogram<u64>,
 }
 
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
@@ -79,6 +81,7 @@ where
             InitialWrite,
             ReportAggregationMetadata,
         >,
+        aggregation_job_size_histogram: Histogram<u64>,
     ) -> Self {
         Self {
             properties: Properties {
@@ -93,6 +96,7 @@ where
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.1.2-6
                 effective_task_max_batch_size: task_max_batch_size.unwrap_or(task_min_batch_size),
                 task_batch_time_window_size,
+                aggregation_job_size_histogram,
             },
             aggregation_job_writer,
             buckets: HashMap::new(),
@@ -235,6 +239,7 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
+                            &properties.aggregation_job_size_histogram,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -264,6 +269,7 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
+                            &properties.aggregation_job_size_histogram,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -305,6 +311,7 @@ where
                     &mut bucket.unaggregated_reports,
                     aggregation_job_writer,
                     report_ids_to_scrub,
+                    &properties.aggregation_job_size_histogram,
                 )?;
 
                 // Loop to the top of this method to create more aggregation jobs in this newly
@@ -331,6 +338,7 @@ where
             ReportAggregationMetadata,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
+        aggregation_job_size_histogram: &Histogram<u64>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
         debug!(
@@ -382,6 +390,10 @@ where
             client_timestamp_interval,
             AggregationJobState::InProgress,
             AggregationJobStep::from(0),
+        );
+        aggregation_job_size_histogram.record(
+            u64::try_from(report_aggregations.len()).unwrap_or(u64::MAX),
+            &[],
         );
         aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 

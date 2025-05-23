@@ -1,6 +1,9 @@
-use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, InitialWrite},
-    batch_creator::BatchCreator,
+use crate::{
+    aggregator::{
+        aggregation_job_writer::{AggregationJobWriter, InitialWrite},
+        batch_creator::BatchCreator,
+    },
+    metrics::AGGREGATION_JOB_SIZE_METER_NAME,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
@@ -93,6 +96,8 @@ pub struct AggregationJobCreator<C: Clock> {
     task_update_time_histogram: Histogram<f64>,
     /// Time spent creating aggregation jobs.
     job_creation_time_histogram: Histogram<f64>,
+    /// Number of reports in aggregation jobs.
+    aggregation_job_size_histogram: Histogram<u64>,
 }
 
 impl<C: Clock + 'static> AggregationJobCreator<C> {
@@ -126,6 +131,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .with_description("Time spent creating aggregation jobs.")
             .with_unit("s")
             .init();
+        let aggregation_job_size_histogram = meter
+            .u64_histogram(AGGREGATION_JOB_SIZE_METER_NAME)
+            .with_description("Number of reports in aggregation jobs")
+            .with_unit("{report}")
+            .init();
 
         AggregationJobCreator {
             datastore,
@@ -137,6 +147,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             aggregation_job_creation_report_window,
             task_update_time_histogram,
             job_creation_time_histogram,
+            aggregation_job_size_histogram,
         }
     }
 
@@ -676,13 +687,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                         ReportAggregationMetadataState::Start,
                                     ))
                                 })
-                                .collect::<Result<_, datastore::Error>>()?;
+                                .collect::<Result<Vec<_>, datastore::Error>>()?;
                             report_ids_to_scrub.extend(
                                 agg_job_reports
                                     .iter()
                                     .map(|report_metadata| *report_metadata.id()),
                             );
 
+                            this.aggregation_job_size_histogram.record(
+                                u64::try_from(report_aggregations.len()).unwrap_or(u64::MAX),
+                                &[],
+                            );
                             aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                         }
                     }
@@ -822,6 +837,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
+                            this.aggregation_job_size_histogram.record(
+                                u64::try_from(report_aggregations.len()).unwrap_or(u64::MAX),
+                                &[],
+                            );
                             aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                         }
 
@@ -888,6 +907,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         task_max_batch_size,
                         task_batch_time_window_size,
                         &mut aggregation_job_writer,
+                        this.aggregation_job_size_histogram.clone(),
                     );
 
                     for report in unaggregated_reports {
