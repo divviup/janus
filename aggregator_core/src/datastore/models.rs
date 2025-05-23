@@ -1619,6 +1619,7 @@ where
             && self.batch_identifier == other.batch_identifier
             && self.aggregation_parameter == other.aggregation_parameter
             && self.ord == other.ord
+            && self.client_timestamp_interval == other.client_timestamp_interval
             && self.state == other.state
     }
 }
