@@ -100,7 +100,7 @@ signal-hook-tokio = "0.3.1"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
 # sqlx-mysql which pulls in the vulnerable rsa crate
 # https://github.com/divviup/janus/security/dependabot/29
-sqlx = { version = "0.8.5", default-features = false }
+sqlx = { version = "0.8.6", default-features = false }
 stopper = "0.2.8"
 tempfile = "3.20.0"
 testcontainers = "0.22.0"
