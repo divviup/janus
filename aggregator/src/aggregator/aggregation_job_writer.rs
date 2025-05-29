@@ -28,7 +28,6 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
     KeyValue,
 };
-use prio::vdaf;
 use rand::{thread_rng, Rng as _};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
