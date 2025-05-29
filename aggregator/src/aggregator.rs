@@ -24,6 +24,7 @@ use crate::{
     diagnostic::AggregationJobInitForbiddenMutationEvent,
     metrics::{
         aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
+        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
         report_aggregation_success_counter,
     },
 };
@@ -171,6 +172,10 @@ pub struct AggregatorMetrics {
     aggregate_step_failure_counter: Counter<u64>,
     /// Histogram tracking the VDAF type and dimension of successfully-aggregated reports.
     aggregated_report_share_dimension_histogram: Histogram<u64>,
+    /// Histogram tracking the clock skew of early reports.
+    early_report_clock_skew_histogram: Histogram<u64>,
+    /// Histogram tracking the clock skew of reports with timestamps in the past.
+    past_report_clock_skew_histogram: Histogram<u64>,
 }
 
 impl AggregatorMetrics {
@@ -304,6 +309,8 @@ impl<C: Clock> Aggregator<C> {
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
         let aggregated_report_share_dimension_histogram =
             aggregated_report_share_dimension_histogram(meter);
+        let early_report_clock_skew_histogram = early_report_clock_skew_histogram(meter);
+        let past_report_clock_skew_histogram = past_report_clock_skew_histogram(meter);
 
         let hpke_keypairs = Arc::new(
             HpkeKeypairCache::new(Arc::clone(&datastore), cfg.hpke_configs_refresh_interval)
@@ -323,6 +330,8 @@ impl<C: Clock> Aggregator<C> {
                 report_aggregation_success_counter,
                 aggregate_step_failure_counter,
                 aggregated_report_share_dimension_histogram,
+                early_report_clock_skew_histogram,
+                past_report_clock_skew_histogram,
             },
             hpke_keypairs,
             peer_aggregators,
@@ -1629,10 +1638,21 @@ impl VdafOps {
             }
         };
 
-        let report_deadline = clock
-            .now()
+        let now = clock.now();
+        let report_deadline = now
             .add(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
+
+        if let Ok(clock_skew) = report.metadata().time().difference(&now) {
+            metrics
+                .early_report_clock_skew_histogram
+                .record(clock_skew.as_seconds(), &[]);
+        }
+        if let Ok(clock_skew) = now.difference(report.metadata().time()) {
+            metrics
+                .past_report_clock_skew_histogram
+                .record(clock_skew.as_seconds(), &[]);
+        }
 
         // Reject reports from too far in the future.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21

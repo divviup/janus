@@ -14,7 +14,10 @@ use crate::{
         Error, RequestBody,
     },
     cache::HpkeKeypairCache,
-    metrics::aggregated_report_share_dimension_histogram,
+    metrics::{
+        aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
+        past_report_clock_skew_histogram,
+    },
 };
 use anyhow::{anyhow, Context, Result};
 use backon::BackoffBuilder;
@@ -100,6 +103,10 @@ pub struct AggregationJobDriver<B> {
     job_retry_counter: Counter<u64>,
     #[educe(Debug(ignore))]
     http_request_duration_histogram: Histogram<f64>,
+    #[educe(Debug(ignore))]
+    early_report_clock_skew_histogram: Histogram<u64>,
+    #[educe(Debug(ignore))]
+    past_report_clock_skew_histogram: Histogram<u64>,
 }
 
 impl<R> AggregationJobDriver<R>
@@ -143,6 +150,9 @@ where
             .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
             .build();
 
+        let early_report_clock_skew_histogram = early_report_clock_skew_histogram(meter);
+        let past_report_clock_skew_histogram = past_report_clock_skew_histogram(meter);
+
         Self {
             batch_aggregation_shard_count,
             task_counter_shard_count,
@@ -156,6 +166,8 @@ where
             job_cancel_counter,
             job_retry_counter,
             http_request_duration_histogram,
+            early_report_clock_skew_histogram,
+            past_report_clock_skew_histogram,
         }
     }
 
@@ -1385,7 +1397,11 @@ where
                 datastore.clock(),
                 hpke_keypairs,
                 Arc::clone(&vdaf),
-                AggregateInitMetrics::new(self.aggregate_step_failure_counter.clone()),
+                AggregateInitMetrics::new(
+                    self.aggregate_step_failure_counter.clone(),
+                    self.early_report_clock_skew_histogram.clone(),
+                    self.past_report_clock_skew_histogram.clone(),
+                ),
                 Arc::clone(&task),
                 Arc::clone(&aggregation_job),
                 report_aggregations,

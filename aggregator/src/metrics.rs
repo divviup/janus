@@ -341,3 +341,27 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
 
     aggregate_step_failure_counter
 }
+
+const TIME_SKEW_HISTOGRAM_VALUES: &[f64] = &[
+    30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0,
+];
+
+pub(crate) fn early_report_clock_skew_histogram(meter: &Meter) -> Histogram<u64> {
+    meter
+        .u64_histogram("janus_early_report_clock_skew")
+        .with_description("Difference between the current time and an early report's timestamp")
+        .with_unit("s")
+        .with_boundaries(TIME_SKEW_HISTOGRAM_VALUES.to_vec())
+        .build()
+}
+
+pub(crate) fn past_report_clock_skew_histogram(meter: &Meter) -> Histogram<u64> {
+    meter
+        .u64_histogram("janus_past_report_clock_skew")
+        .with_description(
+            "Difference between the current time and a report timestamp that is in the past",
+        )
+        .with_unit("s")
+        .with_boundaries(TIME_SKEW_HISTOGRAM_VALUES.to_vec())
+        .build()
+}
