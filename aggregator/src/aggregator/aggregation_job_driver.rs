@@ -53,7 +53,6 @@ use opentelemetry::{
 use prio::{
     codec::{Decode, Encode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
-    vdaf,
 };
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
 use reqwest::Method;
@@ -1811,7 +1810,7 @@ where
 
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state
 /// transition representing the next step for the leader.
-struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+struct SteppedAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
     leader_state: PingPongState<SEED_SIZE, 16, A>,
 }

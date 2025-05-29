@@ -7,10 +7,11 @@ use janus_aggregator_core::{
         models::{BatchAggregation, BatchAggregationState},
     },
     task::AggregatorTask,
+    AsyncAggregator,
 };
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
 use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum};
-use prio::vdaf::{self, Aggregatable};
+use prio::vdaf::Aggregatable;
 
 /// Computes the aggregate share over the provided batch aggregations.
 ///
@@ -21,7 +22,7 @@ use prio::vdaf::{self, Aggregatable};
 pub(crate) async fn compute_aggregate_share<
     const SEED_SIZE: usize,
     B: BatchMode,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: AsyncAggregator<SEED_SIZE>,
 >(
     task: &AggregatorTask,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, B, A>],

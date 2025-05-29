@@ -904,15 +904,12 @@ where
 }
 
 #[derive(Clone)]
-pub struct WritableReportAggregation<const SEED_SIZE: usize, A>
-where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
+pub struct WritableReportAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
     output_share: Option<A::OutputShare>,
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
     WritableReportAggregation<SEED_SIZE, A>
 {
     /// Creates a new WritableReportAggregation.
@@ -945,7 +942,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 ///
 /// See [`ReportAggregation`] and [`ReportAggregationMetadata`].
 #[async_trait]
-pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>:
+pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>:
     Clone + Send + Sync
 {
     type Borrowed: ReportAggregationUpdate<SEED_SIZE, A>;

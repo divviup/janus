@@ -23,6 +23,7 @@ use janus_aggregator_core::{
     },
     taskprov::{taskprov_task_id, test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
+    AsyncAggregator,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
@@ -44,7 +45,7 @@ use janus_messages::{
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
-    vdaf::{dummy, Aggregator, Client, Vdaf},
+    vdaf::{dummy, Client, Vdaf},
 };
 use rand::random;
 use serde_json::json;
@@ -86,7 +87,7 @@ impl TaskprovTestCase<0, dummy::Vdaf> {
 
 impl<const VERIFY_KEY_SIZE: usize, V> TaskprovTestCase<VERIFY_KEY_SIZE, V>
 where
-    V: Vdaf + Client<16> + Aggregator<VERIFY_KEY_SIZE, 16> + Clone,
+    V: Vdaf + Client<16> + AsyncAggregator<VERIFY_KEY_SIZE>,
 {
     async fn with_vdaf(
         vdaf_config: VdafConfig,

@@ -5,6 +5,7 @@ use crate::{
         Transaction,
     },
     task::AggregatorTask,
+    AsyncAggregator,
 };
 use async_trait::async_trait;
 use futures::future::try_join_all;
@@ -13,7 +14,6 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Duration, Interval, Query, TaskId, Time,
 };
-use prio::vdaf;
 use std::iter;
 
 #[async_trait]
@@ -31,7 +31,7 @@ pub trait AccumulableBatchMode: BatchMode {
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
@@ -84,7 +84,7 @@ impl AccumulableBatchMode for TimeInterval {
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
@@ -136,7 +136,7 @@ impl AccumulableBatchMode for LeaderSelected {
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
@@ -212,7 +212,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     /// identifier.
     async fn get_batch_aggregations_for_collection_identifier<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<C>,
@@ -221,11 +221,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<Vec<BatchAggregation<SEED_SIZE, Self, A>>, datastore::Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<Vec<BatchAggregation<SEED_SIZE, Self, A>>, datastore::Error> {
         Ok(try_join_all(
             Self::batch_identifiers_for_collection_identifier(
                 time_precision,
@@ -256,7 +252,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     /// the given collection identifier.
     async fn get_batch_aggregation_job_count_for_collection_identifier<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<C>,
@@ -264,11 +260,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
         time_precision: &Duration,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<(u64, u64), datastore::Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-    {
+    ) -> Result<(u64, u64), datastore::Error> {
         Ok(try_join_all(
             Self::batch_identifiers_for_collection_identifier(
                 time_precision,
