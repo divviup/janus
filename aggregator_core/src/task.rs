@@ -1132,7 +1132,8 @@ pub mod test_util {
                 None,
                 /* Min batch size */ 1,
                 /* Time precision */ Duration::from_hours(8).unwrap(),
-                /* Tolerable clock skew */ Duration::from_minutes(10).unwrap(),
+                /* Tolerable clock skew */
+                Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
                 /* Aggregator auth token */ random(),
                 /* Collector auth token */ random(),
@@ -1340,6 +1341,11 @@ pub mod test_util {
 
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
+            // If the tolerable clock skew is unset, copy the time_precision
+            if *self.0.tolerable_clock_skew() == Duration::ZERO {
+                let time_precision = *self.0.time_precision();
+                return self.with_tolerable_clock_skew(time_precision).0;
+            }
             self.0
         }
     }
