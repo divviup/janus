@@ -109,9 +109,8 @@ async fn handle_add_task(
         None,
         request.min_batch_size,
         time_precision,
-        // We can be strict about clock skew since this executable is only intended for use with
-        // other aggregators running on the same host.
-        Duration::from_seconds(1),
+        /* tolerable clock skew */
+        time_precision, // Since the clock skew must be a multiple of the precision, start at 1x
         aggregator_parameters,
     )
     .context("error constructing task")?;
