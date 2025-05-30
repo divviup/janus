@@ -23,7 +23,10 @@ use janus_messages::{
     ExtensionType, InputShareAad, PlaintextInputShare, PrepareResp, PrepareStepResult, ReportError,
     Role,
 };
-use opentelemetry::{metrics::Counter, KeyValue};
+use opentelemetry::{
+    metrics::{Counter, Histogram},
+    KeyValue,
+};
 use prio::{
     codec::{Decode as _, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongState, PingPongTopology as _},
@@ -38,12 +41,22 @@ pub struct AggregateInitMetrics {
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
+    /// Histogram tracking the clock skew of early reports.
+    early_report_clock_skew_histogram: Histogram<u64>,
+    /// Histogram tracking the clock skew of reports with timestamps in the past.
+    past_report_clock_skew_histogram: Histogram<u64>,
 }
 
 impl AggregateInitMetrics {
-    pub fn new(aggregate_step_failure_counter: Counter<u64>) -> Self {
+    pub fn new(
+        aggregate_step_failure_counter: Counter<u64>,
+        early_report_clock_skew_histogram: Histogram<u64>,
+        past_report_clock_skew_histogram: Histogram<u64>,
+    ) -> Self {
         Self {
             aggregate_step_failure_counter,
+            early_report_clock_skew_histogram,
+            past_report_clock_skew_histogram,
         }
     }
 }
@@ -52,6 +65,8 @@ impl From<AggregatorMetrics> for AggregateInitMetrics {
     fn from(metrics: AggregatorMetrics) -> Self {
         Self {
             aggregate_step_failure_counter: metrics.aggregate_step_failure_counter,
+            early_report_clock_skew_histogram: metrics.early_report_clock_skew_histogram,
+            past_report_clock_skew_histogram: metrics.past_report_clock_skew_histogram,
         }
     }
 }
@@ -83,10 +98,8 @@ where
 {
     let verify_key = task.vdaf_verify_key()?;
     let report_aggregation_count = report_aggregations.len();
-    let report_deadline = clock
-        .now()
-        .add(task.tolerable_clock_skew())
-        .map_err(Error::from)?;
+    let now = clock.now();
+    let report_deadline = now.add(task.tolerable_clock_skew()).map_err(Error::from)?;
 
     // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped. This
     // will cause any attempts to send on `sender` to return a `SendError`, which will be returned
@@ -296,6 +309,24 @@ where
 
                         let shares =
                             input_share.and_then(|input_share| Ok((public_share?, input_share)));
+
+                        if let Ok(clock_skew) = prepare_init
+                            .report_share()
+                            .metadata()
+                            .time()
+                            .difference(&now)
+                        {
+                            metrics
+                                .early_report_clock_skew_histogram
+                                .record(clock_skew.as_seconds(), &[]);
+                        }
+                        if let Ok(clock_skew) =
+                            now.difference(prepare_init.report_share().metadata().time())
+                        {
+                            metrics
+                                .past_report_clock_skew_histogram
+                                .record(clock_skew.as_seconds(), &[]);
+                        }
 
                         // Reject reports from too far in the future.
                         let shares = shares.and_then(|shares| {
