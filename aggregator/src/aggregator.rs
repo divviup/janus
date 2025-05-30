@@ -23,7 +23,8 @@ use crate::{
     diagnostic::AggregationJobInitForbiddenMutationEvent,
     metrics::{
         aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
-        report_aggregation_success_counter,
+        report_aggregation_success_counter, EARLY_REPORT_CLOCK_SKEW_METER_NAME,
+        PAST_REPORT_CLOCK_SKEW_METER_NAME,
     },
 };
 use aws_lc_rs::{
@@ -179,6 +180,10 @@ struct AggregatorMetrics {
     aggregate_step_failure_counter: Counter<u64>,
     /// Histogram tracking the VDAF type and dimension of successfully-aggregated reports.
     aggregated_report_share_dimension_histogram: Histogram<u64>,
+    /// Histogram tracking the clock skew of early reports.
+    early_report_clock_skew_histogram: Histogram<u64>,
+    /// Histogram tracking the clock skew of reports with timestamps in the past.
+    past_report_clock_skew_histogram: Histogram<u64>,
 }
 
 impl AggregatorMetrics {
@@ -321,6 +326,19 @@ impl<C: Clock> Aggregator<C> {
         let aggregated_report_share_dimension_histogram =
             aggregated_report_share_dimension_histogram(meter);
 
+        let early_report_clock_skew_histogram = meter
+            .u64_histogram(EARLY_REPORT_CLOCK_SKEW_METER_NAME)
+            .with_description("Difference between the current time and an early report's timestamp")
+            .with_unit("s")
+            .init();
+        let past_report_clock_skew_histogram = meter
+            .u64_histogram(PAST_REPORT_CLOCK_SKEW_METER_NAME)
+            .with_description(
+                "Difference between the current time and a report timestamp that is in the past",
+            )
+            .with_unit("s")
+            .init();
+
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
             cfg.global_hpke_configs_refresh_interval,
@@ -341,6 +359,8 @@ impl<C: Clock> Aggregator<C> {
                 report_aggregation_success_counter,
                 aggregate_step_failure_counter,
                 aggregated_report_share_dimension_histogram,
+                early_report_clock_skew_histogram,
+                past_report_clock_skew_histogram,
             },
             global_hpke_keypairs,
             peer_aggregators,
@@ -1708,10 +1728,21 @@ impl VdafOps {
             }
         };
 
-        let report_deadline = clock
-            .now()
+        let now = clock.now();
+        let report_deadline = now
             .add(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
+
+        if let Ok(clock_skew) = report.metadata().time().difference(&now) {
+            metrics
+                .early_report_clock_skew_histogram
+                .record(clock_skew.as_seconds(), &[]);
+        }
+        if let Ok(clock_skew) = now.difference(report.metadata().time()) {
+            metrics
+                .past_report_clock_skew_histogram
+                .record(clock_skew.as_seconds(), &[]);
+        }
 
         // Reject reports from too far in the future.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
@@ -2060,10 +2091,8 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
-        let report_deadline = clock
-            .now()
-            .add(task.tolerable_clock_skew())
-            .map_err(Error::from)?;
+        let now = clock.now();
+        let report_deadline = now.add(task.tolerable_clock_skew()).map_err(Error::from)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
@@ -2321,6 +2350,24 @@ impl VdafOps {
 
                         let shares =
                             input_share.and_then(|input_share| Ok((public_share?, input_share)));
+
+                        if let Ok(clock_skew) = prepare_init
+                            .report_share()
+                            .metadata()
+                            .time()
+                            .difference(&now)
+                        {
+                            metrics
+                                .early_report_clock_skew_histogram
+                                .record(clock_skew.as_seconds(), &[]);
+                        }
+                        if let Ok(clock_skew) =
+                            now.difference(prepare_init.report_share().metadata().time())
+                        {
+                            metrics
+                                .past_report_clock_skew_histogram
+                                .record(clock_skew.as_seconds(), &[]);
+                        }
 
                         // Reject reports from too far in the future.
                         let shares = shares.and_then(|shares| {

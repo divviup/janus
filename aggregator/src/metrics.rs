@@ -178,6 +178,7 @@ struct CustomView {
     vdaf_dimension_histogram_view: Box<dyn View>,
     bytes_histogram_view: Box<dyn View>,
     aggregation_job_size_histogram_view: Box<dyn View>,
+    time_skew_histogram_view: Box<dyn View>,
     default_histogram_view: Box<dyn View>,
 }
 
@@ -210,6 +211,11 @@ impl CustomView {
     const AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES: &[f64] =
         &[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0];
 
+    /// These boundaries are for time differences from report timestamps.
+    const TIME_SKEW_HISTOGRAM_VALUES: &[f64] = &[
+        30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0,
+    ];
+
     pub fn new() -> Result<Self, MetricsError> {
         let wildcard_instrument = Instrument::new().name("*");
         Ok(Self {
@@ -241,6 +247,13 @@ impl CustomView {
                     record_min_max: true,
                 }),
             )?,
+            time_skew_histogram_view: new_view(
+                wildcard_instrument.clone(),
+                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
+                    boundaries: Vec::from(Self::TIME_SKEW_HISTOGRAM_VALUES),
+                    record_min_max: true,
+                }),
+            )?,
             default_histogram_view: new_view(
                 wildcard_instrument,
                 Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
@@ -269,6 +282,10 @@ impl View for CustomView {
             (Some(InstrumentKind::Histogram), AGGREGATION_JOB_SIZE_METER_NAME) => {
                 self.aggregation_job_size_histogram_view.match_inst(inst)
             }
+            (
+                Some(InstrumentKind::Histogram),
+                EARLY_REPORT_CLOCK_SKEW_METER_NAME | PAST_REPORT_CLOCK_SKEW_METER_NAME,
+            ) => self.time_skew_histogram_view.match_inst(inst),
             (Some(InstrumentKind::Histogram), _) => self.default_histogram_view.match_inst(inst),
             _ => None,
         }
@@ -511,3 +528,6 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
 }
 
 pub const AGGREGATION_JOB_SIZE_METER_NAME: &str = "janus_aggregation_job_size";
+
+pub(crate) const EARLY_REPORT_CLOCK_SKEW_METER_NAME: &str = "janus_early_report_clock_skew";
+pub(crate) const PAST_REPORT_CLOCK_SKEW_METER_NAME: &str = "janus_past_report_clock_skew";
