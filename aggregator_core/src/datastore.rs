@@ -23,7 +23,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, IntervalExt, TimeExt},
+    time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -675,6 +675,9 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
             end.validate_precision(task.time_precision())
                 .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
         }
+        task.tolerable_clock_skew()
+            .validate_precision(task.time_precision())
+            .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
 
         // Main task insert.
         let stmt = self

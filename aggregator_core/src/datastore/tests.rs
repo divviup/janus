@@ -6681,7 +6681,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6692,7 +6691,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6705,7 +6703,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6718,7 +6715,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6731,7 +6727,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6742,7 +6737,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                 .with_time_precision(TIME_PRECISION)
-                .with_tolerable_clock_skew(TIME_PRECISION)
                 .build()
                 .leader_view()
                 .unwrap();
