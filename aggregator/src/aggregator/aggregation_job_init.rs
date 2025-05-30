@@ -581,6 +581,7 @@ mod tests {
             AggregationMode, BatchMode,
         },
         test_util::noop_meter,
+        AsyncAggregator,
     };
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
