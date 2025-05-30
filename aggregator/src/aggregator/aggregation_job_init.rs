@@ -435,7 +435,10 @@ where
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::aggregator::test_util::generate_helper_report_share;
-    use janus_aggregator_core::task::{test_util::Task, AggregatorTask};
+    use janus_aggregator_core::{
+        task::{test_util::Task, AggregatorTask},
+        AsyncAggregator,
+    };
     use janus_core::{
         test_util::{run_vdaf, VdafTranscript},
         time::{Clock, MockClock, TimeExt as _},
@@ -468,7 +471,7 @@ pub mod test_util {
 
     impl<const VERIFY_KEY_SIZE: usize, V> PrepareInitGenerator<VERIFY_KEY_SIZE, V>
     where
-        V: vdaf::Vdaf + vdaf::Aggregator<VERIFY_KEY_SIZE, 16> + vdaf::Client<16>,
+        V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
     {
         pub fn new(
             clock: MockClock,
@@ -609,6 +612,7 @@ mod tests {
             AggregationMode, BatchMode,
         },
         test_util::noop_meter,
+        AsyncAggregator,
     };
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
@@ -633,7 +637,7 @@ mod tests {
 
     pub(super) struct AggregationJobInitTestCase<
         const VERIFY_KEY_SIZE: usize,
-        V: vdaf::Aggregator<VERIFY_KEY_SIZE, 16>,
+        V: AsyncAggregator<VERIFY_KEY_SIZE>,
     > {
         pub(super) clock: MockClock,
         pub(super) task: Task,
@@ -668,7 +672,7 @@ mod tests {
 
     async fn setup_aggregate_init_test_for_vdaf<
         const VERIFY_KEY_SIZE: usize,
-        V: vdaf::Aggregator<VERIFY_KEY_SIZE, 16> + vdaf::Client<16>,
+        V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
     >(
         vdaf: V,
         vdaf_instance: VdafInstance,
@@ -713,7 +717,7 @@ mod tests {
 
     async fn setup_aggregate_init_test_without_sending_request<
         const VERIFY_KEY_SIZE: usize,
-        V: vdaf::Aggregator<VERIFY_KEY_SIZE, 16> + vdaf::Client<16>,
+        V: AsyncAggregator<VERIFY_KEY_SIZE> + vdaf::Client<16>,
     >(
         vdaf: V,
         vdaf_instance: VdafInstance,

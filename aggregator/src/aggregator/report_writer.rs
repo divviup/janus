@@ -5,14 +5,16 @@ use crate::aggregator::{
 };
 use async_trait::async_trait;
 use futures::future::{join_all, try_join_all};
-use janus_aggregator_core::datastore::{
-    self,
-    models::{LeaderStoredReport, TaskUploadCounter},
-    Datastore, Transaction,
+use janus_aggregator_core::{
+    datastore::{
+        self,
+        models::{LeaderStoredReport, TaskUploadCounter},
+        Datastore, Transaction,
+    },
+    AsyncAggregator,
 };
 use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
-use prio::vdaf;
 use rand::{thread_rng, Rng};
 use std::{
     collections::BTreeMap,
@@ -247,11 +249,7 @@ pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
 #[derive(Debug)]
 pub struct WritableReport<const SEED_SIZE: usize, B, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
+    A: AsyncAggregator<SEED_SIZE>,
     B: UploadableBatchMode,
 {
     vdaf: Arc<A>,
@@ -261,11 +259,7 @@ where
 
 impl<const SEED_SIZE: usize, B, A> WritableReport<SEED_SIZE, B, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
+    A: AsyncAggregator<SEED_SIZE>,
     B: UploadableBatchMode,
 {
     pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<SEED_SIZE, A>) -> Self {
@@ -280,11 +274,7 @@ where
 #[async_trait]
 impl<const SEED_SIZE: usize, C, B, A> ReportWriter<C> for WritableReport<SEED_SIZE, B, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
+    A: AsyncAggregator<SEED_SIZE>,
     C: Clock,
     B: UploadableBatchMode,
 {

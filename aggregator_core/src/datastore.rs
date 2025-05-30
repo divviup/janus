@@ -15,7 +15,7 @@ use crate::{
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
 };
 use aws_lc_rs::aead::{self, LessSafeKey, AES_128_GCM};
 use chrono::NaiveDateTime;
@@ -41,7 +41,6 @@ use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongState, PingPongTransition},
-    vdaf,
 };
 use rand::random;
 use std::{
@@ -1052,9 +1051,7 @@ LIMIT 5000",
         report_id: &ReportId,
     ) -> Result<Option<LeaderStoredReport<SEED_SIZE, A>>, Error>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
+        A: AsyncAggregator<SEED_SIZE>,
     {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -1090,7 +1087,7 @@ WHERE client_reports.task_id = $1
     #[cfg(feature = "test-util")]
     pub async fn get_client_reports_for_task<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -1137,16 +1134,12 @@ WHERE client_reports.task_id = $1
         .collect()
     }
 
-    fn client_report_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn client_report_from_row<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
         vdaf: &A,
         task_id: TaskId,
         report_id: ReportId,
         row: Row,
-    ) -> Result<LeaderStoredReport<SEED_SIZE, A>, Error>
-    where
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
-    {
+    ) -> Result<LeaderStoredReport<SEED_SIZE, A>, Error> {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
 
         let encoded_public_extensions: Vec<u8> = row
@@ -1274,7 +1267,7 @@ RETURNING report_id, client_timestamp",
         limit: usize,
     ) -> Result<Vec<(A::AggregationParam, UnaggregatedReport)>, Error>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter,
+        A: AsyncAggregator<SEED_SIZE> + VdafHasAggregationParameter,
     {
         // TODO(#224): lock retrieved client_reports rows
         // TODO(#225): use get_task_primary_key_and_expiry_threshold as in
@@ -1556,9 +1549,7 @@ WHERE report_aggregations.task_id = $1
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
+        A: AsyncAggregator<SEED_SIZE>,
     {
         let task_info = self
             .task_info_for(report.task_id())
@@ -1800,7 +1791,7 @@ WHERE client_reports.client_timestamp < $7",
     pub async fn get_aggregation_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         task_id: &TaskId,
@@ -1847,7 +1838,7 @@ WHERE aggregation_jobs.task_id = $1
     ) -> Result<Vec<AggregationJob<SEED_SIZE, B, A>>, Error>
     where
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -1888,7 +1879,7 @@ WHERE aggregation_jobs.task_id = $1
     fn aggregation_job_from_row<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
@@ -2056,7 +2047,7 @@ WHERE aggregation_jobs.task_id = $4
     pub async fn put_aggregation_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
@@ -2129,7 +2120,7 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
     pub async fn update_aggregation_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         aggregation_job: &AggregationJob<SEED_SIZE, B, A>,
@@ -2177,7 +2168,7 @@ WHERE aggregation_jobs.task_id = $6
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_report_aggregations_for_aggregation_job<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -2185,10 +2176,7 @@ WHERE aggregation_jobs.task_id = $6
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
-    where
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-    {
+    ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -2242,7 +2230,7 @@ ORDER BY ord ASC",
     #[cfg(feature = "test-util")]
     pub async fn get_report_aggregation_by_report_id<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -2251,10 +2239,7 @@ ORDER BY ord ASC",
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error>
-    where
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-    {
+    ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(None),
@@ -2309,17 +2294,14 @@ WHERE report_aggregations.task_id = $1
     #[cfg(feature = "test-util")]
     pub async fn get_report_aggregations_for_task<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
         aggregation_param: &A::AggregationParam,
-    ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
-    where
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-    {
+    ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -2366,7 +2348,7 @@ WHERE report_aggregations.task_id = $1
         .collect()
     }
 
-    fn report_aggregation_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn report_aggregation_from_row<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
@@ -2374,10 +2356,7 @@ WHERE report_aggregations.task_id = $1
         report_id: &ReportId,
         aggregation_param: &A::AggregationParam,
         row: &Row,
-    ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
-    where
-        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-    {
+    ) -> Result<ReportAggregation<SEED_SIZE, A>, Error> {
         let ord: u64 = row.get_bigint_and_convert("ord")?;
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
         let state: ReportAggregationStateCode = row.get("state");
@@ -2615,16 +2594,10 @@ WHERE report_aggregations.task_id = $1
 
     /// put_report_aggregation stores aggregation data for a single report.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_report_aggregation<
-        const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-    >(
+    pub async fn put_report_aggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
         &self,
         report_aggregation: &ReportAggregation<SEED_SIZE, A>,
-    ) -> Result<(), Error>
-    where
-        A::PrepareState: Encode,
-    {
+    ) -> Result<(), Error> {
         let task_info = match self.task_info_for(report_aggregation.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
@@ -2898,14 +2871,11 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_report_aggregation<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         report_aggregation: &ReportAggregation<SEED_SIZE, A>,
-    ) -> Result<(), Error>
-    where
-        A::PrepareState: Encode,
-    {
+    ) -> Result<(), Error> {
         let task_info = match self.task_info_for(report_aggregation.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
@@ -2984,7 +2954,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
     pub async fn get_collection_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3043,7 +3013,7 @@ WHERE collection_jobs.task_id = $1
     pub async fn get_finished_collection_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3108,7 +3078,7 @@ LIMIT 1",
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_including_time<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3159,7 +3129,7 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_intersecting_interval<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3220,7 +3190,7 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_by_batch_id<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3274,7 +3244,7 @@ WHERE task_id = $1
     pub async fn get_collection_jobs_for_task<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3326,7 +3296,7 @@ WHERE task_id = $1
     fn collection_job_from_row<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         vdaf: &A,
         task_id: TaskId,
@@ -3401,14 +3371,11 @@ WHERE task_id = $1
     pub async fn put_collection_job<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         collection_job: &CollectionJob<SEED_SIZE, B, A>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Debug,
-    {
+    ) -> Result<(), Error> {
         let task_info = match self.task_info_for(collection_job.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
@@ -3642,7 +3609,7 @@ WHERE task_id = $4
     pub async fn update_collection_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         collection_job: &CollectionJob<SEED_SIZE, B, A>,
@@ -3736,7 +3703,7 @@ WHERE task_id = $8
     pub async fn get_batch_aggregation<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3810,7 +3777,7 @@ WHERE task_id = $1
     pub async fn get_batch_aggregations_for_batch<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -3882,7 +3849,7 @@ WHERE task_id = $1
     pub async fn get_batch_aggregation_job_count_for_batch<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         task_id: &TaskId,
@@ -3948,7 +3915,7 @@ WHERE task_id = $1
     pub async fn get_batch_aggregations_for_task<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -4015,7 +3982,7 @@ WHERE task_id = $1
     fn batch_aggregation_from_row<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         vdaf: &A,
         task_id: TaskId,
@@ -4025,7 +3992,7 @@ WHERE task_id = $1
         row: Row,
     ) -> Result<BatchAggregation<SEED_SIZE, B, A>, Error> {
         #[allow(clippy::type_complexity)]
-        fn parse_values_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+        fn parse_values_from_row<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>(
             vdaf: &A,
             aggregation_param: &A::AggregationParam,
             row: &Row,
@@ -4108,15 +4075,11 @@ WHERE task_id = $1
     pub async fn put_batch_aggregation<
         const SEED_SIZE: usize,
         B: AccumulableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Debug,
-        A::AggregateShare: Debug,
-    {
+    ) -> Result<(), Error> {
         let task_info = match self.task_info_for(batch_aggregation.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
@@ -4207,15 +4170,11 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
     pub async fn update_batch_aggregation<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error>
-    where
-        A::AggregationParam: Debug,
-        A::AggregateShare: Debug,
-    {
+    ) -> Result<(), Error> {
         let task_info = match self.task_info_for(batch_aggregation.task_id()).await? {
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
@@ -4297,7 +4256,7 @@ WHERE task_id = $10
     pub async fn get_aggregate_share_job<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -4356,7 +4315,7 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_intersecting_interval<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -4415,7 +4374,7 @@ WHERE task_id = $1
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_by_batch_id<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -4466,7 +4425,7 @@ WHERE task_id = $1
     pub async fn get_aggregate_share_jobs_for_task<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         vdaf: &A,
@@ -4522,7 +4481,7 @@ WHERE task_id = $1
     fn aggregate_share_job_from_row<
         const SEED_SIZE: usize,
         B: BatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         vdaf: &A,
         task_id: &TaskId,
@@ -4547,7 +4506,7 @@ WHERE task_id = $1
     pub async fn put_aggregate_share_job<
         const SEED_SIZE: usize,
         B: CollectableBatchMode,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: AsyncAggregator<SEED_SIZE>,
     >(
         &self,
         aggregate_share_job: &AggregateShareJob<SEED_SIZE, B, A>,
