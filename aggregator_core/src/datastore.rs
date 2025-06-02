@@ -4508,19 +4508,14 @@ ON CONFLICT(task_id, batch_id) DO UPDATE
             let stmt = self
                 .prepare_cached(
                     "-- get_unfilled_outstanding_batches()
-WITH non_gc_batches AS (
-    SELECT batch_identifier
-    FROM batch_aggregations
-    WHERE task_id = $1
-    GROUP BY batch_identifier
-    HAVING MAX(UPPER(client_timestamp_interval)) >= $3
-)
 SELECT batch_id FROM outstanding_batches
 WHERE task_id = $1
   AND time_bucket_start = $2
   AND state = 'FILLING'
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = outstanding_batches.batch_id)",
+  AND (SELECT MAX(UPPER(client_timestamp_interval)) FROM batch_aggregations
+          WHERE batch_identifier = outstanding_batches.batch_id
+            AND task_id = $1
+  ) >= $3",
                 )
                 .await?;
             self.query(
@@ -4540,19 +4535,14 @@ WHERE task_id = $1
             let stmt = self
                 .prepare_cached(
                     "-- get_unfilled_outstanding_batches()
-WITH non_gc_batches AS (
-    SELECT batch_identifier
-    FROM batch_aggregations
-    WHERE task_id = $1
-    GROUP BY batch_identifier
-    HAVING MAX(UPPER(client_timestamp_interval)) >= $2
-)
 SELECT batch_id FROM outstanding_batches
 WHERE task_id = $1
   AND time_bucket_start IS NULL
   AND state = 'FILLING'
-  AND EXISTS(SELECT 1 FROM non_gc_batches
-             WHERE batch_identifier = outstanding_batches.batch_id)",
+  AND (SELECT MAX(UPPER(client_timestamp_interval)) FROM batch_aggregations
+          WHERE batch_identifier = outstanding_batches.batch_id
+            AND task_id = $1
+  ) >= $2",
                 )
                 .await?;
             self.query(
