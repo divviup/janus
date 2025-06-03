@@ -461,7 +461,6 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.verify_key_init,
         req.collector_hpke_config,
         req.report_expiry_age,
-        req.tolerable_clock_skew,
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
     )

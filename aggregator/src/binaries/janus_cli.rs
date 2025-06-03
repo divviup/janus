@@ -149,10 +149,6 @@ enum Command {
         #[arg(long)]
         report_expiry_age_secs: Option<u64>,
 
-        /// The amount of clock skew that the system will accept, in seconds.
-        #[arg(long)]
-        tolerable_clock_skew_secs: u64,
-
         /// The aggregator auth token, which must be in the format `bearer:value` or `dap:value`.
         #[arg(long, env = "AGGREGATOR_AUTH_TOKEN", hide_env_values = true)]
         aggregator_auth_token: AuthenticationToken,
@@ -257,7 +253,6 @@ impl Command {
                 verify_key_init,
                 collector_hpke_config_file,
                 report_expiry_age_secs,
-                tolerable_clock_skew_secs,
                 aggregator_auth_token,
                 collector_auth_token,
             } => {
@@ -271,7 +266,6 @@ impl Command {
 
                 // Parse flags into proper types.
                 let report_expiry_age = report_expiry_age_secs.map(Duration::from_seconds);
-                let tolerable_clock_skew = Duration::from_seconds(*tolerable_clock_skew_secs);
 
                 add_taskprov_peer_aggregator(
                     &datastore,
@@ -282,7 +276,6 @@ impl Command {
                     *verify_key_init,
                     collector_hpke_config_file,
                     report_expiry_age,
-                    tolerable_clock_skew,
                     aggregator_auth_token,
                     collector_auth_token.as_ref(),
                 )
@@ -408,7 +401,6 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
     verify_key_init: VerifyKeyInit,
     collector_hpke_config_file: &Path,
     report_expiry_age: Option<Duration>,
-    tolerable_clock_skew: Duration,
     aggregator_auth_token: &AuthenticationToken,
     collector_auth_token: Option<&AuthenticationToken>,
 ) -> Result<()> {
@@ -427,7 +419,6 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
         verify_key_init,
         collector_hpke_config,
         report_expiry_age,
-        tolerable_clock_skew,
         Vec::from([aggregator_auth_token.clone()]),
         collector_auth_tokens,
     )?);
@@ -1056,7 +1047,6 @@ mod tests {
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: &HpkeConfig,
         report_expiry_age: Option<Duration>,
-        tolerable_clock_skew: Duration,
         aggregator_auth_token: &AuthenticationToken,
         collector_auth_token: Option<&AuthenticationToken>,
     ) {
@@ -1075,7 +1065,6 @@ mod tests {
             verify_key_init,
             &collector_hpke_config_file,
             report_expiry_age,
-            tolerable_clock_skew,
             aggregator_auth_token,
             collector_auth_token,
         )
@@ -1102,7 +1091,6 @@ mod tests {
         .config()
         .clone();
         let report_expiry_age = Some(Duration::from_seconds(3600));
-        let tolerable_clock_skew = Duration::from_seconds(60);
         let aggregator_auth_token = random();
         let collector_auth_token = random();
 
@@ -1115,7 +1103,6 @@ mod tests {
             verify_key_init,
             &collector_hpke_config,
             report_expiry_age,
-            tolerable_clock_skew,
             &aggregator_auth_token,
             Some(&collector_auth_token),
         )
@@ -1128,7 +1115,6 @@ mod tests {
             verify_key_init,
             collector_hpke_config,
             report_expiry_age,
-            tolerable_clock_skew,
             Vec::from([aggregator_auth_token]),
             Vec::from([collector_auth_token]),
         )
@@ -1174,7 +1160,6 @@ mod tests {
             .config()
             .clone(),
             Some(Duration::from_seconds(3600)),
-            Duration::from_seconds(60),
             &random(),
             Some(&random()),
         )

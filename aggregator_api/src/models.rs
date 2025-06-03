@@ -208,7 +208,6 @@ pub(crate) struct TaskprovPeerAggregatorResp {
     pub(crate) peer_role: Role,
     pub(crate) collector_hpke_config: HpkeConfig,
     pub(crate) report_expiry_age: Option<Duration>,
-    pub(crate) tolerable_clock_skew: Duration,
 }
 
 impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
@@ -219,7 +218,6 @@ impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
             peer_role: *value.peer_role(),
             collector_hpke_config: value.collector_hpke_config().clone(),
             report_expiry_age: value.report_expiry_age().cloned(),
-            tolerable_clock_skew: *value.tolerable_clock_skew(),
         }
     }
 }
@@ -232,7 +230,6 @@ pub(crate) struct PostTaskprovPeerAggregatorReq {
     pub(crate) collector_hpke_config: HpkeConfig,
     pub(crate) verify_key_init: VerifyKeyInit,
     pub(crate) report_expiry_age: Option<Duration>,
-    pub(crate) tolerable_clock_skew: Duration,
     pub(crate) aggregator_auth_tokens: Vec<AuthenticationToken>,
     pub(crate) collector_auth_tokens: Vec<AuthenticationToken>,
 }
