@@ -87,6 +87,7 @@ impl SimulationAggregator {
                 max_upload_batch_write_delay: StdDuration::from_secs(0),
                 batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
                 task_counter_shard_count: TASK_COUNTER_SHARD_COUNT,
+                max_future_concurrency: 10000,
                 hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
                 hpke_config_signing_key: None,
                 // We only support Taskprov on the helper side, so leave it disabled.
@@ -306,6 +307,7 @@ impl Components {
             &state.meter,
             BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             RetryStrategy::new(StdDuration::ZERO, StdDuration::ZERO, 1.0).unwrap(),
+            10000,
         ));
         let collection_job_driver_acquirer_cb =
             Box::new(collection_job_driver.make_incomplete_job_acquirer_callback(

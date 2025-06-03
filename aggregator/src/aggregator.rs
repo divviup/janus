@@ -41,7 +41,7 @@ use fixed::{
     types::extra::{U15, U31},
     FixedI16, FixedI32,
 };
-use futures::future::try_join_all;
+use futures::{future::try_join_all, stream::TryStreamExt};
 use http::{header::CONTENT_TYPE, Method};
 use itertools::iproduct;
 use janus_aggregator_core::{
@@ -102,6 +102,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fmt::Debug,
+    iter::repeat,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex as SyncMutex},
@@ -207,6 +208,10 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
+    /// The maximum number of futures to await concurrenctly while servicing jobs. Higher values
+    /// will cause higher peak memory usage.
+    pub max_future_concurrency: usize,
+
     /// Defines the number of shards to break report counters into. Increasing this value will
     /// reduce the amount of database contention during report uploads, while increasing the cost
     /// of getting task metrics.
@@ -244,6 +249,7 @@ impl Default for Config {
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
             task_counter_shard_count: 32,
+            max_future_concurrency: 10000,
             hpke_configs_refresh_interval: HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
@@ -714,6 +720,7 @@ impl<C: Clock> Aggregator<C> {
                 &self.datastore,
                 &self.clock,
                 self.cfg.batch_aggregation_shard_count,
+                self.cfg.max_future_concurrency,
                 req_bytes,
                 collector_hpke_config,
             )
@@ -1121,6 +1128,7 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         clock: &C,
         batch_aggregation_shard_count: u64,
+        max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
     ) -> Result<AggregateShare, Error> {
@@ -1130,6 +1138,7 @@ impl<C: Clock> TaskAggregator<C> {
                 clock,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
+                max_future_concurrency,
                 req_bytes,
                 collector_hpke_config,
             )
@@ -3127,6 +3136,7 @@ impl VdafOps {
         clock: &C,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
+        max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
     ) -> Result<AggregateShare, Error> {
@@ -3146,6 +3156,7 @@ impl VdafOps {
                         Arc::clone(vdaf),
                         req_bytes,
                         batch_aggregation_shard_count,
+                        max_future_concurrency,
                         collector_hpke_config,
                         Arc::clone(dp_strategy)
                     ).await
@@ -3166,6 +3177,7 @@ impl VdafOps {
                         Arc::clone(vdaf),
                         req_bytes,
                         batch_aggregation_shard_count,
+                        max_future_concurrency,
                         collector_hpke_config,
                         Arc::clone(dp_strategy)
                     ).await
@@ -3187,6 +3199,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         req_bytes: &[u8],
         batch_aggregation_shard_count: u64,
+        max_future_concurrency: usize,
         collector_hpke_config: &HpkeConfig,
         dp_strategy: Arc<S>,
     ) -> Result<AggregateShare, Error> {
@@ -3319,15 +3332,30 @@ impl VdafOps {
                         report_count,
                         checksum,
                     );
-                    try_join!(
-                        tx.put_aggregate_share_job(&aggregate_share_job),
-                        try_join_all(batch_aggregations.into_iter().map(|ba| async move {
-                            tx.update_batch_aggregation(&ba.scrubbed()).await
-                        })),
-                        try_join_all(empty_batch_aggregations.into_iter().map(|ba| async move {
-                            tx.put_batch_aggregation(&ba.scrubbed()).await
-                        }))
-                    )?;
+
+                    tx.put_aggregate_share_job(&aggregate_share_job).await?;
+
+                    // Rather than awaiting all the futures at once, which can cause heap growth
+                    // proportional to the number of batch aggregations to write, put them into an
+                    // buffered stream so that they get run in groups of bounded size. #3857
+                    futures::stream::iter(
+                        batch_aggregations
+                            .into_iter()
+                            // existing batch aggregatons must be updated so zip with true
+                            .zip(repeat(true))
+                            // empty batch aggregations are new so zip with false
+                            .chain(empty_batch_aggregations.into_iter().zip(repeat(false)))
+                            .map(|(ba, is_update)| Ok((ba.scrubbed(), is_update))),
+                    )
+                    .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
+                        if is_update {
+                            tx.update_batch_aggregation(&ba).await
+                        } else {
+                            tx.put_batch_aggregation(&ba).await
+                        }
+                    })
+                    .await?;
+
                     Ok(aggregate_share_job)
                 })
             })
