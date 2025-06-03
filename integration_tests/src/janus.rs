@@ -170,6 +170,7 @@ impl JanusInProcess {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 100,
             batch_aggregation_shard_count: 32,
+            max_future_concurrency: 10000,
             task_counter_shard_count: 64,
             global_hpke_configs_refresh_interval: None,
             task_cache_ttl_s: None,
@@ -233,6 +234,7 @@ impl JanusInProcess {
             min_collection_job_retry_delay_s: 1,
             max_collection_job_retry_delay_s: 1,
             collection_job_retry_delay_exponential_factor: 1.0,
+            max_future_concurrency: 1000,
         };
         let key_rotator_config = KeyRotatorConfig {
             common_config,

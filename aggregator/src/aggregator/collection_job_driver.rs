@@ -9,7 +9,7 @@ use anyhow::bail;
 use backoff::backoff::Backoff;
 use bytes::Bytes;
 use educe::Educe;
-use futures::future::{try_join_all, BoxFuture};
+use futures::{future::BoxFuture, stream::TryStreamExt};
 use janus_aggregator_core::{
     datastore::{
         self,
@@ -37,7 +37,7 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{sync::Arc, time::Duration};
+use std::{iter::repeat, sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
 
@@ -56,6 +56,8 @@ pub struct CollectionJobDriver<B> {
     /// The retry strategy to use for collection jobs that attempted to be stepped but was not yet
     /// ready due to pending aggregation.
     collection_retry_strategy: RetryStrategy,
+    /// How many futures to run concurrently.
+    max_future_concurrency: usize,
 }
 
 impl<B> CollectionJobDriver<B>
@@ -69,6 +71,7 @@ where
         meter: &Meter,
         batch_aggregation_shard_count: u64,
         collection_retry_strategy: RetryStrategy,
+        max_future_concurrency: usize,
     ) -> Self {
         Self {
             http_client,
@@ -76,6 +79,7 @@ where
             metrics: CollectionJobDriverMetrics::new(meter),
             batch_aggregation_shard_count,
             collection_retry_strategy,
+            max_future_concurrency,
         }
     }
 
@@ -161,6 +165,7 @@ where
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
                 let collection_retry_strategy = self.collection_retry_strategy.clone();
                 let metrics = self.metrics.clone();
+                let max_future_concurrency = self.max_future_concurrency;
 
                 Box::pin(async move {
                     // Read the task & collection job.
@@ -302,18 +307,26 @@ where
                         &batch_aggregations,
                     );
 
-                    try_join!(
-                        try_join_all(
-                            batch_aggregations
-                                .iter()
-                                .map(|ba| tx.update_batch_aggregation(ba))
-                        ),
-                        try_join_all(
-                            empty_batch_aggregations
-                                .iter()
-                                .map(|ba| tx.put_batch_aggregation(ba))
-                        ),
-                    )?;
+                    // Rather than awaiting all the futures at once, which can cause heap growth
+                    // proportional to the number of batch aggregations to write, put them into an
+                    // buffered stream so that they get run in groups of bounded size. #3857
+                    futures::stream::iter(
+                        batch_aggregations
+                            .iter()
+                            // existing batch aggregatons must be updated so zip with true
+                            .zip(repeat(true))
+                            // empty batch aggregations are new so zip with false
+                            .chain(empty_batch_aggregations.iter().zip(repeat(false)))
+                            .map(Result::Ok),
+                    )
+                    .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
+                        if is_update {
+                            tx.update_batch_aggregation(ba).await
+                        } else {
+                            tx.put_batch_aggregation(ba).await
+                        }
+                    })
+                    .await?;
 
                     batch_aggregations = batch_aggregations
                         .into_iter()
@@ -406,6 +419,7 @@ where
                 let collection_job = Arc::clone(&collection_job);
                 let batch_aggregations = Arc::clone(&batch_aggregations);
                 let metrics = self.metrics.clone();
+                let max_future_concurrency = self.max_future_concurrency;
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
@@ -426,13 +440,17 @@ where
 
                     match maybe_updated_collection_job.state() {
                         CollectionJobState::Start => {
-                            try_join!(
-                                tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
-                                try_join_all(batch_aggregations.iter().map(|ba| async move {
-                                    tx.update_batch_aggregation(ba).await
-                                })),
-                                tx.release_collection_job(&lease, None),
-                            )?;
+                            tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job).await?;
+
+                            // Put all the futures into a buffered stream so that we don't incur the
+                            // combined memory footprint of all the futures at once. #3857
+                            futures::stream::iter(batch_aggregations.iter().map(Result::Ok))
+                                .try_for_each_concurrent(max_future_concurrency, |ba| {
+                                    tx.update_batch_aggregation(ba)
+                                })
+                                .await?;
+
+                            tx.release_collection_job(&lease, None).await?;
                             metrics.jobs_finished_counter.add( 1, &[]);
                         }
 
@@ -445,7 +463,7 @@ where
                                 collection_job_id = %collection_job.id(),
                                 "collection job was deleted while lease was held. Discarding aggregate results.",
                             );
-                            metrics.deleted_jobs_encountered_counter.add( 1, &[]);
+                            metrics.deleted_jobs_encountered_counter.add(1, &[]);
                         }
 
                         state => {
@@ -453,7 +471,10 @@ where
                             // abandoned or finished state while this collection job driver held its
                             // lease, and we should not have acquired a lease if we were in the
                             // start state.
-                            metrics.unexpected_job_state_counter.add( 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
+                            metrics.unexpected_job_state_counter.add(
+                                1,
+                                &[KeyValue::new("state", Value::from(format!("{state}")))],
+                            );
                             panic!(
                                 "collection job {} unexpectedly in state {}",
                                 collection_job.id(), state
@@ -1115,6 +1136,7 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             RetryStrategy::NO_DELAY.clone(),
+            10000,
         );
 
         // Batch aggregations indicate not all aggregation jobs are complete, and there is an
@@ -1467,6 +1489,7 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             RetryStrategy::NO_DELAY.clone(),
+            10000,
         );
 
         // Run: abandon the collection job.
@@ -1529,6 +1552,7 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             RetryStrategy::NO_DELAY.clone(),
+            10000,
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1625,6 +1649,7 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             RetryStrategy::NO_DELAY.clone(),
+            10000,
         ));
         let job_driver = Arc::new(
             JobDriver::new(
@@ -1752,6 +1777,7 @@ mod tests {
             &noop_meter(),
             BATCH_AGGREGATION_SHARD_COUNT,
             RetryStrategy::NO_DELAY.clone(),
+            10000,
         );
 
         // Step the collection job. The driver should successfully run the job, but then discard the
