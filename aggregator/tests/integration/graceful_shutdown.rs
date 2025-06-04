@@ -382,6 +382,7 @@ async fn aggregation_job_creator_shutdown() {
         min_aggregation_job_size: 100,
         max_aggregation_job_size: 100,
         aggregation_job_creation_report_window: 5000,
+        late_report_grace_period_s: 3600,
     };
 
     graceful_shutdown("aggregation_job_creator", config).await;

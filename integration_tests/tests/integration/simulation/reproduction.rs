@@ -25,6 +25,7 @@ fn successful_collection_time_interval() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -99,6 +100,7 @@ fn successful_collection_leader_selected() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -161,6 +163,7 @@ fn successful_collection_asynchronous() {
             aggregation_mode: AggregationMode::Asynchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -255,6 +258,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -296,6 +300,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -337,6 +342,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -377,6 +383,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {
@@ -427,6 +434,7 @@ fn repro_helper_accumulate_on_retried_request() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
+            late_report_grace_period: Duration::from_seconds(3600),
         },
         ops: Vec::from([
             Op::Upload {

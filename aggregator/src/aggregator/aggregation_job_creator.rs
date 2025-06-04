@@ -55,7 +55,7 @@ use prio::{
 };
 use rand::{random, thread_rng, Rng};
 use std::{
-    cmp::min,
+    cmp::{max, min},
     collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
@@ -88,6 +88,10 @@ pub struct AggregationJobCreator<C: Clock> {
     max_aggregation_job_size: usize,
     /// Maximum number of reports to load at a time when creating aggregation jobs.
     aggregation_job_creation_report_window: usize,
+    /// Maximum expected time difference between a report's timestamp and when it is uploaded. For
+    /// time interval tasks, this is used to decide when to create an aggregation job with fewer
+    /// than `min_aggregation_job_size` reports.
+    late_report_grace_period: janus_messages::Duration,
 
     // Metrics instruments.
     /// Time spent updating tasks.
@@ -108,6 +112,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         min_aggregation_job_size: usize,
         max_aggregation_job_size: usize,
         aggregation_job_creation_report_window: usize,
+        late_report_grace_period: janus_messages::Duration,
     ) -> AggregationJobCreator<C> {
         assert!(
             min_aggregation_job_size > 0,
@@ -146,6 +151,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             min_aggregation_job_size,
             max_aggregation_job_size,
             aggregation_job_creation_report_window,
+            late_report_grace_period,
             task_update_time_histogram,
             job_creation_time_histogram,
             aggregation_job_size_histogram,
@@ -297,7 +303,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    // Returns true if at least one aggregation job was created.
+    /// This returns `true` if at least one aggregation job at or above the
+    /// minimum size was created. This is used as a hint to schedule the next
+    /// run of the aggregation job creator.
     #[tracing::instrument(
         name = "AggregationJobCreator::create_aggregation_jobs_for_task",
         skip(self, task),
@@ -543,6 +551,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
+    /// Create aggregation jobs.
+    ///
+    /// This method is specialized for time interval tasks, using a VDAF with a trivial aggregation
+    /// parameter (and thus eager aggregation).
+    ///
+    /// This returns `true` if at least one aggregation job at or above the minimum size was
+    /// created. This is used as a hint to schedule the next run of the aggregation job creator.
     async fn create_aggregation_jobs_for_time_interval_task_no_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
@@ -571,10 +586,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .await?;
                     reports.sort_by_key(|report| *report.client_timestamp());
 
-                    // Generate aggregation jobs & report aggregations based on the reports we read.
-                    // We attempt to generate reports from touching a minimal number of batches by
-                    // generating as many aggregation jobs in the allowed size range for each batch
-                    // before considering using reports from the next batch.
+                    // Generate aggregation jobs and report aggregations based on the reports we
+                    // read. We attempt to generate aggregation jobs such that their reports touch a
+                    // minimal number of batches by generating as many aggregation jobs in the
+                    // allowed size range as possible for each batch before considering using
+                    // reports from the next batch.
                     let mut aggregation_job_writer =
                         AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
                             Arc::clone(&task),
@@ -583,6 +599,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         );
                     let mut report_ids_to_scrub = HashSet::new();
                     let mut outstanding_reports = Vec::new();
+                    let mut any_normal_size_agg_job = false;
                     {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
@@ -605,17 +622,46 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             // Fill `outstanding_reports` from `reports_by_batch` until we have at
                             // least the minimum aggregation job size available. If we run out of
                             // reports from `reports_by_batch` without meeting the minimum
-                            // aggregation job size, we are done generating aggregation jobs.
-                            if outstanding_reports.len() < this.min_aggregation_job_size {
-                                if let Some((_, new_reports)) = reports_by_batch.next() {
-                                    outstanding_reports.extend(new_reports);
-                                    continue;
-                                } else {
-                                    // If we get here, we have consumed all of `reports_by_batch`
-                                    // and we still don't have enough outstanding reports for an
-                                    // aggregation job -- we are done.
+                            // aggregation job size, we may create one aggregation job smaller than
+                            // the minimum size.
+                            if outstanding_reports.len() >= this.min_aggregation_job_size {
+                                any_normal_size_agg_job = true;
+                            } else if let Some((_, new_reports)) = reports_by_batch.next() {
+                                outstanding_reports.extend(new_reports);
+                                continue;
+                            } else {
+                                // If we get here, we have consumed all of `reports_by_batch`
+                                // and we still don't have enough outstanding reports for an
+                                // aggregation job. If we have yet to create any aggregation
+                                // job, and the reports are sufficiently old, we will fall
+                                // through and create a smaller aggregation job anyway.
+                                // Otherwise, we are done.
+                                if any_normal_size_agg_job {
+                                    // We have made progress this run, so it's fine to stop now.
                                     break;
                                 }
+                                let Some(oldest_report) = outstanding_reports.first() else {
+                                    // No reports. The remainder of this loop requires
+                                    // `outstanding_reports` to be non-empty.
+                                    break;
+                                };
+                                // Calculate the time when this report will be old enough that
+                                // the late report grace period has passed. Round the grace
+                                // period up to the time precision in case it is larger.
+                                let Ok(aggressive_aggregation_time) =
+                                    oldest_report.client_timestamp().add(&max(
+                                        this.late_report_grace_period,
+                                        *task.time_precision(),
+                                    ))
+                                else {
+                                    break;
+                                };
+                                if tx.clock().now() < aggressive_aggregation_time {
+                                    // Report is not old enough to merit a below-minimum size aggregation job.
+                                    break;
+                                }
+                                // Fall through and create an aggregation job smaller than
+                                // `min_aggregation_job_size`.
                             }
 
                             // For the rest of the iteration of this loop, we'll generate a single
@@ -702,7 +748,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         })),
                     )?;
 
-                    Ok(!aggregation_job_writer.is_empty())
+                    Ok(any_normal_size_agg_job)
                 })
             })
             .await?)
@@ -1033,6 +1079,7 @@ mod tests {
             1,
             100,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         let stopper = Stopper::new();
         let task_handle = task::spawn(Arc::clone(&job_creator).run(stopper.clone()));
@@ -1219,6 +1266,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1410,6 +1458,7 @@ mod tests {
             2,
             100,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1417,20 +1466,7 @@ mod tests {
             .unwrap();
 
         // Verify -- we haven't received enough reports yet, so we don't create anything.
-        let want_ra_states: Arc<HashMap<_, _>> = Arc::new(
-            [&first_report]
-                .iter()
-                .map(|report| {
-                    (
-                        (*report.metadata().id(), ()),
-                        report
-                            .as_leader_init_report_aggregation(random(), 0)
-                            .state()
-                            .clone(),
-                    )
-                })
-                .collect(),
-        );
+        let want_ra_states: Arc<HashMap<_, _>> = Arc::new(HashMap::new());
         let (agg_jobs, batch_aggregations) = job_creator
             .datastore
             .run_unnamed_tx(|tx| {
@@ -1523,6 +1559,168 @@ mod tests {
                 *second_report.metadata().id()
             ])
         );
+
+        assert_eq!(
+            batch_aggregations,
+            Vec::from([BatchAggregation::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                0,
+                Interval::new(report_time, *task.time_precision()).unwrap(),
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 1,
+                    aggregation_jobs_terminated: 0
+                }
+            )])
+        );
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_late_report_grace_period() {
+        // Setup.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let task = Arc::new(
+            TaskBuilder::new(
+                TaskBatchMode::TimeInterval,
+                AggregationMode::Synchronous,
+                VdafInstance::Prio3Count,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
+        );
+        let late_report_grace_period = janus_messages::Duration::from_hours(24).unwrap();
+        assert!(late_report_grace_period >= *task.time_precision());
+
+        let report_time = clock.now_aligned_to_precision(task.time_precision());
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+        let helper_hpke_keypair = HpkeKeypair::test();
+
+        let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            task.id(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
+            &(),
+            report_metadata.id(),
+            &false,
+        );
+        let report = Arc::new(LeaderStoredReport::generate(
+            *task.id(),
+            report_metadata,
+            helper_hpke_keypair.config(),
+            Vec::new(),
+            &transcript,
+        ));
+
+        ds.run_unnamed_tx(|tx| {
+            let task = Arc::clone(&task);
+            let report = Arc::clone(&report);
+
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await.unwrap();
+                tx.put_client_report(&report).await.unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run.
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            Arc::new(ds),
+            noop_meter(),
+            BATCH_AGGREGATION_SHARD_COUNT,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            2,
+            100,
+            5000,
+            late_report_grace_period,
+        ));
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify -- we haven't received enough reports yet, so we don't create anything.
+        let want_ra_states = Arc::new(HashMap::new());
+        let (agg_jobs, batch_aggregations) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
+
+                Box::pin(async move {
+                    Ok(read_and_verify_aggregate_info_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        _,
+                        _,
+                    >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
+                    .await)
+                })
+            })
+            .await
+            .unwrap();
+        assert!(agg_jobs.is_empty());
+        assert!(batch_aggregations.is_empty());
+
+        // Advance time.
+        clock.advance(&late_report_grace_period);
+
+        // Run.
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify -- waiting until the grace period passes allows an aggregation job to be created.
+        let want_ra_states = Arc::new(HashMap::from([(
+            (*report.metadata().id(), ()),
+            report
+                .as_leader_init_report_aggregation(random(), 0)
+                .state()
+                .clone(),
+        )]));
+        let (agg_jobs, batch_aggregations) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+                let want_ra_states = Arc::clone(&want_ra_states);
+
+                Box::pin(async move {
+                    Ok(read_and_verify_aggregate_info_for_task::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        _,
+                        _,
+                    >(tx, vdaf.as_ref(), task.id(), want_ra_states.as_ref())
+                    .await)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(agg_jobs.len(), 1);
+        let report_ids: HashSet<_> = agg_jobs
+            .into_iter()
+            .next()
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|ra| *ra.report_id())
+            .collect();
+        assert_eq!(report_ids, HashSet::from([*report.metadata().id()]));
 
         assert_eq!(
             batch_aggregations,
@@ -1641,6 +1839,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1809,6 +2008,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2003,6 +2203,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2172,6 +2373,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2435,6 +2637,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2738,6 +2941,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2863,6 +3067,7 @@ mod tests {
                 )
             })
             .collect();
+
         want_batch_aggregations.sort_by_key(|ba| *ba.batch_id());
         assert_eq!(batch_aggregations, want_batch_aggregations);
     }
@@ -2974,6 +3179,7 @@ mod tests {
             1,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
+            janus_messages::Duration::from_seconds(3600),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(

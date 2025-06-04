@@ -22,6 +22,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
         ctx.config.aggregation_job_creation_report_window,
+        janus_messages::Duration::from_seconds(ctx.config.late_report_grace_period_s),
     ));
     info!("Running aggregation job creator");
     aggregation_job_creator.run(ctx.stopper).await;
@@ -94,10 +95,19 @@ pub struct Config {
     /// Maximum number of reports to load at a time when creating aggregation jobs.
     #[serde(default = "default_aggregation_job_creation_report_window")]
     pub aggregation_job_creation_report_window: usize,
+    /// Maximum expected time difference between a report's timestamp and when it is uploaded. For
+    /// time interval tasks, this is used to decide when to create an aggregation job with fewer
+    /// than `min_aggregation_job_size` reports.
+    #[serde(default = "default_late_report_grace_period_s")]
+    pub late_report_grace_period_s: u64,
 }
 
 fn default_aggregation_job_creation_report_window() -> usize {
     5000
+}
+
+fn default_late_report_grace_period_s() -> u64 {
+    3600
 }
 
 impl BinaryConfig for Config {
@@ -144,6 +154,7 @@ mod tests {
             min_aggregation_job_size: 100,
             max_aggregation_job_size: 500,
             aggregation_job_creation_report_window: 5000,
+            late_report_grace_period_s: 3600,
         })
     }
 
