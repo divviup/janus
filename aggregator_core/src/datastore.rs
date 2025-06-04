@@ -51,7 +51,7 @@ use std::{
     io::Cursor,
     mem::size_of,
     ops::RangeInclusive,
-    pin::Pin,
+    pin::{pin, Pin},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -490,9 +490,12 @@ impl<C: Clock> Transaction<'_, C> {
     // Under the assumption that the "root cause" error is concurrent with the "in failed SQL
     // transactions" errors, this guarantees we will evaluate the "root cause" error for retry
     // before any errors make their way out of the transaction code.
+    //
+    // The future is passed as a pinned mutable reference instead of by value in order to work
+    // around https://github.com/rust-lang/rust/issues/62958.
     async fn run_op<T>(
         &self,
-        op: impl Future<Output = Result<T, tokio_postgres::Error>>,
+        op: Pin<&mut impl Future<Output = Result<T, tokio_postgres::Error>>>,
     ) -> Result<T, tokio_postgres::Error> {
         // Enter.
         //
@@ -571,11 +574,12 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.run_op(self.raw_tx.execute(statement, params)).await
+        self.run_op(pin!(self.raw_tx.execute(statement, params)))
+            .await
     }
 
     async fn prepare_cached(&self, query: &str) -> Result<Statement, tokio_postgres::Error> {
-        self.run_op(self.raw_tx.prepare_cached(query)).await
+        self.run_op(pin!(self.raw_tx.prepare_cached(query))).await
     }
 
     async fn query<T>(
@@ -586,7 +590,8 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.run_op(self.raw_tx.query(statement, params)).await
+        self.run_op(pin!(self.raw_tx.query(statement, params)))
+            .await
     }
 
     async fn query_one<T>(
@@ -597,7 +602,8 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.run_op(self.raw_tx.query_one(statement, params)).await
+        self.run_op(pin!(self.raw_tx.query_one(statement, params)))
+            .await
     }
 
     async fn query_opt<T>(
@@ -608,7 +614,8 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.run_op(self.raw_tx.query_opt(statement, params)).await
+        self.run_op(pin!(self.raw_tx.query_opt(statement, params)))
+            .await
     }
 
     /// Returns the current schema version of the datastore and the description of the migration
