@@ -54,7 +54,6 @@ Note that not every DAP draft has been implemented.
 [dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
 [dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
 [dap-09]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/09/
-[dap-13]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/13/
 [dap-14]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/14/
 [dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
 
