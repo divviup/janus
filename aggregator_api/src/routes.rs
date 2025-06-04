@@ -190,7 +190,7 @@ pub(super) async fn post_task<C: Clock>(
             /* min_batch_size */ req.min_batch_size,
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
-            Duration::from_seconds(60), // 1 minute,
+            req.time_precision, // Must be a multiple of the precision
             aggregator_parameters,
         )
         .context("Error constructing task")
@@ -212,6 +212,7 @@ pub(super) async fn post_task<C: Clock>(
                 && existing_task.task_end() == task.task_end()
                 && existing_task.min_batch_size() == task.min_batch_size()
                 && existing_task.time_precision() == task.time_precision()
+                && existing_task.tolerable_clock_skew() == task.tolerable_clock_skew()
                 && existing_task.collector_hpke_config() == task.collector_hpke_config() {
                     return Ok(())
                 }
@@ -460,7 +461,6 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.verify_key_init,
         req.collector_hpke_config,
         req.report_expiry_age,
-        req.tolerable_clock_skew,
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
     )

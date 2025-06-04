@@ -756,7 +756,8 @@ impl<C: Clock> Aggregator<C> {
                 peer_aggregator.report_expiry_age().cloned(),
                 u64::from(*task_config.min_batch_size()),
                 *task_config.time_precision(),
-                *peer_aggregator.tolerable_clock_skew(),
+                /* tolerable clock skew */
+                *task_config.time_precision(), // Use the time precision as the tolerable skew
                 task::AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {

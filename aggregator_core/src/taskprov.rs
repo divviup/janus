@@ -126,10 +126,6 @@ pub struct PeerAggregator {
     /// copied into the definition for a provisioned task.
     report_expiry_age: Option<Duration>,
 
-    /// The maximum allowable clock skew between peers. This value is copied into the definition for
-    /// a provisioned task.
-    tolerable_clock_skew: Duration,
-
     /// Auth tokens used for authenticating Leader to Helper requests.
     aggregator_auth_tokens: Vec<AuthenticationToken>,
 
@@ -147,7 +143,6 @@ impl PeerAggregator {
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: HpkeConfig,
         report_expiry_age: Option<Duration>,
-        tolerable_clock_skew: Duration,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
     ) -> anyhow::Result<Self> {
@@ -164,7 +159,6 @@ impl PeerAggregator {
             verify_key_init,
             collector_hpke_config,
             report_expiry_age,
-            tolerable_clock_skew,
             aggregator_auth_tokens,
             collector_auth_tokens,
         })
@@ -200,11 +194,6 @@ impl PeerAggregator {
     /// Retrieve the report expiry age that each task will be configured with.
     pub fn report_expiry_age(&self) -> Option<&Duration> {
         self.report_expiry_age.as_ref()
-    }
-
-    /// Retrieve the maximum tolerable clock skew that each task will be configured with.
-    pub fn tolerable_clock_skew(&self) -> &Duration {
-        &self.tolerable_clock_skew
     }
 
     /// Retrieve the [`AuthenticationToken`]s used for authenticating leader to helper requests.
@@ -315,7 +304,6 @@ pub mod test_util {
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: HpkeConfig,
         report_expiry_age: Option<Duration>,
-        tolerable_clock_skew: Duration,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
     }
@@ -329,7 +317,6 @@ pub mod test_util {
                 verify_key_init: random(),
                 collector_hpke_config: HpkeKeypair::test().config().clone(),
                 report_expiry_age: None,
-                tolerable_clock_skew: Duration::from_seconds(1),
                 aggregator_auth_tokens: Vec::from([random()]),
                 collector_auth_tokens: Vec::from([random()]),
             }
@@ -365,11 +352,6 @@ pub mod test_util {
             self
         }
 
-        pub fn with_tolerable_clock_skew(mut self, tolerable_clock_skew: Duration) -> Self {
-            self.tolerable_clock_skew = tolerable_clock_skew;
-            self
-        }
-
         pub fn with_aggregator_auth_tokens(
             mut self,
             aggregator_auth_tokens: Vec<AuthenticationToken>,
@@ -394,7 +376,6 @@ pub mod test_util {
                 self.verify_key_init,
                 self.collector_hpke_config,
                 self.report_expiry_age,
-                self.tolerable_clock_skew,
                 self.aggregator_auth_tokens,
                 self.collector_auth_tokens,
             )
@@ -410,7 +391,6 @@ pub mod test_util {
                 verify_key_init,
                 collector_hpke_config,
                 report_expiry_age,
-                tolerable_clock_skew,
                 aggregator_auth_tokens,
                 collector_auth_tokens,
             } = value;
@@ -421,7 +401,6 @@ pub mod test_util {
                 verify_key_init,
                 collector_hpke_config,
                 report_expiry_age,
-                tolerable_clock_skew,
                 aggregator_auth_tokens,
                 collector_auth_tokens,
             }

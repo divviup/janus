@@ -23,7 +23,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, IntervalExt, TimeExt},
+    time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -675,6 +675,9 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
             end.validate_precision(task.time_precision())
                 .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
         }
+        task.tolerable_clock_skew()
+            .validate_precision(task.time_precision())
+            .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
 
         // Main task insert.
         let stmt = self
@@ -5209,7 +5212,7 @@ INSERT INTO hpke_keys
             .prepare_cached(
                 "-- get_taskprov_peer_aggregators()
 SELECT id, endpoint, peer_role, aggregation_mode, verify_key_init, collector_hpke_config,
-        report_expiry_age, tolerable_clock_skew
+        report_expiry_age
     FROM taskprov_peer_aggregators",
             )
             .await?;
@@ -5290,7 +5293,7 @@ ord, type, token FROM taskprov_collector_auth_tokens AS a
             .prepare_cached(
                 "-- get_taskprov_peer_aggregator()
 SELECT endpoint, peer_role, aggregation_mode, verify_key_init, collector_hpke_config,
-        report_expiry_age, tolerable_clock_skew
+        report_expiry_age
     FROM taskprov_peer_aggregators WHERE endpoint = $1 AND peer_role = $2",
             )
             .await?;
@@ -5347,9 +5350,6 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         let report_expiry_age = peer_aggregator_row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(Duration::from_seconds);
-        let tolerable_clock_skew = Duration::from_seconds(
-            peer_aggregator_row.get_bigint_and_convert("tolerable_clock_skew")?,
-        );
         let collector_hpke_config =
             HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
 
@@ -5401,7 +5401,6 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
             verify_key_init,
             collector_hpke_config,
             report_expiry_age,
-            tolerable_clock_skew,
             aggregator_auth_tokens,
             collector_auth_tokens,
         )
@@ -5426,9 +5425,9 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
             .prepare_cached(
                 "-- put_taskprov_peer_aggregator()
 INSERT INTO taskprov_peer_aggregators (
-    endpoint, peer_role, aggregation_mode, verify_key_init, tolerable_clock_skew, report_expiry_age,
+    endpoint, peer_role, aggregation_mode, verify_key_init, report_expiry_age,
     collector_hpke_config, created_at, updated_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -5440,8 +5439,6 @@ ON CONFLICT DO NOTHING",
                     /* peer_role */ peer_role,
                     /* aggregation_mode */ &peer_aggregator.aggregation_mode(),
                     /* verify_key_init */ &encrypted_verify_key_init,
-                    /* tolerable_clock_skew */
-                    &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
                     /* report_expiry_age */
                     &peer_aggregator
                         .report_expiry_age()

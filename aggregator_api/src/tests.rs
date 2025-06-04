@@ -1514,14 +1514,12 @@ async fn get_taskprov_peer_aggregator() {
             peer_role: *leader.peer_role(),
             collector_hpke_config: leader.collector_hpke_config().clone(),
             report_expiry_age: leader.report_expiry_age().cloned(),
-            tolerable_clock_skew: *leader.tolerable_clock_skew(),
         },
         TaskprovPeerAggregatorResp {
             endpoint: helper.endpoint().clone(),
             peer_role: *helper.peer_role(),
             collector_hpke_config: helper.collector_hpke_config().clone(),
             report_expiry_age: helper.report_expiry_age().cloned(),
-            tolerable_clock_skew: *helper.tolerable_clock_skew(),
         },
     ];
     expected.sort_by(|a, b| a.endpoint.cmp(&b.endpoint));
@@ -1557,7 +1555,6 @@ async fn post_taskprov_peer_aggregator() {
         collector_hpke_config: leader.collector_hpke_config().clone(),
         verify_key_init: *leader.verify_key_init(),
         report_expiry_age: leader.report_expiry_age().cloned(),
-        tolerable_clock_skew: *leader.tolerable_clock_skew(),
         aggregator_auth_tokens: Vec::from(leader.aggregator_auth_tokens()),
         collector_auth_tokens: Vec::from(leader.collector_auth_tokens()),
     };
