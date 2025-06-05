@@ -16,6 +16,7 @@ DROP INDEX report_aggregations_aggregation_job_id_index CASCADE;
 DROP TABLE report_aggregations CASCADE;
 DROP TYPE REPORT_AGGREGATION_STATE CASCADE;
 DROP INDEX aggregation_jobs_task_and_client_timestamp_interval CASCADE;
+DROP INDEX aggregation_jobs_task_and_upper_client_timestamp_interval CASCADE;
 DROP INDEX aggregation_jobs_task_and_batch_id CASCADE;
 DROP INDEX aggregation_jobs_state_and_lease_expiry CASCADE;
 DROP TABLE aggregation_jobs CASCADE;

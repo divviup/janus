@@ -254,6 +254,7 @@ CREATE TABLE aggregation_jobs(
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'ACTIVE';
 CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_id);
 CREATE INDEX aggregation_jobs_task_and_client_timestamp_interval ON aggregation_jobs USING gist (task_id, client_timestamp_interval);
+CREATE INDEX aggregation_jobs_task_and_upper_client_timestamp_interval ON aggregation_jobs (task_id, UPPER(client_timestamp_interval));
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
