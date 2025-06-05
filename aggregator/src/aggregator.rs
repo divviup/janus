@@ -2133,7 +2133,7 @@ impl VdafOps {
             let agg_param = Arc::clone(&agg_param);
 
             move || {
-                let span = info_span!(parent: parent_span, "handle_aggregate_init_generic threadpool task");
+                let span = info_span!(parent: &parent_span, "handle_aggregate_init_generic threadpool task");
 
                 req
                     .prepare_inits()

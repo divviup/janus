@@ -339,7 +339,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "step_aggregation_job_aggregate_init threadpool task"
                 );
 
@@ -603,7 +603,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "step_aggregation_job_aggregate_continue threadpool task"
                 );
 
@@ -795,7 +795,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "process_Response_from_helper threadpool task"
                 );
 
