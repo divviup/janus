@@ -370,6 +370,11 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
+    /// The maximum number of futures to await concurrenctly while servicing jobs. Higher values
+    /// will cause higher peak memory usage.
+    #[serde(default = "default_max_future_concurrency")]
+    pub max_future_concurrency: usize,
+
     /// Defines the number of shards to break report & aggregation metric counters into. Increasing
     /// this value will reduce the amount of database contention during report uploads &
     /// aggregations, while increasing the cost of getting task metrics.
@@ -414,6 +419,10 @@ fn default_task_counter_shard_count() -> u64 {
     32
 }
 
+fn default_max_future_concurrency() -> usize {
+    10000
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GarbageCollectorConfig {
@@ -454,6 +463,7 @@ impl Config {
                 self.max_upload_batch_write_delay_ms,
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
+            max_future_concurrency: self.max_future_concurrency,
             task_counter_shard_count: self.task_counter_shard_count,
             taskprov_config: self.taskprov_config,
             hpke_configs_refresh_interval: match self.hpke_configs_refresh_interval {
@@ -598,6 +608,7 @@ mod tests {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
+            max_future_concurrency: 10000,
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             hpke_configs_refresh_interval: Some(42),
