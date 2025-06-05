@@ -80,7 +80,7 @@ where
         let aggregation_job = Arc::clone(&aggregation_job);
 
         move || {
-            let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
+            let span = info_span!(parent: &parent_span, "step_aggregation_job threadpool task");
             let ctx = vdaf_application_context(task.id());
 
             report_aggregations

@@ -437,7 +437,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "step_aggregation_job_aggregate_init threadpool task"
                 );
                 let ctx = vdaf_application_context(&task_id);
@@ -716,7 +716,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "step_aggregation_job_aggregate_continue threadpool task"
                 );
                 let ctx = vdaf_application_context(&task_id);
@@ -1105,7 +1105,7 @@ where
 
             move || {
                 let span = info_span!(
-                    parent: parent_span,
+                    parent: &parent_span,
                     "process_response_from_helper threadpool task"
                 );
                 let ctx = vdaf_application_context(&task_id);

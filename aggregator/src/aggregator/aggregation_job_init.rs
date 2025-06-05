@@ -116,7 +116,7 @@ where
 
         move || {
             let span =
-                info_span!(parent: parent_span, "compute_helper_aggregate_init threadpool task");
+                info_span!(parent: &parent_span, "compute_helper_aggregate_init threadpool task");
             let ctx = vdaf_application_context(task.id());
 
             report_aggregations
