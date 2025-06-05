@@ -1,0 +1,1 @@
+CREATE INDEX aggregation_jobs_task_and_upper_client_timestamp_interval ON aggregation_jobs (task_id, UPPER(client_timestamp_interval));
