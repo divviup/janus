@@ -41,6 +41,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
             ctx.config.collection_job_retry_delay_exponential_factor,
         )
         .context("Couldn't create collection retry strategy")?,
+        ctx.config.max_future_concurrency,
     ));
     let lease_duration = Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_s);
 
@@ -103,6 +104,7 @@ impl BinaryOptions for Options {
 ///   force_json_output: true
 /// job_discovery_interval_s: 10
 /// max_concurrent_job_workers: 10
+/// max_future_concurrency: 10000
 /// worker_lease_duration_s: 600
 /// worker_lease_clock_skew_allowance_s: 60
 /// maximum_attempts_before_failure: 5
@@ -152,6 +154,11 @@ pub struct Config {
     /// aggregation.
     #[serde(default = "Config::default_collection_job_retry_delay_exponential_factor")]
     pub collection_job_retry_delay_exponential_factor: f64,
+
+    /// The maximum number of futures to await concurrenctly while servicing jobs. Higher values
+    /// will cause higher peak memory usage.
+    #[serde(default = "Config::default_max_future_concurrency")]
+    pub max_future_concurrency: usize,
 }
 
 impl Config {
@@ -165,6 +172,10 @@ impl Config {
 
     fn default_collection_job_retry_delay_exponential_factor() -> f64 {
         1.25
+    }
+
+    fn default_max_future_concurrency() -> usize {
+        10000
     }
 }
 
@@ -222,6 +233,7 @@ mod tests {
             min_collection_job_retry_delay_s: 600,
             max_collection_job_retry_delay_s: 3600,
             collection_job_retry_delay_exponential_factor: 1.25,
+            max_future_concurrency: 10000,
         })
     }
 

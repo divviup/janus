@@ -96,6 +96,10 @@ job_discovery_interval_s: 10
 # Maximum number of collection jobs to step concurrently. (required)
 max_concurrent_job_workers: 10
 
+# Maximum number of futures to await concurrently while servicing individual jobs. (optional;
+# defaults to 10000)
+max_future_concurrency: 10000
+
 # Duration of leases of collection jobs being processed. (required)
 worker_lease_duration_s: 600
 

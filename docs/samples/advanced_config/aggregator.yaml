@@ -120,6 +120,10 @@ max_upload_batch_write_delay_ms: 250
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
 
+# The maximum number of futures to await concurrenctly while servicing jobs. Higher values will
+# cause higher peak memory usage. (optional, default: 10000)
+max_future_concurrency: 10000
+
 # Defines the number of shards to break report & aggregation metric counters into. Increasing this
 # value will reduce the amount of database contention during report uploads & aggregations, while
 # increasing the cost of getting task metrics. (optional, default: 32)
