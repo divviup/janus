@@ -180,7 +180,7 @@ pub(super) async fn post_task<C: Clock>(
             /* min_batch_size */ req.min_batch_size,
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
-            Duration::from_seconds(60), // 1 minute,
+            Duration::from_seconds(300), // 5 minutes,
             // hpke_keys
             // Unwrap safety: we always use a supported KEM.
             [HpkeKeypair::generate(
