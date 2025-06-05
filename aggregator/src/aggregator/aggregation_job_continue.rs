@@ -158,7 +158,7 @@ impl VdafOps {
             let aggregation_job = Arc::clone(&aggregation_job);
 
             move || {
-                let span = info_span!(parent: parent_span, "step_aggregation_job threadpool task");
+                let span = info_span!(parent: &parent_span, "step_aggregation_job threadpool task");
 
                 prep_steps_and_ras.into_par_iter().try_for_each_with(
                     (sender, span),
