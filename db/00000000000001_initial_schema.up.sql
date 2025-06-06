@@ -258,11 +258,12 @@ CREATE INDEX aggregation_jobs_task_and_upper_client_timestamp_interval ON aggreg
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
-    'INIT',                 -- the aggregator is ready for the aggregation initialization step
-    'INIT_PROCESSING',      -- the aggregator is processing an aggregation initialization request asynchronously
-    'CONTINUE',             -- the aggregator is ready for an aggregation continuation step
-    'CONTINUE_PROCESSING',  -- the aggregator is processing an aggregation continuation request asynchronously
-    'POLL',                 -- the aggregator is polling for completion of a previous operation
+    'INIT',                 -- the aggregator is ready for the aggregation initialization step (leader only)
+    'INIT_PROCESSING',      -- the aggregator is processing an aggregation initialization request asynchronously (helper only)
+    'CONTINUE',             -- the aggregator is ready for an aggregation continuation step (leader only)
+    'CONTINUE_PROCESSING',  -- the aggregator is processing an aggregation continuation request asynchronously (helper only)
+    'POLL_INIT',            -- the aggregator is polling for completion of a previous initialization operation (leader only)
+    'POLL_CONTINUE',        -- the aggregator is polling for completion of a previous continuation operation (leader only)
     'FINISHED',             -- the aggregator has completed the preparation process successfully
     'FAILED'                -- the aggregator has completed the preparation process unsuccessfully
 );
@@ -287,12 +288,11 @@ CREATE TABLE report_aggregations(
     leader_input_share            BYTEA,  -- encoded leader input share (opaque VDAF message)
     helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
 
-    -- Additional data for state LeaderContinue.
+    -- Additional data for state LeaderContinue or LeaderPollContinue
     leader_prep_transition  BYTEA,  -- the current VDAF prepare transition (opaque VDAF message)
 
-    -- Additional data for state LeaderPoll.
+    -- Additional data for state LeaderPollInit.
     leader_prep_state    BYTEA,  -- the current prepare state (opaque VDAF message)
-    leader_output_share  BYTEA,  -- the leader's recovered output share (opaque VDAF message)
 
     -- Additional data for state HelperInitProcessing.
     prepare_init  BYTEA,                  -- the preparation initialization message received from the Leader (opaque DAP message)
