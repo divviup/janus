@@ -2724,7 +2724,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "prometheus",
  "querystring",
  "quickcheck",
@@ -2835,7 +2835,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "regex",
  "reqwest",
@@ -2875,7 +2875,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "mockito",
  "ohttp",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "thiserror 2.0.12",
@@ -2903,7 +2903,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "mime",
  "mockito",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "retry-after",
@@ -2941,7 +2941,7 @@ dependencies = [
  "kube",
  "mime",
  "mockito",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "quickcheck",
  "rand 0.9.1",
  "regex",
@@ -2992,7 +2992,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "opentelemetry",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "quickcheck",
  "rand 0.9.1",
  "regex",
@@ -3032,7 +3032,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.8.0-prerelease-1",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "regex",
  "reqwest",
@@ -3081,7 +3081,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "num_enum",
  "pretty_assertions",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "serde",
  "serde_test",
@@ -3102,7 +3102,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.8.0-prerelease-1",
- "prio 0.17.0",
+ "prio 0.18.0-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "serde_json",
@@ -4208,9 +4208,8 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac0b3cb73cf53e2608f559ac116f67436318cafa7004498395d9f419e2611063"
+version = "0.18.0-alpha.0"
+source = "git+https://github.com/divviup/libprio-rs.git?rev=663390d2d85c4bc173af9bc8fa29ee109faff789#663390d2d85c4bc173af9bc8fa29ee109faff789"
 dependencies = [
  "aes 0.8.4",
  "bitvec",

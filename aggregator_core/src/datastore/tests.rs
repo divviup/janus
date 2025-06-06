@@ -2521,14 +2521,17 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             Role::Leader,
-            ReportAggregationState::LeaderPoll {
-                leader_state: vdaf_transcript.leader_prepare_transitions[0].state.clone(),
+            ReportAggregationState::LeaderPollInit {
+                prepare_state: *vdaf_transcript.leader_prepare_transitions[0].prepare_state(),
             },
         ),
         (
             Role::Leader,
-            ReportAggregationState::LeaderPoll {
-                leader_state: vdaf_transcript.leader_prepare_transitions[1].state.clone(),
+            ReportAggregationState::LeaderPollContinue {
+                transition: vdaf_transcript.leader_prepare_transitions[1]
+                    .transition
+                    .clone()
+                    .unwrap(),
             },
         ),
         (
@@ -2618,8 +2621,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prep_msg: format!("prep_msg_{ord}").into(),
-                        prep_share: format!("prep_share_{ord}").into(),
+                        prepare_message: format!("prepare_message_{ord}").into(),
+                        prepare_share: format!("prepare_share_{ord}").into(),
                     },
                 },
             )),
@@ -2689,7 +2692,6 @@ WHERE client_report_id = $1",
                         task.id(),
                         report_aggregation.aggregation_job_id(),
                         &report_id,
-                        &aggregation_param,
                     )
                     .await
                 })
@@ -2710,8 +2712,8 @@ WHERE client_report_id = $1",
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prep_msg: format!("updated_prep_msg_{ord}").into(),
-                        prep_share: format!("updated_prep_share_{ord}").into(),
+                        prepare_message: format!("updated_prepare_message_{ord}").into(),
+                        prepare_share: format!("updated_prepare_share_{ord}").into(),
                     },
                 },
             )),
@@ -2759,7 +2761,6 @@ SELECT updated_at, updated_by FROM report_aggregations
                         task.id(),
                         report_aggregation.aggregation_job_id(),
                         &report_id,
-                        &aggregation_param,
                     )
                     .await
                 })
@@ -2784,7 +2785,6 @@ SELECT updated_at, updated_by FROM report_aggregations
                         task.id(),
                         report_aggregation.aggregation_job_id(),
                         &report_id,
-                        &aggregation_param,
                     )
                     .await
                 })
@@ -2828,7 +2828,6 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let vdaf = Arc::new(dummy::Vdaf::default());
-    let aggregation_param = dummy::AggregationParam(5);
 
     let rslt = ds
         .run_unnamed_tx(|tx| {
@@ -2841,7 +2840,6 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     &random(),
                     &random(),
                     &ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                    &aggregation_param,
                 )
                 .await
             })
@@ -2987,7 +2985,6 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
-                    &aggregation_param,
                 )
                 .await
             })
@@ -3008,7 +3005,6 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
-                    &aggregation_param,
                 )
                 .await
             })
@@ -3182,7 +3178,6 @@ async fn create_report_aggregation_from_client_reports_table(
                     &Role::Leader,
                     task.id(),
                     aggregation_job.id(),
-                    &aggregation_param,
                 )
                 .await
             })
@@ -5611,7 +5606,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     None,
                     // Counted among max_size.
                     ReportAggregationState::LeaderContinue {
-                        transition: transcript.helper_prepare_transitions[0].transition.clone(),
+                        transition: transcript.helper_prepare_transitions[0]
+                            .transition
+                            .clone()
+                            .unwrap(),
                     },
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy::Vdaf>::new(
@@ -6477,7 +6475,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_time_interval_task_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6486,7 +6483,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_time_interval_task_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6495,7 +6491,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_leader_selected_task_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -6504,7 +6499,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_leader_selected_task_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();

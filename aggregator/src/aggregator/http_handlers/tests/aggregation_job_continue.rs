@@ -313,7 +313,6 @@ async fn aggregate_continue_sync() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -577,7 +576,6 @@ async fn aggregate_continue_async() {
                         &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                     )
                     .await
                     .unwrap();
@@ -1411,7 +1409,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
             *report_metadata.id(),
             // An AggregationJobContinueReq should only ever contain Continue or Finished
             PingPongMessage::Initialize {
-                prep_share: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1531,8 +1529,8 @@ async fn aggregate_continue_prep_step_fails() {
         Vec::from([PrepareContinue::new(
             *report_metadata.id(),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1570,7 +1568,6 @@ async fn aggregate_continue_prep_step_fails() {
                         task.id(),
                         &aggregation_job_id,
                         report_metadata.id(),
-                        &aggregation_param,
                     )
                     .await
                     .unwrap()
@@ -1705,8 +1702,8 @@ async fn aggregate_continue_unexpected_transition() {
                 [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
             ),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
@@ -1859,15 +1856,15 @@ async fn aggregate_continue_out_of_order_transition() {
             PrepareContinue::new(
                 *report_metadata_1.id(),
                 PingPongMessage::Continue {
-                    prep_msg: Vec::new(),
-                    prep_share: Vec::new(),
+                    prepare_message: Vec::new(),
+                    prepare_share: Vec::new(),
                 },
             ),
             PrepareContinue::new(
                 *report_metadata_0.id(),
                 PingPongMessage::Continue {
-                    prep_msg: Vec::new(),
-                    prep_share: Vec::new(),
+                    prepare_message: Vec::new(),
+                    prepare_share: Vec::new(),
                 },
             ),
         ]),
@@ -1968,8 +1965,8 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         Vec::from([PrepareContinue::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             PingPongMessage::Continue {
-                prep_msg: Vec::new(),
-                prep_share: Vec::new(),
+                prepare_message: Vec::new(),
+                prepare_share: Vec::new(),
             },
         )]),
     );
