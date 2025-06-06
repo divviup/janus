@@ -25,7 +25,7 @@ use janus_messages::{
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
-    field::{random_vector, Field128, FieldElement},
+    field::{Field128, FieldElement},
     flp::{gadgets::ParallelSum, types::Histogram, Flp},
     vdaf::{
         prio3::{optimal_chunk_length, Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare},
@@ -33,7 +33,7 @@ use prio::{
         AggregateShare, Aggregator, Client as _, Collector, PrepareTransition, Vdaf,
     },
 };
-use rand::{distributions::Standard, random, thread_rng, Rng};
+use rand::{distr::StandardUniform, random, rng, Rng};
 use std::{net::Ipv4Addr, sync::Arc};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;
@@ -150,7 +150,7 @@ fn shard_encoded_measurement(
 
     const NUM_PROOFS: u8 = 1;
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let ctx = vdaf_application_context(task_id);
 
@@ -160,7 +160,7 @@ fn shard_encoded_measurement(
         Histogram::new(MAX_REPORTS, chunk_length).unwrap();
 
     // Share measurement.
-    let helper_share_seed = rng.gen::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let helper_share_seed = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
     let mut helper_measurement_share_rng = XofTurboShake128::seed_stream(
         helper_share_seed.as_ref(),
         &[&domain_separation_tag(vdaf, DST_MEASUREMENT_SHARE), &ctx],
@@ -170,13 +170,13 @@ fn shard_encoded_measurement(
         Vec::with_capacity(circuit.input_len());
     let mut leader_measurement_share = encoded_measurement.clone();
     for leader_elem in leader_measurement_share.iter_mut() {
-        let helper_elem = helper_measurement_share_rng.sample(Standard);
+        let helper_elem = helper_measurement_share_rng.sample(StandardUniform);
         *leader_elem -= helper_elem;
         expanded_helper_measurement_share.push(helper_elem);
     }
 
     // Derive joint randomness.
-    let helper_joint_rand_blind = rng.gen::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let helper_joint_rand_blind = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
     let mut helper_joint_rand_part_xof = XofTurboShake128::init(
         helper_joint_rand_blind.as_ref(),
         &[&domain_separation_tag(vdaf, DST_JOINT_RAND_PART), &ctx],
@@ -188,7 +188,7 @@ fn shard_encoded_measurement(
     }
     let helper_joint_rand_seed_part = helper_joint_rand_part_xof.into_seed();
 
-    let leader_joint_rand_blind = rng.gen::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let leader_joint_rand_blind = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
     let mut leader_joint_rand_part_xof = XofTurboShake128::init(
         leader_joint_rand_blind.as_ref(),
         &[&domain_separation_tag(vdaf, DST_JOINT_RAND_PART), &ctx],
@@ -214,7 +214,7 @@ fn shard_encoded_measurement(
         &[&[NUM_PROOFS]],
     );
     for _ in 0..circuit.joint_rand_len() {
-        joint_rand.push(joint_rand_xof.sample(Standard));
+        joint_rand.push(joint_rand_xof.sample(StandardUniform));
     }
 
     // Construct and share FLP proof.
@@ -231,7 +231,7 @@ fn shard_encoded_measurement(
         &[&[NUM_PROOFS, HELPER_AGGREGATOR_ID]],
     );
     for leader_elem in leader_proof_share.iter_mut() {
-        let helper_elem = helper_proofs_share_xof.sample(Standard);
+        let helper_elem = helper_proofs_share_xof.sample(StandardUniform);
         *leader_elem -= helper_elem;
     }
 
@@ -473,7 +473,7 @@ fn shard_encoded_measurement_correct() {
     // Check the circuit output first.
     let histogram =
         Histogram::<Field128, ParallelSum<_, _>>::new(MAX_REPORTS, chunk_length).unwrap();
-    let joint_rand = random_vector(histogram.joint_rand_len());
+    let joint_rand = Field128::random_vector(histogram.joint_rand_len());
     let circuit_output = histogram
         .valid(
             &mut histogram.gadget(),

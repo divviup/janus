@@ -6,7 +6,7 @@ use aws_lc_rs::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use educe::Educe;
 use http::{header::AUTHORIZATION, HeaderValue};
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{distr::StandardUniform, prelude::Distribution};
 use regex::Regex;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -112,9 +112,9 @@ impl FromStr for AuthenticationToken {
     }
 }
 
-impl Distribution<AuthenticationToken> for Standard {
+impl Distribution<AuthenticationToken> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AuthenticationToken {
-        AuthenticationToken::Bearer(Standard::sample(self, rng))
+        AuthenticationToken::Bearer(StandardUniform::sample(self, rng))
     }
 }
 
@@ -211,9 +211,9 @@ impl PartialEq for DapAuthToken {
 
 impl Eq for DapAuthToken {}
 
-impl Distribution<DapAuthToken> for Standard {
+impl Distribution<DapAuthToken> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> DapAuthToken {
-        DapAuthToken(URL_SAFE_NO_PAD.encode(rng.gen::<[u8; 16]>()))
+        DapAuthToken(URL_SAFE_NO_PAD.encode(rng.random::<[u8; 16]>()))
     }
 }
 
@@ -317,9 +317,9 @@ impl PartialEq for BearerToken {
 
 impl Eq for BearerToken {}
 
-impl Distribution<BearerToken> for Standard {
+impl Distribution<BearerToken> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> BearerToken {
-        BearerToken(URL_SAFE_NO_PAD.encode(rng.gen::<[u8; 16]>()))
+        BearerToken(URL_SAFE_NO_PAD.encode(rng.random::<[u8; 16]>()))
     }
 }
 

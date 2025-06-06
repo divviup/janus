@@ -53,7 +53,7 @@ use prio::{
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
-use rand::{random, thread_rng, Rng};
+use rand::{random, rng, Rng};
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
@@ -265,7 +265,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let mut next_run_instant = Instant::now();
         if !self.aggregation_job_creation_interval.is_zero() {
             next_run_instant +=
-                thread_rng().gen_range(Duration::ZERO..self.aggregation_job_creation_interval);
+                rng().random_range(Duration::ZERO..self.aggregation_job_creation_interval);
         }
 
         loop {

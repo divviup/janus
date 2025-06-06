@@ -20,7 +20,7 @@ janus_core.workspace = true
 janus_messages.workspace = true
 opentelemetry.workspace = true
 querystring = { workspace = true }
-rand = { workspace = true, features = ["min_const_gen"] }
+rand = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

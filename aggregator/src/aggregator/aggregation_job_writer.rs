@@ -28,7 +28,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
     KeyValue,
 };
-use rand::{thread_rng, Rng as _};
+use rand::{rng, Rng as _};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
 use tracing::{warn, Level};
@@ -512,7 +512,7 @@ where
             .collect();
 
         // Read all relevant batch aggregations from the datastore.
-        let batch_aggregation_ord = thread_rng().gen_range(0..writer.batch_aggregation_shard_count);
+        let batch_aggregation_ord = rng().random_range(0..writer.batch_aggregation_shard_count);
         let batch_aggregations = try_join_all(writer.by_batch_identifier_index.keys().map(
             |batch_identifier| {
                 tx.get_batch_aggregation::<SEED_SIZE, B, A>(

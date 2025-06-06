@@ -45,7 +45,7 @@ opentelemetry.workspace = true
 postgres-protocol = { workspace = true }
 postgres-types = { workspace = true, features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }
-rand = { workspace = true, features = ["min_const_gen"] }
+rand = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde.workspace = true

@@ -8,7 +8,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{metrics::Meter, KeyValue};
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use std::{
     fmt::{Debug, Display},
     future::Future,
@@ -119,7 +119,7 @@ where
 
         let mut next_run_instant = Instant::now();
         if !self.job_discovery_interval.is_zero() {
-            next_run_instant += thread_rng().gen_range(Duration::ZERO..self.job_discovery_interval);
+            next_run_instant += rng().random_range(Duration::ZERO..self.job_discovery_interval);
         }
 
         loop {

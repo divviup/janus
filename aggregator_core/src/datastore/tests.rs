@@ -47,7 +47,7 @@ use prio::{
     topology::ping_pong::PingPongMessage,
     vdaf::{dummy, prio3::Prio3Count},
 };
-use rand::{distributions::Standard, random, thread_rng, Rng};
+use rand::{distr::StandardUniform, random, rng, Rng};
 use std::{
     collections::{HashMap, HashSet},
     iter,
@@ -1959,7 +1959,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     let mut task_and_aggregation_job_ids: Vec<_> = [*leader_task.id(), *helper_task.id()]
         .into_iter()
         .cycle()
-        .zip(thread_rng().sample_iter(Standard))
+        .zip(rng().sample_iter(StandardUniform))
         .take(AGGREGATION_JOB_COUNT)
         .collect();
     task_and_aggregation_job_ids.sort();
@@ -8010,7 +8010,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(counter, Some(TaskUploadCounter::default()));
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_upload_counter(
                     &task_id,
                     ord,
@@ -8019,7 +8019,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 .await
                 .unwrap();
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_upload_counter(
                     &task_id,
                     ord,
@@ -8028,7 +8028,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 .await
                 .unwrap();
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_upload_counter(&task_id, ord, &TaskUploadCounter::default())
                     .await
                     .unwrap();
@@ -8088,7 +8088,7 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 let counter = tx.get_task_aggregation_counter(task.id()).await.unwrap();
                 assert_eq!(counter, Some(TaskAggregationCounter::default()));
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_aggregation_counter(
                     task.id(),
                     ord,
@@ -8097,7 +8097,7 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 .await
                 .unwrap();
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_aggregation_counter(
                     task.id(),
                     ord,
@@ -8106,7 +8106,7 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 .await
                 .unwrap();
 
-                let ord = thread_rng().gen_range(0..32);
+                let ord = rng().random_range(0..32);
                 tx.increment_task_aggregation_counter(
                     task.id(),
                     ord,

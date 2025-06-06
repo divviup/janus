@@ -16,7 +16,7 @@ use prio::{
     },
     topology::ping_pong::PingPongMessage,
 };
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use rand::{distr::StandardUniform, prelude::Distribution, Rng};
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
@@ -356,9 +356,9 @@ impl Decode for BatchId {
     }
 }
 
-impl Distribution<BatchId> for Standard {
+impl Distribution<BatchId> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> BatchId {
-        BatchId(rng.gen())
+        BatchId(rng.random())
     }
 }
 
@@ -436,9 +436,9 @@ impl FromStr for ReportId {
     }
 }
 
-impl Distribution<ReportId> for Standard {
+impl Distribution<ReportId> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportId {
-        ReportId(rng.gen())
+        ReportId(rng.random())
     }
 }
 
@@ -505,9 +505,9 @@ impl Decode for ReportIdChecksum {
 }
 
 #[cfg(feature = "test-util")]
-impl Distribution<ReportIdChecksum> for Standard {
+impl Distribution<ReportIdChecksum> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportIdChecksum {
-        ReportIdChecksum(rng.gen())
+        ReportIdChecksum(rng.random())
     }
 }
 
@@ -630,9 +630,9 @@ impl From<HpkeConfigId> for u8 {
     }
 }
 
-impl Distribution<HpkeConfigId> for Standard {
+impl Distribution<HpkeConfigId> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> HpkeConfigId {
-        HpkeConfigId(rng.gen())
+        HpkeConfigId(rng.random())
     }
 }
 
@@ -710,9 +710,9 @@ impl FromStr for TaskId {
     }
 }
 
-impl Distribution<TaskId> for Standard {
+impl Distribution<TaskId> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> TaskId {
-        TaskId(rng.gen())
+        TaskId(rng.random())
     }
 }
 
@@ -1695,9 +1695,9 @@ impl Display for CollectionJobId {
     }
 }
 
-impl Distribution<CollectionJobId> for Standard {
+impl Distribution<CollectionJobId> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> CollectionJobId {
-        CollectionJobId(rng.gen())
+        CollectionJobId(rng.random())
     }
 }
 
@@ -2285,9 +2285,9 @@ impl Display for AggregationJobId {
     }
 }
 
-impl Distribution<AggregationJobId> for Standard {
+impl Distribution<AggregationJobId> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> AggregationJobId {
-        AggregationJobId(rng.gen())
+        AggregationJobId(rng.random())
     }
 }
 

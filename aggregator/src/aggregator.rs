@@ -96,7 +96,7 @@ use prio::{
     flp::gadgets::{Mul, ParallelSum},
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use reqwest::Client;
 use std::{
     borrow::Cow,
@@ -3419,7 +3419,7 @@ fn write_task_aggregation_counter<C: Clock>(
     // not slow the main processing. The lack of transactionality between writing the updated
     // aggregation job & updating the counters means that process failure may cause us to leave
     // some counter updates unaccounted for, but that is an acceptable tradeoff.
-    let ord = thread_rng().gen_range(0..shard_count);
+    let ord = rng().random_range(0..shard_count);
     tokio::task::spawn(async move {
         let rslt = datastore
             .run_tx("update_task_aggregation_counters", |tx| {

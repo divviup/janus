@@ -35,7 +35,7 @@ use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
     TaskId, Time,
 };
-use rand::{distributions::Standard, random, thread_rng, Rng};
+use rand::{distr::StandardUniform, random, rng, Rng};
 use serde_test::{assert_ser_tokens, assert_tokens, Token};
 use std::{iter, sync::Arc};
 use trillium::{Handler, Status};
@@ -191,8 +191,8 @@ async fn post_task_bad_role() {
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -231,8 +231,8 @@ async fn post_task_unauthorized() {
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -272,8 +272,8 @@ async fn post_task_helper_no_optional_fields() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -358,8 +358,8 @@ async fn post_task_helper_with_aggregator_auth_token() {
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -400,8 +400,8 @@ async fn post_task_idempotence() {
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -480,8 +480,8 @@ async fn post_task_leader_all_optional_fields() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
@@ -566,8 +566,8 @@ async fn post_task_leader_no_aggregator_auth_token() {
     let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
     let vdaf_verify_key = SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
+        rng()
+            .sample_iter(StandardUniform)
             .take(VERIFY_KEY_LENGTH_PRIO3)
             .collect(),
     );
