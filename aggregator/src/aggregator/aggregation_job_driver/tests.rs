@@ -3522,7 +3522,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let leader_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -3551,9 +3551,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit {
-                        prepare_state: leader_state,
-                    },
+                    ReportAggregationState::LeaderPollInit { prepare_state },
                 ))
                 .await
                 .unwrap();
@@ -3774,7 +3772,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let leader_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -3803,9 +3801,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit {
-                        prepare_state: leader_state,
-                    },
+                    ReportAggregationState::LeaderPollInit { prepare_state },
                 ))
                 .await
                 .unwrap();
@@ -4026,7 +4022,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let leader_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -4055,9 +4051,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit {
-                        prepare_state: leader_state,
-                    },
+                    ReportAggregationState::LeaderPollInit { prepare_state },
                 ))
                 .await
                 .unwrap();
@@ -4283,7 +4277,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let leader_state = *transcript.leader_prepare_transitions[0].prepare_state();
+            let prepare_state = *transcript.leader_prepare_transitions[0].prepare_state();
 
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -4312,9 +4306,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollInit {
-                        prepare_state: leader_state,
-                    },
+                    ReportAggregationState::LeaderPollInit { prepare_state },
                 ))
                 .await
                 .unwrap();
