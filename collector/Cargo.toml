@@ -28,7 +28,7 @@ janus_core.workspace = true
 janus_messages.workspace = true
 mime.workspace = true
 prio.workspace = true
-rand = { workspace = true, features = ["min_const_gen"] }
+rand = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 retry-after = { workspace = true }
 serde = { workspace = true }

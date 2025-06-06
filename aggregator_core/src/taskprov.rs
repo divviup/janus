@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId};
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
@@ -81,9 +81,9 @@ impl<'de> Deserialize<'de> for VerifyKeyInit {
     }
 }
 
-impl Distribution<VerifyKeyInit> for Standard {
+impl Distribution<VerifyKeyInit> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> VerifyKeyInit {
-        VerifyKeyInit(rng.gen())
+        VerifyKeyInit(rng.random())
     }
 }
 

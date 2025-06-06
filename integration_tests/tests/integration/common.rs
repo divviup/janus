@@ -20,7 +20,7 @@ use prio::{
     flp::gadgets::ParallelSumMultithreaded,
     vdaf::{self, prio3::Prio3},
 };
-use rand::{random, seq::IteratorRandom as _, thread_rng, Rng};
+use rand::{random, rng, seq::IteratorRandom as _, Rng};
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
@@ -397,7 +397,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             let vdaf = Prio3::new_sum(2, max_measurement).unwrap();
 
             let measurements: Vec<_> =
-                iter::repeat_with(|| (0..=max_measurement).choose(&mut thread_rng()).unwrap())
+                iter::repeat_with(|| (0..=max_measurement).choose(&mut rng()).unwrap())
                     .take(total_measurements)
                     .collect();
             let aggregate_result = measurements.iter().sum();
@@ -537,7 +537,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
             let mut aggregate_result = vec![0; *length];
             let measurements = iter::repeat_with(|| {
-                let choice = thread_rng().gen_range(0..*length);
+                let choice = rng().random_range(0..*length);
                 aggregate_result[choice] += 1;
                 choice
             })

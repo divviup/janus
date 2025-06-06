@@ -13,7 +13,7 @@ use janus_messages::{
     batch_mode, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId, Time,
 };
 use postgres_types::{FromSql, ToSql};
-use rand::{distributions::Standard, random, thread_rng, Rng};
+use rand::{distr::StandardUniform, random, rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{array::TryFromSliceError, str::FromStr};
 use url::Url;
@@ -663,8 +663,8 @@ impl SerializedAggregatorTask {
 
         if self.vdaf_verify_key.is_none() {
             let vdaf_verify_key = SecretBytes::new(
-                thread_rng()
-                    .sample_iter(Standard)
+                rng()
+                    .sample_iter(StandardUniform)
                     .take(self.vdaf.verify_key_length())
                     .collect(),
             );
@@ -796,7 +796,7 @@ pub mod test_util {
         AggregationJobId, AggregationJobStep, CollectionJobId, Duration, HpkeConfigId, Role,
         TaskId, Time,
     };
-    use rand::{distributions::Standard, random, thread_rng, Rng};
+    use rand::{distr::StandardUniform, random, rng, Rng};
     use std::collections::HashMap;
     use url::Url;
 
@@ -1113,8 +1113,8 @@ pub mod test_util {
             ];
 
             let vdaf_verify_key = SecretBytes::new(
-                thread_rng()
-                    .sample_iter(Standard)
+                rng()
+                    .sample_iter(StandardUniform)
                     .take(vdaf.verify_key_length())
                     .collect(),
             );

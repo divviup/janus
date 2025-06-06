@@ -11,7 +11,7 @@ use janus_core::{
     time::{Clock, MockClock, TimeExt},
 };
 use janus_messages::Time;
-use rand::{distributions::Standard, random, thread_rng, Rng};
+use rand::{distr::StandardUniform, random, rng, Rng};
 use sqlx::{
     migrate::{Migrate, Migrator},
     Connection, PgConnection,
@@ -457,8 +457,8 @@ pub async fn ephemeral_datastore_schema_version_by_downgrade(
 }
 
 pub fn generate_aead_key_bytes() -> Vec<u8> {
-    thread_rng()
-        .sample_iter(Standard)
+    rng()
+        .sample_iter(StandardUniform)
         .take(AES_128_GCM.key_len())
         .collect()
 }

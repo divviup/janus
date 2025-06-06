@@ -27,7 +27,7 @@ use prio::{
     topology::ping_pong::{PingPongState, PingPongTransition},
     vdaf::Aggregatable,
 };
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
@@ -547,9 +547,9 @@ impl AsRef<[u8; Self::LEN]> for LeaseToken {
     }
 }
 
-impl Distribution<LeaseToken> for Standard {
+impl Distribution<LeaseToken> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> LeaseToken {
-        LeaseToken(rng.gen())
+        LeaseToken(rng.random())
     }
 }
 

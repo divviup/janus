@@ -28,7 +28,7 @@ use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
 use prio::codec::Decode as _;
-use rand::{distributions::Standard, thread_rng, Rng};
+use rand::{distr::StandardUniform, rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -546,8 +546,8 @@ async fn create_datastore_key(
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
     // consumers of the secret we are about to write.
-    let key_bytes: Vec<_> = thread_rng()
-        .sample_iter(Standard)
+    let key_bytes: Vec<_> = rng()
+        .sample_iter(StandardUniform)
         .take(AES_128_GCM.key_len())
         .collect();
     let secret_content = URL_SAFE_NO_PAD.encode(key_bytes);

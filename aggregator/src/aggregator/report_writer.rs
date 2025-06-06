@@ -15,7 +15,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -348,7 +348,7 @@ impl TaskUploadCounters {
         counter_shard_count: u64,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
-        let ord = thread_rng().gen_range(0..counter_shard_count);
+        let ord = rng().random_range(0..counter_shard_count);
         let map = {
             // Unwrap safety: panic on mutex poisoning.
             let mut lock = self.0.lock().unwrap();

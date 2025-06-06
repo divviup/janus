@@ -30,7 +30,7 @@ use prio::{
     flp::gadgets::ParallelSum,
     vdaf::{self, prio3::Prio3},
 };
-use rand::{distributions::Standard, prelude::Distribution, random};
+use rand::{distr::StandardUniform, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -140,9 +140,9 @@ struct TaskState {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Handle(String);
 
-impl Distribution<Handle> for Standard {
+impl Distribution<Handle> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Handle {
-        Handle(URL_SAFE_NO_PAD.encode(rng.gen::<[u8; 32]>()))
+        Handle(URL_SAFE_NO_PAD.encode(rng.random::<[u8; 32]>()))
     }
 }
 
