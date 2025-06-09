@@ -787,7 +787,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "no kubernetes"]
     async fn options_datastore_keys() {
         initialize_rustls();
         // Prep: create a Kubernetes cluster and put a secret in it

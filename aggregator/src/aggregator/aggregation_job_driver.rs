@@ -550,13 +550,12 @@ where
                                         public_share_bytes,
                                         helper_encrypted_input_share.clone(),
                                     ),
-                                    message,
+                                    message.clone(),
                                 ),
-                                SteppedAggregation {
+                                SteppedAggregation::new(
                                     report_aggregation,
-                                    leader_ping_pong_state: None,
-                                    leader_prepare_state: Some(prepare_state),
-                                },
+                                    Either::PrepareState(prepare_state),
+                                ),
                             )).map_err(|_| ())
                         }
                         Err(report_error) => {
@@ -739,52 +738,50 @@ where
                             ),
                         };
 
-                        let result =
-                            trace_span!("VDAF preparation (leader continuation evaluation)")
-                                .in_scope(|| continuation.clone().evaluate(&ctx, vdaf.as_ref()));
-                        match result {
-                            // If we are continuing, then the state can only be Continued or
-                            // FinishedWithOutbound. Anything else is illegal.
-                            Ok(
-                                ref state @ PingPongState::Continued(Continued {
-                                    ref message, ..
-                                })
-                                | ref state @ PingPongState::FinishedWithOutbound {
-                                    ref message, ..
-                                },
-                            ) => pc_and_sa_sender
-                                .send((
-                                    report_aggregation.ord(),
-                                    PrepareContinue::new(
-                                        *report_aggregation.report_id(),
-                                        message.clone(),
-                                    ),
-                                    SteppedAggregation {
-                                        report_aggregation,
-                                        leader_ping_pong_state: Some(state.clone()),
-                                        leader_prepare_state: None,
-                                    },
-                                ))
-                                .map_err(|_| ()),
-                            Ok(state) => panic!("Unexpected ping pong state: {state:?}"),
-                            Err(error) => {
-                                let report_error = handle_ping_pong_error(
-                                    &task_id,
-                                    Role::Leader,
-                                    report_aggregation.report_id(),
-                                    error,
-                                    &aggregate_step_failure_counter,
-                                );
-                                ra_sender
-                                    .send(WritableReportAggregation::new(
-                                        report_aggregation.with_state(
-                                            ReportAggregationState::Failed { report_error },
-                                        ),
-                                        None,
-                                    ))
-                                    .map_err(|_| ())
-                            }
-                        }
+                        let (message, either) =
+                            match trace_span!("VDAF preparation (leader continuation evaluation)")
+                                .in_scope(|| continuation.clone().evaluate(&ctx, vdaf.as_ref()))
+                            {
+                                // If we are continuing, then the state can only be Continued or
+                                // FinishedWithOutbound. Anything else is illegal.
+                                Ok(PingPongState::Continued(Continued {
+                                    message,
+                                    prepare_state,
+                                })) => (message, Either::PrepareState(prepare_state)),
+                                Ok(PingPongState::FinishedWithOutbound {
+                                    message,
+                                    output_share,
+                                }) => (message, Either::OutputShare(output_share)),
+                                Ok(state) => panic!("Unexpected ping pong state: {state:?}"),
+                                Err(error) => {
+                                    let report_error = handle_ping_pong_error(
+                                        &task_id,
+                                        Role::Leader,
+                                        report_aggregation.report_id(),
+                                        error,
+                                        &aggregate_step_failure_counter,
+                                    );
+                                    return ra_sender
+                                        .send(WritableReportAggregation::new(
+                                            report_aggregation.with_state(
+                                                ReportAggregationState::Failed { report_error },
+                                            ),
+                                            None,
+                                        ))
+                                        .map_err(|_| ());
+                                }
+                            };
+
+                        pc_and_sa_sender
+                            .send((
+                                report_aggregation.ord(),
+                                PrepareContinue::new(
+                                    *report_aggregation.report_id(),
+                                    message.clone(),
+                                ),
+                                SteppedAggregation::new(report_aggregation, either),
+                            ))
+                            .map_err(|_| ())
                     })
             }
         });
@@ -889,29 +886,33 @@ where
         let stepped_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter_map(|report_aggregation| {
-                let leader_state = match report_aggregation.state() {
+                let leader_state_or_output_share = match report_aggregation.state() {
                     ReportAggregationState::LeaderPollInit { prepare_state } => {
-                        Ok(PingPongState::Continued(Continued {
-                            prepare_state: prepare_state.clone(),
-                            message: todo!(),
-                        }))
+                        Ok(Either::PrepareState(prepare_state.clone()))
                     }
                     ReportAggregationState::LeaderPollContinue { continuation } => continuation
                         .clone()
                         .evaluate(&vdaf_application_context(task.id()), &vdaf)
                         // The transition has been successfully evaluated in a previous step, so we
                         // never expect this to fail and represent it as Error::Internal.
-                        .map_err(|e| Error::Internal(e.into())),
+                        .map_err(|e| Error::Internal(e.into()))
+                        .map(|ping_pong_state| match ping_pong_state {
+                            PingPongState::Continued(Continued { prepare_state, .. }) => {
+                                Either::PrepareState(prepare_state)
+                            }
+                            PingPongState::Finished { output_share }
+                            | PingPongState::FinishedWithOutbound { output_share, .. } => {
+                                Either::OutputShare(output_share)
+                            }
+                        }),
 
                     _ => return None,
                 }
-                .map(|leader_state| SteppedAggregation {
-                    report_aggregation,
-                    leader_ping_pong_state: Some(leader_state),
-                    leader_prepare_state: todo!(),
+                .map(|leader_state_or_output_share| {
+                    SteppedAggregation::new(report_aggregation, leader_state_or_output_share)
                 });
 
-                Some(leader_state)
+                Some(leader_state_or_output_share)
             })
             .collect::<Result<_, _>>()?;
 
@@ -1027,11 +1028,11 @@ where
             |stepped_aggregation| {
                 let polling_state = match (
                     stepped_aggregation.report_aggregation.state(),
-                    stepped_aggregation.leader_ping_pong_state,
+                    stepped_aggregation.leader_state_or_output_share,
                 ) {
                     (
                         ReportAggregationState::LeaderInit { .. },
-                        Some(PingPongState::Continued(Continued { prepare_state, .. })),
+                        Either::PrepareState(prepare_state),
                     ) => ReportAggregationState::LeaderPollInit { prepare_state },
                     (ReportAggregationState::LeaderContinue { continuation }, _) => {
                         ReportAggregationState::LeaderPollContinue {
@@ -1176,8 +1177,7 @@ where
                         let _entered = span.enter();
 
                         let (new_state, output_share) = match (
-                            stepped_aggregation.prepare_state(),
-                            &stepped_aggregation.leader_ping_pong_state,
+                            stepped_aggregation.leader_state_or_output_share,
                             helper_prep_resp.result(),
                         ) {
                             // Leader is in state continued, incoming helper message is continue.
@@ -1185,8 +1185,7 @@ where
                             // This can happen while handling a response to AggregationJobInitReq or
                             // AggregationJobContinueReq.
                             (
-                                Some(leader_prepare_state),
-                                _,
+                                Either::PrepareState(leader_prepare_state),
                                 PrepareStepResult::Continue {
                                     message: helper_prep_msg,
                                 },
@@ -1240,8 +1239,9 @@ where
                                     }
                                 }
                             }
-                            // If helper continued but leader is in any other state, that's illegal.
-                            (_, _, PrepareStepResult::Continue { .. }) => {
+                            // If helper continued but leader is in any state but continue, that's
+                            // illegal.
+                            (_, PrepareStepResult::Continue { .. }) => {
                                 warn!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
                                     "Helper continued but Leader did not",
@@ -1259,13 +1259,12 @@ where
                             // finished. Leader commits output share.
                             // This can only happen while handling a response to
                             // AggregationJobContinueReq.
-                            (
-                                None,
-                                Some(PingPongState::FinishedWithOutbound { output_share, .. }),
-                                PrepareStepResult::Finished,
-                            ) => (ReportAggregationState::Finished, Some(output_share.clone())),
-                            // If helper finished but leader is in any other state, that's illegal.
-                            (_, _, PrepareStepResult::Finished) => {
+                            (Either::OutputShare(output_share), PrepareStepResult::Finished) => {
+                                (ReportAggregationState::Finished, Some(output_share.clone()))
+                            }
+                            // If helper finished but leader is in any state but finished, that's
+                            // illegal.
+                            (_, PrepareStepResult::Finished) => {
                                 warn!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
                                     "Helper finished but Leader did not",
@@ -1283,14 +1282,7 @@ where
                             // helper message is rejected. Leader drops this report.
                             // This can happen while handling a response to AggregationJobInitReq or
                             // AggregationJobContinueReq.
-                            (
-                                _,
-                                Some(
-                                    PingPongState::Continued(_)
-                                    | PingPongState::FinishedWithOutbound { .. },
-                                ),
-                                PrepareStepResult::Reject(err),
-                            ) => {
+                            (_, PrepareStepResult::Reject(err)) => {
                                 // TODO(#236): is it correct to just record the transition error that the helper reports?
                                 info!(
                                     report_id = %stepped_aggregation.report_aggregation.report_id(),
@@ -1301,9 +1293,6 @@ where
                                     .add(1, &[KeyValue::new("type", "helper_step_failure")]);
                                 (ReportAggregationState::Failed { report_error: *err }, None)
                             }
-                            // Anything else is an unexpected state combination and causes abort of
-                            // aggregation job.
-                            _ => todo!("abort somehow"),
                         };
 
                         ra_sender.send(WritableReportAggregation::new(
@@ -1918,18 +1907,25 @@ where
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state.
 struct SteppedAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
-    leader_ping_pong_state: Option<PingPongState<A::PrepareState, A::OutputShare>>,
-    leader_prepare_state: Option<A::PrepareState>,
+    leader_state_or_output_share: Either<A::PrepareState, A::OutputShare>,
 }
 
 impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> SteppedAggregation<SEED_SIZE, A> {
-    fn prepare_state(&self) -> Option<&A::PrepareState> {
-        match (&self.leader_ping_pong_state, &self.leader_prepare_state) {
-            (Some(PingPongState::Continued(Continued { prepare_state, .. })), None)
-            | (None, Some(prepare_state)) => Some(prepare_state),
-            _ => None,
+    fn new(
+        report_aggregation: ReportAggregation<SEED_SIZE, A>,
+        leader_state_or_output_share: Either<A::PrepareState, A::OutputShare>,
+    ) -> Self {
+        Self {
+            report_aggregation,
+            leader_state_or_output_share,
         }
     }
+}
+
+#[derive(Debug)]
+enum Either<PS, OS> {
+    PrepareState(PS),
+    OutputShare(OS),
 }
 
 fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {

@@ -390,8 +390,7 @@ where
                                     Some(output_share),
                                 ),
 
-                                // It's impossible for helper_initialized to return PingPongState::Finished
-                                // TODO(timg): fix ping pong API here
+                                // Helper cannot finish at this stage
                                 Ok(_) => (
                                     ReportAggregationState::Failed {
                                         report_error: ReportError::VdafPrepError,
