@@ -292,6 +292,7 @@ mod tests {
     use kube::{api::ListParams, Api};
 
     #[tokio::test]
+    #[ignore = "no kubernetes"]
     async fn create_clusters() {
         // Create a couple of clusters, check communication, then drop them, to test that creating
         // multiple clusters does not lead to collisions in some namespace.
