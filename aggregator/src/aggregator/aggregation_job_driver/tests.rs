@@ -185,7 +185,10 @@ async fn aggregation_job_driver() {
                 prepare_resps: Vec::from([PrepareResp::new(
                     *report.metadata().id(),
                     PrepareStepResult::Continue {
-                        message: transcript.helper_prepare_transitions[0].message.clone(),
+                        message: transcript.helper_prepare_transitions[0]
+                            .message()
+                            .unwrap()
+                            .clone(),
                     },
                 )]),
             }
@@ -547,14 +550,20 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -924,14 +933,20 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -998,8 +1013,8 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            transition: transcript.leader_prepare_transitions[1]
-                .transition
+            continuation: transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap(),
         },
@@ -1278,7 +1293,8 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                     gc_eligible_report.helper_encrypted_input_share().clone(),
                 ),
                 gc_eligible_transcript.leader_prepare_transitions[0]
-                    .message
+                    .message()
+                    .unwrap()
                     .clone(),
             ),
             PrepareInit::new(
@@ -1288,7 +1304,8 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                     gc_ineligible_report.helper_encrypted_input_share().clone(),
                 ),
                 gc_ineligible_transcript.leader_prepare_transitions[0]
-                    .message
+                    .message()
+                    .unwrap()
                     .clone(),
             ),
         ]),
@@ -1299,7 +1316,8 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                 *gc_eligible_report.metadata().id(),
                 PrepareStepResult::Continue {
                     message: gc_eligible_transcript.helper_prepare_transitions[0]
-                        .message
+                        .message()
+                        .unwrap()
                         .clone(),
                 },
             ),
@@ -1307,7 +1325,8 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                 *gc_ineligible_report.metadata().id(),
                 PrepareStepResult::Continue {
                     message: gc_ineligible_transcript.helper_prepare_transitions[0]
-                        .message
+                        .message()
+                        .unwrap()
                         .clone(),
                 },
             ),
@@ -1595,14 +1614,20 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -1900,14 +1925,20 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -1974,8 +2005,8 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            transition: transcript.leader_prepare_transitions[1]
-                .transition
+            continuation: transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap(),
         },
@@ -2140,8 +2171,8 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
                     0,
                     None,
                     ReportAggregationState::LeaderContinue {
-                        transition: transcript.leader_prepare_transitions[1]
-                            .transition
+                        continuation: transcript.leader_prepare_transitions[1]
+                            .continuation
                             .clone()
                             .unwrap(),
                     },
@@ -2204,7 +2235,10 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1].message.clone(),
+            transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
@@ -2482,8 +2516,8 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                     0,
                     None,
                     ReportAggregationState::LeaderContinue {
-                        transition: transcript.leader_prepare_transitions[1]
-                            .transition
+                        continuation: transcript.leader_prepare_transitions[1]
+                            .continuation
                             .clone()
                             .unwrap(),
                     },
@@ -2530,7 +2564,10 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1].message.clone(),
+            transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Finished {
@@ -2808,7 +2845,10 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Processing;
@@ -3066,7 +3106,10 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 report.public_share().get_encoded().unwrap(),
                 report.helper_encrypted_input_share().clone(),
             ),
-            transcript.leader_prepare_transitions[0].message.clone(),
+            transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Processing;
@@ -3259,8 +3302,8 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let transition = transcript.leader_prepare_transitions[1]
-                .transition
+            let continuation = transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap();
 
@@ -3291,7 +3334,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderContinue { transition },
+                    ReportAggregationState::LeaderContinue { continuation },
                 ))
                 .await
                 .unwrap();
@@ -3330,7 +3373,10 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *report.metadata().id(),
-            transcript.leader_prepare_transitions[1].message.clone(),
+            transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone(),
         )]),
     );
     let helper_response = AggregationJobResp::Processing;
@@ -3395,8 +3441,8 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollContinue {
-            transition: transcript.leader_prepare_transitions[1]
-                .transition
+            continuation: transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap(),
         },
@@ -4090,7 +4136,10 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -4345,7 +4394,10 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )]),
     };
@@ -4410,8 +4462,8 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         0,
         None,
         ReportAggregationState::LeaderContinue {
-            transition: transcript.leader_prepare_transitions[1]
-                .transition
+            continuation: transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap(),
         },
@@ -4538,8 +4590,8 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let transition = transcript.leader_prepare_transitions[1]
-                .transition
+            let continuation = transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap();
 
@@ -4572,7 +4624,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollContinue { transition },
+                    ReportAggregationState::LeaderPollContinue { continuation },
                 ))
                 .await
                 .unwrap();
@@ -4669,8 +4721,8 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         0,
         None,
         ReportAggregationState::LeaderPollContinue {
-            transition: transcript.leader_prepare_transitions[1]
-                .transition
+            continuation: transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap(),
         },
@@ -4796,8 +4848,8 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
         .run_unnamed_tx(|tx| {
             let task = leader_task.clone();
             let report = report.clone();
-            let transition = transcript.leader_prepare_transitions[1]
-                .transition
+            let continuation = transcript.leader_prepare_transitions[1]
+                .continuation
                 .clone()
                 .unwrap();
 
@@ -4831,7 +4883,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
                     *report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::LeaderPollContinue { transition },
+                    ReportAggregationState::LeaderPollContinue { continuation },
                 ))
                 .await
                 .unwrap();
@@ -5052,7 +5104,10 @@ async fn helper_async_init_processing_to_finished() {
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
-            let message = transcript.leader_prepare_transitions[0].message.clone();
+            let message = transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone();
 
             Box::pin(async move {
                 let report_id = *report_share.metadata().id();
@@ -5163,7 +5218,10 @@ async fn helper_async_init_processing_to_finished() {
         Some(PrepareResp::new(
             *report_share.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )),
         ReportAggregationState::Finished,
@@ -5286,7 +5344,10 @@ async fn helper_async_init_processing_to_continue() {
         .run_unnamed_tx(|tx| {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
-            let message = transcript.leader_prepare_transitions[0].message.clone();
+            let message = transcript.leader_prepare_transitions[0]
+                .message()
+                .unwrap()
+                .clone();
 
             Box::pin(async move {
                 let report_id = *report_share.metadata().id();
@@ -5397,7 +5458,10 @@ async fn helper_async_init_processing_to_continue() {
         Some(PrepareResp::new(
             *report_share.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].message.clone(),
+                message: transcript.helper_prepare_transitions[0]
+                    .message()
+                    .unwrap()
+                    .clone(),
             },
         )),
         ReportAggregationState::HelperContinue {
@@ -5523,7 +5587,10 @@ async fn helper_async_continue_processing_to_finished() {
             let helper_task = helper_task.clone();
             let report_share = report_share.clone();
             let prepare_state = *transcript.helper_prepare_transitions[0].prepare_state();
-            let message = transcript.leader_prepare_transitions[1].message.clone();
+            let message = transcript.leader_prepare_transitions[1]
+                .message()
+                .unwrap()
+                .clone();
 
             Box::pin(async move {
                 let report_id = *report_share.metadata().id();

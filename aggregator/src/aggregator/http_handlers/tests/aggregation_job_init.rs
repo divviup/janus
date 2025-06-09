@@ -306,7 +306,10 @@ async fn aggregate_init_sync() {
 
     let prepare_init_5 = PrepareInit::new(
         report_share_5,
-        transcript_5.leader_prepare_transitions[0].message.clone(),
+        transcript_5.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
     );
 
     // prepare_init_6 fails decoding due to an issue with the public share.
@@ -339,7 +342,10 @@ async fn aggregate_init_sync() {
 
     let prepare_init_6 = PrepareInit::new(
         report_share_6,
-        transcript_6.leader_prepare_transitions[0].message.clone(),
+        transcript_6.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
     );
 
     // prepare_init_7 fails due to having repeated public extensions.
@@ -373,7 +379,10 @@ async fn aggregate_init_sync() {
 
     let prepare_init_7 = PrepareInit::new(
         report_share_7,
-        transcript_7.leader_prepare_transitions[0].message.clone(),
+        transcript_7.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
     );
 
     // prepare_init_8 fails due to having repeated private extensions.
@@ -407,7 +416,10 @@ async fn aggregate_init_sync() {
 
     let prepare_init_8 = PrepareInit::new(
         report_share_8,
-        transcript_8.leader_prepare_transitions[0].message.clone(),
+        transcript_8.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
     );
 
     // prepare_init_9 fails due to having repeated extensions between the public & private
@@ -439,7 +451,10 @@ async fn aggregate_init_sync() {
 
     let prepare_init_9 = PrepareInit::new(
         report_share_9,
-        transcript_9.leader_prepare_transitions[0].message.clone(),
+        transcript_9.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
     );
 
     let mut batch_aggregations_results = Vec::new();
@@ -531,7 +546,7 @@ async fn aggregate_init_sync() {
             prepare_init_0.report_share().metadata().id()
         );
         assert_matches!(prepare_step_0.result(), PrepareStepResult::Continue { message } => {
-            assert_eq!(message, &transcript_0.helper_prepare_transitions[0].message);
+            assert_eq!(message, transcript_0.helper_prepare_transitions[0].message().unwrap());
         });
 
         let prepare_step_1 = prepare_resps.get(1).unwrap();
