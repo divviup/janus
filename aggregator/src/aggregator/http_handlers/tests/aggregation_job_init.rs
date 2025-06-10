@@ -462,6 +462,8 @@ async fn aggregate_init_sync() {
                 .await
                 .unwrap();
 
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+
                 // Write collected batch aggregations for the interval that report_share_5 falls
                 // into, which will cause it to fail to prepare.
                 try_join_all(
@@ -477,7 +479,7 @@ async fn aggregate_init_sync() {
                         &[],
                     )
                     .iter()
-                    .map(|ba| tx.put_batch_aggregation(ba)),
+                    .map(|ba| put_batch_aggregation_statement.execute(ba)),
                 )
                 .await
                 .unwrap();
@@ -883,6 +885,7 @@ async fn aggregate_init_batch_already_collected() {
             let timestamp = *prepare_init.report_share().metadata().time();
             Box::pin(async move {
                 let interval = Interval::new(timestamp, *task.time_precision()).unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
 
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.
@@ -901,7 +904,10 @@ async fn aggregate_init_batch_already_collected() {
                             aggregation_jobs_terminated: 1,
                         },
                     );
-                    tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+                    put_batch_aggregation_statement
+                        .execute(&batch_aggregation)
+                        .await
+                        .unwrap();
                 }
 
                 Ok(())

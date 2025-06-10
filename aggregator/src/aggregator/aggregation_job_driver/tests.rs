@@ -152,22 +152,25 @@ async fn aggregation_job_driver() {
             .await
             .unwrap();
 
-            tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                *task.id(),
-                batch_identifier,
-                aggregation_param,
-                0,
-                Interval::new(time, time_precision).unwrap(),
-                BatchAggregationState::Aggregating {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 1,
-                    aggregation_jobs_terminated: 0,
-                },
-            ))
-            .await
-            .unwrap();
+            tx.put_batch_aggregation()
+                .await
+                .unwrap()
+                .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    *task.id(),
+                    batch_identifier,
+                    aggregation_param,
+                    0,
+                    Interval::new(time, time_precision).unwrap(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: None,
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 0,
+                    },
+                ))
+                .await
+                .unwrap();
 
             Ok(())
         })
@@ -502,26 +505,29 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                     .unwrap();
                 }
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    batch_identifier,
-                    (),
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -887,22 +893,25 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -1216,46 +1225,49 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *leader_task.id(),
-                    gc_eligible_batch_identifier,
-                    (),
-                    0,
-                    Interval::new(gc_eligible_time, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *leader_task.id(),
-                    gc_ineligible_batch_identifier,
-                    (),
-                    0,
-                    Interval::new(gc_ineligible_time, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        *leader_task.id(),
+                        gc_eligible_batch_identifier,
+                        (),
+                        0,
+                        Interval::new(gc_eligible_time, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        *leader_task.id(),
+                        gc_ineligible_batch_identifier,
+                        (),
+                        0,
+                        Interval::new(gc_ineligible_time, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -1556,26 +1568,29 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    LeaderSelected,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    batch_id,
-                    (),
-                    0,
-                    Interval::new(*report.metadata().time(), time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        LeaderSelected,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        batch_id,
+                        (),
+                        0,
+                        Interval::new(*report.metadata().time(), time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -1866,22 +1881,25 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    aggregation_param,
-                    0,
-                    Interval::new(*report.metadata().time(), time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        aggregation_param,
+                        0,
+                        Interval::new(*report.metadata().time(), time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -2158,38 +2176,41 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(*report.metadata().time(), time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    other_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::EMPTY,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(*report.metadata().time(), time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        other_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::EMPTY,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -2501,22 +2522,25 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    aggregation_param,
-                    0,
-                    Interval::new(*report.metadata().time(), time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        aggregation_param,
+                        0,
+                        Interval::new(*report.metadata().time(), time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -2780,22 +2804,25 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -3039,22 +3066,25 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -3309,22 +3339,25 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -3567,22 +3600,25 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -3818,22 +3854,25 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -4069,22 +4108,25 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -4325,22 +4367,25 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -4589,22 +4634,25 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(*report.metadata().time(), time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(*report.metadata().time(), time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -4843,22 +4891,25 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(*report.metadata().time(), *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(*report.metadata().time(), *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -5098,22 +5149,25 @@ async fn helper_async_init_processing_to_finished() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(report_timestamp, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *helper_task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(report_timestamp, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -5333,22 +5387,25 @@ async fn helper_async_init_processing_to_continue() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(report_timestamp, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *helper_task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(report_timestamp, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -5571,22 +5628,25 @@ async fn helper_async_continue_processing_to_finished() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    active_batch_identifier,
-                    aggregation_param,
-                    0,
-                    Interval::new(report_timestamp, time_precision).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *helper_task.id(),
+                        active_batch_identifier,
+                        aggregation_param,
+                        0,
+                        Interval::new(report_timestamp, time_precision).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let lease = tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -5803,26 +5863,29 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
                     .await
                     .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    batch_identifier,
-                    (),
-                    0,
-                    Interval::new(time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        0,
+                        Interval::new(time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
@@ -6088,26 +6151,29 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
             .await
             .unwrap();
 
-            tx.put_batch_aggregation(&BatchAggregation::<
-                VERIFY_KEY_LENGTH_PRIO3,
-                TimeInterval,
-                Prio3Count,
-            >::new(
-                *task.id(),
-                batch_identifier,
-                (),
-                0,
-                Interval::new(time, *task.time_precision()).unwrap(),
-                BatchAggregationState::Aggregating {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 1,
-                    aggregation_jobs_terminated: 0,
-                },
-            ))
-            .await
-            .unwrap();
+            tx.put_batch_aggregation()
+                .await
+                .unwrap()
+                .execute(&BatchAggregation::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    0,
+                    Interval::new(time, *task.time_precision()).unwrap(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: None,
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 0,
+                    },
+                ))
+                .await
+                .unwrap();
 
             Ok(())
         })
@@ -6340,26 +6406,29 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
             .await
             .unwrap();
 
-            tx.put_batch_aggregation(&BatchAggregation::<
-                VERIFY_KEY_LENGTH_PRIO3,
-                TimeInterval,
-                Prio3Count,
-            >::new(
-                *task.id(),
-                batch_identifier,
-                (),
-                0,
-                Interval::new(time, *task.time_precision()).unwrap(),
-                BatchAggregationState::Aggregating {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 1,
-                    aggregation_jobs_terminated: 0,
-                },
-            ))
-            .await
-            .unwrap();
+            tx.put_batch_aggregation()
+                .await
+                .unwrap()
+                .execute(&BatchAggregation::<
+                    VERIFY_KEY_LENGTH_PRIO3,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    0,
+                    Interval::new(time, *task.time_precision()).unwrap(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: None,
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 0,
+                    },
+                ))
+                .await
+                .unwrap();
 
             Ok(())
         })

@@ -179,7 +179,12 @@ impl CollectionJobTestCase {
                             aggregation_jobs_terminated: 1,
                         },
                     );
-                    tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&batch_aggregation)
+                        .await
+                        .unwrap();
                     tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
@@ -245,7 +250,12 @@ impl CollectionJobTestCase {
                             aggregation_jobs_terminated: 1,
                         },
                     );
-                    tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&batch_aggregation)
+                        .await
+                        .unwrap();
                     Ok(batch_interval)
                 })
             })

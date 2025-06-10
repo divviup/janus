@@ -3335,6 +3335,8 @@ impl VdafOps {
 
                     tx.put_aggregate_share_job(&aggregate_share_job).await?;
 
+                    let put_batch_aggregation_statement = tx.put_batch_aggregation().await?;
+
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
                     // buffered stream so that they get run in groups of bounded size. #3857
@@ -3351,7 +3353,7 @@ impl VdafOps {
                         if is_update {
                             tx.update_batch_aggregation(&ba).await
                         } else {
-                            tx.put_batch_aggregation(&ba).await
+                            put_batch_aggregation_statement.execute(&ba).await
                         }
                     })
                     .await?;

@@ -242,6 +242,8 @@ async fn aggregate_continue_sync() {
                 .await
                 .unwrap();
 
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await?;
+
                 // Write collected batch aggregations for the interval that report_share_2 falls
                 // into, which will cause it to fail to prepare.
                 try_join_all(
@@ -257,7 +259,7 @@ async fn aggregate_continue_sync() {
                         &[],
                     )
                     .iter()
-                    .map(|ba| tx.put_batch_aggregation(ba)),
+                    .map(|ba| put_batch_aggregation_statement.execute(ba)),
                 )
                 .await
                 .unwrap();
@@ -888,27 +890,29 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                 .await
                 .unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *helper_task.id(),
-                    first_batch_identifier,
-                    aggregation_param,
-                    0,
-                    first_batch_identifier,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 2,
-                        aggregation_jobs_terminated: 0,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *helper_task.id(),
+                        first_batch_identifier,
+                        aggregation_param,
+                        0,
+                        first_batch_identifier,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 2,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 try_join_all(
                     second_batch_want_batch_aggregations
                         .iter()
-                        .map(|ba| tx.put_batch_aggregation(ba)),
+                        .map(|ba| put_batch_aggregation_statement.execute(ba)),
                 )
                 .await
                 .unwrap();

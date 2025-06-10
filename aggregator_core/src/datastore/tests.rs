@@ -3739,17 +3739,19 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
                 tx.put_report_aggregation(report_aggregation).await.unwrap();
             }
 
+            let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
             for test_case in test_case.collection_job_test_cases.iter_mut() {
-                tx.put_batch_aggregation(&BatchAggregation::<0, B, dummy::Vdaf>::new(
-                    test_case.task_id,
-                    test_case.batch_identifier.clone(),
-                    test_case.agg_param,
-                    0,
-                    test_case.client_timestamp_interval,
-                    BatchAggregationState::Scrubbed,
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, B, dummy::Vdaf>::new(
+                        test_case.task_id,
+                        test_case.batch_identifier.clone(),
+                        test_case.agg_param,
+                        0,
+                        test_case.client_timestamp_interval,
+                        BatchAggregationState::Scrubbed,
+                    ))
+                    .await
+                    .unwrap();
 
                 let collection_job_id = random();
                 tx.put_collection_job(&CollectionJob::<0, B, dummy::Vdaf>::new(
@@ -4680,95 +4682,110 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     );
 
                 // Start of this aggregation's interval is before the interval queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1000), time_precision).unwrap(),
-                    aggregation_param,
-                    4,
-                    Interval::EMPTY,
-                    BatchAggregationState::Collected {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 3,
-                        aggregation_jobs_terminated: 3,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
+                            .unwrap(),
+                        aggregation_param,
+                        4,
+                        Interval::EMPTY,
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 3,
+                            aggregation_jobs_terminated: 3,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 // Following three batches are within the interval queried below.
-                tx.put_batch_aggregation(&first_batch_aggregation)
+                put_batch_aggregation_statement
+                    .execute(&first_batch_aggregation)
                     .await
                     .unwrap();
-                tx.put_batch_aggregation(&second_batch_aggregation)
+                put_batch_aggregation_statement
+                    .execute(&second_batch_aggregation)
                     .await
                     .unwrap();
-                tx.put_batch_aggregation(&third_batch_aggregation)
+                put_batch_aggregation_statement
+                    .execute(&third_batch_aggregation)
                     .await
                     .unwrap();
-                tx.put_batch_aggregation(&fourth_batch_aggregation)
+                put_batch_aggregation_statement
+                    .execute(&fourth_batch_aggregation)
                     .await
                     .unwrap();
 
                 assert_matches!(
-                    tx.put_batch_aggregation(&first_batch_aggregation).await,
+                    put_batch_aggregation_statement
+                        .execute(&first_batch_aggregation)
+                        .await,
                     Err(Error::MutationTargetAlreadyExists)
                 );
 
                 // Aggregation parameter differs from the one queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1000), time_precision).unwrap(),
-                    dummy::AggregationParam(13),
-                    5,
-                    Interval::EMPTY,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(aggregate_share),
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 8,
-                        aggregation_jobs_terminated: 6,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
+                            .unwrap(),
+                        dummy::AggregationParam(13),
+                        5,
+                        Interval::EMPTY,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 8,
+                            aggregation_jobs_terminated: 6,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 // Start of this aggregation's interval is after the interval queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1500), time_precision).unwrap(),
-                    aggregation_param,
-                    6,
-                    Interval::EMPTY,
-                    BatchAggregationState::Collected {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 7,
-                        aggregation_jobs_terminated: 7,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(Time::from_seconds_since_epoch(1500), time_precision)
+                            .unwrap(),
+                        aggregation_param,
+                        6,
+                        Interval::EMPTY,
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 7,
+                            aggregation_jobs_terminated: 7,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 // Task ID differs from that queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *other_task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1200), time_precision).unwrap(),
-                    aggregation_param,
-                    7,
-                    Interval::EMPTY,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(aggregate_share),
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 8,
-                        aggregation_jobs_terminated: 2,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *other_task.id(),
+                        Interval::new(Time::from_seconds_since_epoch(1200), time_precision)
+                            .unwrap(),
+                        aggregation_param,
+                        7,
+                        Interval::EMPTY,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 8,
+                            aggregation_jobs_terminated: 2,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 tx.check_timestamp_columns(
                     "batch_aggregations",
@@ -4987,70 +5004,79 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                 );
 
                 // Following batch aggregations have the batch ID queried below.
-                tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&batch_aggregation)
+                    .await
+                    .unwrap();
 
                 assert_matches!(
-                    tx.put_batch_aggregation(&batch_aggregation).await,
+                    put_batch_aggregation_statement
+                        .execute(&batch_aggregation)
+                        .await,
                     Err(Error::MutationTargetAlreadyExists)
                 );
 
                 // Wrong batch ID.
                 let other_batch_id = random();
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    other_batch_id,
-                    aggregation_param,
-                    1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    BatchAggregationState::Collected {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 4,
-                        aggregation_jobs_terminated: 4,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        other_batch_id,
+                        aggregation_param,
+                        1,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 4,
+                            aggregation_jobs_terminated: 4,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 // Task ID differs from that queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *other_task.id(),
-                    batch_id,
-                    aggregation_param,
-                    2,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(aggregate_share),
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 5,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *other_task.id(),
+                        batch_id,
+                        aggregation_param,
+                        2,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 5,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 // Index differs from that queried below.
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    aggregation_param,
-                    3,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    BatchAggregationState::Collected {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 6,
-                        aggregation_jobs_terminated: 6,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        aggregation_param,
+                        3,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 6,
+                            aggregation_jobs_terminated: 6,
+                        },
+                    ))
+                    .await
+                    .unwrap();
                 Ok(batch_aggregation)
             })
         })
@@ -5164,24 +5190,26 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 .unwrap();
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
-                    *task.id(),
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
-                    dummy::AggregationParam(11),
-                    0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 1,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 7,
-                        aggregation_jobs_terminated: 5,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
+                            .unwrap(),
+                        dummy::AggregationParam(11),
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            report_count: 1,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 7,
+                            aggregation_jobs_terminated: 5,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
@@ -5339,23 +5367,26 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                 tx.put_aggregator_task(&task).await.unwrap();
 
                 let batch_id = random();
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    dummy::AggregationParam(11),
-                    0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 1,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 7,
-                        aggregation_jobs_terminated: 5,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        dummy::AggregationParam(11),
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            report_count: 1,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 7,
+                            aggregation_jobs_terminated: 5,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
@@ -5498,40 +5529,43 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_1 =
                     LeaderStoredReport::new_dummy(*task_1.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task_1.id(),
-                    batch_id_1,
-                    dummy::AggregationParam(0),
-                    0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 1,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 3,
-                        aggregation_jobs_terminated: 2,
-                    },
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task_1.id(),
-                    batch_id_1,
-                    dummy::AggregationParam(0),
-                    1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        report_count: 1,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 4,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-                .unwrap();
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task_1.id(),
+                        batch_id_1,
+                        dummy::AggregationParam(0),
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            report_count: 1,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 3,
+                            aggregation_jobs_terminated: 2,
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task_1.id(),
+                        batch_id_1,
+                        dummy::AggregationParam(0),
+                        1,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            report_count: 1,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 4,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_outstanding_batch(task_1.id(), &batch_id_1, &None)
                     .await
                     .unwrap();
@@ -5553,26 +5587,27 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_2 =
                     LeaderStoredReport::new_dummy(*task_2.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task_2.id(),
-                    batch_id_2,
-                    dummy::AggregationParam(0),
-                    0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_2.time_precision())
-                        .unwrap(),
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(dummy::AggregateShare(0)),
-                        // Let report_count be 1 without an accompanying report_aggregation in a
-                        // terminal state. This captures the case where a FINISHED report_aggregation
-                        // was garbage collected and no longer exists in the database.
-                        report_count: 1,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 4,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-                .unwrap();
+                put_batch_aggregation_statement
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task_2.id(),
+                        batch_id_2,
+                        dummy::AggregationParam(0),
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_2.time_precision())
+                            .unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            // Let report_count be 1 without an accompanying report_aggregation in a
+                            // terminal state. This captures the case where a FINISHED report_aggregation
+                            // was garbage collected and no longer exists in the database.
+                            report_count: 1,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 4,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    ))
+                    .await
+                    .unwrap();
                 tx.put_outstanding_batch(task_2.id(), &batch_id_2, &Some(time_bucket_start))
                     .await
                     .unwrap();
@@ -6569,7 +6604,11 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 aggregation_jobs_terminated: 2,
             },
         );
-        tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+        let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+        put_batch_aggregation_statement
+            .execute(&batch_aggregation)
+            .await
+            .unwrap();
         for ord in 1..8 {
             let batch_aggregation = BatchAggregation::<0, B, dummy::Vdaf>::new(
                 *task.id(),
@@ -6585,7 +6624,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     aggregation_jobs_terminated: 0,
                 },
             );
-            tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+            put_batch_aggregation_statement
+                .execute(&batch_aggregation)
+                .await
+                .unwrap();
         }
 
         if task.role() == &Role::Leader {
