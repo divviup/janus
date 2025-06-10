@@ -301,6 +301,8 @@ where
                         &batch_aggregations,
                     );
 
+                    let put_batch_aggregation_statement = tx.put_batch_aggregation().await?;
+
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
                     // buffered stream so that they get run in groups of bounded size. #3857
@@ -317,7 +319,7 @@ where
                         if is_update {
                             tx.update_batch_aggregation(ba).await
                         } else {
-                            tx.put_batch_aggregation(ba).await
+                            put_batch_aggregation_statement.execute(ba).await
                         }
                     })
                     .await?;
@@ -927,8 +929,9 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
@@ -941,12 +944,11 @@ mod tests {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                        ))
+                        .await
+                        .unwrap();
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
                                 clock.now().add(&Duration::from_seconds(1000)).unwrap(),
@@ -967,10 +969,9 @@ mod tests {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     if acquire_lease {
                         let lease = tx
@@ -1070,8 +1071,9 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
@@ -1084,13 +1086,12 @@ mod tests {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
                                 clock.now().add(&Duration::from_seconds(1000)).unwrap(),
@@ -1111,10 +1112,9 @@ mod tests {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 0,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     let lease = Arc::new(
                         tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)

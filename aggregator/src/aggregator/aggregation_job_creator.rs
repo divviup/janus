@@ -1803,26 +1803,29 @@ mod tests {
                 for report in reports.iter() {
                     tx.put_client_report(report).await.unwrap();
                 }
-                tx.put_batch_aggregation(&BatchAggregation::<
-                    VERIFY_KEY_LENGTH_PRIO3,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    batch_identifier,
-                    (),
-                    0,
-                    Interval::new(report_time, *task.time_precision()).unwrap(),
-                    BatchAggregationState::Collected {
-                        aggregate_share: None,
-                        report_count: 0,
-                        checksum: ReportIdChecksum::default(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH_PRIO3,
+                        TimeInterval,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        0,
+                        Interval::new(report_time, *task.time_precision()).unwrap(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    ))
+                    .await
+                    .unwrap();
                 Ok(())
             })
         })

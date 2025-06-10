@@ -226,9 +226,10 @@ async fn aggregate_share_request() {
         .run_unnamed_tx(|tx| {
             let task = helper_task.clone();
             Box::pin(async move {
+                let put_batch_aggregation_statement = tx.put_batch_aggregation().await.unwrap();
                 for aggregation_param in [dummy::AggregationParam(0), dummy::AggregationParam(1)] {
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_1,
                             aggregation_param,
@@ -241,13 +242,12 @@ async fn aggregate_share_request() {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_2,
                             aggregation_param,
@@ -260,13 +260,12 @@ async fn aggregate_share_request() {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_3,
                             aggregation_param,
@@ -279,13 +278,12 @@ async fn aggregate_share_request() {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    put_batch_aggregation_statement
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_4,
                             aggregation_param,
@@ -298,10 +296,9 @@ async fn aggregate_share_request() {
                                 aggregation_jobs_created: 1,
                                 aggregation_jobs_terminated: 1,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
                 }
 
                 Ok(())

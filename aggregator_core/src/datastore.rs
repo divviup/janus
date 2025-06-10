@@ -4079,39 +4079,20 @@ WHERE task_id = $1
             state,
         ))
     }
+}
 
+/// Prepared statement for `put_batch_aggregation()`.
+pub struct PutBatchAggregationStatement<'a, C: Clock> {
+    tx: &'a Transaction<'a, C>,
+    statement: Statement,
+}
+
+impl<C: Clock> Transaction<'_, C> {
     /// Store a new `batch_aggregations` row in the datastore.
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn put_batch_aggregation<
-        const SEED_SIZE: usize,
-        B: AccumulableBatchMode,
-        A: AsyncAggregator<SEED_SIZE>,
-    >(
+    pub async fn put_batch_aggregation(
         &self,
-        batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
-    ) -> Result<(), Error> {
-        let task_info = match self.task_info_for(batch_aggregation.task_id()).await? {
-            Some(task_info) => task_info,
-            None => return Err(Error::MutationTargetNotFound),
-        };
-        let now = self.clock.now().as_naive_date_time()?;
-
-        let batch_interval =
-            B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
-        let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
-
-        batch_aggregation
-            .client_timestamp_interval()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(
-                    batch_aggregation.task_id(),
-                    &task_info.time_precision,
-                    e,
-                )
-            })?;
-
-        let stmt = self
+    ) -> Result<PutBatchAggregationStatement<'_, C>, Error> {
+        let statement = self
             .prepare_cached(
                 "-- put_batch_aggregation()
 INSERT INTO batch_aggregations (
@@ -4143,37 +4124,79 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                  AND ba.aggregation_param = batch_aggregations.aggregation_param)) < $16",
             )
             .await?;
+        Ok(PutBatchAggregationStatement {
+            tx: self,
+            statement,
+        })
+    }
+}
+
+impl<C: Clock> PutBatchAggregationStatement<'_, C> {
+    /// Store a new `batch_aggregations` row in the datastore.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn execute<
+        const SEED_SIZE: usize,
+        B: AccumulableBatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        &self,
+        batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
+    ) -> Result<(), Error> {
+        let task_info = match self.tx.task_info_for(batch_aggregation.task_id()).await? {
+            Some(task_info) => task_info,
+            None => return Err(Error::MutationTargetNotFound),
+        };
+        let now = self.tx.clock.now().as_naive_date_time()?;
+
+        let batch_interval =
+            B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
+        let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
+
+        batch_aggregation
+            .client_timestamp_interval()
+            .validate_precision(&task_info.time_precision)
+            .map_err(|e| {
+                Transaction::<C>::unaligned_time_error(
+                    batch_aggregation.task_id(),
+                    &task_info.time_precision,
+                    e,
+                )
+            })?;
+
         check_insert(
-            self.execute(
-                &stmt,
-                &[
-                    /* task_id */ &task_info.pkey,
-                    /* batch_identifier */
-                    &batch_aggregation.batch_identifier().get_encoded()?,
-                    /* batch_interval */ &batch_interval,
-                    /* aggregation_param */
-                    &batch_aggregation.aggregation_parameter().get_encoded()?,
-                    /* ord */ &i64::try_from(batch_aggregation.ord())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
-                    /* state */ &batch_aggregation.state().state_code(),
-                    /* aggregate_share */ &encoded_state_values.aggregate_share,
-                    /* report_count */ &encoded_state_values.report_count,
-                    /* checksum */ &encoded_state_values.checksum,
-                    /* aggregation_jobs_created */
-                    &encoded_state_values.aggregation_jobs_created,
-                    /* aggregation_jobs_terminated */
-                    &encoded_state_values.aggregation_jobs_terminated,
-                    /* created_at */ &now,
-                    /* updated_at */ &now,
-                    /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
-                ],
-            )
-            .await?,
+            self.tx
+                .execute(
+                    &self.statement,
+                    &[
+                        /* task_id */ &task_info.pkey,
+                        /* batch_identifier */
+                        &batch_aggregation.batch_identifier().get_encoded()?,
+                        /* batch_interval */ &batch_interval,
+                        /* aggregation_param */
+                        &batch_aggregation.aggregation_parameter().get_encoded()?,
+                        /* ord */ &i64::try_from(batch_aggregation.ord())?,
+                        /* client_timestamp_interval */
+                        &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
+                        /* state */ &batch_aggregation.state().state_code(),
+                        /* aggregate_share */ &encoded_state_values.aggregate_share,
+                        /* report_count */ &encoded_state_values.report_count,
+                        /* checksum */ &encoded_state_values.checksum,
+                        /* aggregation_jobs_created */
+                        &encoded_state_values.aggregation_jobs_created,
+                        /* aggregation_jobs_terminated */
+                        &encoded_state_values.aggregation_jobs_terminated,
+                        /* created_at */ &now,
+                        /* updated_at */ &now,
+                        /* updated_by */ &self.tx.name,
+                        /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    ],
+                )
+                .await?,
         )
     }
+}
 
+impl<C: Clock> Transaction<'_, C> {
     /// Update an existing `batch_aggregations` row with the values from the provided batch
     /// aggregation.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]

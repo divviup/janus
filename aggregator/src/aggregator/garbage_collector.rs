@@ -257,8 +257,10 @@ mod tests {
                     // Collection artifacts.
                     let batch_identifier =
                         Interval::new(client_timestamp, *task.time_precision()).unwrap(); // unrealistic, but induces GC
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             batch_identifier,
                             dummy::AggregationParam(0),
@@ -271,10 +273,9 @@ mod tests {
                                 aggregation_jobs_created: 3,
                                 aggregation_jobs_terminated: 3,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
@@ -438,8 +439,10 @@ mod tests {
                     // Collection artifacts.
                     let batch_identifier =
                         Interval::new(client_timestamp, *task.time_precision()).unwrap(); // unrealistic, but induces GC
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             batch_identifier,
                             dummy::AggregationParam(0),
@@ -452,10 +455,9 @@ mod tests {
                                 aggregation_jobs_created: 5,
                                 aggregation_jobs_terminated: 5,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_aggregate_share_job(
                         &AggregateShareJob::<0, TimeInterval, dummy::Vdaf>::new(
@@ -604,8 +606,10 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                             *task.id(),
                             batch_id,
                             dummy::AggregationParam(0),
@@ -618,10 +622,9 @@ mod tests {
                                 aggregation_jobs_created: 5,
                                 aggregation_jobs_terminated: 5,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
@@ -799,8 +802,10 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch_aggregation(
-                        &BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation()
+                        .await
+                        .unwrap()
+                        .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                             *task.id(),
                             batch_id,
                             dummy::AggregationParam(0),
@@ -813,10 +818,9 @@ mod tests {
                                 aggregation_jobs_created: 6,
                                 aggregation_jobs_terminated: 6,
                             },
-                        ),
-                    )
-                    .await
-                    .unwrap();
+                        ))
+                        .await
+                        .unwrap();
 
                     tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await

@@ -969,22 +969,25 @@ async fn taskprov_aggregate_share() {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    aggregation_param,
-                    0,
-                    interval,
-                    BatchAggregationState::Aggregating {
-                        aggregate_share: Some(transcript.helper_aggregate_share),
-                        report_count: 1,
-                        checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
-                        aggregation_jobs_created: 1,
-                        aggregation_jobs_terminated: 1,
-                    },
-                ))
-                .await
-                .unwrap();
+                tx.put_batch_aggregation()
+                    .await
+                    .unwrap()
+                    .execute(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        aggregation_param,
+                        0,
+                        interval,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(transcript.helper_aggregate_share),
+                            report_count: 1,
+                            checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 1,
+                        },
+                    ))
+                    .await
+                    .unwrap();
                 Ok(())
             })
         })

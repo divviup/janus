@@ -206,6 +206,9 @@ where
             },
         ));
 
+        let put_batch_aggregation_statement = tx.put_batch_aggregation().await?;
+        let put_batch_aggregation_statement = &put_batch_aggregation_statement;
+
         // Prevent deadlocks when inserting into shards by providing a deterministic order to shard
         // updates. Suppose two concurrent processes are attempting to update a batch aggregation.
         // We want to avoid this situation:
@@ -232,7 +235,7 @@ where
         let write_batch_aggs_future =
             try_join_all(batch_aggregations.iter().map(|(op, ba)| async move {
                 match op {
-                    Operation::Put => tx.put_batch_aggregation(ba).await,
+                    Operation::Put => put_batch_aggregation_statement.execute(ba).await,
                     Operation::Update => tx.update_batch_aggregation(ba).await,
                 }
             }));
