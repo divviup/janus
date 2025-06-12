@@ -18,7 +18,7 @@ pub mod runtime;
 pub mod testcontainers;
 
 #[derive(Clone, Debug)]
-pub struct LeaderPrepareTransition<
+pub struct PrepareTransition<
     const VERIFY_KEY_LENGTH: usize,
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 > {
@@ -27,18 +27,8 @@ pub struct LeaderPrepareTransition<
     pub message: PingPongMessage,
 }
 
-#[derive(Clone, Debug)]
-pub struct HelperPrepareTransition<
-    const VERIFY_KEY_LENGTH: usize,
-    V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-> {
-    pub transition: PingPongTransition<VERIFY_KEY_LENGTH, 16, V>,
-    pub state: PingPongState<VERIFY_KEY_LENGTH, 16, V>,
-    pub message: PingPongMessage,
-}
-
 impl<const VERIFY_KEY_LENGTH: usize, V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>>
-    HelperPrepareTransition<VERIFY_KEY_LENGTH, V>
+    PrepareTransition<VERIFY_KEY_LENGTH, V>
 {
     pub fn prepare_state(&self) -> &V::PrepareState {
         assert_matches!(self.state, PingPongState::Continued(ref state) => state)
@@ -62,12 +52,12 @@ pub struct VdafTranscript<
     /// The leader's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
     #[allow(clippy::type_complexity)]
-    pub leader_prepare_transitions: Vec<LeaderPrepareTransition<VERIFY_KEY_LENGTH, V>>,
+    pub leader_prepare_transitions: Vec<PrepareTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The helper's states and messages computed throughout the protocol run. Indexed by the
     /// aggregation job step.
     #[allow(clippy::type_complexity)]
-    pub helper_prepare_transitions: Vec<HelperPrepareTransition<VERIFY_KEY_LENGTH, V>>,
+    pub helper_prepare_transitions: Vec<PrepareTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The leader's computed output share.
     pub leader_output_share: V::OutputShare,
@@ -114,7 +104,7 @@ pub fn run_vdaf<
         )
         .unwrap();
 
-    leader_prepare_transitions.push(LeaderPrepareTransition {
+    leader_prepare_transitions.push(PrepareTransition {
         transition: None,
         state: leader_state,
         message: leader_message.clone(),
@@ -133,8 +123,8 @@ pub fn run_vdaf<
         .unwrap();
     let (helper_state, helper_message) = helper_transition.evaluate(&ctx, vdaf).unwrap();
 
-    helper_prepare_transitions.push(HelperPrepareTransition {
-        transition: helper_transition,
+    helper_prepare_transitions.push(PrepareTransition {
+        transition: Some(helper_transition),
         state: helper_state,
         message: helper_message,
     });
@@ -183,15 +173,15 @@ pub fn run_vdaf<
                             let (state, message) = transition.clone().evaluate(&ctx, vdaf).unwrap();
                             match role {
                                 Role::Leader => {
-                                    leader_prepare_transitions.push(LeaderPrepareTransition {
+                                    leader_prepare_transitions.push(PrepareTransition {
                                         transition: Some(transition),
                                         state,
                                         message,
                                     })
                                 }
                                 Role::Helper => {
-                                    helper_prepare_transitions.push(HelperPrepareTransition {
-                                        transition,
+                                    helper_prepare_transitions.push(PrepareTransition {
+                                        transition: Some(transition),
                                         state,
                                         message,
                                     })

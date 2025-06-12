@@ -3406,7 +3406,6 @@ mod tests {
                                 &Role::Leader,
                                 task_id,
                                 &agg_job_id,
-                                agg_job.aggregation_parameter(),
                             )
                             .await
                             .unwrap();

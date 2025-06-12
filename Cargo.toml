@@ -76,7 +76,7 @@ postgres-types = "0.2.9"
 pretty_assertions = "1.4.1"
 # Disable default features so that individual workspace crates can choose to
 # re-enable them
-prio = { version = "0.17.0", default-features = false, features = ["experimental"] }
+prio = { version = "0.18.1-alpha.0", default-features = false, features = ["experimental"] }
 prometheus = "0.13.4"
 querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }
