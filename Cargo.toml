@@ -31,7 +31,7 @@ backon = { version = "1.5.1", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.5.4"
 bytes = "1"
-cfg-if = "1.0.0"
+cfg-if = "1.0.1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
