@@ -12,6 +12,10 @@ ignore = [
     # bugs or security vulnerabilities.
     "RUSTSEC-2024-0384",
 
+    # `backoff` is unmaintained, but it is a simple dependency, and we don't
+    # plan to backport our migration to `backon` to this release branch.
+    "RUSTSEC-2025-0012",
+
     # Janus never uses the protobuf format for exposing metrics, and in any case we would not be
     # handling untrusted input.
     "RUSTSEC-2024-0437",
