@@ -826,15 +826,16 @@ mod tests {
         ))
     }
 
-    fn build_collect_response_time<
-        const SEED_SIZE: usize,
-        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
-    >(
+    fn build_collect_response_time<const SEED_SIZE: usize, V>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_interval: Interval,
-    ) -> CollectionJobResp<TimeInterval> {
+    ) -> CollectionJobResp<TimeInterval>
+    where
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+        V::OutputShare: Eq,
+    {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
             aggregation_parameter.get_encoded().unwrap(),
@@ -861,15 +862,16 @@ mod tests {
         }
     }
 
-    fn build_collect_response_fixed<
-        const SEED_SIZE: usize,
-        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
-    >(
+    fn build_collect_response_fixed<const SEED_SIZE: usize, V>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_id: BatchId,
-    ) -> CollectionJobResp<LeaderSelected> {
+    ) -> CollectionJobResp<LeaderSelected>
+    where
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+        V::OutputShare: Eq,
+    {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
             aggregation_parameter.get_encoded().unwrap(),
