@@ -2513,8 +2513,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::LeaderContinue {
-                transition: vdaf_transcript.leader_prepare_transitions[1]
-                    .transition
+                continuation: vdaf_transcript.leader_prepare_transitions[1]
+                    .continuation
                     .clone()
                     .unwrap(),
             },
@@ -2528,8 +2528,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         (
             Role::Leader,
             ReportAggregationState::LeaderPollContinue {
-                transition: vdaf_transcript.leader_prepare_transitions[1]
-                    .transition
+                continuation: vdaf_transcript.leader_prepare_transitions[1]
+                    .continuation
                     .clone()
                     .unwrap(),
             },
@@ -2552,7 +2552,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                         ),
                     ),
                     vdaf_transcript.leader_prepare_transitions[0]
-                        .message
+                        .message()
+                        .unwrap()
                         .clone(),
                 ),
                 require_taskbind_extension: true,
@@ -2571,7 +2572,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 prepare_continue: PrepareContinue::new(
                     report_id,
                     vdaf_transcript.leader_prepare_transitions[1]
-                        .message
+                        .message()
+                        .unwrap()
                         .clone(),
                 ),
             },
@@ -5606,8 +5608,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     None,
                     // Counted among max_size.
                     ReportAggregationState::LeaderContinue {
-                        transition: transcript.helper_prepare_transitions[0]
-                            .transition
+                        continuation: transcript.helper_prepare_transitions[0]
+                            .continuation
                             .clone()
                             .unwrap(),
                     },
