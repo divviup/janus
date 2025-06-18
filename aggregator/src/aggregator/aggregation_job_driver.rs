@@ -1165,21 +1165,6 @@ where
                 );
                 let ctx = vdaf_application_context(&task_id);
 
-                /*
-                if we are here, then we are processing a response from the helper to our agg init
-                or our agg continue
-
-                if agg init, then the leader has to be in the continued state, because leader init
-                can't transition to anything else
-                    so we have a prepare state and a prepare message, (would be nice if we didn't have to)
-                    we only expect the incoming helper message to be PrepareStepResult::Continue(pp_message) and to continue with it
-
-                if agg continue, then the leader is either in state continued (prepare state + prepare message)
-                    we expect PrepareStepResult::Continue(pp_message) and to continue
-                or in state finishedwithoutbound (output share + prepare message),
-                    we expect PrepareStepResult::Finished(nil) and to commit
-                any other state wouldn't have yielded a further msg to helper
-                */
                 stepped_aggregations
                     .into_par_iter()
                     .zip(prepare_resps)
