@@ -1222,7 +1222,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.12",
  "curve25519-dalek-derive",
- "fiat-crypto",
+ "fiat-crypto 0.2.9",
  "rustc_version",
  "subtle",
 ]
@@ -1642,6 +1642,12 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "fiat-crypto"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
 name = "filetime"
@@ -2724,7 +2730,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "prometheus",
  "querystring",
  "quickcheck",
@@ -2835,7 +2841,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "regex",
  "reqwest",
@@ -2875,7 +2881,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "mockito",
  "ohttp",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "thiserror 2.0.12",
@@ -2903,7 +2909,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "mime",
  "mockito",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "retry-after",
@@ -2941,7 +2947,7 @@ dependencies = [
  "kube",
  "mime",
  "mockito",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "quickcheck",
  "rand 0.9.1",
  "regex",
@@ -2992,7 +2998,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "opentelemetry",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "quickcheck",
  "rand 0.9.1",
  "regex",
@@ -3032,7 +3038,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.8.0-prerelease-1",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "regex",
  "reqwest",
@@ -3081,7 +3087,7 @@ dependencies = [
  "janus_messages 0.8.0-prerelease-1",
  "num_enum",
  "pretty_assertions",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "serde",
  "serde_test",
@@ -3102,7 +3108,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.8.0-prerelease-1",
- "prio 0.17.0",
+ "prio 0.18.1-alpha.0",
  "rand 0.9.1",
  "reqwest",
  "serde_json",
@@ -4188,7 +4194,7 @@ dependencies = [
  "bitvec",
  "byteorder",
  "ctr 0.9.2",
- "fiat-crypto",
+ "fiat-crypto 0.2.9",
  "fixed",
  "getrandom 0.2.15",
  "hmac 0.12.1",
@@ -4208,15 +4214,15 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.17.0"
+version = "0.18.1-alpha.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac0b3cb73cf53e2608f559ac116f67436318cafa7004498395d9f419e2611063"
+checksum = "f88300e58f0000e71f531ea7efe3aa8acbd4de2b9c84f7d0358f31f1152f8956"
 dependencies = [
  "aes 0.8.4",
  "bitvec",
  "byteorder",
  "ctr 0.9.2",
- "fiat-crypto",
+ "fiat-crypto 0.3.0",
  "fixed",
  "hex",
  "hmac 0.12.1",

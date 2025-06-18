@@ -2109,10 +2109,9 @@ impl Encode for PrepareStepResult {
         // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
         // DAP spec.
         match self {
-            Self::Continue { message: prep_msg } => {
+            Self::Continue { message } => {
                 0u8.encode(bytes)?;
-                let encoded_prep_msg = prep_msg.get_encoded()?;
-                encode_u32_items(bytes, &(), &encoded_prep_msg)
+                encode_u32_items(bytes, &(), &message.get_encoded()?)
             }
             Self::Finished => 1u8.encode(bytes),
             Self::Reject(error) => {
@@ -2124,7 +2123,7 @@ impl Encode for PrepareStepResult {
 
     fn encoded_len(&self) -> Option<usize> {
         match self {
-            Self::Continue { message: prep_msg } => Some(1 + 4 + prep_msg.encoded_len()?),
+            Self::Continue { message } => Some(1 + 4 + message.encoded_len()?),
             Self::Finished => Some(1),
             Self::Reject(error) => Some(1 + error.encoded_len()?),
         }
@@ -2137,8 +2136,8 @@ impl Decode for PrepareStepResult {
         Ok(match val {
             0 => {
                 let prep_msg_bytes = decode_u32_items(&(), bytes)?;
-                let prep_msg = PingPongMessage::get_decoded(&prep_msg_bytes)?;
-                Self::Continue { message: prep_msg }
+                let message = PingPongMessage::get_decoded(&prep_msg_bytes)?;
+                Self::Continue { message }
             }
             1 => Self::Finished,
             2 => Self::Reject(ReportError::decode(bytes)?),

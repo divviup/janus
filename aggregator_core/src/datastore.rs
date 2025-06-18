@@ -40,7 +40,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::{PingPongState, PingPongTransition},
+    topology::ping_pong::PingPongTransition,
 };
 use rand::random;
 use std::{
@@ -2185,7 +2185,6 @@ WHERE aggregation_jobs.task_id = $6
         role: &Role,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
-        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -2200,7 +2199,7 @@ SELECT
     report_aggregations.state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, leader_prep_state,
-    leader_output_share, prepare_init, require_taskbind_extension,
+    prepare_init, require_taskbind_extension,
     helper_prep_state, prepare_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -2229,7 +2228,6 @@ ORDER BY ord ASC",
                 task_id,
                 aggregation_job_id,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
-                aggregation_param,
                 &row,
             )
         })
@@ -2248,7 +2246,6 @@ ORDER BY ord ASC",
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
-        aggregation_param: &A::AggregationParam,
     ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -2262,7 +2259,7 @@ SELECT
     ord, client_timestamp, last_prep_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
     leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    leader_prep_state, leader_output_share, prepare_init,
+    leader_prep_state, prepare_init,
     require_taskbind_extension, helper_prep_state, prepare_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs
@@ -2292,7 +2289,6 @@ WHERE report_aggregations.task_id = $1
                 task_id,
                 aggregation_job_id,
                 report_id,
-                aggregation_param,
                 &row,
             )
         })
@@ -2310,7 +2306,6 @@ WHERE report_aggregations.task_id = $1
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error> {
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
@@ -2325,7 +2320,7 @@ SELECT
     client_timestamp, last_prep_resp, report_aggregations.state,
     public_extensions, public_share, leader_private_extensions,
     leader_input_share, helper_encrypted_input_share, leader_prep_transition,
-    leader_prep_state, leader_output_share, prepare_init,
+    leader_prep_state, prepare_init,
     require_taskbind_extension, helper_prep_state, prepare_continue, error_code
 FROM report_aggregations
 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -2351,7 +2346,6 @@ WHERE report_aggregations.task_id = $1
                 task_id,
                 &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
-                aggregation_param,
                 &row,
             )
         })
@@ -2364,7 +2358,6 @@ WHERE report_aggregations.task_id = $1
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
-        aggregation_param: &A::AggregationParam,
         row: &Row,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error> {
         let ord: u64 = row.get_bigint_and_convert("ord")?;
@@ -2537,34 +2530,40 @@ WHERE report_aggregations.task_id = $1
                 }
             }
 
-            ReportAggregationStateCode::Poll => {
-                let leader_prep_state_bytes = row.get::<_, Option<Vec<u8>>>("leader_prep_state");
-                let leader_output_share_bytes =
-                    row.get::<_, Option<Vec<u8>>>("leader_output_share");
+            ReportAggregationStateCode::PollInit => {
+                row.get::<_, Option<Vec<u8>>>("leader_prep_state")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state POLL_INIT but leader_prep_state is NULL"
+                                .to_string(),
+                        )
+                    })
+                    .and_then(|encoded| {
+                        Ok(ReportAggregationState::LeaderPollInit {
+                            prepare_state: A::PrepareState::get_decoded_with_param(
+                                &(vdaf, 0 /* leader */),
+                                &encoded,
+                            )?,
+                        })
+                    })?
+            }
 
-                let leader_state = match (leader_prep_state_bytes, leader_output_share_bytes) {
-                    (Some(leader_prep_state_bytes), None) => {
-                        PingPongState::Continued(A::PrepareState::get_decoded_with_param(
-                            &(vdaf, 0 /* leader */),
-                            &leader_prep_state_bytes,
-                        )?)
-                    }
-
-                    (None, Some(leader_output_share_bytes)) => {
-                        PingPongState::Finished(A::OutputShare::get_decoded_with_param(
-                            &(vdaf, aggregation_param),
-                            &leader_output_share_bytes,
-                        )?)
-                    }
-
-                    _ => return Err(Error::DbState(
-                        "report aggregation in state POLL but both/neither of leader_prep_state \
-                        and leader_output_share are NULL"
-                            .to_string(),
-                    )),
-                };
-
-                ReportAggregationState::LeaderPoll { leader_state }
+            ReportAggregationStateCode::PollContinue => {
+                row.get::<_, Option<Vec<u8>>>("leader_prep_transition")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state POLL_CONTINUE but leader_prep_transition is NULL"
+                                .to_string(),
+                        )
+                    })
+                    .and_then(|encoded| {
+                        Ok(ReportAggregationState::LeaderPollContinue {
+                            transition: PingPongTransition::get_decoded_with_param(
+                                &(vdaf, 0 /* leader */),
+                                &encoded,
+                            )?,
+                        })
+                    })?
             }
 
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
@@ -2643,12 +2642,12 @@ INSERT INTO report_aggregations
     last_prep_resp, state, public_extensions, public_share,
     leader_private_extensions, leader_input_share,
     helper_encrypted_input_share, leader_prep_transition, leader_prep_state,
-    leader_output_share, prepare_init, require_taskbind_extension,
+    prepare_init, require_taskbind_extension,
     helper_prep_state, prepare_continue, error_code, created_at, updated_at,
     updated_by)
 SELECT
     $1, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17, $18, $19, $20, $21, $22, $23
+    $15, $16, $17, $18, $19, $20, $21, $22
 FROM aggregation_jobs
 WHERE task_id = $1
   AND aggregation_job_id = $2
@@ -2657,7 +2656,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         client_report_id, client_timestamp, last_prep_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state, leader_output_share,
+        leader_prep_transition, leader_prep_state,
         prepare_init, require_taskbind_extension, helper_prep_state,
         prepare_continue, error_code, created_at, updated_at, updated_by
     ) = (
@@ -2666,14 +2665,14 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
         excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.leader_output_share, excluded.prepare_init,
+        excluded.prepare_init,
         excluded.require_taskbind_extension, excluded.helper_prep_state,
         excluded.prepare_continue, excluded.error_code, excluded.created_at,
         excluded.updated_at, excluded.updated_by
     )
     WHERE (SELECT UPPER(client_timestamp_interval)
            FROM aggregation_jobs
-           WHERE id = report_aggregations.aggregation_job_id) < $24",
+           WHERE id = report_aggregations.aggregation_job_id) < $23",
             )
             .await?;
         check_insert(
@@ -2698,7 +2697,6 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
                     /* leader_prep_state */ &encoded_state_values.leader_prep_state,
-                    /* leader_output_share */ &encoded_state_values.leader_output_share,
                     /* prepare_init */ &encoded_state_values.prepare_init,
                     /* require_taskbind_extension */
                     &encoded_state_values.require_taskbind_extension,
@@ -2771,7 +2769,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         client_report_id, client_timestamp, last_prep_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state, leader_output_share,
+        leader_prep_transition, leader_prep_state,
         prepare_init, helper_prep_state, prepare_continue, error_code,
         created_at, updated_at, updated_by
     ) = (
@@ -2780,7 +2778,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
         excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.leader_output_share, excluded.prepare_init,
+        excluded.prepare_init,
         excluded.helper_prep_state, excluded.prepare_continue,
         excluded.error_code, excluded.created_at, excluded.updated_at,
         excluded.updated_by
@@ -2833,7 +2831,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         client_report_id, client_timestamp, last_prep_resp, state,
         public_extensions, public_share, leader_private_extensions,
         leader_input_share, helper_encrypted_input_share,
-        leader_prep_transition, leader_prep_state, leader_output_share,
+        leader_prep_transition, leader_prep_state,
         prepare_init, helper_prep_state, prepare_continue, error_code,
         created_at, updated_at, updated_by
     ) = (
@@ -2842,7 +2840,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
         excluded.public_share, excluded.leader_private_extensions,
         excluded.leader_input_share, excluded.helper_encrypted_input_share,
         excluded.leader_prep_transition, excluded.leader_prep_state,
-        excluded.leader_output_share, excluded.prepare_init,
+        excluded.prepare_init,
         excluded.helper_prep_state, excluded.prepare_continue,
         excluded.error_code, excluded.created_at, excluded.updated_at,
         excluded.updated_by
@@ -2906,19 +2904,19 @@ SET
     last_prep_resp = $1, state = $2, public_extensions = $3, public_share = $4,
     leader_private_extensions = $5, leader_input_share = $6,
     helper_encrypted_input_share = $7, leader_prep_transition = $8,
-    leader_prep_state = $9, leader_output_share = $10, prepare_init = $11,
-    require_taskbind_extension = $12, helper_prep_state = $13,
-    prepare_continue = $14, error_code = $15, updated_at = $16,
-    updated_by = $17
+    leader_prep_state = $9, prepare_init = $10,
+    require_taskbind_extension = $11, helper_prep_state = $12,
+    prepare_continue = $13, error_code = $14, updated_at = $15,
+    updated_by = $16
 FROM aggregation_jobs
 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
-  AND aggregation_jobs.aggregation_job_id = $18
-  AND aggregation_jobs.task_id = $19
-  AND report_aggregations.task_id = $19
-  AND report_aggregations.client_report_id = $20
-  AND report_aggregations.client_timestamp = $21
-  AND report_aggregations.ord = $22
-  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $23",
+  AND aggregation_jobs.aggregation_job_id = $17
+  AND aggregation_jobs.task_id = $18
+  AND report_aggregations.task_id = $18
+  AND report_aggregations.client_report_id = $19
+  AND report_aggregations.client_timestamp = $20
+  AND report_aggregations.ord = $21
+  AND UPPER(aggregation_jobs.client_timestamp_interval) >= $22",
             )
             .await?;
         check_single_row_mutation(
@@ -2937,7 +2935,6 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
                     /* leader_prep_state */ &encoded_state_values.leader_prep_state,
-                    /* leader_output_share */ &encoded_state_values.leader_output_share,
                     /* prepare_init */ &encoded_state_values.prepare_init,
                     /* require_taskbind_extension */
                     &encoded_state_values.require_taskbind_extension,
