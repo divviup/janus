@@ -79,8 +79,6 @@ jobs:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo test --profile ci --locked --all-targets --features=prometheus
-      # Continue on error so we can upload logs
-      continue-on-error: true
     - name: Build (Docker-specific tests)
       # This matches the `cargo test` command invoked by `cargo xtask test-docker`, except for `--no-run`.
       run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
@@ -91,21 +89,15 @@ jobs:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo run --package xtask --profile=ci -- test-docker --profile=ci --locked
-      # Continue on error so we can upload logs
-      continue-on-error: true
     - name: Upload container logs
       # Only get logs on test failure
-      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
+      if: failure() && (steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure')
       uses: actions/upload-artifact@v4
       with:
         name: container-logs
         path: ${{ github.workspace }}/test-logs/
         # Not all test failures yield log files
         if-no-files-found: ignore
-    # Force overall job to fail if tests fail
-    - name: test status
-      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
-      run: exit 1
   
   janus_lints:
     strategy:
