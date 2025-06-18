@@ -1001,18 +1001,21 @@ where
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error> {
-        // Any non-failed report aggregations are set to the Poll state, allowing them to be polled
-        // when the aggregation job is next picked up.
+        // We sent either an init or continue request to the helper, and it indicated that will
+        // defer processing. Any non-failed report aggregations are transitioned to a polling state,
+        // allowing them to be polled when the aggregation job is next picked up.
         report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
             |stepped_aggregation| {
                 let polling_state = match (
                     stepped_aggregation.report_aggregation.state(),
                     stepped_aggregation.leader_state,
                 ) {
+                    // Transition from init state to polling init state
                     (
                         ReportAggregationState::LeaderInit { .. },
                         PingPongState::Continued(prepare_state),
                     ) => ReportAggregationState::LeaderPollInit { prepare_state },
+                    // Transition from continue state to polling continue state
                     (ReportAggregationState::LeaderContinue { transition }, _) => {
                         ReportAggregationState::LeaderPollContinue {
                             transition: transition.clone(),
@@ -1021,6 +1024,7 @@ where
                     // We were already polling, so keep polling
                     s @ (ReportAggregationState::LeaderPollInit { .. }, _)
                     | s @ (ReportAggregationState::LeaderPollContinue { .. }, _) => s.0.clone(),
+                    // Other state transitions are impossible
                     s => panic!("cannot transition to polling state from state {s:?}"),
                 };
                 WritableReportAggregation::new(
