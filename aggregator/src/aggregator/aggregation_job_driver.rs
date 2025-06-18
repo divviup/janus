@@ -868,15 +868,21 @@ where
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<(), Error> {
+        // The leader previously initiated or continued this job, and the helper deferred processing
+        // it. The leader is now are polling the helper to check if it has stepped the job.
         // Only process non-failed report aggregations; convert non-failed report aggregations into
         // stepped aggregations to be compatible with `process_response_from_helper`.
         let stepped_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter_map(|report_aggregation| {
                 let leader_state = match report_aggregation.state() {
+                    // Leader was in the init state, so re-hydrate the prepare state into
+                    // PingPongState::Continued.
                     ReportAggregationState::LeaderPollInit { prepare_state } => {
                         Ok(PingPongState::Continued(prepare_state.clone()))
                     }
+                    // Leader was in the continue state, so re-evaluate the transition into either
+                    // PingPongState::Continued or ::Finished.
                     ReportAggregationState::LeaderPollContinue { transition } => transition
                         .evaluate(&vdaf_application_context(task.id()), &vdaf)
                         .map(|(state, _)| state)
@@ -1001,9 +1007,9 @@ where
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error> {
-        // We sent either an init or continue request to the helper, and it indicated that will
-        // defer processing. Any non-failed report aggregations are transitioned to a polling state,
-        // allowing them to be polled when the aggregation job is next picked up.
+        // The leader sent either an init or continue request to the helper, and it indicated that
+        // it would defer processing. Any non-failed report aggregations are transitioned to a
+        // polling state, allowing them to be polled when the aggregation job is next picked up.
         report_aggregations_to_write.extend(stepped_aggregations.into_iter().map(
             |stepped_aggregation| {
                 let polling_state = match (
