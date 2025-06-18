@@ -3,7 +3,7 @@
 pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
-        aggregate_share::compute_aggregate_share,
+        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
         aggregation_job_init::compute_helper_aggregate_init,
         aggregation_job_writer::{
             AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
@@ -43,15 +43,14 @@ use fixed::{
 };
 use futures::{future::try_join_all, stream::TryStreamExt};
 use http::{header::CONTENT_TYPE, Method};
-use itertools::iproduct;
 use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState, TaskAggregationCounter,
+            AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
+            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            TaskAggregationCounter,
         },
         Datastore, Error as DatastoreError, Transaction,
     },
@@ -79,7 +78,7 @@ use janus_messages::{
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareResp, Report, ReportError, ReportIdChecksum, Role, TaskId,
+    PrepareResp, Report, ReportError, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -102,13 +101,13 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fmt::Debug,
-    iter::repeat,
+    iter::repeat_with,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::try_join;
+use tokio::{sync::Mutex, try_join};
 use tracing::{debug, error, info, warn, Level};
 use url::Url;
 
@@ -3297,24 +3296,55 @@ impl VdafOps {
                     // To ensure that concurrent aggregations don't write into a
                     // currently-nonexistent batch aggregation, we write (empty) batch
                     // aggregations for any that have not already been written to storage.
-                    let empty_batch_aggregations = empty_batch_aggregations(
+                    let batch_aggregations_iter = BatchAggregationsIterator::new(
                         &task,
                         batch_aggregation_shard_count,
                         aggregate_share_req.batch_selector().batch_identifier(),
                         &aggregation_param,
-                        &batch_aggregations,
+                        batch_aggregations,
                     );
 
-                    let (mut helper_aggregate_share, report_count, _, checksum) =
-                        compute_aggregate_share::<SEED_SIZE, B, A>(&task, &batch_aggregations)
-                            .await
-                            .map_err(|e| datastore::Error::User(e.into()))?;
+                    let aggregate_share =
+                        Arc::new(Mutex::new(AggregateShareComputer::new(&task)));
+
+                    // Rather than awaiting all the futures at once, which can cause heap growth
+                    // proportional to the number of batch aggregations to write, put them into an
+                    // buffered stream so that they get run in groups of bounded size. #3857
+                    futures::stream::iter(
+                        batch_aggregations_iter
+                            .clone()
+                            .zip(repeat_with(|| Arc::clone(&aggregate_share)))
+                            .map(Result::Ok),
+                    )
+                    .try_for_each_concurrent(
+                        max_future_concurrency,
+                        async |((ba, is_update), aggregate_share)| {
+                            aggregate_share
+                                .lock()
+                                .await
+                                .update(&ba)
+                                .map_err(|e| datastore::Error::User(e.into()))?;
+                            let ba = ba.scrubbed();
+                            if is_update {
+                                tx.update_batch_aggregation(&ba).await
+                            } else {
+                                tx.put_batch_aggregation(&ba).await
+                            }
+                        },
+                    )
+                    .await?;
+
+                    let mut aggregate_share = aggregate_share
+                        .lock()
+                        .await
+                        .finalize()
+                        .map_err(|e| datastore::Error::User(e.into()))?;
 
                     vdaf.add_noise_to_agg_share(
                         &dp_strategy,
                         &aggregation_param,
-                        &mut helper_aggregate_share,
-                        report_count.try_into()?,
+                        &mut aggregate_share.aggregate_share,
+                        aggregate_share.report_count.try_into()?,
                     )
                     .map_err(|e| datastore::Error::User(e.into()))?;
 
@@ -3327,34 +3357,13 @@ impl VdafOps {
                             .batch_selector()
                             .batch_identifier()
                             .clone(),
-                        aggregation_param,
-                        helper_aggregate_share,
-                        report_count,
-                        checksum,
+                        aggregation_param.clone(),
+                        aggregate_share.aggregate_share,
+                        aggregate_share.report_count,
+                        aggregate_share.checksum,
                     );
 
                     tx.put_aggregate_share_job(&aggregate_share_job).await?;
-
-                    // Rather than awaiting all the futures at once, which can cause heap growth
-                    // proportional to the number of batch aggregations to write, put them into an
-                    // buffered stream so that they get run in groups of bounded size. #3857
-                    futures::stream::iter(
-                        batch_aggregations
-                            .into_iter()
-                            // existing batch aggregatons must be updated so zip with true
-                            .zip(repeat(true))
-                            // empty batch aggregations are new so zip with false
-                            .chain(empty_batch_aggregations.into_iter().zip(repeat(false)))
-                            .map(|(ba, is_update)| Ok((ba.scrubbed(), is_update))),
-                    )
-                    .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
-                        if is_update {
-                            tx.update_batch_aggregation(&ba).await
-                        } else {
-                            tx.put_batch_aggregation(&ba).await
-                        }
-                    })
-                    .await?;
 
                     Ok(aggregate_share_job)
                 })
@@ -3438,48 +3447,6 @@ fn write_task_aggregation_counter<C: Clock>(
             );
         }
     });
-}
-
-fn empty_batch_aggregations<
-    const SEED_SIZE: usize,
-    B: CollectableBatchMode,
-    A: AsyncAggregator<SEED_SIZE>,
->(
-    task: &AggregatorTask,
-    batch_aggregation_shard_count: u64,
-    batch_identifier: &B::BatchIdentifier,
-    aggregation_param: &A::AggregationParam,
-    batch_aggregations: &[BatchAggregation<SEED_SIZE, B, A>],
-) -> Vec<BatchAggregation<SEED_SIZE, B, A>> {
-    let existing_batch_aggregations: HashSet<_> = batch_aggregations
-        .iter()
-        .map(|ba| (ba.batch_identifier(), ba.ord()))
-        .collect();
-    iproduct!(
-        B::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
-        0..batch_aggregation_shard_count
-    )
-    .filter_map(|(batch_identifier, ord)| {
-        if !existing_batch_aggregations.contains(&(&batch_identifier, ord)) {
-            Some(BatchAggregation::<SEED_SIZE, B, A>::new(
-                *task.id(),
-                batch_identifier,
-                aggregation_param.clone(),
-                ord,
-                Interval::EMPTY,
-                BatchAggregationState::Collected {
-                    aggregate_share: None,
-                    report_count: 0,
-                    checksum: ReportIdChecksum::default(),
-                    aggregation_jobs_created: 0,
-                    aggregation_jobs_terminated: 0,
-                },
-            ))
-        } else {
-            None
-        }
-    })
-    .collect()
 }
 
 #[derive(Clone)]

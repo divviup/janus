@@ -2,12 +2,12 @@
 
 use crate::aggregator::{
     aggregation_job_init::test_util::{put_aggregation_job, PrepareInitGenerator},
-    empty_batch_aggregations,
     http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
     test_util::{
         assert_task_aggregation_counter, generate_helper_report_share,
         generate_helper_report_share_for_plaintext, BATCH_AGGREGATION_SHARD_COUNT,
     },
+    BatchAggregationsIterator,
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
@@ -465,7 +465,7 @@ async fn aggregate_init_sync() {
                 // Write collected batch aggregations for the interval that report_share_5 falls
                 // into, which will cause it to fail to prepare.
                 try_join_all(
-                    empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
+                    BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
                         &Interval::new(
@@ -474,10 +474,11 @@ async fn aggregate_init_sync() {
                         )
                         .unwrap(),
                         &dummy::AggregationParam(0),
-                        &[],
+                        [],
                     )
+                    .collect::<Vec<_>>()
                     .iter()
-                    .map(|ba| tx.put_batch_aggregation(ba)),
+                    .map(|(ba, _)| tx.put_batch_aggregation(ba)),
                 )
                 .await
                 .unwrap();

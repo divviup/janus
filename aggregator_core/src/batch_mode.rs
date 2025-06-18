@@ -176,7 +176,7 @@ impl AccumulableBatchMode for LeaderSelected {
 /// [`AccumulableBatchMode`] with additional functionality required for collection.
 #[async_trait]
 pub trait CollectableBatchMode: AccumulableBatchMode {
-    type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
+    type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync + Clone;
 
     /// Retrieves the batch identifier for a given query.
     async fn collection_identifier_for_query<C: Clock>(
@@ -332,9 +332,9 @@ impl CollectableBatchMode for TimeInterval {
 // This type only exists because the CollectableBatchMode trait requires specifying the type of the
 // iterator explicitly (i.e. it cannot be inferred or replaced with an `impl Trait` expression), and
 // the type of the iterator created via method chaining does not have a type which is expressible.
+#[derive(Clone)]
 pub struct TimeIntervalBatchIdentifierIter {
     step: u64,
-
     total_step_count: u64,
     start: Time,
     time_precision: Duration,

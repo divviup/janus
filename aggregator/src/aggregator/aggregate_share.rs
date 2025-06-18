@@ -1,7 +1,9 @@
 //! Implements functionality for computing & validating aggregate shares.
 
 use super::Error;
+use itertools::iproduct;
 use janus_aggregator_core::{
+    batch_mode::CollectableBatchMode,
     datastore::{
         self,
         models::{BatchAggregation, BatchAggregationState},
@@ -10,50 +12,75 @@ use janus_aggregator_core::{
     AsyncAggregator,
 };
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
-use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum};
+use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum, TaskId};
 use prio::vdaf::Aggregatable;
+use std::collections::HashMap;
 
 /// Computes the aggregate share over the provided batch aggregations.
 ///
 /// The assumption is that all aggregation jobs contributing to those batch aggregations have been
 /// driven to completion, and that the query count requirements have been validated for the included
 /// batches.
-#[tracing::instrument(skip(task, batch_aggregations), fields(task_id = ?task.id()), err)]
-pub(crate) async fn compute_aggregate_share<
-    const SEED_SIZE: usize,
-    B: BatchMode,
+#[derive(Clone, Debug)]
+pub(crate) struct AggregateShareComputer<'a, const SEED_SIZE: usize, A>
+where
     A: AsyncAggregator<SEED_SIZE>,
->(
-    task: &AggregatorTask,
-    batch_aggregations: &[BatchAggregation<SEED_SIZE, B, A>],
-) -> Result<(A::AggregateShare, u64, Interval, ReportIdChecksum), Error> {
-    // At the moment we construct an aggregate share (either handling AggregateShareReq in the
-    // helper or driving a collection job in the leader), there could be some incomplete aggregation
-    // jobs whose results not been accumulated into the batch aggregations we just queried from the
-    // datastore, meaning we will aggregate over an incomplete view of data, which:
-    //
-    //  * reduces fidelity of the resulting aggregates,
-    //  * could cause us to fail to meet the minimum batch size for the task,
-    //  * or for particularly pathological timing, could cause us to aggregate a different set of
-    //    reports than the leader did (though the checksum will detect this).
-    //
-    // There's not much the helper can do about this, because an aggregate job might be unfinished
-    // because it's waiting on an aggregate sub-protocol message that is never coming because the
-    // leader has abandoned that job. Thus the helper has no choice but to assume that any
-    // unfinished aggregation jobs were intentionally abandoned by the leader (see issue #104 for
-    // more discussion).
-    //
-    // On the leader side, we know/assume that we would not be stepping a collection job unless we
-    // had verified that the constituent aggregation jobs were finished.
-    //
-    // In either case, we go ahead and service the aggregate share request with whatever batch
-    // aggregations are available now.
-    let mut total_report_count = 0;
-    let mut client_timestamp_interval = Interval::EMPTY;
-    let mut total_checksum = ReportIdChecksum::default();
-    let mut total_aggregate_share: Option<A::AggregateShare> = None;
+{
+    task: &'a AggregatorTask,
+    total_report_count: u64,
+    client_timestamp_interval: Interval,
+    total_checksum: ReportIdChecksum,
+    total_aggregate_share: Option<A::AggregateShare>,
+}
 
-    for batch_aggregation in batch_aggregations {
+#[derive(Clone, Debug)]
+pub(crate) struct AggregateShareComputerResult<AggregateShare> {
+    pub report_count: u64,
+    pub client_timestamp_interval: Interval,
+    pub checksum: ReportIdChecksum,
+    pub aggregate_share: AggregateShare,
+}
+
+impl<'a, const SEED_SIZE: usize, A> AggregateShareComputer<'a, SEED_SIZE, A>
+where
+    A: AsyncAggregator<SEED_SIZE>,
+{
+    pub(crate) fn new(task: &'a AggregatorTask) -> Self {
+        Self {
+            task,
+            total_report_count: 0,
+            client_timestamp_interval: Interval::EMPTY,
+            total_checksum: ReportIdChecksum::default(),
+            total_aggregate_share: None,
+        }
+    }
+
+    pub(crate) fn update<B: BatchMode>(
+        &mut self,
+        batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
+    ) -> Result<(), Error> {
+        // At the moment we construct an aggregate share (either handling AggregateShareReq in the
+        // helper or driving a collection job in the leader), there could be some incomplete
+        // aggregation jobs whose results not been accumulated into the batch aggregations we just
+        // queried from the datastore, meaning we will aggregate over an incomplete view of data,
+        // which:
+        //
+        //  * reduces fidelity of the resulting aggregates,
+        //  * could cause us to fail to meet the minimum batch size for the task,
+        //  * or for particularly pathological timing, could cause us to aggregate a different set
+        //    of reports than the leader did (though the checksum will detect this).
+        //
+        // There's not much the helper can do about this, because an aggregate job might be
+        // unfinished because it's waiting on an aggregate sub-protocol message that is never coming
+        // because the leader has abandoned that job. Thus the helper has no choice but to assume
+        // that any unfinished aggregation jobs were intentionally abandoned by the leader (see
+        // issue #104 for more discussion).
+        //
+        // On the leader side, we know/assume that we would not be stepping a collection job unless
+        // we had verified that the constituent aggregation jobs were finished.
+        //
+        // In either case, we go ahead and service the aggregate share request with whatever batch
+        // aggregations are available now.
         let (aggregate_share, report_count, checksum) = match batch_aggregation.state() {
             BatchAggregationState::Aggregating {
                 aggregate_share,
@@ -74,46 +101,146 @@ pub(crate) async fn compute_aggregate_share<
 
         // Merge the intervals spanned by the constituent batch aggregations into the interval
         // spanned by the collection.
-        client_timestamp_interval =
-            client_timestamp_interval.merge(batch_aggregation.client_timestamp_interval())?;
+        self.client_timestamp_interval = self
+            .client_timestamp_interval
+            .merge(batch_aggregation.client_timestamp_interval())?;
 
         // XOR this batch interval's checksum into the overall checksum
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_checksum = total_checksum.combined_with(checksum);
+        self.total_checksum = self.total_checksum.combined_with(checksum);
 
         // Sum all the report counts
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_report_count += report_count;
+        self.total_report_count += *report_count;
 
-        match &mut total_aggregate_share {
+        match &mut self.total_aggregate_share {
             Some(share) => {
                 aggregate_share
                     .as_ref()
                     .map(|other| share.merge(other))
                     .transpose()?;
             }
-            None => total_aggregate_share.clone_from(aggregate_share),
+            None => self.total_aggregate_share.clone_from(aggregate_share),
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn finalize(
+        &self,
+    ) -> Result<AggregateShareComputerResult<A::AggregateShare>, Error> {
+        // Only happens if there were no batch aggregations, which would get caught by the
+        // min_batch_size check below, but we have to unwrap the option.
+        let aggregate_share = self
+            .total_aggregate_share
+            .clone()
+            .ok_or_else(|| Error::InvalidBatchSize(*self.task.id(), self.total_report_count))?;
+
+        let client_timestamp_interval = self
+            .client_timestamp_interval
+            .align_to_time_precision(self.task.time_precision())?;
+
+        // Validate batch size per
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        if !self.task.validate_batch_size(self.total_report_count) {
+            return Err(Error::InvalidBatchSize(
+                *self.task.id(),
+                self.total_report_count,
+            ));
+        }
+
+        Ok(AggregateShareComputerResult {
+            report_count: self.total_report_count,
+            client_timestamp_interval,
+            checksum: self.total_checksum,
+            aggregate_share,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct BatchAggregationsIterator<
+    const SEED_SIZE: usize,
+    B: CollectableBatchMode,
+    A: AsyncAggregator<SEED_SIZE>,
+> {
+    expected_batch_aggregations: itertools::Product<B::Iter, std::ops::Range<u64>>,
+    real_batch_aggregations: HashMap<(B::BatchIdentifier, u64), BatchAggregation<SEED_SIZE, B, A>>,
+    task_id: TaskId,
+    aggregation_param: A::AggregationParam,
+}
+
+impl<const SEED_SIZE: usize, B, A> BatchAggregationsIterator<SEED_SIZE, B, A>
+where
+    B: CollectableBatchMode,
+    A: AsyncAggregator<SEED_SIZE>,
+{
+    pub(crate) fn new<InputIterator: IntoIterator<Item = BatchAggregation<SEED_SIZE, B, A>>>(
+        task: &AggregatorTask,
+        batch_aggregation_shard_count: u64,
+        batch_identifier: &B::BatchIdentifier,
+        aggregation_param: &A::AggregationParam,
+        real_batch_aggregations: InputIterator,
+    ) -> Self {
+        // Construct iterator over all possible batch aggregations for the collection identifier.
+        let expected_batch_aggregations = iproduct!(
+            B::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
+            0..batch_aggregation_shard_count
+        );
+
+        Self {
+            expected_batch_aggregations,
+            real_batch_aggregations: HashMap::from_iter(
+                real_batch_aggregations
+                    .into_iter()
+                    .map(|ba| ((ba.batch_identifier().clone(), ba.ord()), ba)),
+            ),
+            task_id: *task.id(),
+            aggregation_param: aggregation_param.clone(),
         }
     }
+}
 
-    // Only happens if there were no batch aggregations, which would get caught by the
-    // min_batch_size check below, but we have to unwrap the option.
-    let total_aggregate_share = total_aggregate_share
-        .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
+impl<const SEED_SIZE: usize, B, A> Iterator for BatchAggregationsIterator<SEED_SIZE, B, A>
+where
+    B: CollectableBatchMode,
+    A: AsyncAggregator<SEED_SIZE>,
+{
+    // The iterator yields a tuple of the BatchAggregation (by value!) and a boolean indicating
+    // whether it's real or a synthetic, empty BA.
+    type Item = (BatchAggregation<SEED_SIZE, B, A>, bool);
 
-    client_timestamp_interval =
-        client_timestamp_interval.align_to_time_precision(task.time_precision())?;
+    fn next(&mut self) -> Option<Self::Item> {
+        // See what the next (batch_identifier, ord) we want to yield is
+        let key = self.expected_batch_aggregations.next()?;
 
-    // Validate batch size per
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    if !task.validate_batch_size(total_report_count) {
-        return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
+        // If we have a real BA for that key, yield it, removing it from the HashMap. This lets us
+        // return a value without cloning, and since this iterator gets consumed, the value can't be
+        // yielded again anyway.
+        self.real_batch_aggregations
+            .remove(&key)
+            .map(|real_ba| (real_ba, true))
+            .or_else(|| {
+                // If there was no real BA, synthesize an empty one. This is why we have to yield a
+                // value in the other case: we can't instantiate a BA here and return a reference.
+                let (batch_identifier, ord) = key;
+                Some((
+                    BatchAggregation::<SEED_SIZE, B, A>::new(
+                        self.task_id,
+                        batch_identifier,
+                        self.aggregation_param.clone(),
+                        ord,
+                        Interval::EMPTY,
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 0,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ),
+                    false,
+                ))
+            })
     }
-
-    Ok((
-        total_aggregate_share,
-        total_report_count,
-        client_timestamp_interval,
-        total_checksum,
-    ))
 }
