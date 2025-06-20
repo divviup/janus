@@ -1,4 +1,3 @@
-#[cfg(tokio_unstable)]
 use std::time::Duration;
 
 #[cfg(tokio_unstable)]
@@ -19,6 +18,37 @@ pub(super) fn initialize(runtime_metrics: RuntimeMetrics, meter_provider: &SdkMe
         .with_callback({
             let num_workers_u64 = u64::try_from(num_workers).unwrap_or(u64::MAX);
             move |observer| observer.observe(num_workers_u64, &[])
+        })
+        .build();
+
+    meter
+        .u64_observable_counter("tokio.park")
+        .with_description("Total number of times worker threads have parked")
+        .with_callback({
+            let runtime_metrics = runtime_metrics.clone();
+            move |observer| {
+                let mut park_count = 0;
+                for worker in 0..num_workers {
+                    park_count += runtime_metrics.worker_park_count(worker);
+                }
+                observer.observe(park_count, &[]);
+            }
+        })
+        .build();
+
+    meter
+        .f64_observable_counter("tokio.thread.worker.busy.time")
+        .with_description("Total amount of time that all worker threads have been busy")
+        .with_unit("s")
+        .with_callback({
+            let runtime_metrics = runtime_metrics.clone();
+            move |observer| {
+                let mut total_busy_duration = Duration::from_secs(0);
+                for worker in 0..num_workers {
+                    total_busy_duration += runtime_metrics.worker_total_busy_duration(worker);
+                }
+                observer.observe(total_busy_duration.as_secs_f64(), &[]);
+            }
         })
         .build();
 
@@ -145,21 +175,6 @@ fn initialize_unstable_metrics(runtime_metrics: RuntimeMetrics, meter: Meter) {
         .build();
 
     meter
-        .u64_observable_counter("tokio.park")
-        .with_description("Total number of times worker threads have parked")
-        .with_callback({
-            let runtime_metrics = runtime_metrics.clone();
-            move |observer| {
-                let mut park_count = 0;
-                for worker in 0..num_workers {
-                    park_count += runtime_metrics.worker_park_count(worker);
-                }
-                observer.observe(park_count, &[]);
-            }
-        })
-        .build();
-
-    meter
         .u64_observable_counter("tokio.noop")
         .with_description(
             "Total number of times worker threads unparked and parked again without doing any work",
@@ -204,22 +219,6 @@ fn initialize_unstable_metrics(runtime_metrics: RuntimeMetrics, meter: Meter) {
                     steal_operations += runtime_metrics.worker_steal_operations(worker);
                 }
                 observer.observe(steal_operations, &[]);
-            }
-        })
-        .build();
-
-    meter
-        .f64_observable_counter("tokio.thread.worker.busy.time")
-        .with_description("Total amount of time that all worker threads have been busy")
-        .with_unit("s")
-        .with_callback({
-            let runtime_metrics = runtime_metrics.clone();
-            move |observer| {
-                let mut total_busy_duration = Duration::from_secs(0);
-                for worker in 0..num_workers {
-                    total_busy_duration += runtime_metrics.worker_total_busy_duration(worker);
-                }
-                observer.observe(total_busy_duration.as_secs_f64(), &[]);
             }
         })
         .build();
