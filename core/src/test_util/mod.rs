@@ -3,8 +3,7 @@ use assert_matches::assert_matches;
 use janus_messages::{ReportId, Role, TaskId};
 use prio::{
     topology::ping_pong::{
-        PingPongContinuedValue, PingPongMessage, PingPongState, PingPongTopology,
-        PingPongTransition,
+        Continued, PingPongContinuation, PingPongMessage, PingPongState, PingPongTopology,
     },
     vdaf,
 };
@@ -18,29 +17,39 @@ pub mod runtime;
 pub mod testcontainers;
 
 #[derive(Clone, Debug)]
-pub struct PrepareTransition<
-    const VERIFY_KEY_LENGTH: usize,
+pub struct PrepareTransition<const VERIFY_KEY_LENGTH: usize, V>
+where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-> {
-    pub transition: Option<PingPongTransition<VERIFY_KEY_LENGTH, 16, V>>,
-    pub state: PingPongState<VERIFY_KEY_LENGTH, 16, V>,
-    pub message: PingPongMessage,
+{
+    pub continuation: Option<PingPongContinuation<VERIFY_KEY_LENGTH, 16, V>>,
+    pub state: PingPongState<V::PrepareState, V::OutputShare>,
 }
 
-impl<const VERIFY_KEY_LENGTH: usize, V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>>
-    PrepareTransition<VERIFY_KEY_LENGTH, V>
+impl<const VERIFY_KEY_LENGTH: usize, V> PrepareTransition<VERIFY_KEY_LENGTH, V>
+where
+    V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
     pub fn prepare_state(&self) -> &V::PrepareState {
-        assert_matches!(self.state, PingPongState::Continued(ref state) => state)
+        assert_matches!(self.state, PingPongState::Continued(Continued{
+            ref prepare_state, ..
+        }) => prepare_state)
+    }
+
+    pub fn message(&self) -> Option<&PingPongMessage> {
+        match self.state {
+            PingPongState::Continued(Continued { ref message, .. })
+            | PingPongState::FinishedWithOutbound { ref message, .. } => Some(message),
+            _ => None,
+        }
     }
 }
 
 /// A transcript of a VDAF run using the ping-pong VDAF topology.
 #[derive(Clone, Debug)]
-pub struct VdafTranscript<
-    const VERIFY_KEY_LENGTH: usize,
+pub struct VdafTranscript<const VERIFY_KEY_LENGTH: usize, V>
+where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-> {
+{
     /// The public share, from the sharding algorithm.
     pub public_share: V::PublicShare,
     /// The leader's input share, from the sharding algorithm.
@@ -74,17 +83,17 @@ pub struct VdafTranscript<
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
 /// returning a "transcript" of all states & messages.
-pub fn run_vdaf<
-    const VERIFY_KEY_LENGTH: usize,
-    V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16> + vdaf::Client<16>,
->(
+pub fn run_vdaf<const VERIFY_KEY_LENGTH: usize, V>(
     vdaf: &V,
     task_id: &TaskId,
     verify_key: &[u8; VERIFY_KEY_LENGTH],
     aggregation_param: &V::AggregationParam,
     report_id: &ReportId,
     measurement: &V::Measurement,
-) -> VdafTranscript<VERIFY_KEY_LENGTH, V> {
+) -> VdafTranscript<VERIFY_KEY_LENGTH, V>
+where
+    V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16> + vdaf::Client<16>,
+{
     let ctx = vdaf_application_context(task_id);
 
     let mut leader_prepare_transitions = Vec::new();
@@ -93,7 +102,7 @@ pub fn run_vdaf<
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
     let (public_share, input_shares) = vdaf.shard(&ctx, measurement, report_id.as_ref()).unwrap();
 
-    let (leader_state, leader_message) = vdaf
+    let leader_state = vdaf
         .leader_initialized(
             verify_key,
             &ctx,
@@ -105,9 +114,8 @@ pub fn run_vdaf<
         .unwrap();
 
     leader_prepare_transitions.push(PrepareTransition {
-        transition: None,
-        state: leader_state,
-        message: leader_message.clone(),
+        continuation: None,
+        state: PingPongState::Continued(leader_state.clone()),
     });
 
     let helper_transition = vdaf
@@ -118,15 +126,14 @@ pub fn run_vdaf<
             report_id.as_ref(),
             &public_share,
             &input_shares[1],
-            &leader_message,
+            &leader_state.message,
         )
         .unwrap();
-    let (helper_state, helper_message) = helper_transition.evaluate(&ctx, vdaf).unwrap();
+    let helper_state = helper_transition.evaluate(&ctx, vdaf).unwrap();
 
     helper_prepare_transitions.push(PrepareTransition {
-        transition: Some(helper_transition),
+        continuation: Some(helper_transition),
         state: helper_state,
-        message: helper_message,
     });
 
     // Repeatedly step the VDAF until we reach a terminal state
@@ -137,66 +144,53 @@ pub fn run_vdaf<
             let (curr_state, last_peer_message) = match role {
                 Role::Leader => (
                     leader_prepare_transitions.last().unwrap().state.clone(),
-                    helper_prepare_transitions.last().unwrap().message.clone(),
+                    helper_prepare_transitions.last().unwrap().message(),
                 ),
                 Role::Helper => (
                     helper_prepare_transitions.last().unwrap().state.clone(),
-                    leader_prepare_transitions.last().unwrap().message.clone(),
+                    leader_prepare_transitions.last().unwrap().message(),
                 ),
                 _ => panic!(),
             };
 
-            match (&curr_state, &last_peer_message) {
-                (curr_state @ PingPongState::Continued(_), last_peer_message) => {
-                    let state_and_message = match role {
+            match curr_state {
+                PingPongState::Continued(Continued { prepare_state, .. }) => {
+                    let continuation = match role {
                         Role::Leader => vdaf
                             .leader_continued(
                                 &ctx,
-                                curr_state.clone(),
                                 aggregation_param,
-                                last_peer_message,
+                                prepare_state,
+                                last_peer_message.unwrap(),
                             )
                             .unwrap(),
                         Role::Helper => vdaf
                             .helper_continued(
                                 &ctx,
-                                curr_state.clone(),
                                 aggregation_param,
-                                last_peer_message,
+                                prepare_state,
+                                last_peer_message.unwrap(),
                             )
                             .unwrap(),
                         _ => panic!(),
                     };
 
-                    match state_and_message {
-                        PingPongContinuedValue::WithMessage { transition } => {
-                            let (state, message) = transition.clone().evaluate(&ctx, vdaf).unwrap();
-                            match role {
-                                Role::Leader => {
-                                    leader_prepare_transitions.push(PrepareTransition {
-                                        transition: Some(transition),
-                                        state,
-                                        message,
-                                    })
-                                }
-                                Role::Helper => {
-                                    helper_prepare_transitions.push(PrepareTransition {
-                                        transition: Some(transition),
-                                        state,
-                                        message,
-                                    })
-                                }
-                                _ => panic!(),
-                            }
-                        }
-                        PingPongContinuedValue::FinishedNoMessage { output_share } => match role {
-                            Role::Leader => leader_output_share = Some(output_share.clone()),
-                            Role::Helper => helper_output_share = Some(output_share.clone()),
-                            _ => panic!(),
-                        },
+                    let state = continuation.evaluate(&ctx, vdaf).unwrap();
+
+                    match role {
+                        Role::Leader => leader_prepare_transitions.push(PrepareTransition {
+                            continuation: Some(continuation),
+                            state,
+                        }),
+                        Role::Helper => helper_prepare_transitions.push(PrepareTransition {
+                            continuation: Some(continuation),
+                            state,
+                        }),
+                        _ => panic!(),
                     }
                 }
-                (PingPongState::Finished(output_share), _) => match role {
+                PingPongState::Finished { output_share }
+                | PingPongState::FinishedWithOutbound { output_share, .. } => match role {
                     Role::Leader => leader_output_share = Some(output_share.clone()),
                     Role::Helper => helper_output_share = Some(output_share.clone()),
                     _ => panic!(),

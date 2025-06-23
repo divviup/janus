@@ -52,7 +52,7 @@ pub trait AsyncAggregator<const VERIFY_KEY_SIZE: usize>:
         PrepareMessage: Send + Sync + PartialEq,
         PrepareShare: Send + Sync + PartialEq,
         PublicShare: Send + Sync + PartialEq,
-        OutputShare: Send + Sync + PartialEq,
+        OutputShare: Send + Sync + PartialEq + Eq,
         PrepareState: Send
                           + Sync
                           + Encode
@@ -77,7 +77,7 @@ impl<
                 PrepareMessage: Send + Sync + PartialEq,
                 PrepareShare: Send + Sync + PartialEq,
                 PublicShare: Send + Sync + PartialEq,
-                OutputShare: Send + Sync + PartialEq,
+                OutputShare: Send + Sync + PartialEq + Eq,
                 PrepareState: Send
                                   + Sync
                                   + Encode
