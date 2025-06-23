@@ -20,7 +20,6 @@ pub mod testcontainers;
 pub struct PrepareTransition<const VERIFY_KEY_LENGTH: usize, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-    V::OutputShare: Eq,
 {
     pub continuation: Option<PingPongContinuation<VERIFY_KEY_LENGTH, 16, V>>,
     pub state: PingPongState<V::PrepareState, V::OutputShare>,
@@ -29,7 +28,6 @@ where
 impl<const VERIFY_KEY_LENGTH: usize, V> PrepareTransition<VERIFY_KEY_LENGTH, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-    V::OutputShare: Eq,
 {
     pub fn prepare_state(&self) -> &V::PrepareState {
         assert_matches!(self.state, PingPongState::Continued(Continued{
@@ -51,7 +49,6 @@ where
 pub struct VdafTranscript<const VERIFY_KEY_LENGTH: usize, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
-    V::OutputShare: Eq,
 {
     /// The public share, from the sharding algorithm.
     pub public_share: V::PublicShare,
@@ -96,7 +93,6 @@ pub fn run_vdaf<const VERIFY_KEY_LENGTH: usize, V>(
 ) -> VdafTranscript<VERIFY_KEY_LENGTH, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16> + vdaf::Client<16>,
-    V::OutputShare: Eq,
 {
     let ctx = vdaf_application_context(task_id);
 
@@ -133,7 +129,7 @@ where
             &leader_state.message,
         )
         .unwrap();
-    let helper_state = helper_transition.clone().evaluate(&ctx, vdaf).unwrap();
+    let helper_state = helper_transition.evaluate(&ctx, vdaf).unwrap();
 
     helper_prepare_transitions.push(PrepareTransition {
         continuation: Some(helper_transition),
@@ -179,7 +175,7 @@ where
                         _ => panic!(),
                     };
 
-                    let state = continuation.clone().evaluate(&ctx, vdaf).unwrap();
+                    let state = continuation.evaluate(&ctx, vdaf).unwrap();
 
                     match role {
                         Role::Leader => leader_prepare_transitions.push(PrepareTransition {

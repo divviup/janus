@@ -740,7 +740,7 @@ where
 
                         let (message, either) =
                             match trace_span!("VDAF preparation (leader continuation evaluation)")
-                                .in_scope(|| continuation.clone().evaluate(&ctx, vdaf.as_ref()))
+                                .in_scope(|| continuation.evaluate(&ctx, vdaf.as_ref()))
                             {
                                 // If we are continuing, then the state can only be Continued or
                                 // FinishedWithOutbound. Anything else is illegal.
@@ -897,7 +897,6 @@ where
                     // Leader was in the continue state, so re-evaluate the transition into either
                     // PingPongState::Continued or ::Finished.
                     ReportAggregationState::LeaderPollContinue { continuation } => continuation
-                        .clone()
                         .evaluate(&vdaf_application_context(task.id()), &vdaf)
                         // The transition has been successfully evaluated in a previous step, so we
                         // never expect this to fail and represent it as Error::Internal.

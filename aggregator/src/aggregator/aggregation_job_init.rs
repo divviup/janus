@@ -391,7 +391,7 @@ where
                                 ),
 
                                 // Helper cannot finish at this stage
-                                Ok(_) => (
+                                Ok(PingPongState::Finished{ .. }) => (
                                     ReportAggregationState::Failed {
                                         report_error: ReportError::VdafPrepError,
                                     },
