@@ -3304,8 +3304,7 @@ impl VdafOps {
                         batch_aggregations,
                     );
 
-                    let aggregate_share =
-                        Arc::new(Mutex::new(AggregateShareComputer::new(&task)));
+                    let aggregate_share = Arc::new(Mutex::new(AggregateShareComputer::new(&task)));
 
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
