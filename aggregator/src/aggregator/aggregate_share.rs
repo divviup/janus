@@ -14,7 +14,7 @@ use janus_aggregator_core::{
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
 use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum, TaskId};
 use prio::vdaf::Aggregatable;
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 /// Computes the aggregate share over the provided batch aggregations.
 ///
@@ -177,24 +177,36 @@ where
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct BatchAggregationsKey<BI> {
+    batch_identifier: BI,
+    ord: u64,
+}
+
 #[derive(Clone)]
 pub(crate) struct BatchAggregationsIterator<
+    'a,
     const SEED_SIZE: usize,
     B: CollectableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 > {
     expected_batch_aggregations: itertools::Product<B::Iter, std::ops::Range<u64>>,
-    real_batch_aggregations: HashMap<(B::BatchIdentifier, u64), BatchAggregation<SEED_SIZE, B, A>>,
+    real_batch_aggregations: HashMap<
+        BatchAggregationsKey<B::BatchIdentifier>,
+        Cow<'a, BatchAggregation<SEED_SIZE, B, A>>,
+    >,
     task_id: TaskId,
     aggregation_param: A::AggregationParam,
 }
 
-impl<const SEED_SIZE: usize, B, A> BatchAggregationsIterator<SEED_SIZE, B, A>
+impl<'a, const SEED_SIZE: usize, B, A> BatchAggregationsIterator<'a, SEED_SIZE, B, A>
 where
     B: CollectableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    pub(crate) fn new<InputIterator: IntoIterator<Item = BatchAggregation<SEED_SIZE, B, A>>>(
+    pub(crate) fn new<
+        InputIterator: IntoIterator<Item = Cow<'a, BatchAggregation<SEED_SIZE, B, A>>>,
+    >(
         task: &AggregatorTask,
         batch_aggregation_shard_count: u64,
         batch_identifier: &B::BatchIdentifier,
@@ -209,29 +221,41 @@ where
 
         Self {
             expected_batch_aggregations,
-            real_batch_aggregations: HashMap::from_iter(
-                real_batch_aggregations
-                    .into_iter()
-                    .map(|ba| ((ba.batch_identifier().clone(), ba.ord()), ba)),
-            ),
+            real_batch_aggregations: HashMap::from_iter(real_batch_aggregations.into_iter().map(
+                |ba| {
+                    (
+                        BatchAggregationsKey {
+                            batch_identifier: ba.batch_identifier().clone(),
+                            ord: ba.ord(),
+                        },
+                        ba,
+                    )
+                },
+            )),
             task_id: *task.id(),
             aggregation_param: aggregation_param.clone(),
         }
     }
 }
 
-impl<const SEED_SIZE: usize, B, A> Iterator for BatchAggregationsIterator<SEED_SIZE, B, A>
+impl<'a, const SEED_SIZE: usize, B, A> Iterator for BatchAggregationsIterator<'a, SEED_SIZE, B, A>
 where
     B: CollectableBatchMode,
     A: AsyncAggregator<SEED_SIZE>,
 {
-    // The iterator yields a tuple of the BatchAggregation (by value!) and a boolean indicating
-    // whether it's real or a synthetic, empty BA.
-    type Item = (BatchAggregation<SEED_SIZE, B, A>, bool);
+    // The iterator yields a tuple of the BatchAggregation and a boolean indicating whether it's
+    // real or a synthetic, empty BA.
+    type Item = (Cow<'a, BatchAggregation<SEED_SIZE, B, A>>, bool);
 
     fn next(&mut self) -> Option<Self::Item> {
         // See what the next (batch_identifier, ord) we want to yield is
-        let key = self.expected_batch_aggregations.next()?;
+        let key = self
+            .expected_batch_aggregations
+            .next()
+            .map(|(batch_identifier, ord)| BatchAggregationsKey {
+                batch_identifier,
+                ord,
+            })?;
 
         // If we have a real BA for that key, yield it, removing it from the HashMap. This lets us
         // return a value without cloning, and since this iterator gets consumed, the value can't be
@@ -243,13 +267,12 @@ where
                 // If there was no real BA, synthesize an empty one. This is why we have to yield an
                 // owned value in the other case: we can't instantiate a BA here and return a
                 // reference.
-                let (batch_identifier, ord) = key;
                 Some((
-                    BatchAggregation::<SEED_SIZE, B, A>::new(
+                    Cow::Owned(BatchAggregation::<SEED_SIZE, B, A>::new(
                         self.task_id,
-                        batch_identifier,
+                        key.batch_identifier,
                         self.aggregation_param.clone(),
-                        ord,
+                        key.ord,
                         Interval::EMPTY,
                         BatchAggregationState::Collected {
                             aggregate_share: None,
@@ -258,7 +281,7 @@ where
                             aggregation_jobs_created: 0,
                             aggregation_jobs_terminated: 0,
                         },
-                    ),
+                    )),
                     false,
                 ))
             })

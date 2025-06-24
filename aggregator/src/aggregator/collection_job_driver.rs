@@ -36,8 +36,8 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
 };
 use reqwest::Method;
-use std::{sync::Arc, time::Duration};
-use tokio::{sync::Mutex, try_join};
+use std::{borrow::Cow, sync::Arc, time::Duration};
+use tokio::try_join;
 use tracing::{error, info, warn};
 
 /// Drives a collection job.
@@ -298,8 +298,7 @@ where
                                 .map_err(|e| datastore::Error::User(e.into()))?;
                             ba.collected()
                         })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter();
+                        .collect::<Result<Vec<_>, _>>()?;
 
                     let leader_aggregate_share = aggregate_share
                         .finalize()
@@ -310,7 +309,7 @@ where
                         batch_aggregation_shard_count,
                         collection_job.batch_identifier(),
                         &aggregation_param,
-                        batch_aggregations,
+                        batch_aggregations.iter().map(Cow::Borrowed),
                     );
 
                     // Rather than awaiting all the futures at once, which can cause heap growth
@@ -329,17 +328,20 @@ where
                     Ok(Some((
                         task,
                         collection_job,
-                        batch_aggregations_iter,
+                        batch_aggregations,
                         leader_aggregate_share,
                     )))
                 })
             })
             .await?;
 
-        let (task, collection_job, all_bas_iter, mut leader_aggregate_share) = match rslt {
-            Some((task, collection_job, all_bas_iter, leader_aggregate_share)) => {
-                (task, collection_job, all_bas_iter, leader_aggregate_share)
-            }
+        let (task, collection_job, batch_aggregations, mut leader_aggregate_share) = match rslt {
+            Some((task, collection_job, batch_aggregations, leader_aggregate_share)) => (
+                task,
+                collection_job,
+                batch_aggregations,
+                leader_aggregate_share,
+            ),
             None => return Ok(()),
         };
 
@@ -398,16 +400,20 @@ where
             }),
         );
 
-        let all_bas_iter = Arc::new(Mutex::new(all_bas_iter));
+        let batch_aggregations = Arc::new(batch_aggregations);
+        let task = Arc::new(task);
 
         datastore
             .run_tx("step_collection_job_2", |tx| {
+                let task = Arc::clone(&task);
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let collection_job = Arc::clone(&collection_job);
-                let batch_aggregations = Arc::clone(&all_bas_iter);
+                let batch_aggregations = Arc::clone(&batch_aggregations);
+                let aggregation_param = aggregation_param.clone();
                 let metrics = self.metrics.clone();
                 let max_future_concurrency = self.max_future_concurrency;
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
@@ -430,16 +436,20 @@ where
                         CollectionJobState::Start => {
                             tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job).await?;
 
+                            let batch_aggregations_iter = BatchAggregationsIterator::new(
+                                &task,
+                                batch_aggregation_shard_count,
+                                collection_job.batch_identifier(),
+                                &aggregation_param,
+                                batch_aggregations.iter().map(Cow::Borrowed),
+                            );
+
                             // Scrub all the batch aggregations, including the empty ones.
                             // Put all the futures into a buffered stream so that we don't incur the
                             // combined memory footprint of all the futures at once. #3857
-                            futures::stream::iter(
-                                batch_aggregations
-                                    .lock()
-                                    .await
-                                    .by_ref()
-                                    .map(|(v, _)| Result::Ok(BatchAggregation::scrubbed(v)))
-                            ).try_for_each_concurrent(max_future_concurrency, async |ba| {
+                            futures::stream::iter(batch_aggregations_iter.map(|(v, _)| {
+                                Result::Ok(BatchAggregation::scrubbed(v.into_owned()))
+                            })).try_for_each_concurrent(max_future_concurrency, async |ba| {
                                 tx.update_batch_aggregation(&ba).await
                             }).await?;
 
