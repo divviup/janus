@@ -36,7 +36,7 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
 };
 use reqwest::Method;
-use std::{iter::repeat_with, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{sync::Mutex, try_join};
 use tracing::{error, info, warn};
 
@@ -275,8 +275,10 @@ where
                         &collection_identifier,
                         &aggregation_param,
                     )
-                    .await?
-                    .into_iter()
+                    .await?;
+
+                    let mut aggregate_share = AggregateShareComputer::new(&task);
+
                     // Mark batch aggregations as collected to avoid further aggregation. (We don't
                     // need to do this if there is a FINISHED collection job since that job will
                     // have marked the batch aggregations.)
@@ -286,9 +288,22 @@ where
                     // for any that have not already been written to storage. We do this
                     // transactionally to avoid the possibility of overwriting other transactions'
                     // updates to batch aggregations.
-                    .map(|ba| ba.collected())
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter();
+                    let batch_aggregations = batch_aggregations
+                        .into_iter()
+                        .map(|ba| {
+                            // Empty batch aggregations cannot contribute to the aggregate share so
+                            // don't bother including them.
+                            aggregate_share
+                                .update(&ba)
+                                .map_err(|e| datastore::Error::User(e.into()))?;
+                            ba.collected()
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter();
+
+                    let leader_aggregate_share = aggregate_share
+                        .finalize()
+                        .map_err(|e| datastore::Error::User(e.into()))?;
 
                     let batch_aggregations_iter = BatchAggregationsIterator::new(
                         &task,
@@ -298,41 +313,18 @@ where
                         batch_aggregations,
                     );
 
-                    let aggregate_share = Arc::new(Mutex::new(AggregateShareComputer::new(&task)));
-
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
                     // buffered stream so that they get run in groups of bounded size. #3857
-                    futures::stream::iter(
-                        batch_aggregations_iter
-                            .clone()
-                            .zip(repeat_with(|| Arc::clone(&aggregate_share)))
-                            .map(Result::Ok),
-                    )
-                    .try_for_each_concurrent(
-                        max_future_concurrency,
-                        async |((ba, is_update), aggregate_share)| {
-                            // Empty batch aggregations cannot contribute to the aggregate share so
-                            // don't bother including them
+                    futures::stream::iter(batch_aggregations_iter.clone().map(Result::Ok))
+                        .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
                             if is_update {
-                                aggregate_share
-                                    .lock()
-                                    .await
-                                    .update(&ba)
-                                    .map_err(|e| datastore::Error::User(e.into()))?;
                                 tx.update_batch_aggregation(&ba).await
                             } else {
                                 tx.put_batch_aggregation(&ba).await
                             }
-                        },
-                    )
-                    .await?;
-
-                    let leader_aggregate_share = aggregate_share
-                        .lock()
-                        .await
-                        .finalize()
-                        .map_err(|e| datastore::Error::User(e.into()))?;
+                        })
+                        .await?;
 
                     Ok(Some((
                         task,
@@ -406,12 +398,14 @@ where
             }),
         );
 
+        let all_bas_iter = Arc::new(Mutex::new(all_bas_iter));
+
         datastore
             .run_tx("step_collection_job_2", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let collection_job = Arc::clone(&collection_job);
-                let batch_aggregations = all_bas_iter.clone();
+                let batch_aggregations = Arc::clone(&all_bas_iter);
                 let metrics = self.metrics.clone();
                 let max_future_concurrency = self.max_future_concurrency;
 
@@ -440,7 +434,11 @@ where
                             // Put all the futures into a buffered stream so that we don't incur the
                             // combined memory footprint of all the futures at once. #3857
                             futures::stream::iter(
-                                batch_aggregations.map(|(v, _)| Result::Ok(BatchAggregation::scrubbed(v)))
+                                batch_aggregations
+                                    .lock()
+                                    .await
+                                    .by_ref()
+                                    .map(|(v, _)| Result::Ok(BatchAggregation::scrubbed(v)))
                             ).try_for_each_concurrent(max_future_concurrency, async |ba| {
                                 tx.update_batch_aggregation(&ba).await
                             }).await?;

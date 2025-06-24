@@ -45,6 +45,7 @@ impl<'a, const SEED_SIZE: usize, A> AggregateShareComputer<'a, SEED_SIZE, A>
 where
     A: AsyncAggregator<SEED_SIZE>,
 {
+    /// Creates a new aggregate share computer.
     pub(crate) fn new(task: &'a AggregatorTask) -> Self {
         Self {
             task,
@@ -55,6 +56,24 @@ where
         }
     }
 
+    /// Compute an aggregate share over the provided batch aggregations.
+    pub(crate) fn oneshot<B, I>(
+        &mut self,
+        batch_aggregations: I,
+    ) -> Result<AggregateShareComputerResult<A::AggregateShare>, Error>
+    where
+        B: BatchMode,
+        I: IntoIterator<Item = &'a BatchAggregation<SEED_SIZE, B, A>>,
+    {
+        for ba in batch_aggregations.into_iter() {
+            self.update(ba)?;
+        }
+
+        self.finalize()
+    }
+
+    /// Update the computer with a single [`BatchAggregation`]. Call [`finalize`] to obtain the
+    /// aggregate share.
     pub(crate) fn update<B: BatchMode>(
         &mut self,
         batch_aggregation: &BatchAggregation<SEED_SIZE, B, A>,
@@ -221,8 +240,9 @@ where
             .remove(&key)
             .map(|real_ba| (real_ba, true))
             .or_else(|| {
-                // If there was no real BA, synthesize an empty one. This is why we have to yield a
-                // value in the other case: we can't instantiate a BA here and return a reference.
+                // If there was no real BA, synthesize an empty one. This is why we have to yield an
+                // owned value in the other case: we can't instantiate a BA here and return a
+                // reference.
                 let (batch_identifier, ord) = key;
                 Some((
                     BatchAggregation::<SEED_SIZE, B, A>::new(

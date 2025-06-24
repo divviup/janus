@@ -101,13 +101,12 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fmt::Debug,
-    iter::repeat_with,
     panic,
     path::PathBuf,
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::Mutex, try_join};
+use tokio::try_join;
 use tracing::{debug, error, info, warn, Level};
 use url::Url;
 
@@ -3293,6 +3292,20 @@ impl VdafOps {
                         )
                     )?;
 
+                    // Empty batch aggregations cannot contribute to the aggregate share so don't
+                    // bother including them.
+                    let mut aggregate_share = AggregateShareComputer::new(&task)
+                        .oneshot(&batch_aggregations)
+                        .map_err(|e| datastore::Error::User(e.into()))?;
+
+                    vdaf.add_noise_to_agg_share(
+                        &dp_strategy,
+                        &aggregation_param,
+                        &mut aggregate_share.aggregate_share,
+                        aggregate_share.report_count.try_into()?,
+                    )
+                    .map_err(|e| datastore::Error::User(e.into()))?;
+
                     // To ensure that concurrent aggregations don't write into a
                     // currently-nonexistent batch aggregation, we write (empty) batch
                     // aggregations for any that have not already been written to storage.
@@ -3304,48 +3317,19 @@ impl VdafOps {
                         batch_aggregations,
                     );
 
-                    let aggregate_share = Arc::new(Mutex::new(AggregateShareComputer::new(&task)));
-
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
                     // buffered stream so that they get run in groups of bounded size. #3857
-                    futures::stream::iter(
-                        batch_aggregations_iter
-                            .clone()
-                            .zip(repeat_with(|| Arc::clone(&aggregate_share)))
-                            .map(Result::Ok),
-                    )
-                    .try_for_each_concurrent(
-                        max_future_concurrency,
-                        async |((ba, is_update), aggregate_share)| {
-                            aggregate_share
-                                .lock()
-                                .await
-                                .update(&ba)
-                                .map_err(|e| datastore::Error::User(e.into()))?;
+                    futures::stream::iter(batch_aggregations_iter.map(Result::Ok))
+                        .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
                             let ba = ba.scrubbed();
                             if is_update {
                                 tx.update_batch_aggregation(&ba).await
                             } else {
                                 tx.put_batch_aggregation(&ba).await
                             }
-                        },
-                    )
-                    .await?;
-
-                    let mut aggregate_share = aggregate_share
-                        .lock()
-                        .await
-                        .finalize()
-                        .map_err(|e| datastore::Error::User(e.into()))?;
-
-                    vdaf.add_noise_to_agg_share(
-                        &dp_strategy,
-                        &aggregation_param,
-                        &mut aggregate_share.aggregate_share,
-                        aggregate_share.report_count.try_into()?,
-                    )
-                    .map_err(|e| datastore::Error::User(e.into()))?;
+                        })
+                        .await?;
 
                     // Now that we are satisfied that the request is serviceable, we consume
                     // a query by recording the aggregate share request parameters and the
