@@ -3320,7 +3320,7 @@ impl VdafOps {
                     // Rather than awaiting all the futures at once, which can cause heap growth
                     // proportional to the number of batch aggregations to write, put them into an
                     // buffered stream so that they get run in groups of bounded size. #3857
-                    futures::stream::iter(batch_aggregations_iter.map(Result::Ok))
+                    futures::stream::iter(batch_aggregations_iter.map(Ok))
                         .try_for_each_concurrent(max_future_concurrency, async |(ba, is_update)| {
                             let ba = ba.into_owned().scrubbed();
                             if is_update {

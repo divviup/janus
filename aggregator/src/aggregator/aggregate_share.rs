@@ -257,16 +257,16 @@ where
                 ord,
             })?;
 
-        // If we have a real BA for that key, yield it, removing it from the HashMap. This lets us
-        // return a value without cloning, and since this iterator gets consumed, the value can't be
-        // yielded again anyway.
+        // If we have a real BA for that key, yield it, removing it from the HashMap. If the value
+        // is Cow::Owned, this saves us a Clone, and as this iterator gets consumed, the value
+        // can't be yielded again anyway.
         self.real_batch_aggregations
             .remove(&key)
             .map(|real_ba| (real_ba, true))
             .or_else(|| {
-                // If there was no real BA, synthesize an empty one. This is why we have to yield an
-                // owned value in the other case: we can't instantiate a BA here and return a
-                // reference.
+                // If there was no real BA, synthesize an empty one. This is why we have to yield a
+                // Cow in the other case: we can't instantiate a struct BatchAggregation here and
+                // return `&BatchAggregation`.
                 Some((
                     Cow::Owned(BatchAggregation::<SEED_SIZE, B, A>::new(
                         self.task_id,
