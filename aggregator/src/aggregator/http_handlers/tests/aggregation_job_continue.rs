@@ -2,12 +2,12 @@ use crate::aggregator::{
     aggregation_job_continue::test_util::{
         post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
     },
-    empty_batch_aggregations,
     http_handlers::test_util::HttpHandlerTest,
     test_util::{
         assert_task_aggregation_counter, generate_helper_report_share,
         BATCH_AGGREGATION_SHARD_COUNT,
     },
+    BatchAggregationsIterator,
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
@@ -249,7 +249,7 @@ async fn aggregate_continue_sync() {
                 // Write collected batch aggregations for the interval that report_share_2 falls
                 // into, which will cause it to fail to prepare.
                 try_join_all(
-                    empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
+                    BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
                         &Interval::new(
@@ -258,10 +258,11 @@ async fn aggregate_continue_sync() {
                         )
                         .unwrap(),
                         &aggregation_param,
-                        &[],
+                        [],
                     )
+                    .collect::<Vec<_>>()
                     .iter()
-                    .map(|ba| tx.put_batch_aggregation(ba)),
+                    .map(|(ba, _)| tx.put_batch_aggregation(ba)),
                 )
                 .await
                 .unwrap();
@@ -786,16 +787,17 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     )
     .unwrap();
 
+    // Write collected batch aggregations for the interval that report_share_2 falls
+    // into, which will cause it to fail to prepare.
     let second_batch_want_batch_aggregations: Vec<_> =
-        empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
+        BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
             &helper_task,
             BATCH_AGGREGATION_SHARD_COUNT,
             &second_batch_identifier,
             &aggregation_param,
-            &[],
+            [],
         )
-        .into_iter()
-        .map(|ba| {
+        .map(|(ba, _)| {
             BatchAggregation::new(
                 *ba.task_id(),
                 *ba.batch_identifier(),
