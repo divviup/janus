@@ -320,7 +320,7 @@ async fn taskprov_aggregate_init() {
         .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
-        assert_eq!(test_conn.status(), Some(Status::Forbidden), "{}", name);
+        assert_eq!(test_conn.status(), Some(Status::Forbidden), "{name}");
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
@@ -357,7 +357,7 @@ async fn taskprov_aggregate_init() {
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
-        assert_eq!(aggregate_resp.prepare_resps().len(), 1, "{}", name);
+        assert_eq!(aggregate_resp.prepare_resps().len(), 1, "{name}");
         let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
@@ -790,7 +790,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
             "status": Status::BadRequest as u16,
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
-            "taskid": format!("{}", another_task_id),
+            "taskid": format!("{another_task_id}"),
         })
     );
 }
@@ -871,7 +871,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             "status": Status::BadRequest as u16,
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
-            "taskid": format!("{}", another_task_id),
+            "taskid": format!("{another_task_id}"),
         })
     );
 }

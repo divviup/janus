@@ -578,15 +578,11 @@ mod tests {
         roundtrip_encoding(&[
             (
                 DpConfig::new(DpMechanism::Reserved),
-                concat!(
-                    "00",   // dp_mechanism
-                ),
+                "00", // dp_mechanism
             ),
             (
                 DpConfig::new(DpMechanism::None),
-                concat!(
-                    "01",   // dp_mechanism
-                ),
+                "01", // dp_mechanism
             ),
             (
                 DpConfig::new(DpMechanism::Unrecognized {
@@ -606,9 +602,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 VdafType::Prio3Count,
-                concat!(
-                    "00000000", // vdaf_type_code
-                ),
+                "00000000", // vdaf_type_code
             ),
             (
                 VdafType::Prio3Sum { bits: u8::MIN },
@@ -705,10 +699,8 @@ mod tests {
                         "0001", // dp_config length
                         "01",   // dp_mechanism
                     ),
-                    concat!(
-                        // vdaf_type
-                        "00000000", // vdaf_type_code
-                    ),
+                    // vdaf_type
+                    "00000000", // vdaf_type_code
                 ),
             ),
             (
@@ -728,9 +720,7 @@ mod tests {
                         "DEADBEEF"  // rest of unrecognized DpConfig
                     ),
                     // vdaf_type
-                    concat!(
-                        "00000000" // vdaf_type_code
-                    )
+                    "00000000" // vdaf_type_code
                 ),
             ),
             (
@@ -906,9 +896,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Query::TimeInterval,
-                concat!(
-                    "01", // query_type
-                ),
+                "01", // query_type
             ),
             (
                 Query::FixedSize {
@@ -995,10 +983,8 @@ mod tests {
                             "0001", // dp_config length
                             "01",   // dp_config
                         ),
-                        concat!(
-                            // vdaf_type
-                            "00000000", // vdaf_type_code
-                        ),
+                        // vdaf_type
+                        "00000000", // vdaf_type_code
                     ),
                 ),
             ),
@@ -1072,10 +1058,8 @@ mod tests {
         assert_matches!(
             TaskConfig::get_decoded(
                 &hex::decode(concat!(
-                    concat!(
-                        // task_info
-                        "00", // length
-                    ),
+                    // task_info
+                    "00", // length
                     concat!(
                         // leader_aggregator_url
                         "0014",                                     // length

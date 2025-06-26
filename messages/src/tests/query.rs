@@ -38,9 +38,7 @@ fn roundtrip_fixed_size_query() {
         ),
         (
             FixedSizeQuery::CurrentBatch,
-            concat!(
-                "01", // query_type
-            ),
+            "01", // query_type
         ),
     ])
 }
