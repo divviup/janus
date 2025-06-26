@@ -3,26 +3,26 @@
 use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    AsyncAggregator,
     datastore::{
+        Error, Transaction,
         models::{
             AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
             ReportAggregationMetadataState, UnaggregatedReport,
         },
-        Error, Transaction,
     },
-    AsyncAggregator,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    batch_mode::LeaderSelected, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId,
-    Time,
+    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    batch_mode::LeaderSelected,
 };
 use opentelemetry::metrics::Histogram;
 use prio::codec::Encode;
 use rand::random;
 use std::{
-    cmp::{max, min, Ordering},
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, HashSet, VecDeque},
+    cmp::{Ordering, max, min},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut, hash_map},
     ops::RangeInclusive,
     sync::Arc,
 };

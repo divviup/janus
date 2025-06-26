@@ -1,12 +1,12 @@
 use anyhow::{Context, Error, Result};
-use futures::future::{join_all, try_join_all, OptionFuture};
+use futures::future::{OptionFuture, join_all, try_join_all};
 use janus_aggregator_core::datastore::{self, Datastore};
 use janus_core::time::Clock;
 use janus_messages::TaskId;
 use opentelemetry::metrics::{Counter, Meter};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use tokio::{sync::Semaphore, try_join};
 use tracing::error;
@@ -182,7 +182,7 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        task::{self, test_util::TaskBuilder, AggregationMode},
+        task::{self, AggregationMode, test_util::TaskBuilder},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -191,9 +191,9 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        batch_mode::{LeaderSelected, TimeInterval},
         AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
         ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+        batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::vdaf::dummy;
     use rand::random;
@@ -319,38 +319,46 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
-                assert!(tx
-                    .get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_report_aggregations_for_task::<0, dummy::Vdaf>(
+                assert!(
+                    tx.get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Leader,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_collection_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(&vdaf, task.id(),)
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_collection_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &vdaf,
+                        task.id(),
+                    )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 Ok(())
             })
         })
@@ -501,41 +509,46 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
-                assert!(tx
-                    .get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_report_aggregations_for_task::<0, dummy::Vdaf>(
+                assert!(
+                    tx.get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Leader,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
                         &vdaf,
                         task.id()
                     )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 Ok(())
             })
         })
@@ -668,46 +681,52 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
-                assert!(tx
-                    .get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_report_aggregations_for_task::<0, dummy::Vdaf>(
+                assert!(
+                    tx.get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Leader,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_unfilled_outstanding_batches(task.id(), &None)
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_unfilled_outstanding_batches(task.id(), &None)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_collection_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 Ok(())
             })
         })
@@ -867,41 +886,46 @@ mod tests {
         ds.run_unnamed_tx(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
-                assert!(tx
-                    .get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_report_aggregations_for_task::<0, dummy::Vdaf>(
+                assert!(
+                    tx.get_client_reports_for_task::<0, dummy::Vdaf>(&vdaf, task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_aggregation_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(task.id())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    tx.get_report_aggregations_for_task::<0, dummy::Vdaf>(
                         &vdaf,
                         &Role::Leader,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
+                    .is_empty()
+                );
+                assert!(
+                    tx.get_aggregate_share_jobs_for_task::<0, LeaderSelected, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 Ok(())
             })
         })

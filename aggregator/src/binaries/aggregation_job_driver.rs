@@ -1,12 +1,12 @@
 use crate::{
     aggregator::aggregation_job_driver::AggregationJobDriver,
-    binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, job_driver::JobDriver},
     cache::HpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, JobDriverConfig, TaskprovConfig},
 };
 use anyhow::{Context, Result};
 use clap::Parser;
-use janus_core::{time::RealClock, TokioRuntime};
+use janus_core::{TokioRuntime, time::RealClock};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::info;
@@ -177,9 +177,8 @@ fn default_default_async_poll_interval() -> u64 {
 mod tests {
     use super::{Config, Options};
     use crate::config::{
-        default_max_transaction_retries,
+        CommonConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig, JobDriverConfig, TaskprovConfig,
     };
     use clap::CommandFactory;
     use janus_core::test_util::roundtrip_encoding;

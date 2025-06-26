@@ -1,12 +1,12 @@
 #[allow(unused_imports)]
 use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
 use crate::cache::HpkeKeypairCache;
-use anyhow::{anyhow, Error};
+use anyhow::{Error, anyhow};
 use educe::Educe;
-use futures::{future::try_join_all, FutureExt};
+use futures::{FutureExt, future::try_join_all};
 use janus_aggregator_core::datastore::{
-    models::{HpkeKeyState, HpkeKeypair},
     Datastore, Error as DatastoreError, Transaction,
+    models::{HpkeKeyState, HpkeKeypair},
 };
 use janus_core::{
     hpke::{self, HpkeCiphersuite},
@@ -15,7 +15,7 @@ use janus_core::{
 use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
 #[cfg(test)]
 use quickcheck::{Arbitrary, Gen};
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -506,9 +506,9 @@ mod tests {
 
     use itertools::Itertools;
     use janus_aggregator_core::datastore::{
+        Datastore,
         models::{HpkeKeyState, HpkeKeypair},
         test_util::ephemeral_datastore,
-        Datastore,
     };
     use janus_core::{
         hpke::{self, HpkeCiphersuite},
@@ -519,7 +519,7 @@ mod tests {
     use quickcheck::{Arbitrary, Gen, TestResult};
     use quickcheck_macros::quickcheck;
 
-    use crate::aggregator::key_rotator::{duration_since, HpkeKeyRotatorConfig, KeyRotator};
+    use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator, duration_since};
 
     use super::HpkeKeyRotator;
 

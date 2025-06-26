@@ -124,9 +124,8 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{Config, Options};
     use crate::config::{
-        default_max_transaction_retries,
+        CommonConfig, default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig,
     };
     use clap::CommandFactory;
     use janus_core::test_util::roundtrip_encoding;

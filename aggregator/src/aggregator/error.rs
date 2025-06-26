@@ -4,7 +4,7 @@ use janus_messages::{
     AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, ReportError,
     ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
-use opentelemetry::{metrics::Counter, KeyValue};
+use opentelemetry::{KeyValue, metrics::Counter};
 use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
 use std::{
     fmt::{self, Display, Formatter},

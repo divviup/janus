@@ -1,15 +1,15 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
     AggregationJobResp, CollectionJobReq, CollectionJobResp, HpkeConfig, HpkeConfigList, Report,
+    batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::codec::Decode;
 use std::{
     fmt::Debug,
     fs::File,
-    io::{stdin, Read},
+    io::{Read, stdin},
 };
 
 fn main() -> Result<()> {

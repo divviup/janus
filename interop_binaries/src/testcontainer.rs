@@ -4,7 +4,7 @@
 //! and provide them.
 
 use std::env;
-use testcontainers::{core::WaitFor, Image};
+use testcontainers::{Image, core::WaitFor};
 
 // Note that testcontainers always assembles image names in the format "$NAME:$TAG". Images will
 // typically be provided as digests, of the form "sha256:$HASH". We will parse these into a 'name'

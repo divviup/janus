@@ -2,7 +2,7 @@
 
 use crate::SecretBytes;
 use anyhow::anyhow;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -10,11 +10,11 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId, Time,
+    AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId, Time, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
-use rand::{distr::StandardUniform, random, rng, Rng};
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use rand::{Rng, distr::StandardUniform, random, rng};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::{array::TryFromSliceError, str::FromStr};
 use url::Url;
 
@@ -778,11 +778,11 @@ impl<'de> Deserialize<'de> for AggregatorTask {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::{
+        SecretBytes,
         task::{
             AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode,
             CommonTaskParameters, Error, VerifyKey,
         },
-        SecretBytes,
     };
     use educe::Educe;
     use janus_core::{
@@ -796,7 +796,7 @@ pub mod test_util {
         AggregationJobId, AggregationJobStep, CollectionJobId, Duration, HpkeConfigId, Role,
         TaskId, Time,
     };
-    use rand::{distr::StandardUniform, random, rng, Rng};
+    use rand::{Rng, distr::StandardUniform, random, rng};
     use std::collections::HashMap;
     use url::Url;
 
@@ -1360,11 +1360,11 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        task::{
-            test_util::TaskBuilder, AggregationMode, AggregatorTask, AggregatorTaskParameters,
-            BatchMode, VdafInstance,
-        },
         SecretBytes,
+        task::{
+            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode, VdafInstance,
+            test_util::TaskBuilder,
+        },
     };
     use assert_matches::assert_matches;
     use janus_core::{
@@ -1379,7 +1379,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use serde_test::{assert_de_tokens, assert_tokens, Token};
+    use serde_test::{Token, assert_de_tokens, assert_tokens};
 
     #[test]
     fn leader_task_serialization() {

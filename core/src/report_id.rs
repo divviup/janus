@@ -1,6 +1,6 @@
 //! Extensions on report ID representations from `janus_messages`.
 
-use aws_lc_rs::digest::{digest, SHA256, SHA256_OUTPUT_LEN};
+use aws_lc_rs::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
 use janus_messages::{ReportId, ReportIdChecksum};
 
 /// Additional methods for working with a [`ReportIdChecksum`].

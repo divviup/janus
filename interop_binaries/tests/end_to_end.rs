@@ -1,7 +1,7 @@
 #![cfg(feature = "testcontainer")]
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use fixed::types::{I1F15, I1F31};
 use futures::future::join_all;
 use janus_core::{
@@ -11,21 +11,20 @@ use janus_core::{
     vdaf::VERIFY_KEY_LENGTH_PRIO3,
 };
 use janus_interop_binaries::{
-    get_rust_log_level,
+    ContainerLogsDropGuard, get_rust_log_level,
     test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
-    ContainerLogsDropGuard,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Duration, TaskId,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::codec::Encode;
 use rand::random;
-use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
-use serde_json::{json, Value};
+use reqwest::{StatusCode, Url, header::CONTENT_TYPE};
+use serde_json::{Value, json};
 use std::time::Duration as StdDuration;
-use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
+use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
 use tokio::time::sleep;
 
 const JSON_MEDIA_TYPE: &str = "application/json";

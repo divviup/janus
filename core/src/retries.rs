@@ -347,8 +347,8 @@ mod tests {
     use crate::{
         initialize_rustls,
         retries::{
-            retry_http_request, retry_http_request_notify, test_util::LimitedRetryer,
-            ExponentialWithTotalDelayBuilder,
+            ExponentialWithTotalDelayBuilder, retry_http_request, retry_http_request_notify,
+            test_util::LimitedRetryer,
         },
         test_util::install_test_trace_subscriber,
     };

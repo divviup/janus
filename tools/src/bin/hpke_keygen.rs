@@ -1,5 +1,5 @@
 use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use janus_core::{
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
@@ -8,7 +8,7 @@ use janus_core::{
 use janus_messages::HpkeConfigId;
 use prio::codec::Encode;
 use serde_yaml::to_writer;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 
 fn main() -> Result<()> {
     let options = Options::parse();

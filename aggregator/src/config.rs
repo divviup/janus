@@ -3,7 +3,7 @@
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use educe::Educe;
 use janus_core::retries::ExponentialWithTotalDelayBuilder;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -319,9 +319,8 @@ pub mod test_util {
 mod tests {
     use crate::{
         config::{
-            default_max_transaction_retries,
+            CommonConfig, DbConfig, JobDriverConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig, DbConfig, JobDriverConfig,
         },
         metrics::MetricsExporterConfiguration,
         trace::OpenTelemetryTraceConfiguration,

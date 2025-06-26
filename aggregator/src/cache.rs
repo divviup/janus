@@ -1,19 +1,19 @@
 //! Various in-memory caches that can be used by an aggregator.
 
-use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
+use crate::aggregator::{Error, TaskAggregator, report_writer::ReportWriteBatcher};
 use janus_aggregator_core::{
     datastore::{
-        models::{HpkeKeyState, HpkeKeypair},
         Datastore,
+        models::{HpkeKeyState, HpkeKeypair},
     },
     taskprov::PeerAggregator,
 };
 use janus_core::{hpke, time::Clock};
 use janus_messages::{HpkeConfig, HpkeConfigId, Role, TaskId};
 use moka::{
+    Entry,
     future::{Cache, CacheBuilder},
     ops::compute::Op,
-    Entry,
 };
 use std::{
     collections::HashMap,
@@ -276,7 +276,7 @@ mod tests {
 
     use janus_aggregator_core::{
         datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
-        task::{test_util::TaskBuilder, AggregationMode, BatchMode},
+        task::{AggregationMode, BatchMode, test_util::TaskBuilder},
     };
     use janus_core::{
         hpke::HpkeKeypair,

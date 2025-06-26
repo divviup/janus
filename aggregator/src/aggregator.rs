@@ -11,14 +11,14 @@ use crate::{
         },
         batch_mode::{CollectableBatchMode, UploadableBatchMode},
         error::{
-            handle_ping_pong_error, BatchMismatch, OptOutReason, ReportRejection,
-            ReportRejectionReason,
+            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
+            handle_ping_pong_error,
         },
         report_writer::{ReportWriteBatcher, WritableReport},
     },
     cache::{
-        HpkeKeypairCache, PeerAggregatorCache, TaskAggregatorCache,
-        TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
+        HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
     },
     config::TaskprovConfig,
     diagnostic::AggregationJobInitForbiddenMutationEvent,
@@ -30,7 +30,7 @@ use crate::{
 };
 use aggregation_job_continue::compute_helper_aggregate_continue;
 use aws_lc_rs::{
-    digest::{digest, SHA256},
+    digest::{SHA256, digest},
     rand::SystemRandom,
     signature::{EcdsaKeyPair, Signature},
 };
@@ -38,56 +38,55 @@ use backon::BackoffBuilder;
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
-    types::extra::{U15, U31},
     FixedI16, FixedI32,
+    types::extra::{U15, U31},
 };
 use futures::{future::try_join_all, stream::TryStreamExt};
-use http::{header::CONTENT_TYPE, Method};
+use http::{Method, header::CONTENT_TYPE};
 use janus_aggregator_core::{
+    AsyncAggregator, AsyncAggregatorWithNoise,
     batch_mode::AccumulableBatchMode,
     datastore::{
-        self,
+        self, Datastore, Error as DatastoreError, Transaction,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
             CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
             TaskAggregationCounter,
         },
-        Datastore, Error as DatastoreError, Transaction,
     },
     task::{self, AggregationMode, AggregatorTask, BatchMode},
     taskprov::PeerAggregator,
-    AsyncAggregator, AsyncAggregatorWithNoise,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
+    Runtime,
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
-    retries::{retry_http_request_notify, HttpResponse},
+    retries::{HttpResponse, retry_http_request_notify},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{
-        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance,
+        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
     },
-    Runtime,
 };
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
-    taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareResp, Report, ReportError, Role, TaskId,
+    batch_mode::{LeaderSelected, TimeInterval},
+    taskprov::TaskConfig,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
     KeyValue,
+    metrics::{Counter, Histogram, Meter},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 #[cfg(feature = "test-util")]
-use prio::vdaf::{dummy, PrepareTransition, VdafError};
+use prio::vdaf::{PrepareTransition, VdafError, dummy};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
@@ -95,7 +94,7 @@ use prio::{
     flp::gadgets::{Mul, ParallelSum},
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use reqwest::Client;
 use std::{
     borrow::Cow,
@@ -107,7 +106,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::try_join;
-use tracing::{debug, error, info, warn, Level};
+use tracing::{Level, debug, error, info, warn};
 use url::Url;
 
 pub mod aggregate_share;
@@ -2694,14 +2693,14 @@ impl VdafOps {
                             return Err(datastore::Error::User(
                                 Error::AbandonedAggregationJob(*task.id(), *aggregation_job.id())
                                     .into(),
-                            ))
+                            ));
                         }
 
                         AggregationJobState::Deleted => {
                             return Err(datastore::Error::User(
                                 Error::DeletedAggregationJob(*task.id(), *aggregation_job.id())
                                     .into(),
-                            ))
+                            ));
                         }
                     })
                 })

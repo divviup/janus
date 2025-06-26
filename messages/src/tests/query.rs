@@ -1,6 +1,6 @@
 use crate::{
-    batch_mode, roundtrip_encoding, BatchId, Duration, Interval, LeaderSelected, Query, TaskId,
-    Time, TimeInterval,
+    BatchId, Duration, Interval, LeaderSelected, Query, TaskId, Time, TimeInterval, batch_mode,
+    roundtrip_encoding,
 };
 
 #[test]

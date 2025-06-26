@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use opentelemetry::metrics::{Meter, MeterProvider};
 use opentelemetry_sdk::{
-    metrics::{data::Metric, PeriodicReader, SdkMeterProvider},
+    metrics::{PeriodicReader, SdkMeterProvider, data::Metric},
     runtime,
     testing::metrics::InMemoryMetricExporter,
 };

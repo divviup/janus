@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ops::ControlFlow,
-    panic::{catch_unwind, AssertUnwindSafe},
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
@@ -11,33 +11,33 @@ use futures::future::join_all;
 use janus_aggregator::aggregator;
 use janus_aggregator_core::{
     datastore::models::AggregatorRole,
-    task::{test_util::Task, AggregatorTask},
+    task::{AggregatorTask, test_util::Task},
     test_util::noop_meter,
 };
 use janus_collector::{Collection, CollectionJob, PollResult};
 use janus_core::{
     test_util::runtime::TestRuntimeManager,
     time::{Clock, MockClock},
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
     CollectionJobId, Duration, Time,
+    batch_mode::{LeaderSelected, TimeInterval},
 };
 use opentelemetry::metrics::Meter;
-use prio::vdaf::prio3::{optimal_chunk_length, Prio3, Prio3Histogram};
+use prio::vdaf::prio3::{Prio3, Prio3Histogram, optimal_chunk_length};
 use quickcheck::TestResult;
 use tokio::time::timeout;
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 use trillium_tokio::Stopper;
 
 use crate::simulation::{
+    START_TIME,
     bad_client::{
         upload_replay_report, upload_report_invalid_measurement, upload_report_not_rounded,
     },
     model::{Input, Op, Query},
     setup::Components,
-    START_TIME,
 };
 
 pub(super) const MAX_REPORTS: usize = 400;

@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_aggregator_core::{
     datastore::models::{HpkeKeyState, HpkeKeypair, TaskAggregationCounter, TaskUploadCounter},
@@ -10,8 +10,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::Code as SupportedBatchMode, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
-    Role, TaskId, Time,
+    Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    batch_mode::Code as SupportedBatchMode,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;

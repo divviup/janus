@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     aggregator::key_rotator::{
-        deserialize_hpke_key_rotator_config, HpkeKeyRotatorConfig, KeyRotator,
+        HpkeKeyRotatorConfig, KeyRotator, deserialize_hpke_key_rotator_config,
     },
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -98,13 +98,12 @@ mod tests {
 
     use crate::{
         aggregator::key_rotator::{
-            default_active_duration, default_expired_duration, default_hpke_ciphersuites,
-            default_pending_duration, HpkeKeyRotatorConfig,
+            HpkeKeyRotatorConfig, default_active_duration, default_expired_duration,
+            default_hpke_ciphersuites, default_pending_duration,
         },
         config::{
-            default_max_transaction_retries,
+            CommonConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig,
         },
     };
 

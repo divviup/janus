@@ -1,18 +1,18 @@
 use super::{
-    error::{ReportRejection, ReportRejectionReason},
     Error,
+    error::{ReportRejection, ReportRejectionReason},
 };
 use async_trait::async_trait;
 use janus_aggregator_core::{
-    batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
-    datastore::{self, models::LeaderStoredReport, Transaction},
-    task::AggregatorTask,
     AsyncAggregator,
+    batch_mode::{AccumulableBatchMode, CollectableBatchMode as CoreCollectableBatchMode},
+    datastore::{self, Transaction, models::LeaderStoredReport},
+    task::AggregatorTask,
 };
 use janus_core::time::Clock;
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Role,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 
 #[async_trait]

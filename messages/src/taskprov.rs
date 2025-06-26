@@ -2,12 +2,12 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{batch_mode, Duration, Error, Time, Url};
+use crate::{Duration, Error, Time, Url, batch_mode};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
-    decode_u16_items, decode_u8_items, encode_u16_items, encode_u8_items, CodecError, Decode,
-    Encode,
+    CodecError, Decode, Encode, decode_u8_items, decode_u16_items, encode_u8_items,
+    encode_u16_items,
 };
 use std::{fmt::Debug, io::Cursor};
 
@@ -402,7 +402,7 @@ impl Decode for VdafConfig {
             val => {
                 return Err(CodecError::Other(
                     anyhow!("unexpected VDAF type code value {}", val).into(),
-                ))
+                ));
             }
         };
 
@@ -502,9 +502,8 @@ impl Decode for TaskbindExtensionType {
 #[cfg(test)]
 mod tests {
     use crate::{
-        batch_mode, roundtrip_encoding,
+        Duration, Time, Url, batch_mode, roundtrip_encoding,
         taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
-        Duration, Time, Url,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode as _};

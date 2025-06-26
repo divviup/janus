@@ -1,12 +1,12 @@
 use crate::DAP_VERSION_IDENTIFIER;
-use janus_messages::{taskprov, TaskId};
+use janus_messages::{TaskId, taskprov};
 use prio::{
     field::Field64,
     flp::{
         gadgets::{Mul, ParallelSumGadget},
         types::SumVec,
     },
-    vdaf::{prio3::Prio3, xof::XofHmacSha256Aes128, VdafError},
+    vdaf::{VdafError, prio3::Prio3, xof::XofHmacSha256Aes128},
 };
 use serde::{Deserialize, Serialize};
 use std::str;
@@ -614,15 +614,15 @@ macro_rules! vdaf_dispatch {
 mod tests {
     #[cfg(feature = "fpvec_bounded_l2")]
     use crate::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-    use crate::vdaf::{vdaf_dp_strategies, VdafInstance};
+    use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
     use assert_matches::assert_matches;
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use prio::dp::{distributions::ZCdpDiscreteGaussian, ZCdpBudget};
     use prio::dp::{
-        distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
         DifferentialPrivacyStrategy, PureDpBudget, Rational,
+        distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
     };
-    use serde_test::{assert_tokens, Token};
+    #[cfg(feature = "fpvec_bounded_l2")]
+    use prio::dp::{ZCdpBudget, distributions::ZCdpDiscreteGaussian};
+    use serde_test::{Token, assert_tokens};
 
     #[test]
     fn vdaf_serialization() {

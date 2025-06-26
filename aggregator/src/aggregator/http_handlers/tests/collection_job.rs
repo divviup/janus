@@ -1,20 +1,20 @@
 use crate::aggregator::{
     collection_job_tests::setup_collection_job_test_case,
-    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
 };
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::models::{CollectionJob, CollectionJobState},
-    task::{test_util::TaskBuilder, AggregationMode, BatchMode},
+    task::{AggregationMode, BatchMode, test_util::TaskBuilder},
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::TimeInterval, AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq,
-    CollectionJobResp, Duration, Interval, Query, Role, Time,
+    AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
+    Duration, Interval, Query, Role, Time, batch_mode::TimeInterval,
 };
 use prio::{
     codec::{Decode, Encode},

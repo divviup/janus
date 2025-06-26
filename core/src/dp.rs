@@ -3,19 +3,19 @@ use fixed::traits::Fixed;
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::flp::{
     gadgets::PolyEval,
-    types::fixedpoint_l2::{compatible_float::CompatibleFloat, FixedPointBoundedL2VecSum},
+    types::fixedpoint_l2::{FixedPointBoundedL2VecSum, compatible_float::CompatibleFloat},
 };
 #[cfg(feature = "test-util")]
-use prio::vdaf::{dummy, AggregatorWithNoise};
+use prio::vdaf::{AggregatorWithNoise, dummy};
 use prio::{
     dp::{
         DifferentialPrivacyBudget, DifferentialPrivacyDistribution, DifferentialPrivacyStrategy,
         DpError,
     },
-    field::{Field128, Field64},
+    field::{Field64, Field128},
     flp::{
-        gadgets::{Mul, ParallelSumGadget},
         TypeWithNoise,
+        gadgets::{Mul, ParallelSumGadget},
     },
 };
 use serde::{Deserialize, Serialize};

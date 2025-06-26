@@ -2,8 +2,8 @@
 
 use anyhow::anyhow;
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
     KeyValue,
+    metrics::{Counter, Histogram, Meter},
 };
 use serde::{Deserialize, Serialize};
 use std::net::AddrParseError;
@@ -32,8 +32,8 @@ use {
     janus_aggregator_api::git_revision,
     opentelemetry::global::set_meter_provider,
     opentelemetry_sdk::{
-        metrics::{MetricError, SdkMeterProvider},
         Resource,
+        metrics::{MetricError, SdkMeterProvider},
     },
 };
 

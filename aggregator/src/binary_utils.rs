@@ -5,12 +5,12 @@ pub mod job_driver;
 use crate::{
     config::{BinaryConfig, DbConfig},
     metrics::install_metrics_exporter,
-    trace::{install_trace_subscriber, TraceReloadHandle},
+    trace::{TraceReloadHandle, install_trace_subscriber},
 };
-use anyhow::{anyhow, Context as _, Result};
-use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use anyhow::{Context as _, Result, anyhow};
+use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
@@ -40,7 +40,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 use trillium::{Handler, Info, Init, Status};
-use trillium_api::{api, State};
+use trillium_api::{State, api};
 use trillium_head::Head;
 use trillium_router::Router;
 use trillium_tokio::Stopper;
@@ -539,8 +539,8 @@ mod tests {
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
         binary_utils::{
-            database_pool, initialize_rustls, register_database_pool_status_metrics,
-            zpages_handler, CommonBinaryOptions,
+            CommonBinaryOptions, database_pool, initialize_rustls,
+            register_database_pool_status_metrics, zpages_handler,
         },
         config::DbConfig,
         metrics::test_util::InMemoryMetricInfrastructure,
@@ -553,8 +553,8 @@ mod tests {
     };
     use opentelemetry_sdk::metrics::data::Gauge;
     use std::fs;
-    use testcontainers::{core::Mount, runners::AsyncRunner, ContainerRequest, ImageExt};
-    use tracing_subscriber::{reload, EnvFilter};
+    use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
+    use tracing_subscriber::{EnvFilter, reload};
     use trillium::Status;
     use trillium_testing::prelude::*;
 

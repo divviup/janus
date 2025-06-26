@@ -1,9 +1,10 @@
 use assert_matches::assert_matches;
-use janus_aggregator_core::task::{test_util::TaskBuilder, AggregationMode, BatchMode};
+use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
-    batch_mode::LeaderSelected, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
-    BatchSelector, PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
+    AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp, BatchSelector,
+    PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
+    batch_mode::LeaderSelected,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -14,9 +15,9 @@ use trillium::Status;
 use trillium_testing::assert_status;
 
 use crate::aggregator::{
-    aggregation_job_init::test_util::{put_aggregation_job, PrepareInitGenerator},
+    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
     http_handlers::{
-        test_util::{take_response_body, HttpHandlerTest},
+        test_util::{HttpHandlerTest, take_response_body},
         tests::aggregate_share::post_aggregate_share_request,
     },
 };

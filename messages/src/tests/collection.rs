@@ -1,8 +1,7 @@
 use crate::{
-    roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq, BatchId,
-    BatchSelector, CollectionJobReq, CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId,
-    Interval, LeaderSelected, PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time,
-    TimeInterval,
+    AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector, CollectionJobReq,
+    CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected,
+    PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval, roundtrip_encoding,
 };
 use prio::codec::Decode;
 

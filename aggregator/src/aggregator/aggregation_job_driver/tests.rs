@@ -2,58 +2,57 @@
 
 use crate::{
     aggregator::{
+        Error,
         aggregation_job_driver::AggregationJobDriver,
         test_util::{
-            assert_task_aggregation_counter, generate_helper_report_share,
             BATCH_AGGREGATION_SHARD_COUNT, TASK_AGGREGATION_COUNTER_SHARD_COUNT,
+            assert_task_aggregation_counter, generate_helper_report_share,
         },
-        Error,
     },
     binary_utils::job_driver::JobDriver,
     cache::HpkeKeypairCache,
 };
 use assert_matches::assert_matches;
 use futures::future::join_all;
-use http::{header::CONTENT_TYPE, StatusCode};
+use http::{StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     datastore::{
-        models::{
-            merge_batch_aggregations_by_batch, AcquiredAggregationJob, AggregationJob,
-            AggregationJobState, BatchAggregation, BatchAggregationState, LeaderStoredReport,
-            Lease, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
-        },
-        test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
+        models::{
+            AcquiredAggregationJob, AggregationJob, AggregationJobState, BatchAggregation,
+            BatchAggregationState, LeaderStoredReport, Lease, ReportAggregation,
+            ReportAggregationState, TaskAggregationCounter, merge_batch_aggregations_by_batch,
+        },
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
-    task::{test_util::TaskBuilder, AggregationMode, AggregatorTask, BatchMode, VerifyKey},
+    task::{AggregationMode, AggregatorTask, BatchMode, VerifyKey, test_util::TaskBuilder},
     test_util::noop_meter,
 };
 use janus_core::{
+    Runtime,
     hpke::HpkeKeypair,
     initialize_rustls,
     report_id::ReportIdChecksumExt,
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
     time::{Clock, DurationExt, MockClock, TimeExt},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
-    Runtime,
+    vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
-    problem_type::DapProblemType,
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
     PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, Time,
+    batch_mode::{LeaderSelected, TimeInterval},
+    problem_type::DapProblemType,
 };
 use mockito::ServerGuard;
 use prio::{
     codec::Encode,
     vdaf::{
-        dummy,
+        Aggregator, dummy,
         prio3::{Prio3, Prio3Count},
-        Aggregator,
     },
 };
 use rand::random;

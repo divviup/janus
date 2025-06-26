@@ -1,48 +1,46 @@
 use crate::{
-    aggregator_api_handler,
+    CONTENT_TYPE, Config, aggregator_api_handler,
     models::{
         DeleteTaskprovPeerAggregatorReq, GetTaskAggregationMetricsResp, GetTaskIdsResp,
         GetTaskUploadMetricsResp, HpkeConfigResp, PatchHpkeConfigReq, PostTaskReq,
         PostTaskprovPeerAggregatorReq, PutHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
     },
-    Config, CONTENT_TYPE,
 };
 use assert_matches::assert_matches;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    SecretBytes,
     datastore::{
-        models::{HpkeKeyState, TaskAggregationCounter, TaskUploadCounter},
-        test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
+        models::{HpkeKeyState, TaskAggregationCounter, TaskUploadCounter},
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
-        test_util::TaskBuilder, AggregationMode, AggregatorTask, AggregatorTaskParameters,
-        BatchMode,
+        AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode,
+        test_util::TaskBuilder,
     },
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
-    SecretBytes,
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::HpkeKeypair,
     test_util::install_test_trace_subscriber,
     time::MockClock,
-    vdaf::{vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
+    vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
     TaskId, Time,
 };
-use rand::{distr::StandardUniform, random, rng, Rng};
-use serde_test::{assert_ser_tokens, assert_tokens, Token};
+use rand::{Rng, distr::StandardUniform, random, rng};
+use serde_test::{Token, assert_ser_tokens, assert_tokens};
 use std::{iter, sync::Arc};
 use trillium::{Handler, Status};
 use trillium_testing::{
-    assert_body_contains, assert_response, assert_status,
+    Url, assert_body_contains, assert_response, assert_status,
     prelude::{delete, get, patch, post, put},
-    Url,
 };
 
 const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";

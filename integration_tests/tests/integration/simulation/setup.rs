@@ -7,14 +7,13 @@ use crate::simulation::{
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
-        self,
+        self, Config as AggregatorConfig,
         aggregation_job_creator::AggregationJobCreator,
         aggregation_job_driver::AggregationJobDriver,
         collection_job_driver::{CollectionJobDriver, RetryStrategy},
         garbage_collector::GarbageCollector,
         http_handlers::AggregatorHandlerBuilder,
         key_rotator::KeyRotator,
-        Config as AggregatorConfig,
     },
     cache::{
         HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
@@ -22,21 +21,20 @@ use janus_aggregator::{
 };
 use janus_aggregator_core::{
     datastore::{
-        self,
+        self, Datastore,
         models::{AcquiredAggregationJob, AcquiredCollectionJob, Lease},
-        test_util::{ephemeral_datastore, EphemeralDatastore},
-        Datastore,
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
-        test_util::{Task, TaskBuilder},
         BatchMode,
+        test_util::{Task, TaskBuilder},
     },
 };
-use janus_client::{default_http_client, Client};
+use janus_client::{Client, default_http_client};
 use janus_collector::Collector;
 use janus_core::{
-    retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime, time::MockClock,
-    Runtime,
+    Runtime, retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime,
+    time::MockClock,
 };
 use prio::vdaf::prio3::Prio3Histogram;
 use std::{

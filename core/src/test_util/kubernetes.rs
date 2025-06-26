@@ -5,9 +5,9 @@ use backon::{BackoffBuilder, BlockingRetryable, ConstantBuilder};
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{Pod, Service};
 use kube::{
+    Api, ResourceExt,
     api::ListParams,
     config::{KubeConfigOptions, Kubeconfig},
-    Api, ResourceExt,
 };
 use rand::random;
 use std::{
@@ -289,7 +289,7 @@ mod tests {
     use super::EphemeralCluster;
     use crate::test_util::install_test_trace_subscriber;
     use k8s_openapi::api::core::v1::Node;
-    use kube::{api::ListParams, Api};
+    use kube::{Api, api::ListParams};
 
     #[tokio::test]
     async fn create_clusters() {

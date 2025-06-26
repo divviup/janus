@@ -1,34 +1,34 @@
 use super::{
-    error::{ArcError, ReportRejectionReason},
-    queue::{queued_lifo, LIFORequestQueue},
     Aggregator, Config, Error,
+    error::{ArcError, ReportRejectionReason},
+    queue::{LIFORequestQueue, queued_lifo},
 };
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use anyhow::Context;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    datastore::Datastore, datastore::Error as datastoreError, instrumented,
-    taskprov::taskprov_task_id, TIME_HISTOGRAM_BOUNDARIES,
+    TIME_HISTOGRAM_BOUNDARIES, datastore::Datastore, datastore::Error as datastoreError,
+    instrumented, taskprov::taskprov_task_id,
 };
 use janus_core::{
+    Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::extract_bearer_token,
     taskprov::TASKPROV_HEADER,
     time::Clock,
-    Runtime,
 };
 use janus_messages::{
-    batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
     AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, HpkeConfigList, Report, TaskId,
+    CollectionJobReq, CollectionJobResp, HpkeConfigList, Report, TaskId, batch_mode::TimeInterval,
+    codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{
-    metrics::{Counter, Meter},
     KeyValue,
+    metrics::{Counter, Meter},
 };
 use prio::codec::Encode;
 use querystring::querify;
@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::{borrow::Cow, time::Duration as StdDuration};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
-use trillium_api::{api, State, TryFromConn};
+use trillium_api::{State, TryFromConn, api};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::Metrics;
 use trillium_router::{Router, RouterConnExt};
@@ -911,8 +911,8 @@ pub mod test_util {
     use crate::aggregator::test_util::default_aggregator_config;
     use janus_aggregator_core::{
         datastore::{
-            test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
+            test_util::{EphemeralDatastore, ephemeral_datastore},
         },
         test_util::noop_meter,
     };
@@ -925,7 +925,7 @@ pub mod test_util {
     use janus_messages::codec::Decode;
     use std::sync::Arc;
     use trillium::Handler;
-    use trillium_testing::{assert_headers, TestConn};
+    use trillium_testing::{TestConn, assert_headers};
 
     use super::AggregatorHandlerBuilder;
 

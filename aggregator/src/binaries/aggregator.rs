@@ -2,27 +2,27 @@ use crate::{
     aggregator::{
         self,
         http_handlers::{AggregatorHandlerBuilder, HelperAggregationRequestQueue},
-        key_rotator::{deserialize_hpke_key_rotator_config, HpkeKeyRotatorConfig, KeyRotator},
+        key_rotator::{HpkeKeyRotatorConfig, KeyRotator, deserialize_hpke_key_rotator_config},
     },
     binaries::garbage_collector::run_garbage_collector,
-    binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, setup_server},
     cache::{
         HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
-use anyhow::{anyhow, Context, Result};
-use aws_lc_rs::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+use anyhow::{Context, Result, anyhow};
+use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
 use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
+use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, time::RealClock};
 use opentelemetry::metrics::Meter;
 use sec1::EcPrivateKey;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
-    future::{ready, Future},
+    future::{Future, ready},
     path::PathBuf,
 };
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
@@ -266,12 +266,12 @@ where
             (None, None) => {
                 return Err(de::Error::custom(
                     "one of listen_address or path_prefix must be provided",
-                ))
+                ));
             }
             (Some(_), Some(_)) => {
                 return Err(de::Error::custom(
                     "only one of listen_address and path_prefix must be specified",
-                ))
+                ));
             }
             _ => {}
         }
@@ -520,12 +520,11 @@ mod tests {
         aggregator::{
             self,
             key_rotator::HpkeKeyRotatorConfig,
-            test_util::{hpke_config_signing_key, HPKE_CONFIG_SIGNING_KEY_PEM},
+            test_util::{HPKE_CONFIG_SIGNING_KEY_PEM, hpke_config_signing_key},
         },
         config::{
-            default_max_transaction_retries,
+            BinaryConfig, CommonConfig, TaskprovConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            BinaryConfig, CommonConfig, TaskprovConfig,
         },
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
         trace::{
@@ -535,7 +534,7 @@ mod tests {
     use assert_matches::assert_matches;
     use aws_lc_rs::{
         rand::SystemRandom,
-        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
+        signature::{ECDSA_P256_SHA256_ASN1, KeyPair, UnparsedPublicKey},
     };
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};

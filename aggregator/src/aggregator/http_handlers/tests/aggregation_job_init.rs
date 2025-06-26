@@ -1,13 +1,13 @@
 #![allow(clippy::unit_arg)] // allow reference to dummy::Vdaf's public share, which has the unit type
 
 use crate::aggregator::{
-    aggregation_job_init::test_util::{put_aggregation_job, PrepareInitGenerator},
-    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
-    test_util::{
-        assert_task_aggregation_counter, generate_helper_report_share,
-        generate_helper_report_share_for_plaintext, BATCH_AGGREGATION_SHARD_COUNT,
-    },
     BatchAggregationsIterator,
+    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    test_util::{
+        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
+        generate_helper_report_share, generate_helper_report_share_for_plaintext,
+    },
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         AggregationJobState, BatchAggregation, BatchAggregationState, ReportAggregationState,
         TaskAggregationCounter,
     },
-    task::{test_util::TaskBuilder, AggregationMode, BatchMode, VerifyKey},
+    task::{AggregationMode, BatchMode, VerifyKey, test_util::TaskBuilder},
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
@@ -27,16 +27,16 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Extension, ExtensionType,
     HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector, PrepareInit,
     PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+    batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
-use trillium_testing::{assert_headers, prelude::put, TestConn};
+use trillium_testing::{TestConn, assert_headers, prelude::put};
 
 #[tokio::test]
 async fn aggregate_leader() {

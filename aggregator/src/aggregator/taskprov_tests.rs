@@ -1,51 +1,51 @@
 use crate::{
     aggregator::{
+        Config,
         aggregation_job_init::test_util::PrepareInitGenerator,
         http_handlers::test_util::{decode_response_body, take_problem_details},
-        Config,
     },
     config::TaskprovConfig,
 };
 use assert_matches::assert_matches;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator_core::{
+    AsyncAggregator,
     datastore::{
+        Datastore,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
             BatchAggregationState, HpkeKeyState, ReportAggregation, ReportAggregationState,
         },
-        test_util::{ephemeral_datastore, EphemeralDatastore},
-        Datastore,
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode, BatchMode,
+        test_util::{Task, TaskBuilder},
     },
-    taskprov::{taskprov_task_id, test_util::PeerAggregatorBuilder, PeerAggregator},
+    taskprov::{PeerAggregator, taskprov_task_id, test_util::PeerAggregatorBuilder},
     test_util::noop_meter,
-    AsyncAggregator,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
-    test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
+    test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, DurationExt, MockClock, TimeExt},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
-    batch_mode::{self, LeaderSelected},
-    codec::{Decode, Encode},
-    taskprov::{TaskConfig, VdafConfig},
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
     ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    batch_mode::{self, LeaderSelected},
+    codec::{Decode, Encode},
+    taskprov::{TaskConfig, VdafConfig},
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
-    vdaf::{dummy, Client, Vdaf},
+    vdaf::{Client, Vdaf, dummy},
 };
 use rand::random;
 use serde_json::json;

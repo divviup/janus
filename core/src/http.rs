@@ -4,7 +4,7 @@ use http::StatusCode;
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
 use mime;
-use reqwest::{header::CONTENT_TYPE, Response};
+use reqwest::{Response, header::CONTENT_TYPE};
 use std::fmt::{self, Display, Formatter};
 use tracing::warn;
 use trillium::{Conn, HeaderValue};

@@ -4,9 +4,9 @@ use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
 use crate::simulation::{
+    START_TIME,
     model::{Config, Input, Op, Query},
     run::Simulation,
-    START_TIME,
 };
 
 #[test]

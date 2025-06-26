@@ -1,23 +1,24 @@
 use crate::aggregator::{
+    BatchAggregationsIterator,
     aggregation_job_continue::test_util::{
         post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
     },
     http_handlers::test_util::HttpHandlerTest,
     test_util::{
-        assert_task_aggregation_counter, generate_helper_report_share,
-        BATCH_AGGREGATION_SHARD_COUNT,
+        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
+        generate_helper_report_share,
     },
-    BatchAggregationsIterator,
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
     datastore::models::{
-        merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState, BatchAggregation,
-        BatchAggregationState, ReportAggregation, ReportAggregationState, TaskAggregationCounter,
+        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+        ReportAggregation, ReportAggregationState, TaskAggregationCounter,
+        merge_batch_aggregations_by_batch,
     },
-    task::{test_util::TaskBuilder, AggregationMode, BatchMode, VerifyKey},
+    task::{AggregationMode, BatchMode, VerifyKey, test_util::TaskBuilder},
 };
 use janus_core::{
     report_id::ReportIdChecksumExt,
@@ -26,13 +27,13 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobResp, AggregationJobStep,
-    Duration, Interval, PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, Role, Time,
+    AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Duration, Interval,
+    PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum,
+    ReportMetadata, Role, Time, batch_mode::TimeInterval,
 };
 use prio::{
     topology::ping_pong::PingPongMessage,
-    vdaf::{dummy, Aggregator},
+    vdaf::{Aggregator, dummy},
 };
 use rand::random;
 use std::sync::Arc;

@@ -1,36 +1,36 @@
 use anyhow::Context;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{
+    Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
-    Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
 use janus_collector::{
-    default_http_client, AuthenticationToken, Collection, CollectionJob, Collector, PollResult,
-    PrivateCollectorCredential,
+    AuthenticationToken, Collection, CollectionJob, Collector, PollResult,
+    PrivateCollectorCredential, default_http_client,
 };
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     retries::ExponentialWithTotalDelayBuilder,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     codec::Decode,
-    vdaf::{self, prio3::Prio3, Vdaf},
+    vdaf::{self, Vdaf, prio3::Prio3},
 };
 use rand::random;
 use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 use tracing_log::LogTracer;
-use tracing_subscriber::{prelude::*, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 use url::Url;
 
 /// Enum to propagate errors through this program. Clap errors are handled separately from all
@@ -684,7 +684,7 @@ trait BatchModeExt: BatchMode {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
 
     fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
-        -> String;
+    -> String;
 }
 
 impl BatchModeExt for TimeInterval {
@@ -708,12 +708,12 @@ impl BatchModeExt for LeaderSelected {
 #[cfg(test)]
 mod tests {
     use crate::{
-        run, AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, Subcommands, VdafType,
+        AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
+        QueryOptions, Subcommands, VdafType, run,
     };
     use assert_matches::assert_matches;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    use clap::{error::ErrorKind, CommandFactory, Parser};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use clap::{CommandFactory, Parser, error::ErrorKind};
     use janus_collector::PrivateCollectorCredential;
     use janus_core::{
         auth_tokens::{BearerToken, DapAuthToken},

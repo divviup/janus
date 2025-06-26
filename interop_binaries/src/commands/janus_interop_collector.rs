@@ -1,10 +1,10 @@
 use crate::{
+    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
 };
 use anyhow::Context;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -20,8 +20,8 @@ use janus_core::{
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
-    batch_mode::BatchMode, BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
-    TaskId, Time,
+    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
+    batch_mode::BatchMode,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -34,14 +34,14 @@ use rand::{distr::StandardUniform, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     net::Ipv4Addr,
     sync::Arc,
     time::Duration as StdDuration,
 };
 use tokio::{sync::Mutex, task::JoinHandle};
 use trillium::{Conn, Handler};
-use trillium_api::{api, Json, State};
+use trillium_api::{Json, State, api};
 use trillium_router::Router;
 
 #[derive(Educe, Deserialize)]
@@ -286,7 +286,7 @@ async fn handle_collection_start(
             return Err(anyhow::anyhow!(
                 "unsupported batch mode: {}",
                 request.query.batch_mode
-            ))
+            ));
         }
     };
 

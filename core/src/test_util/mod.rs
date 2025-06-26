@@ -7,10 +7,10 @@ use prio::{
     },
     vdaf,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt::Debug, sync::Once};
 use tracing_log::LogTracer;
-use tracing_subscriber::{prelude::*, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 
 pub mod kubernetes;
 pub mod runtime;

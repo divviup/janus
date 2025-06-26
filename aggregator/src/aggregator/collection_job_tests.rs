@@ -1,22 +1,22 @@
 use crate::aggregator::{
+    Config,
     http_handlers::test_util::{decode_response_body, take_problem_details},
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
-    Config,
 };
 use assert_matches::assert_matches;
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
+        Datastore,
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
             CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        test_util::{ephemeral_datastore, EphemeralDatastore},
-        Datastore,
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode, BatchMode,
+        test_util::{Task, TaskBuilder},
     },
     test_util::noop_meter,
 };
@@ -28,9 +28,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, CollectionJobId,
     CollectionJobReq, CollectionJobResp, Interval, Query, Role, Time,
+    batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -41,9 +41,8 @@ use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
-    assert_headers,
+    TestConn, assert_headers,
     prelude::{get, put},
-    TestConn,
 };
 
 use super::http_handlers::AggregatorHandlerBuilder;
@@ -298,8 +297,8 @@ pub(crate) async fn setup_collection_job_test_case(
     }
 }
 
-async fn setup_leader_selected_current_batch_collection_job_test_case(
-) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
+async fn setup_leader_selected_current_batch_collection_job_test_case()
+-> (CollectionJobTestCase, BatchId, BatchId, Interval) {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         BatchMode::LeaderSelected {
