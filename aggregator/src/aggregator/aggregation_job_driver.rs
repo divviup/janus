@@ -1768,8 +1768,11 @@ where
         &self,
         datastore: Arc<Datastore<C>>,
         lease_duration: Duration,
-    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
-    {
+    ) -> impl Fn(
+        usize,
+    )
+        -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
+           + use<C, R> {
         move |max_acquire_count: usize| {
             let datastore = Arc::clone(&datastore);
 

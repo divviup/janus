@@ -178,7 +178,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
         // config error, rather than attempting to decrypt them with the wrong key.
         let newest_id = keypairs
             .iter()
-            .max_by_key(|(&id, _)| id)
+            .max_by_key(|&(id, _)| id)
             .map(|(&id, _)| id.into())
             .unwrap_or(0);
         let available_ids = Box::new((newest_id..=u8::MAX).chain(0..newest_id).filter_map(

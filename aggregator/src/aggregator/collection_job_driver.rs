@@ -567,8 +567,11 @@ where
         &self,
         datastore: Arc<Datastore<C>>,
         lease_duration: Duration,
-    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
-    {
+    ) -> impl Fn(
+        usize,
+    )
+        -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
+           + use<C, R> {
         move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {

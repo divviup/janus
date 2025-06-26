@@ -79,7 +79,7 @@ pub fn aggregator_api_handler<C: Clock>(
     ds: Arc<Datastore<C>>,
     cfg: Config,
     meter: &Meter,
-) -> impl Handler {
+) -> impl Handler + use<C> {
     (
         // State used by endpoint handlers.
         State(ds),
@@ -142,7 +142,7 @@ pub fn aggregator_api_handler<C: Clock>(
     )
 }
 
-async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
+async fn auth_check(conn: &mut Conn, (): ()) -> Option<(Status, Halt)> {
     let (Some(cfg), Ok(Some(bearer_token))) =
         (conn.state::<Arc<Config>>(), extract_bearer_token(conn))
     else {

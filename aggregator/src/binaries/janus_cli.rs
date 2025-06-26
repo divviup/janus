@@ -662,7 +662,7 @@ impl KubernetesSecretOptions {
         options: &CommonBinaryOptions,
         kube_client: &LazyKubeClient,
     ) -> Result<Vec<String>> {
-        if let Some(ref secrets_namespace) = &self.secrets_k8s_namespace {
+        if let Some(secrets_namespace) = &self.secrets_k8s_namespace {
             fetch_datastore_keys(
                 kube_client,
                 secrets_namespace,
