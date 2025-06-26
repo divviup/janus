@@ -47,8 +47,7 @@ async fn prometheus_metrics_pull() {
     let text = String::from_utf8(response.body().to_vec()).unwrap();
     assert!(
         text.contains("HELP") && text.contains("TYPE"),
-        "Exported metrics: {:?}",
-        text
+        "Exported metrics: {text:?}"
     );
 
     join_handle.abort();

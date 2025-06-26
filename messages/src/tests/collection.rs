@@ -125,9 +125,7 @@ fn roundtrip_partial_batch_selector() {
     // TimeInterval.
     roundtrip_encoding(&[(
         PartialBatchSelector::new_time_interval(),
-        concat!(
-            "01", // query_type
-        ),
+        "01", // query_type
     )]);
 
     // FixedSize.
