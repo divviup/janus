@@ -304,10 +304,9 @@ impl Metrics {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
         let _outstanding_requests_gauge = meter
             .u64_observable_gauge(Self::get_outstanding_requests_name(prefix))
-            .with_description(concat!(
-                "The approximate number of requests currently being serviced by the ",
-                "aggregator."
-            ))
+            .with_description(
+                "The approximate number of requests currently being serviced by the aggregator.",
+            )
             .with_unit("{request}")
             .with_callback({
                 let outstanding_requests = Arc::clone(&outstanding_requests);
@@ -320,9 +319,9 @@ impl Metrics {
                     .into_iter()
                     .join("_"),
             )
-            .with_description(concat!(
-                "The maximum number of requests that the aggregator can service at a time."
-            ))
+            .with_description(
+                "The maximum number of requests that the aggregator can service at a time.",
+            )
             .with_unit("{request}")
             .with_callback(move |observer| observer.observe(max_outstanding_requests, &[]))
             .build();
