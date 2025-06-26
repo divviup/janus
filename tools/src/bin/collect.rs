@@ -624,7 +624,7 @@ where
         PollResult::NotReady(retry_after) => {
             println!("State: Not ready");
             match retry_after {
-                Some(retry_after) => println!("Retry after: {:?}", retry_after),
+                Some(retry_after) => println!("Retry after: {retry_after:?}"),
                 None => println!("Retry after: Not provided"),
             }
             Err(Error::PollNotReady)
@@ -668,7 +668,7 @@ fn print_collection<V: vdaf::Collector, Q: QueryTypeExt>(
     let (start, duration) = collection.interval();
 
     println!("Number of reports: {}", collection.report_count());
-    println!("Interval start: {}", start);
+    println!("Interval start: {start}");
     println!("Interval end: {}", *start + *duration);
     println!(
         "Interval length: {:?}",

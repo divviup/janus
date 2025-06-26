@@ -76,7 +76,7 @@ pub(super) async fn get_task_ids<C: Clock>(
         .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
         .map(|(_, v)| TaskId::from_str(v))
         .transpose()
-        .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
+        .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {err:?}")))?;
 
     let task_ids = ds
         .run_tx("get_task_ids", |tx| {

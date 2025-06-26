@@ -234,7 +234,7 @@ impl ConnExt for Conn {
             self.param("task_id")
                 .ok_or_else(|| Error::Internal("Missing task_id parameter".to_string()))?,
         )
-        .map_err(|err| Error::BadRequest(format!("{:?}", err)))
+        .map_err(|err| Error::BadRequest(format!("{err:?}")))
     }
 
     fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Error> {
