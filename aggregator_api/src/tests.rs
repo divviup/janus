@@ -69,7 +69,7 @@ async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<Mo
 async fn get_config() {
     let (handler, ..) = setup_api_test().await;
     let mut conn = get("/")
-        .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .run_async(&handler)
         .await;
@@ -790,7 +790,7 @@ async fn patch_task(#[case] role: Role) {
     );
 
     // Verify: patching the task with a null task end time returns the expected result.
-    let mut conn = patch(format!("/tasks/{}", task_id))
+    let mut conn = patch(format!("/tasks/{task_id}"))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_body(r#"{"task_end": null}"#)
@@ -816,7 +816,7 @@ async fn patch_task(#[case] role: Role) {
     // Verify: patching the task with a task end time that isn't a multiple of the time precision
     // returns BadRequest.
     assert_response!(
-        patch(format!("/tasks/{}", task_id))
+        patch(format!("/tasks/{task_id}"))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_body(r#"{"task_end": 1337}"#)
@@ -828,7 +828,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with a task end time returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000));
-    let mut conn = patch(format!("/tasks/{}", task_id))
+    let mut conn = patch(format!("/tasks/{task_id}"))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
         .with_request_body(r#"{"task_end": 2000}"#)
@@ -865,7 +865,7 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
-        patch(format!("/tasks/{}", task_id))
+        patch(format!("/tasks/{task_id}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_body("{}")
             .run_async(&handler)

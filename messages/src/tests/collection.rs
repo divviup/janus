@@ -155,9 +155,7 @@ fn roundtrip_collection_job_resp() {
     roundtrip_encoding(&[
         (
             CollectionJobResp::<TimeInterval>::Processing,
-            concat!(
-                "00", // status
-            ),
+            "00", // status
         ),
         (
             CollectionJobResp::Finished {
@@ -285,9 +283,7 @@ fn roundtrip_collection_job_resp() {
     roundtrip_encoding(&[
         (
             CollectionJobResp::<LeaderSelected>::Processing,
-            concat!(
-                "00", // status
-            ),
+            "00", // status
         ),
         (
             CollectionJobResp::Finished {

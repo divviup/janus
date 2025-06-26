@@ -23,13 +23,13 @@ fn roundtrip_url() {
 
     // Zero length string
     assert_matches!(
-        Url::get_decoded(&hex::decode(concat!("0000")).unwrap()),
+        Url::get_decoded(&hex::decode("0000").unwrap()),
         Err(CodecError::Other(_))
     );
 
     // Non-ascii string
     assert_matches!(
-        Url::get_decoded(&hex::decode(concat!("0001FF")).unwrap()),
+        Url::get_decoded(&hex::decode("0001FF").unwrap()),
         Err(CodecError::Other(_))
     );
 }
