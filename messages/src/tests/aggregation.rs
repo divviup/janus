@@ -696,9 +696,7 @@ fn roundtrip_aggregation_job_resp() {
     roundtrip_encoding(&[
         (
             AggregationJobResp::Processing,
-            concat!(
-                "00", // status
-            ),
+            "00", // status
         ),
         (
             AggregationJobResp::Finished {

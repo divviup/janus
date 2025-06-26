@@ -799,7 +799,7 @@ mod tests {
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+            Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
         assert_eq!(
@@ -1028,7 +1028,7 @@ mod tests {
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+            Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
         // Check that clap enforces all the constraints we need on combinations of query arguments.
@@ -1239,7 +1239,7 @@ mod tests {
             "1000".to_string(),
             "--vdaf=count".to_string(),
             format!("--authorization-bearer-token={}", bearer_token.as_str()),
-            format!("--collector-credential={}", SAMPLE_COLLECTOR_CREDENTIAL),
+            format!("--collector-credential={SAMPLE_COLLECTOR_CREDENTIAL}"),
         ]);
 
         assert_eq!(
@@ -1300,8 +1300,7 @@ mod tests {
 
         let mut collector_credential_mutually_exclusive = correct_arguments.clone();
         collector_credential_mutually_exclusive.push(format!(
-            "--collector-credential={}",
-            SAMPLE_COLLECTOR_CREDENTIAL
+            "--collector-credential={SAMPLE_COLLECTOR_CREDENTIAL}",
         ));
         assert_eq!(
             Options::try_parse_from(collector_credential_mutually_exclusive)
@@ -1376,7 +1375,7 @@ mod tests {
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+            Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
         let collection_job_id = random();
@@ -1403,7 +1402,7 @@ mod tests {
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+            Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
     }
 
@@ -1462,7 +1461,7 @@ mod tests {
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+            Err(e) => panic!("{e}\narguments were {correct_arguments:?}"),
         }
 
         let mut bad_arguments = correct_arguments;
