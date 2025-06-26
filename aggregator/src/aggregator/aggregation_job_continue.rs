@@ -380,7 +380,7 @@ pub mod test_util {
 
         if let Some(job_id) = want_aggregation_job_id {
             assert_matches!(expected_problem_details, serde_json::Value::Object(ref mut map) => {
-                map.insert("aggregation_job_id".into(), format!("{}", job_id).into());
+                map.insert("aggregation_job_id".into(), format!("{job_id}").into());
             });
         }
 

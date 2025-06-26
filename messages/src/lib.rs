@@ -1061,7 +1061,7 @@ impl Decode for HpkePublicKey {
 
 impl Debug for HpkePublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "HpkePublicKey({})", self)
+        write!(f, "HpkePublicKey({self})")
     }
 }
 

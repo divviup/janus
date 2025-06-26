@@ -188,7 +188,7 @@ impl EphemeralDatabase {
 async fn buffer_printer(buffer: std::pin::Pin<Box<dyn AsyncBufRead + Send>>) {
     let mut lines = buffer.lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        println!("{}", line);
+        println!("{line}");
     }
 }
 
@@ -283,8 +283,7 @@ impl EphemeralDatastore {
             .version;
         if target >= current_version {
             panic!(
-                "target version ({}) must be less than the current database version ({})",
-                target, current_version,
+                "target version ({target}) must be less than the current database version ({current_version})",
             );
         }
 
@@ -294,7 +293,7 @@ impl EphemeralDatastore {
             self.migrator
                 .undo(&mut connection, v)
                 .await
-                .unwrap_or_else(|e| panic!("failed to downgrade to version {}: {}", v, e));
+                .unwrap_or_else(|e| panic!("failed to downgrade to version {v}: {e}"));
         }
     }
 }
