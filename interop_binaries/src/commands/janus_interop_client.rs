@@ -1,20 +1,19 @@
 use crate::{
-    install_tracing_subscriber,
+    ErrorHandler, NumberAsString, VdafObject, install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    ErrorHandler, NumberAsString, VdafObject,
 };
 use anyhow::Context;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
-    types::extra::{U15, U31},
     FixedI16, FixedI32,
+    types::extra::{U15, U31},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-use janus_core::vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance};
+use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
 use janus_messages::{Duration, TaskId, Time};
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
@@ -27,7 +26,7 @@ use prio::{
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
 use trillium::{Conn, Handler};
-use trillium_api::{api, Json, State};
+use trillium_api::{Json, State, api};
 use trillium_router::Router;
 use url::Url;
 

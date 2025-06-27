@@ -1,27 +1,26 @@
 use crate::{
-    git_revision,
+    Config, ConnExt, Error, git_revision,
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
         GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, HpkeConfigResp,
         PatchHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
         PutHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
-    Config, ConnExt, Error,
 };
 use anyhow::Context;
-use aws_lc_rs::digest::{digest, SHA256};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use aws_lc_rs::digest::{SHA256, digest};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator_core::{
+    SecretBytes,
     datastore::{self, Datastore},
     task::{AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes,
 };
 use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::Clock};
 use janus_messages::HpkeConfigId;
 use janus_messages::{
-    batch_mode::Code as SupportedBatchMode, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
-    TaskId,
+    Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId,
+    batch_mode::Code as SupportedBatchMode,
 };
 use querystring::querify;
 use rand::random;

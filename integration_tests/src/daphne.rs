@@ -3,11 +3,11 @@
 use crate::interop_api;
 use janus_aggregator_core::task::test_util::{Task, TaskBuilder};
 use janus_interop_binaries::{
-    get_rust_log_level, test_util::await_ready_ok, ContainerLogsDropGuard, ContainerLogsSource,
+    ContainerLogsDropGuard, ContainerLogsSource, get_rust_log_level, test_util::await_ready_ok,
 };
 use janus_messages::{Role, Time};
 use serde_json::json;
-use testcontainers::{runners::AsyncRunner, ContainerRequest, GenericImage, ImageExt};
+use testcontainers::{ContainerRequest, GenericImage, ImageExt, runners::AsyncRunner};
 use url::Url;
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";

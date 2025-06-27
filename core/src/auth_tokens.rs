@@ -1,14 +1,14 @@
 use anyhow::anyhow;
 use aws_lc_rs::{
     constant_time,
-    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
+    digest::{SHA256, SHA256_OUTPUT_LEN, digest},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
-use http::{header::AUTHORIZATION, HeaderValue};
+use http::{HeaderValue, header::AUTHORIZATION};
 use rand::{distr::StandardUniform, prelude::Distribution};
 use regex::Regex;
-use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 use std::{
     str::{self, FromStr},
     sync::LazyLock,

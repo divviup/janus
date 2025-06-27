@@ -1,14 +1,14 @@
 //! Implements portions of aggregation job continuation for the Helper.
 
 use crate::aggregator::{
-    aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error, AggregatorMetrics,
+    AggregatorMetrics, aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error,
 };
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
+    AsyncAggregator,
     batch_mode::AccumulableBatchMode,
     datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
     task::AggregatorTask,
-    AsyncAggregator,
 };
 use janus_core::vdaf::vdaf_application_context;
 use janus_messages::{PrepareResp, PrepareStepResult, Role};
@@ -17,7 +17,7 @@ use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _}
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{panic, sync::Arc};
 use tokio::sync::mpsc;
-use tracing::{info_span, trace_span, Span};
+use tracing::{Span, info_span, trace_span};
 
 #[derive(Clone)]
 pub struct AggregateContinueMetrics {
@@ -205,7 +205,7 @@ pub mod test_util {
     use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{assert_headers, prelude::post, TestConn};
+    use trillium_testing::{TestConn, assert_headers, prelude::post};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -307,24 +307,24 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        aggregation_job_init::test_util::{put_aggregation_job, PrepareInitGenerator},
+        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
         http_handlers::{
-            test_util::{take_problem_details, HttpHandlerTest},
             AggregatorHandlerBuilder,
+            test_util::{HttpHandlerTest, take_problem_details},
         },
         test_util::default_aggregator_config,
     };
     use janus_aggregator_core::{
         datastore::{
+            Datastore,
             models::{
                 AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
             },
-            test_util::{ephemeral_datastore, EphemeralDatastore},
-            Datastore,
+            test_util::{EphemeralDatastore, ephemeral_datastore},
         },
         task::{
-            test_util::{Task, TaskBuilder},
             AggregationMode, BatchMode,
+            test_util::{Task, TaskBuilder},
         },
         test_util::noop_meter,
     };
@@ -334,13 +334,13 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        batch_mode::TimeInterval, AggregationJobContinueReq, AggregationJobId,
-        AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, Interval,
-        PartialBatchSelector, PrepareContinue, PrepareResp, PrepareStepResult, Role,
+        AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+        AggregationJobResp, AggregationJobStep, Interval, PartialBatchSelector, PrepareContinue,
+        PrepareResp, PrepareStepResult, Role, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode as _,
-        vdaf::{dummy, Aggregator},
+        vdaf::{Aggregator, dummy},
     };
     use rand::random;
     use serde_json::json;
@@ -488,8 +488,8 @@ mod tests {
 
     /// Set up a helper with an aggregation job in step 1.
     #[allow(clippy::unit_arg)]
-    async fn setup_aggregation_job_continue_step_recovery_test(
-    ) -> AggregationJobContinueTestCase<0, dummy::Vdaf> {
+    async fn setup_aggregation_job_continue_step_recovery_test()
+    -> AggregationJobContinueTestCase<0, dummy::Vdaf> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
         let first_continue_response = post_aggregation_job_and_decode(

@@ -1,26 +1,26 @@
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use itertools::Itertools;
-use janus_aggregator_core::task::{test_util::TaskBuilder, BatchMode};
+use janus_aggregator_core::task::{BatchMode, test_util::TaskBuilder};
 use janus_collector::{Collection, Collector};
 use janus_core::{
-    retries::{test_util::test_http_request_exponential_backoff, ExponentialWithTotalDelayBuilder},
+    retries::{ExponentialWithTotalDelayBuilder, test_util::test_http_request_exponential_backoff},
     time::{Clock, RealClock, TimeExt},
-    vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
+    vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_integration_tests::{
-    client::{ClientBackend, ClientImplementation, InteropClientEncoding},
     AggregatorEndpointFragments, EndpointFragments, TaskParameters,
+    client::{ClientBackend, ClientImplementation, InteropClientEncoding},
 };
 use janus_messages::{
+    Duration, Interval, Query, Time,
     batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
-    Duration, Interval, Query, Time,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
     vdaf::{self, prio3::Prio3},
 };
-use rand::{random, rng, seq::IteratorRandom as _, Rng};
+use rand::{Rng, random, rng, seq::IteratorRandom as _};
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
@@ -363,9 +363,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             let num_true_measurements = total_measurements / 2;
             let num_false_measurements = total_measurements - num_true_measurements;
             assert!(num_true_measurements > 0 && num_false_measurements > 0);
-            let measurements = iter::repeat(true)
-                .take(num_true_measurements)
-                .interleave(iter::repeat(false).take(num_false_measurements))
+            let measurements = iter::repeat_n(true, num_true_measurements)
+                .interleave(iter::repeat_n(false, num_false_measurements))
                 .collect::<Vec<_>>();
             let test_case = AggregationTestCase {
                 measurements,

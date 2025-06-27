@@ -2,7 +2,7 @@ use std::time::Duration;
 
 #[cfg(tokio_unstable)]
 use opentelemetry::metrics::Meter;
-use opentelemetry::{metrics::MeterProvider, KeyValue};
+use opentelemetry::{KeyValue, metrics::MeterProvider};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use tokio::runtime::RuntimeMetrics;
 

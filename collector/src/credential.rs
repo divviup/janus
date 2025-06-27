@@ -46,7 +46,7 @@ impl PrivateCollectorCredential {
 #[cfg(test)]
 mod tests {
     use crate::credential::PrivateCollectorCredential;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::{HpkeKeypair, HpkePrivateKey},

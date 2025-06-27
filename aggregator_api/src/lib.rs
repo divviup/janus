@@ -7,8 +7,9 @@ mod tests;
 use async_trait::async_trait;
 use git_version::git_version;
 use janus_aggregator_core::{
+    TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, Datastore},
-    instrumented, TIME_HISTOGRAM_BOUNDARIES,
+    instrumented,
 };
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
@@ -22,7 +23,7 @@ use trillium::{
     Status,
     Status::{NotAcceptable, UnsupportedMediaType},
 };
-use trillium_api::{api, Halt, State};
+use trillium_api::{Halt, State, api};
 use trillium_opentelemetry::Metrics;
 use trillium_router::{Router, RouterConnExt};
 use url::Url;
@@ -79,7 +80,7 @@ pub fn aggregator_api_handler<C: Clock>(
     ds: Arc<Datastore<C>>,
     cfg: Config,
     meter: &Meter,
-) -> impl Handler {
+) -> impl Handler + use<C> {
     (
         // State used by endpoint handlers.
         State(ds),
@@ -142,7 +143,7 @@ pub fn aggregator_api_handler<C: Clock>(
     )
 }
 
-async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
+async fn auth_check(conn: &mut Conn, (): ()) -> Option<(Status, Halt)> {
     let (Some(cfg), Ok(Some(bearer_token))) =
         (conn.state::<Arc<Config>>(), extract_bearer_token(conn))
     else {

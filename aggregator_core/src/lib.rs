@@ -12,7 +12,7 @@ use prio::{
     vdaf::{Aggregator, AggregatorWithNoise},
 };
 use std::hash::Hash;
-use tracing::{debug, info_span, Instrument, Span};
+use tracing::{Instrument, Span, debug, info_span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
 use trillium_router::RouterConnExt;
@@ -67,27 +67,27 @@ pub trait AsyncAggregator<const VERIFY_KEY_SIZE: usize>:
 
 /// Blanket implementation for conforming VDAFs.
 impl<
-        const VERIFY_KEY_SIZE: usize,
-        A: Aggregator<
-                VERIFY_KEY_SIZE,
-                16,
-                AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
-                AggregateShare: Send + Sync + PartialEq,
-                InputShare: Send + Sync + PartialEq,
-                PrepareMessage: Send + Sync + PartialEq,
-                PrepareShare: Send + Sync + PartialEq,
-                PublicShare: Send + Sync + PartialEq,
-                OutputShare: Send + Sync + PartialEq + Eq,
-                PrepareState: Send
-                                  + Sync
-                                  + Encode
-                                  + PartialEq
-                                  + for<'a> ParameterizedDecode<(&'a Self, usize)>,
-            >
-            + 'static
-            + Send
-            + Sync,
-    > AsyncAggregator<VERIFY_KEY_SIZE> for A
+    const VERIFY_KEY_SIZE: usize,
+    A: Aggregator<
+            VERIFY_KEY_SIZE,
+            16,
+            AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
+            AggregateShare: Send + Sync + PartialEq,
+            InputShare: Send + Sync + PartialEq,
+            PrepareMessage: Send + Sync + PartialEq,
+            PrepareShare: Send + Sync + PartialEq,
+            PublicShare: Send + Sync + PartialEq,
+            OutputShare: Send + Sync + PartialEq + Eq,
+            PrepareState: Send
+                              + Sync
+                              + Encode
+                              + PartialEq
+                              + for<'a> ParameterizedDecode<(&'a Self, usize)>,
+        >
+        + 'static
+        + Send
+        + Sync,
+> AsyncAggregator<VERIFY_KEY_SIZE> for A
 {
 }
 
@@ -97,10 +97,10 @@ pub trait AsyncAggregatorWithNoise<const VERIFY_KEY_SIZE: usize, S: Differential
 }
 
 impl<
-        const VERIFY_KEY_SIZE: usize,
-        S: DifferentialPrivacyStrategy,
-        A: AsyncAggregator<VERIFY_KEY_SIZE> + AggregatorWithNoise<VERIFY_KEY_SIZE, 16, S>,
-    > AsyncAggregatorWithNoise<VERIFY_KEY_SIZE, S> for A
+    const VERIFY_KEY_SIZE: usize,
+    S: DifferentialPrivacyStrategy,
+    A: AsyncAggregator<VERIFY_KEY_SIZE> + AggregatorWithNoise<VERIFY_KEY_SIZE, 16, S>,
+> AsyncAggregatorWithNoise<VERIFY_KEY_SIZE, S> for A
 {
 }
 
@@ -156,8 +156,8 @@ pub mod test_util {
     use std::sync::Arc;
 
     use opentelemetry::{
-        metrics::{InstrumentProvider, Meter, MeterProvider},
         InstrumentationScope,
+        metrics::{InstrumentProvider, Meter, MeterProvider},
     };
 
     pub fn noop_meter() -> Meter {

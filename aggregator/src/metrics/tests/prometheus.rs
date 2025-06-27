@@ -12,8 +12,8 @@ use janus_core::{
 };
 use opentelemetry::metrics::MeterProvider as _;
 use prometheus::{
-    proto::{Metric, MetricType},
     Registry,
+    proto::{Metric, MetricType},
 };
 use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
 use trillium::Handler;

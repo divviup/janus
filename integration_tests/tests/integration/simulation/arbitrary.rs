@@ -9,12 +9,12 @@ use std::cmp::max;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{DurationExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
-use quickcheck::{empty_shrinker, Arbitrary, Gen};
+use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
 
 use crate::simulation::{
-    model::{Config, Input, Op},
     START_TIME,
+    model::{Config, Input, Op},
 };
 
 impl Arbitrary for Config {

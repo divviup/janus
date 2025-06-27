@@ -3,16 +3,16 @@
 use super::Error;
 use itertools::iproduct;
 use janus_aggregator_core::{
+    AsyncAggregator,
     batch_mode::CollectableBatchMode,
     datastore::{
         self,
         models::{BatchAggregation, BatchAggregationState},
     },
     task::AggregatorTask,
-    AsyncAggregator,
 };
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
-use janus_messages::{batch_mode::BatchMode, Interval, ReportIdChecksum, TaskId};
+use janus_messages::{Interval, ReportIdChecksum, TaskId, batch_mode::BatchMode};
 use prio::vdaf::Aggregatable;
 use std::{borrow::Cow, collections::HashMap};
 
@@ -114,7 +114,7 @@ where
                 ..
             } => (aggregate_share, report_count, checksum),
             BatchAggregationState::Scrubbed => {
-                return Err(Error::Datastore(datastore::Error::Scrubbed))
+                return Err(Error::Datastore(datastore::Error::Scrubbed));
             }
         };
 

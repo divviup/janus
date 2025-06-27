@@ -1,8 +1,8 @@
 use crate::{
     aggregator::{
-        aggregate_step_failure_counter,
-        aggregation_job_continue::{compute_helper_aggregate_continue, AggregateContinueMetrics},
-        aggregation_job_init::{compute_helper_aggregate_init, AggregateInitMetrics},
+        Error, RequestBody, aggregate_step_failure_counter,
+        aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
+        aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
         aggregation_job_writer::{
             AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
             WritableReportAggregation,
@@ -11,7 +11,6 @@ use crate::{
         error::handle_ping_pong_error,
         http_handlers::AGGREGATION_JOB_ROUTE,
         report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
-        Error, RequestBody,
     },
     cache::HpkeKeypairCache,
     metrics::{
@@ -19,23 +18,22 @@ use crate::{
         past_report_clock_skew_histogram,
     },
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
-use http::{header::RETRY_AFTER, HeaderValue};
+use http::{HeaderValue, header::RETRY_AFTER};
 use janus_aggregator_core::{
+    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
-        self,
+        self, Datastore,
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, Lease, ReportAggregation,
             ReportAggregationState,
         },
-        Datastore,
     },
     task::{self, AggregatorTask},
-    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -44,14 +42,14 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    batch_mode::{LeaderSelected, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
     ReportError, ReportMetadata, ReportShare, Role,
+    batch_mode::{LeaderSelected, TimeInterval},
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
     KeyValue,
+    metrics::{Counter, Histogram, Meter},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -69,10 +67,10 @@ use std::{
 };
 use tokio::{
     join,
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     try_join,
 };
-use tracing::{debug, error, info, info_span, trace_span, warn, Span};
+use tracing::{Span, debug, error, info, info_span, trace_span, warn};
 
 #[cfg(test)]
 mod tests;
@@ -1393,7 +1391,7 @@ where
                             report_aggregation.state().state_name()
                         )
                         .into(),
-                    ))
+                    ));
                 }
             }
         }
@@ -1768,8 +1766,11 @@ where
         &self,
         datastore: Arc<Datastore<C>>,
         lease_duration: Duration,
-    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
-    {
+    ) -> impl Fn(
+        usize,
+    )
+        -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
+    + use<C, R> {
         move |max_acquire_count: usize| {
             let datastore = Arc::clone(&datastore);
 

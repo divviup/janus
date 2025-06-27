@@ -2,7 +2,7 @@ use crate::{
     datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
 };
-use aws_lc_rs::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
@@ -11,10 +11,10 @@ use janus_core::{
     time::{Clock, MockClock, TimeExt},
 };
 use janus_messages::Time;
-use rand::{distr::StandardUniform, random, rng, Rng};
+use rand::{Rng, distr::StandardUniform, random, rng};
 use sqlx::{
-    migrate::{Migrate, Migrator},
     Connection, PgConnection,
+    migrate::{Migrate, Migrator},
 };
 use std::{
     env,
@@ -25,16 +25,16 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
-use testcontainers::{core::Mount, runners::AsyncRunner, ContainerRequest, ImageExt};
+use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt},
     join,
     sync::{
-        oneshot::{self, Sender},
         Mutex,
+        oneshot::{self, Sender},
     },
 };
-use tokio_postgres::{connect, Config, NoTls};
+use tokio_postgres::{Config, NoTls, connect};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;

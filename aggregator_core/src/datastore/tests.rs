@@ -3,6 +3,7 @@
 use crate::{
     batch_mode::CollectableBatchMode,
     datastore::{
+        Crypter, Datastore, Error, RowExt, SUPPORTED_SCHEMA_VERSIONS, Transaction,
         models::{
             AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
             AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
@@ -13,12 +14,11 @@ use crate::{
         },
         schema_versions_template,
         test_util::{
-            ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
-            EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+            EphemeralDatastore, EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+            ephemeral_datastore_schema_version, generate_aead_key,
         },
-        Crypter, Datastore, Error, RowExt, Transaction, SUPPORTED_SCHEMA_VERSIONS,
     },
-    task::{self, test_util::TaskBuilder, AggregationMode, AggregatorTask},
+    task::{self, AggregationMode, AggregatorTask, test_util::TaskBuilder},
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
@@ -30,31 +30,31 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, run_vdaf},
     time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
-    vdaf::{vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
+    vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
     PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::{
     codec::{Decode, Encode},
     dp::{
-        distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
+        DifferentialPrivacyStrategy, PureDpBudget, Rational, distributions::PureDpDiscreteLaplace,
     },
     topology::ping_pong::PingPongMessage,
     vdaf::{dummy, prio3::Prio3Count},
 };
-use rand::{distr::StandardUniform, random, rng, Rng};
+use rand::{Rng, distr::StandardUniform, random, rng};
 use std::{
     collections::{HashMap, HashSet},
     iter,
     ops::RangeInclusive,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration as StdDuration,
 };
@@ -769,10 +769,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             Box::pin(async move {
                 // At this point, first_unaggregated_report and second_unaggregated_report are both
                 // unaggregated.
-                assert!(tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
-                    .await
-                    .unwrap());
+                assert!(
+                    tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                        .await
+                        .unwrap()
+                );
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(task.id(), 5000)
@@ -800,10 +801,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             let task = task.clone();
             Box::pin(async move {
                 // At this point, all reports have started aggregation.
-                assert!(!tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
-                    .await
-                    .unwrap());
+                assert!(
+                    !tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                        .await
+                        .unwrap()
+                );
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(task.id(), 5000)
@@ -837,10 +839,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             let task = task.clone();
             Box::pin(async move {
                 // At this point, first_unaggregated_report is unaggregated.
-                assert!(tx
-                    .interval_has_unaggregated_reports(task.id(), &report_interval)
-                    .await
-                    .unwrap());
+                assert!(
+                    tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                        .await
+                        .unwrap()
+                );
 
                 Ok(tx
                     .get_unaggregated_client_reports_for_task(task.id(), 5000)
@@ -2198,11 +2201,12 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Verify that we can't immediately acquire the jobs again.
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
-            assert!(tx
-                .acquire_incomplete_aggregation_jobs(&LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                tx.acquire_incomplete_aggregation_jobs(&LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
             Ok(())
         })
     })
@@ -3249,15 +3253,21 @@ async fn crypter() {
 
     // Roundtripping encryption with a mismatched table, row, or column fails.
     let ciphertext = crypter.encrypt(TABLE, ROW, COLUMN, PLAINTEXT).unwrap();
-    assert!(crypter
-        .decrypt("wrong_table", ROW, COLUMN, &ciphertext)
-        .is_err());
-    assert!(crypter
-        .decrypt(TABLE, b"wrong_row", COLUMN, &ciphertext)
-        .is_err());
-    assert!(crypter
-        .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
-        .is_err());
+    assert!(
+        crypter
+            .decrypt("wrong_table", ROW, COLUMN, &ciphertext)
+            .is_err()
+    );
+    assert!(
+        crypter
+            .decrypt(TABLE, b"wrong_row", COLUMN, &ciphertext)
+            .is_err()
+    );
+    assert!(
+        crypter
+            .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
+            .is_err()
+    );
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -3358,8 +3368,8 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
 
             // We can't get either of the collection jobs via `get_finished_collection_job`, as
             // neither is finished.
-            assert!(tx
-                .get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
+            assert!(
+                tx.get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     first_collection_job.batch_identifier(),
@@ -3367,9 +3377,10 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 )
                 .await
                 .unwrap()
-                .is_none());
-            assert!(tx
-                .get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
+                .is_none()
+            );
+            assert!(
+                tx.get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     second_collection_job.batch_identifier(),
@@ -3377,7 +3388,8 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 )
                 .await
                 .unwrap()
-                .is_none());
+                .is_none()
+            );
 
             let encrypted_helper_aggregate_share = hpke::seal(
                 task.collector_hpke_config().unwrap(),
@@ -3430,8 +3442,8 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap(),
                 first_collection_job,
             );
-            assert!(tx
-                .get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
+            assert!(
+                tx.get_finished_collection_job::<0, TimeInterval, dummy::Vdaf>(
                     &vdaf,
                     task.id(),
                     second_collection_job.batch_identifier(),
@@ -3439,7 +3451,8 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 )
                 .await
                 .unwrap()
-                .is_none());
+                .is_none()
+            );
 
             Ok(())
         })
@@ -3912,11 +3925,12 @@ async fn time_interval_collection_job_acquire_release_happy_path(
             Box::pin(async move {
                 // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                 // valid.
-                assert!(tx
-                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
-                    .await
-                    .unwrap()
-                    .is_empty());
+                assert!(
+                    tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
 
                 // Release the lease, then re-acquire it.
                 tx.release_collection_job(&collection_job_leases[0], None)
@@ -3987,11 +4001,12 @@ async fn time_interval_collection_job_acquire_release_happy_path(
                 .await
                 .unwrap();
 
-            assert!(tx
-                .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
 
             Ok(())
         })
@@ -4098,11 +4113,12 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
             Box::pin(async move {
                 // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                 // valid.
-                assert!(tx
-                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
-                    .await
-                    .unwrap()
-                    .is_empty());
+                assert!(
+                    tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
 
                 // Release the lease, then re-acquire it.
                 tx.release_collection_job(&collection_job_leases[0], None)
@@ -4162,11 +4178,12 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
                 .await
                 .unwrap();
 
-            assert!(tx
-                .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
 
             Ok(())
         })
@@ -5228,8 +5245,8 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
             assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
 
-            assert!(tx
-                .get_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
+            assert!(
+                tx.get_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     &Interval::new(
@@ -5241,7 +5258,8 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 )
                 .await
                 .unwrap()
-                .is_none());
+                .is_none()
+            );
 
             let want_aggregate_share_jobs = Vec::from([want_aggregate_share_job.clone()]);
 
@@ -5287,8 +5305,8 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 None
             );
 
-            assert!(tx
-                .get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
+            assert!(
+                tx.get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     &Interval::new(
@@ -5301,7 +5319,8 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 )
                 .await
                 .unwrap()
-                .is_empty());
+                .is_empty()
+            );
 
             Ok(())
         })
@@ -5393,8 +5412,8 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                 .unwrap();
             assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
 
-            assert!(tx
-                .get_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
+            assert!(
+                tx.get_aggregate_share_job::<0, LeaderSelected, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     &random(),
@@ -5402,7 +5421,8 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                 )
                 .await
                 .unwrap()
-                .is_none());
+                .is_none()
+            );
 
             let want_aggregate_share_jobs = Vec::from([want_aggregate_share_job.clone()]);
 
@@ -7918,27 +7938,29 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
             let report = report.clone();
 
             Box::pin(async move {
-                assert!(tx
-                    .get_client_report(
+                assert!(
+                    tx.get_client_report(
                         &dummy::Vdaf::default(),
                         report.task_id(),
                         report.metadata().id()
                     )
                     .await
                     .unwrap()
-                    .is_none());
+                    .is_none()
+                );
 
                 tx.put_client_report(&report).await.unwrap();
 
-                assert!(tx
-                    .get_client_report(
+                assert!(
+                    tx.get_client_report(
                         &dummy::Vdaf::default(),
                         report.task_id(),
                         report.metadata().id()
                     )
                     .await
                     .unwrap()
-                    .is_none());
+                    .is_none()
+                );
 
                 Ok(())
             })

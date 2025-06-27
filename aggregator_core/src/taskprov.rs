@@ -1,20 +1,20 @@
 use crate::{
-    task::{AggregationMode, Error},
     SecretBytes,
+    task::{AggregationMode, Error},
 };
 use anyhow::anyhow;
 use aws_lc_rs::{
-    digest::{self, digest, Digest, SHA256},
-    hkdf::{KeyType, Salt, HKDF_SHA256},
+    digest::{self, Digest, SHA256, digest},
+    hkdf::{HKDF_SHA256, KeyType, Salt},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId};
 use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{
-    de::{self, Visitor},
     Deserialize, Serialize, Serializer,
+    de::{self, Visitor},
 };
 use std::{fmt, str::FromStr, sync::LazyLock};
 use url::Url;

@@ -2,13 +2,13 @@
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
 use crate::{
-    common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext},
+    common::{TestContext, build_test_task, submit_measurements_and_verify_aggregate},
     initialize_rustls,
 };
-use janus_aggregator_core::task::{test_util::TaskBuilder, AggregationMode, BatchMode};
+use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{
     test_util::install_test_trace_subscriber,
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_integration_tests::{
     client::{ClientBackend, InteropClient},

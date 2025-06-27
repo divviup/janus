@@ -2,14 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{stdout, IsTerminal},
+    io::{IsTerminal, stdout},
     net::SocketAddr,
 };
 use tracing::Level;
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
 use tracing_subscriber::{
-    filter::FromEnvError, layer::SubscriberExt, reload, EnvFilter, Layer, Registry,
+    EnvFilter, Layer, Registry, filter::FromEnvError, layer::SubscriberExt, reload,
 };
 
 #[cfg(feature = "otlp")]

@@ -1,16 +1,16 @@
 use crate::{
-    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
+    binary_utils::{CommonBinaryOptions, database_pool, datastore, read_config},
     config::{BinaryConfig, CommonConfig},
-    metrics::{install_metrics_exporter, MetricsExporterHandle},
-    trace::{install_trace_subscriber, TraceGuards},
+    metrics::{MetricsExporterHandle, install_metrics_exporter},
+    trace::{TraceGuards, install_trace_subscriber},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::aead::AES_128_GCM;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::{
-    datastore::{self, models::HpkeKeyState, Datastore},
+    datastore::{self, Datastore, models::HpkeKeyState},
     task::{AggregationMode, AggregatorTask, SerializedAggregatorTask},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
@@ -22,13 +22,13 @@ use janus_core::{
     time::{Clock, RealClock},
 };
 use janus_messages::{
-    codec::Encode as _, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, codec::Encode as _,
 };
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
 use prio::codec::Decode as _;
-use rand::{distr::StandardUniform, rng, Rng};
+use rand::{Rng, distr::StandardUniform, rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -662,7 +662,7 @@ impl KubernetesSecretOptions {
         options: &CommonBinaryOptions,
         kube_client: &LazyKubeClient,
     ) -> Result<Vec<String>> {
-        if let Some(ref secrets_namespace) = &self.secrets_k8s_namespace {
+        if let Some(secrets_namespace) = &self.secrets_k8s_namespace {
             fetch_datastore_keys(
                 kube_client,
                 secrets_namespace,
@@ -740,22 +740,21 @@ impl From<kube::Client> for LazyKubeClient {
 mod tests {
     use crate::{
         binaries::janus_cli::{
-            fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
-            LazyKubeClient,
+            CommandLineOptions, ConfigFile, KubernetesSecretOptions, LazyKubeClient,
+            fetch_datastore_keys,
         },
         binary_utils::CommonBinaryOptions,
         config::{
-            default_max_transaction_retries,
+            CommonConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig,
         },
     };
-    use aws_lc_rs::aead::{UnboundKey, AES_128_GCM};
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use aws_lc_rs::aead::{AES_128_GCM, UnboundKey};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::CommandFactory;
     use janus_aggregator_core::{
-        datastore::{models::HpkeKeyState, test_util::ephemeral_datastore, Datastore},
-        task::{test_util::TaskBuilder, AggregationMode, AggregatorTask, BatchMode},
+        datastore::{Datastore, models::HpkeKeyState, test_util::ephemeral_datastore},
+        task::{AggregationMode, AggregatorTask, BatchMode, test_util::TaskBuilder},
         taskprov::{PeerAggregator, VerifyKeyInit},
     };
     use janus_core::{
@@ -764,11 +763,11 @@ mod tests {
         initialize_rustls,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
-        vdaf::{vdaf_dp_strategies, VdafInstance},
+        vdaf::{VdafInstance, vdaf_dp_strategies},
     };
     use janus_messages::{
-        codec::Encode, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
-        TaskId,
+        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
+        codec::Encode,
     };
     use prio::codec::Decode;
     use rand::random;
@@ -777,7 +776,7 @@ mod tests {
         io::Write,
         net::{Ipv4Addr, SocketAddr},
     };
-    use tempfile::{tempdir, NamedTempFile};
+    use tempfile::{NamedTempFile, tempdir};
     use tokio::fs;
     use url::Url;
 

@@ -126,9 +126,8 @@ mod tests {
     use crate::{
         binaries::aggregator::GarbageCollectorConfig,
         config::{
-            default_max_transaction_retries,
+            CommonConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig,
         },
     };
 

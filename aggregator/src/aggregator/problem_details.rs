@@ -1,4 +1,4 @@
-use janus_messages::{problem_type::DapProblemType, AggregationJobId, CollectionJobId, TaskId};
+use janus_messages::{AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType};
 use serde::Serialize;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
@@ -107,14 +107,15 @@ impl ProblemDetailsConnExt for Conn {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
+        Error, RequestBody,
         error::{BatchMismatch, ReportRejection, ReportRejectionReason},
-        send_request_to_helper, Error, RequestBody,
+        send_request_to_helper,
     };
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::future::join_all;
     use http::Method;
-    use janus_aggregator_core::{test_util::noop_meter, TIME_HISTOGRAM_BOUNDARIES};
+    use janus_aggregator_core::{TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
     use janus_core::{
         initialize_rustls,
         retries::test_util::LimitedRetryer,
@@ -122,8 +123,8 @@ mod tests {
         time::{Clock, RealClock},
     };
     use janus_messages::{
-        problem_type::{DapProblemType, DapProblemTypeParseError},
         Duration, Interval, ReportIdChecksum,
+        problem_type::{DapProblemType, DapProblemTypeParseError},
     };
     use rand::random;
     use reqwest::Client;

@@ -1,6 +1,6 @@
 use crate::{
-    roundtrip_encoding, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
-    PlaintextInputShare, Report, ReportId, ReportMetadata, TaskId, Time,
+    Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
+    Report, ReportId, ReportMetadata, TaskId, Time, roundtrip_encoding,
 };
 
 #[test]

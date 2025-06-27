@@ -4,16 +4,15 @@ use opentelemetry_sdk::metrics::MetricError;
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 use tokio::{
     select,
     sync::{
-        mpsc,
+        OwnedSemaphorePermit, Semaphore, mpsc,
         oneshot::{self},
-        OwnedSemaphorePermit, Semaphore,
     },
     task::JoinHandle,
 };
@@ -342,23 +341,23 @@ impl Metrics {
 mod tests {
     use std::{
         sync::{
-            atomic::{AtomicU32, Ordering},
             Arc,
+            atomic::{AtomicU32, Ordering},
         },
         time::Duration,
     };
 
     use async_trait::async_trait;
     use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
-    use futures::{future::join_all, Future};
+    use futures::{Future, future::join_all};
     use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
     use opentelemetry_sdk::metrics::data::Gauge;
-    use quickcheck::{quickcheck, Arbitrary, TestResult};
+    use quickcheck::{Arbitrary, TestResult, quickcheck};
     use tokio::{
         runtime::Builder as RuntimeBuilder,
         sync::Notify,
-        task::{yield_now, JoinHandle},
+        task::{JoinHandle, yield_now},
         time::{sleep, timeout},
     };
     use tracing::debug;
@@ -368,7 +367,7 @@ mod tests {
     use super::Error;
 
     use crate::{
-        aggregator::queue::{queued_lifo, LIFORequestQueue, Metrics},
+        aggregator::queue::{LIFORequestQueue, Metrics, queued_lifo},
         metrics::test_util::InMemoryMetricInfrastructure,
     };
 

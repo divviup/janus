@@ -2,16 +2,16 @@ use crate::{
     aggregator::{
         error::ReportRejectionReason,
         http_handlers::{
-            test_util::{take_problem_details, HttpHandlerTest},
             AggregatorHandlerBuilder,
+            test_util::{HttpHandlerTest, take_problem_details},
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
     },
     metrics::test_util::InMemoryMetricInfrastructure,
 };
 use janus_aggregator_core::{
-    datastore::test_util::{ephemeral_datastore, EphemeralDatastoreBuilder},
-    task::{test_util::TaskBuilder, AggregationMode, BatchMode},
+    datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
+    task::{AggregationMode, BatchMode, test_util::TaskBuilder},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -37,7 +37,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use trillium::{KnownHeaderName, Status};
-use trillium_testing::{assert_headers, prelude::post, TestConn};
+use trillium_testing::{TestConn, assert_headers, prelude::post};
 use trillium_tokio::Stopper;
 
 #[tokio::test]
@@ -795,10 +795,12 @@ async fn upload_client_early_disconnect() {
         .downcast_ref::<Sum<u64>>()
         .unwrap();
     assert_eq!(counter_data.data_points.len(), 2);
-    assert!(counter_data
-        .data_points
-        .iter()
-        .all(|data_point| data_point.value == 2));
+    assert!(
+        counter_data
+            .data_points
+            .iter()
+            .all(|data_point| data_point.value == 2)
+    );
     assert_eq!(
         counter_data
             .data_points
@@ -822,10 +824,12 @@ async fn upload_client_early_disconnect() {
         .downcast_ref::<Histogram<f64>>()
         .unwrap();
     assert_eq!(histogram_data.data_points.len(), 2);
-    assert!(histogram_data
-        .data_points
-        .iter()
-        .all(|data_point| data_point.count == 2));
+    assert!(
+        histogram_data
+            .data_points
+            .iter()
+            .all(|data_point| data_point.count == 2)
+    );
     assert_eq!(
         histogram_data
             .data_points

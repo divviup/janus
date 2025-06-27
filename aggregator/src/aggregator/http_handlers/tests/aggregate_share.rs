@@ -1,6 +1,6 @@
 use crate::aggregator::{
     error::BatchMismatch,
-    http_handlers::test_util::{decode_response_body, take_problem_details, HttpHandlerTest},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
@@ -8,8 +8,8 @@ use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
     datastore::models::{BatchAggregation, BatchAggregationState},
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode, BatchMode,
+        test_util::{Task, TaskBuilder},
     },
 };
 use janus_core::{
@@ -19,9 +19,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{self, TimeInterval},
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq, BatchSelector,
     Duration, Interval, ReportIdChecksum, Role, Time,
+    batch_mode::{self, TimeInterval},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -29,7 +29,7 @@ use prio::{
 };
 use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{assert_headers, prelude::post, TestConn};
+use trillium_testing::{TestConn, assert_headers, prelude::post};
 
 pub(crate) async fn post_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,

@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
 use crate::{
-    Client, Error, OhttpConfig, OHTTP_KEYS_MEDIA_TYPE, OHTTP_REQUEST_MEDIA_TYPE,
-    OHTTP_RESPONSE_MEDIA_TYPE,
+    Client, Error, OHTTP_KEYS_MEDIA_TYPE, OHTTP_REQUEST_MEDIA_TYPE, OHTTP_RESPONSE_MEDIA_TYPE,
+    OhttpConfig,
 };
 use assert_matches::assert_matches;
 use bhttp::{Message, Mode, StatusCode};
@@ -14,8 +14,8 @@ use janus_core::{
 };
 use janus_messages::{Duration, Report};
 use ohttp::{
-    hpke::{Aead, Kdf},
     KeyConfig, SymmetricSuite,
+    hpke::{Aead, Kdf},
 };
 use prio::{
     codec::Decode,

@@ -2,17 +2,17 @@
 
 use crate::{
     aggregator::{
-        aggregation_job_writer::WritableReportAggregation, error::handle_ping_pong_error,
-        AggregatorMetrics, Error,
+        AggregatorMetrics, Error, aggregation_job_writer::WritableReportAggregation,
+        error::handle_ping_pong_error,
     },
     cache::HpkeKeypairCache,
 };
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
+    AsyncAggregator,
     batch_mode::AccumulableBatchMode,
     datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
     task::AggregatorTask,
-    AsyncAggregator,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
@@ -24,8 +24,8 @@ use janus_messages::{
     Role,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram},
     KeyValue,
+    metrics::{Counter, Histogram},
 };
 use prio::{
     codec::{Decode as _, Encode, ParameterizedDecode},
@@ -34,7 +34,7 @@ use prio::{
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use std::{collections::HashMap, panic, sync::Arc};
 use tokio::sync::mpsc;
-use tracing::{debug, info_span, trace_span, Span};
+use tracing::{Span, debug, info_span, trace_span};
 
 #[derive(Clone)]
 pub struct AggregateInitMetrics {
@@ -448,17 +448,17 @@ where
 pub mod test_util {
     use crate::aggregator::test_util::generate_helper_report_share;
     use janus_aggregator_core::{
-        task::{test_util::Task, AggregatorTask},
         AsyncAggregator,
+        task::{AggregatorTask, test_util::Task},
     };
     use janus_core::{
-        test_util::{run_vdaf, VdafTranscript},
+        test_util::{VdafTranscript, run_vdaf},
         time::{Clock, MockClock, TimeExt as _},
     };
     use janus_messages::{
-        batch_mode::{self},
         AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, PrepareInit,
         ReportMetadata, ReportShare,
+        batch_mode::{self},
     };
     use prio::{
         codec::Encode,
@@ -466,7 +466,7 @@ pub mod test_util {
     };
     use rand::random;
     use trillium::{Handler, KnownHeaderName};
-    use trillium_testing::{prelude::put, TestConn};
+    use trillium_testing::{TestConn, prelude::put};
 
     #[derive(Clone)]
     pub struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
@@ -611,23 +611,23 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        aggregation_job_init::test_util::{put_aggregation_job, PrepareInitGenerator},
-        http_handlers::{
-            test_util::{decode_response_body, take_problem_details},
-            AggregatorHandlerBuilder,
-        },
         Config,
+        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+        http_handlers::{
+            AggregatorHandlerBuilder,
+            test_util::{decode_response_body, take_problem_details},
+        },
     };
     use assert_matches::assert_matches;
     use http::StatusCode;
     use janus_aggregator_core::{
-        datastore::test_util::{ephemeral_datastore, EphemeralDatastore},
+        AsyncAggregator,
+        datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
         task::{
-            test_util::{Task, TaskBuilder},
             AggregationMode, BatchMode,
+            test_util::{Task, TaskBuilder},
         },
         test_util::noop_meter,
-        AsyncAggregator,
     };
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
@@ -636,9 +636,9 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        batch_mode::TimeInterval, AggregationJobId, AggregationJobInitializeReq,
-        AggregationJobResp, Duration, Extension, ExtensionType, PartialBatchSelector, PrepareResp,
-        PrepareStepResult, ReportError, ReportMetadata,
+        AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
+        ExtensionType, PartialBatchSelector, PrepareResp, PrepareStepResult, ReportError,
+        ReportMetadata, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,

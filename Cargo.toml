@@ -15,11 +15,11 @@ members = [
 resolver = "2"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 version = "0.8.0-prerelease-1"
 
 [workspace.dependencies]

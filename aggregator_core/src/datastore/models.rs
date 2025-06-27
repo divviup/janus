@@ -1,6 +1,6 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{datastore::Error, task, AsyncAggregator};
+use crate::{AsyncAggregator, datastore::Error, task};
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use clap::ValueEnum;
@@ -13,17 +13,17 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp, Query,
     ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_protocol::types::{
-    range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
+    Range, RangeBound, range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
 };
-use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
+use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
-    codec::{encode_u16_items, Encode},
+    codec::{Encode, encode_u16_items},
     topology::ping_pong::PingPongContinuation,
     vdaf::Aggregatable,
 };
@@ -535,9 +535,9 @@ impl TryFrom<&[u8]> for LeaseToken {
     type Error = &'static str;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for LeaseToken"
-        })?))
+        Ok(Self(value.try_into().map_err(
+            |_| "byte slice has incorrect length for LeaseToken",
+        )?))
     }
 }
 

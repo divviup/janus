@@ -1,5 +1,5 @@
 use crate::aggregator::{
-    http_handlers::test_util::{decode_response_body, HttpHandlerTest},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
     test_util::generate_helper_report_share,
 };
 use janus_aggregator_core::{
@@ -7,8 +7,8 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode, BatchMode, VerifyKey,
+        test_util::{Task, TaskBuilder},
     },
 };
 use janus_core::{
@@ -17,14 +17,14 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::TimeInterval, AggregationJobId, AggregationJobResp, AggregationJobStep, Interval,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportMetadata,
+    AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportMetadata, batch_mode::TimeInterval,
 };
 use prio::vdaf::dummy;
 use rand::random;
 use std::sync::Arc;
 use trillium::{Handler, Status};
-use trillium_testing::{assert_headers, prelude::get, TestConn};
+use trillium_testing::{TestConn, assert_headers, prelude::get};
 
 #[tokio::test]
 async fn aggregation_job_get_ready() {

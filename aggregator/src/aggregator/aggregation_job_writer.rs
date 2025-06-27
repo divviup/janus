@@ -5,17 +5,17 @@ use crate::Operation;
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
+    AsyncAggregator,
     batch_mode::AccumulableBatchMode,
     datastore::{
+        Error, Transaction,
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
             ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
             ReportAggregationState, TaskAggregationCounter,
         },
-        Error, Transaction,
     },
     task::AggregatorTask,
-    AsyncAggregator,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -25,13 +25,13 @@ use janus_messages::{
     ReportIdChecksum, Time,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram},
     KeyValue,
+    metrics::{Counter, Histogram},
 };
-use rand::{rng, Rng as _};
+use rand::{Rng as _, rng};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
-use tracing::{warn, Level};
+use tracing::{Level, warn};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
 pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>

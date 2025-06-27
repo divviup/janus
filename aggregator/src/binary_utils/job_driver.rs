@@ -3,12 +3,12 @@
 use anyhow::Context as _;
 use chrono::NaiveDateTime;
 use janus_aggregator_core::{
-    datastore::{self, models::Lease},
     TIME_HISTOGRAM_BOUNDARIES,
+    datastore::{self, models::Lease},
 };
-use janus_core::{time::Clock, Runtime};
-use opentelemetry::{metrics::Meter, KeyValue};
-use rand::{rng, Rng};
+use janus_core::{Runtime, time::Clock};
+use opentelemetry::{KeyValue, metrics::Meter};
+use rand::{Rng, rng};
 use std::{
     fmt::{Debug, Display},
     future::Future,
@@ -19,7 +19,7 @@ use tokio::{
     sync::{Semaphore, SemaphorePermit},
     time::{self, Instant},
 };
-use tracing::{debug, error, info_span, Instrument};
+use tracing::{Instrument, debug, error, info_span};
 use trillium_tokio::Stopper;
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
@@ -50,15 +50,15 @@ pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
 }
 
 impl<
-        C,
-        R,
-        JobStepperError,
-        JobAcquirer,
-        JobAcquirerFuture,
-        JobStepper,
-        JobStepperFuture,
-        AcquiredJob,
-    > JobDriver<C, R, JobAcquirer, JobStepper>
+    C,
+    R,
+    JobStepperError,
+    JobAcquirer,
+    JobAcquirerFuture,
+    JobStepper,
+    JobStepperFuture,
+    AcquiredJob,
+> JobDriver<C, R, JobAcquirer, JobStepper>
 where
     C: Clock,
     R: Runtime + Send + Sync + 'static,
@@ -276,10 +276,10 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        Runtime,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
         vdaf::VdafInstance,
-        Runtime,
     };
     use janus_messages::{AggregationJobId, TaskId};
     use rand::random;

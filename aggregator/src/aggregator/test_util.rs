@@ -1,13 +1,13 @@
 use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
 use aws_lc_rs::signature::EcdsaKeyPair;
 use janus_aggregator_core::{
-    datastore::{models::TaskAggregationCounter, Datastore},
+    datastore::{Datastore, models::TaskAggregationCounter},
     task::AggregatorTask,
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     time::MockClock,
-    vdaf::{vdaf_application_context, VdafInstance},
+    vdaf::{VdafInstance, vdaf_application_context},
 };
 use janus_messages::{
     Extension, HpkeConfig, InputShareAad, PlaintextInputShare, Report, ReportId, ReportMetadata,
@@ -15,11 +15,11 @@ use janus_messages::{
 };
 use prio::{
     codec::Encode,
-    vdaf::{self, prio3::Prio3Count, Client},
+    vdaf::{self, Client, prio3::Prio3Count},
 };
 use rand::random;
 use std::time::Duration;
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 
 pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
@@ -44,7 +44,7 @@ pub(crate) fn hpke_config_signing_key() -> EcdsaKeyPair {
 }
 
 pub fn hpke_config_verification_key() -> aws_lc_rs::signature::UnparsedPublicKey<Vec<u8>> {
-    use aws_lc_rs::signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
+    use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, KeyPair, UnparsedPublicKey};
     UnparsedPublicKey::new(
         &ECDSA_P256_SHA256_ASN1,
         hpke_config_signing_key().public_key().as_ref().to_vec(),

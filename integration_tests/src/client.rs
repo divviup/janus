@@ -1,9 +1,9 @@
 use crate::TaskParameters;
 use anyhow::anyhow;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_client::Client;
 use janus_core::vdaf::{Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance};
-use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
+use janus_interop_binaries::{ContainerLogsDropGuard, get_rust_log_level};
 use janus_messages::{Duration, TaskId, Time};
 use prio::{
     codec::Encode,
@@ -15,12 +15,12 @@ use prio::{
     },
 };
 use rand::random;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::env;
 use testcontainers::{
-    core::{wait::HealthWaitStrategy, WaitFor},
-    runners::AsyncRunner,
     ContainerRequest, Image, ImageExt,
+    core::{WaitFor, wait::HealthWaitStrategy},
+    runners::AsyncRunner,
 };
 use url::Url;
 

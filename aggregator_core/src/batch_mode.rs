@@ -1,18 +1,17 @@
 use crate::{
+    AsyncAggregator,
     datastore::{
-        self,
+        self, Transaction,
         models::{BatchAggregation, CollectionJob},
-        Transaction,
     },
     task::AggregatorTask,
-    AsyncAggregator,
 };
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     Duration, Interval, Query, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use std::iter;
 
@@ -421,10 +420,10 @@ impl CollectableBatchMode for LeaderSelected {
 mod tests {
     use crate::{
         batch_mode::CollectableBatchMode,
-        task::{test_util::TaskBuilder, AggregationMode, BatchMode},
+        task::{AggregationMode, BatchMode, test_util::TaskBuilder},
     };
     use janus_core::vdaf::VdafInstance;
-    use janus_messages::{batch_mode::TimeInterval, Duration, Interval, Time};
+    use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
 
     #[test]
     fn validate_collect_identifier() {

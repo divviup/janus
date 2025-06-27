@@ -1,9 +1,9 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
 use crate::aggregator::{
-    aggregate_share::AggregateShareComputer, batch_mode::CollectableBatchMode,
-    http_handlers::AGGREGATE_SHARES_ROUTE, send_request_to_helper, BatchAggregationsIterator,
-    Error, RequestBody,
+    BatchAggregationsIterator, Error, RequestBody, aggregate_share::AggregateShareComputer,
+    batch_mode::CollectableBatchMode, http_handlers::AGGREGATE_SHARES_ROUTE,
+    send_request_to_helper,
 };
 use anyhow::bail;
 use backon::BackoffBuilder;
@@ -11,12 +11,12 @@ use bytes::Bytes;
 use educe::Educe;
 use futures::{future::BoxFuture, stream::TryStreamExt};
 use janus_aggregator_core::{
+    AsyncAggregator, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
-        self,
+        self, Datastore,
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
-        Datastore,
     },
-    task, AsyncAggregator, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
+    task,
 };
 use janus_core::{
     retries::{is_retryable_http_client_error, is_retryable_http_status},
@@ -24,12 +24,12 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregateShare, AggregateShareReq, BatchSelector,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
     KeyValue, Value,
+    metrics::{Counter, Histogram, Meter},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -567,8 +567,11 @@ where
         &self,
         datastore: Arc<Datastore<C>>,
         lease_duration: Duration,
-    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
-    {
+    ) -> impl Fn(
+        usize,
+    )
+        -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
+    + use<C, R> {
         move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
@@ -810,42 +813,41 @@ impl RetryStrategy {
 mod tests {
     use crate::{
         aggregator::{
+            Error,
             collection_job_driver::{CollectionJobDriver, RetryStrategy},
             test_util::BATCH_AGGREGATION_SHARD_COUNT,
-            Error,
         },
         binary_utils::job_driver::JobDriver,
     };
     use assert_matches::assert_matches;
-    use http::{header::CONTENT_TYPE, StatusCode};
+    use http::{StatusCode, header::CONTENT_TYPE};
     use janus_aggregator_core::{
         datastore::{
+            Datastore,
             models::{
                 AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
                 BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
                 Lease, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
-            Datastore,
         },
         task::{
-            test_util::{Task, TaskBuilder},
             AggregationMode, BatchMode,
+            test_util::{Task, TaskBuilder},
         },
         test_util::noop_meter,
     };
     use janus_core::{
-        initialize_rustls,
+        Runtime, initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::{Clock, MockClock, TimeExt},
         vdaf::VdafInstance,
-        Runtime,
     };
     use janus_messages::{
-        batch_mode::TimeInterval, problem_type::DapProblemType, AggregateShare, AggregateShareReq,
-        AggregationJobStep, BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum,
+        AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration,
+        HpkeCiphertext, HpkeConfigId, Interval, Query, ReportIdChecksum, batch_mode::TimeInterval,
+        problem_type::DapProblemType,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -1855,8 +1857,7 @@ mod tests {
             .as_secs();
 
             assert_eq!(
-                want_delay_s,
-                got_delay_s,
+                want_delay_s, got_delay_s,
                 "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor}).compute_retry_delay({step_attempts})"
             );
         }

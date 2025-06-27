@@ -5,8 +5,8 @@ use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode,
+        test_util::{Task, TaskBuilder},
     },
     test_util::noop_meter,
 };
@@ -17,7 +17,7 @@ use janus_core::{
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, RealClock, TimeExt},
-    vdaf::{vdaf_application_context, vdaf_dp_strategies, VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
+    vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_application_context, vdaf_dp_strategies},
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
@@ -26,14 +26,14 @@ use janus_messages::{
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     field::{Field128, FieldElement},
-    flp::{gadgets::ParallelSum, types::Histogram, Flp},
+    flp::{Flp, gadgets::ParallelSum, types::Histogram},
     vdaf::{
-        prio3::{optimal_chunk_length, Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare},
-        xof::{Seed, Xof, XofTurboShake128},
         AggregateShare, Aggregator, Client as _, Collector, PrepareTransition, Vdaf,
+        prio3::{Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare, optimal_chunk_length},
+        xof::{Seed, Xof, XofTurboShake128},
     },
 };
-use rand::{distr::StandardUniform, random, rng, Rng};
+use rand::{Rng, distr::StandardUniform, random, rng};
 use std::{net::Ipv4Addr, sync::Arc};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;

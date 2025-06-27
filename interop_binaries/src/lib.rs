@@ -1,25 +1,25 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
-use janus_aggregator_core::task::{test_util::Task, BatchMode};
+use janus_aggregator_core::task::{BatchMode, test_util::Task};
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     hpke::HpkeKeypair,
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
     HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
 };
 use prio::codec::Encode;
 use rand::random;
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use std::{
     collections::HashMap,
     env::{self, VarError},
     fmt::Display,
-    fs::{create_dir_all, File},
-    io::{stderr, Write},
+    fs::{File, create_dir_all},
+    io::{Write, stderr},
     marker::PhantomData,
     ops::Deref,
     path::PathBuf,
@@ -30,8 +30,8 @@ use std::{
 use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
-use tracing_subscriber::{prelude::*, EnvFilter, Registry};
-use trillium::{async_trait, Conn, Handler, Status};
+use tracing_subscriber::{EnvFilter, Registry, prelude::*};
+use trillium::{Conn, Handler, Status, async_trait};
 use trillium_api::ApiConnExt;
 use url::Url;
 

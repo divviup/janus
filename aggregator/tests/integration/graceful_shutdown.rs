@@ -3,7 +3,7 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator::{
     aggregator::key_rotator::HpkeKeyRotatorConfig,
     binaries::{
@@ -16,15 +16,15 @@ use janus_aggregator::{
         garbage_collector::Config as GarbageCollectorBinaryConfig,
     },
     config::{
-        default_max_transaction_retries, BinaryConfig, CommonConfig, DbConfig, JobDriverConfig,
-        TaskprovConfig,
+        BinaryConfig, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig,
+        default_max_transaction_retries,
     },
     metrics::MetricsConfiguration,
     trace::TraceConfiguration,
 };
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
-    task::{test_util::TaskBuilder, AggregationMode, BatchMode},
+    task::{AggregationMode, BatchMode, test_util::TaskBuilder},
 };
 use janus_core::{
     hpke::HpkeCiphersuite, initialize_rustls, test_util::install_test_trace_subscriber,

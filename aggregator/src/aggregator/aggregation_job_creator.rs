@@ -7,41 +7,40 @@ use crate::{
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
-    types::extra::{U15, U31},
     FixedI16, FixedI32,
+    types::extra::{U15, U31},
 };
 use futures::future::try_join_all;
 use itertools::Itertools as _;
 #[cfg(feature = "test-util")]
 use janus_aggregator_core::VdafHasAggregationParameter;
 use janus_aggregator_core::{
+    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
-        self,
+        self, Datastore,
         models::{
             AggregationJob, AggregationJobState, ReportAggregationMetadata,
             ReportAggregationMetadataState, UnaggregatedReport,
         },
-        Datastore,
     },
     task::{self, AggregatorTask},
-    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     time::{Clock, DurationExt as _, TimeExt as _},
     vdaf::{
+        Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
+        VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
-        Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH_PRIO3,
-        VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
     },
 };
 use janus_messages::{
-    batch_mode::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
+    AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId, batch_mode::TimeInterval,
 };
 use opentelemetry::{
-    metrics::{Histogram, Meter},
     KeyValue,
+    metrics::{Histogram, Meter},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -53,7 +52,7 @@ use prio::{
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
-use rand::{random, rng, Rng};
+use rand::{Rng, random, rng};
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
@@ -61,7 +60,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    time::{self, sleep_until, Instant, MissedTickBehavior},
+    time::{self, Instant, MissedTickBehavior, sleep_until},
     try_join,
 };
 use tracing::{debug, error, info};
@@ -541,7 +540,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 VdafInstance::Fake { rounds },
             ) => {
                 let _vdaf = prio::vdaf::dummy::Vdaf::new(*rounds);
-                todo!("wire up call to self.create_aggregation_jobs_for_leader_selected_task_with_param")
+                todo!(
+                    "wire up call to self.create_aggregation_jobs_for_leader_selected_task_with_param"
+                )
             }
 
             _ => {
@@ -944,30 +945,30 @@ mod tests {
     use super::AggregationJobCreator;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
+        AsyncAggregator,
         batch_mode::AccumulableBatchMode,
         datastore::{
+            Transaction,
             models::{
-                merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState,
-                BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
-                LeaderStoredReport, ReportAggregation, ReportAggregationState,
+                AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+                CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
+                ReportAggregationState, merge_batch_aggregations_by_batch,
             },
             test_util::ephemeral_datastore,
-            Transaction,
         },
-        task::{test_util::TaskBuilder, AggregationMode, BatchMode as TaskBatchMode},
+        task::{AggregationMode, BatchMode as TaskBatchMode, test_util::TaskBuilder},
         test_util::noop_meter,
-        AsyncAggregator,
     };
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, MockClock, TimeExt},
-        vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
+        vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
     };
     use janus_messages::{
-        batch_mode::{LeaderSelected, TimeInterval},
         AggregationJobStep, Duration as JanusDuration, Interval, Query, ReportError, ReportId,
         ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+        batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::vdaf::{
         dummy,
@@ -1213,28 +1214,30 @@ mod tests {
         let first_report_time = clock.now_aligned_to_precision(task.time_precision());
         let second_report_time = first_report_time.add(task.time_precision()).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
-            iter::repeat(first_report_time)
-                .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
-                .chain(iter::repeat(second_report_time).take(MIN_AGGREGATION_JOB_SIZE))
-                .map(|report_time| {
-                    let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
-                    let transcript = run_vdaf(
-                        vdaf.as_ref(),
-                        task.id(),
-                        task.vdaf_verify_key().unwrap().as_bytes(),
-                        &(),
-                        report_metadata.id(),
-                        &false,
-                    );
-                    LeaderStoredReport::generate(
-                        *task.id(),
-                        report_metadata,
-                        helper_hpke_keypair.config(),
-                        Vec::new(),
-                        &transcript,
-                    )
-                })
-                .collect(),
+            iter::repeat_n(
+                first_report_time,
+                2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1,
+            )
+            .chain(iter::repeat_n(second_report_time, MIN_AGGREGATION_JOB_SIZE))
+            .map(|report_time| {
+                let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
+                let transcript = run_vdaf(
+                    vdaf.as_ref(),
+                    task.id(),
+                    task.vdaf_verify_key().unwrap().as_bytes(),
+                    &(),
+                    report_metadata.id(),
+                    &false,
+                );
+                LeaderStoredReport::generate(
+                    *task.id(),
+                    report_metadata,
+                    helper_hpke_keypair.config(),
+                    Vec::new(),
+                    &transcript,
+                )
+            })
+            .collect(),
         );
         let all_report_ids: HashSet<ReportId> = reports
             .iter()

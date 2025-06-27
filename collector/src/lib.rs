@@ -73,15 +73,15 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
     http::HttpErrorResponse,
     retries::{
-        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
+        ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
     time::{DurationExt, TimeExt},
     url_ensure_trailing_slash,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, TimeInterval},
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     PartialBatchSelector, Query, Role, TaskId,
+    batch_mode::{BatchMode, TimeInterval},
 };
 use mime::Mime;
 use prio::{
@@ -90,8 +90,8 @@ use prio::{
 };
 use rand::random;
 use reqwest::{
-    header::{HeaderValue, ToStrError, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER},
     StatusCode,
+    header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, RETRY_AFTER, ToStrError},
 };
 pub use retry_after;
 use retry_after::{FromHeaderValueError, RetryAfter};
@@ -99,7 +99,7 @@ use std::{
     convert::TryFrom,
     time::{Duration as StdDuration, SystemTime},
 };
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 use tracing::debug;
 use url::Url;
 
@@ -702,7 +702,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 if let Some(deadline) = deadline {
                     let recommendation_is_past_deadline = Instant::now()
                         .checked_add(retry_after_duration)
-                        .map_or(true, |recommendation| recommendation > deadline);
+                        .is_none_or(|recommendation| recommendation > deadline);
 
                     if recommendation_is_past_deadline {
                         debug!(
@@ -780,25 +780,25 @@ mod tests {
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
         initialize_rustls,
         retries::test_util::test_http_request_exponential_backoff,
-        test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
+        test_util::{VdafTranscript, install_test_trace_subscriber, run_vdaf},
     };
     use janus_messages::{
-        batch_mode::{LeaderSelected, TimeInterval},
-        problem_type::DapProblemType,
         AggregateShareAad, BatchId, BatchSelector, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector, Query, Role,
         TaskId, Time,
+        batch_mode::{LeaderSelected, TimeInterval},
+        problem_type::DapProblemType,
     };
     use mockito::Matcher;
     use prio::{
         codec::Encode,
         field::Field64,
-        vdaf::{self, dummy, prio3::Prio3, AggregateShare, OutputShare},
+        vdaf::{self, AggregateShare, OutputShare, dummy, prio3::Prio3},
     };
     use rand::random;
     use reqwest::{
-        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
         StatusCode, Url,
+        header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     };
     use retry_after::RetryAfter;
 

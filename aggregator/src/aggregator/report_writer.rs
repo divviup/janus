@@ -1,21 +1,20 @@
 use crate::aggregator::{
+    Error,
     batch_mode::UploadableBatchMode,
     error::{ReportRejection, ReportRejectionReason},
-    Error,
 };
 use async_trait::async_trait;
 use futures::future::{join_all, try_join_all};
 use janus_aggregator_core::{
-    datastore::{
-        self,
-        models::{LeaderStoredReport, TaskUploadCounter},
-        Datastore, Transaction,
-    },
     AsyncAggregator,
+    datastore::{
+        self, Datastore, Transaction,
+        models::{LeaderStoredReport, TaskUploadCounter},
+    },
 };
-use janus_core::{time::Clock, Runtime};
+use janus_core::{Runtime, time::Clock};
 use janus_messages::TaskId;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -27,7 +26,7 @@ use std::{
 use tokio::{
     select,
     sync::{mpsc, oneshot},
-    time::{sleep_until, Instant},
+    time::{Instant, sleep_until},
 };
 use tracing::{debug, error};
 

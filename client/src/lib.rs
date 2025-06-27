@@ -44,14 +44,14 @@ use backon::BackoffBuilder;
 use bhttp::{ControlData, Message, Mode};
 use educe::Educe;
 #[cfg(feature = "ohttp")]
-use http::{header::ACCEPT, HeaderValue};
-use http::{header::CONTENT_TYPE, StatusCode};
+use http::{HeaderValue, header::ACCEPT};
+use http::{StatusCode, header::CONTENT_TYPE};
 use itertools::Itertools;
 use janus_core::{
-    hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
+    hpke::{self, HpkeApplicationInfo, Label, is_hpke_config_supported},
     http::HttpErrorResponse,
     retries::{
-        http_request_exponential_backoff, retry_http_request, ExponentialWithTotalDelayBuilder,
+        ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,

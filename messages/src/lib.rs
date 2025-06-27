@@ -5,21 +5,21 @@
 
 use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
-use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use core::slice;
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
     codec::{
-        decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
-        Encode,
+        CodecError, Decode, Encode, decode_u16_items, decode_u32_items, encode_u16_items,
+        encode_u32_items,
     },
     topology::ping_pong::PingPongMessage,
 };
-use rand::{distr::StandardUniform, prelude::Distribution, Rng};
+use rand::{Rng, distr::StandardUniform, prelude::Distribution};
 use serde::{
-    de::{self, Visitor},
     Deserialize, Serialize, Serializer,
+    de::{self, Visitor},
 };
 use std::{
     fmt::{self, Debug, Display, Formatter},

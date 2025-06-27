@@ -1,23 +1,24 @@
 use crate::aggregator::{
+    Aggregator, Config, Error,
     error::ReportRejectionReason,
     test_util::{create_report, create_report_custom, default_aggregator_config},
-    Aggregator, Config, Error,
 };
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
-        models::{CollectionJob, CollectionJobState, TaskUploadCounter},
-        test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
+        models::{CollectionJob, CollectionJobState, TaskUploadCounter},
+        test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
-        test_util::{Task, TaskBuilder},
         AggregationMode, BatchMode,
+        test_util::{Task, TaskBuilder},
     },
     test_util::noop_meter,
 };
 use janus_core::{
+    Runtime,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{
@@ -25,12 +26,11 @@ use janus_core::{
         runtime::{TestRuntime, TestRuntimeManager},
     },
     time::{Clock, MockClock, TimeExt},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH_PRIO3},
-    Runtime,
+    vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
-    batch_mode::TimeInterval, Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    PlaintextInputShare, Query, Report, Role,
+    Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PlaintextInputShare, Query,
+    Report, Role, batch_mode::TimeInterval,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;

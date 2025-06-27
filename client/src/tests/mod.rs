@@ -1,7 +1,7 @@
-use crate::{aggregator_hpke_config, default_http_client, Client, ClientParameters, Error};
+use crate::{Client, ClientParameters, Error, aggregator_hpke_config, default_http_client};
 use assert_matches::assert_matches;
 use hex_literal::hex;
-use http::{header::CONTENT_TYPE, StatusCode};
+use http::{StatusCode, header::CONTENT_TYPE};
 use janus_core::{
     hpke::HpkeKeypair, initialize_rustls,
     retries::test_util::test_http_request_exponential_backoff,

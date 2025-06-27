@@ -12,12 +12,12 @@ use self::models::{
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
 use crate::{
+    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
     task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
 };
-use aws_lc_rs::aead::{self, LessSafeKey, AES_128_GCM};
+use aws_lc_rs::aead::{self, AES_128_GCM, LessSafeKey};
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -27,19 +27,19 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
     HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp, Query, ReportId,
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use models::UnaggregatedReport;
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
     KeyValue,
+    metrics::{Counter, Histogram, Meter},
 };
 use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
-    codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
+    codec::{CodecError, Decode, Encode, ParameterizedDecode, decode_u16_items, encode_u16_items},
     topology::ping_pong::PingPongContinuation,
 };
 use rand::random;
@@ -51,16 +51,16 @@ use std::{
     io::Cursor,
     mem::size_of,
     ops::RangeInclusive,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::Barrier, try_join};
-use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
-use tracing::{error, Level};
+use tokio_postgres::{IsolationLevel, Row, Statement, ToStatement, error::SqlState, row::RowIndex};
+use tracing::{Level, error};
 use url::Url;
 
 pub mod models;

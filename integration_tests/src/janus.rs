@@ -2,7 +2,7 @@
 
 #[cfg(feature = "testcontainer")]
 use crate::interop_api;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator::{
     binaries::{
         aggregation_job_creator::{
@@ -19,26 +19,26 @@ use janus_aggregator::{
     },
     binary_utils::{BinaryContext, CommonBinaryOptions},
     config::{
-        default_max_transaction_retries, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig,
+        CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
     },
     metrics::MetricsConfiguration,
     trace::{TokioConsoleConfiguration, TraceConfiguration},
 };
 use janus_aggregator_core::{
-    datastore::test_util::{ephemeral_datastore, EphemeralDatastore},
+    datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
     task::test_util::Task,
     test_util::noop_meter,
 };
 use janus_core::time::RealClock;
 #[cfg(feature = "testcontainer")]
 use janus_interop_binaries::{
-    get_rust_log_level, test_util::await_http_server, testcontainer::Aggregator,
-    ContainerLogsDropGuard,
+    ContainerLogsDropGuard, get_rust_log_level, test_util::await_http_server,
+    testcontainer::Aggregator,
 };
 use janus_messages::Role;
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "testcontainer")]
-use testcontainers::{runners::AsyncRunner, ContainerRequest, ImageExt};
+use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
 use trillium_tokio::Stopper;
 
 /// Represents a running Janus test instance in a container.

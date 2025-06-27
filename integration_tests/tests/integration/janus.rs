@@ -1,24 +1,24 @@
 use crate::{
     common::{
-        build_test_task, collect_aggregate_result_generic,
-        submit_measurements_and_verify_aggregate, submit_measurements_generic, TestContext,
+        TestContext, build_test_task, collect_aggregate_result_generic,
+        submit_measurements_and_verify_aggregate, submit_measurements_generic,
     },
     initialize_rustls,
 };
-use janus_aggregator_core::task::{test_util::TaskBuilder, AggregationMode, BatchMode};
+use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{
     test_util::install_test_trace_subscriber,
-    vdaf::{vdaf_dp_strategies, VdafInstance},
+    vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 #[cfg(feature = "testcontainer")]
 use janus_integration_tests::janus::JanusContainer;
-use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, TaskParameters};
+use janus_integration_tests::{TaskParameters, client::ClientBackend, janus::JanusInProcess};
 #[cfg(feature = "testcontainer")]
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 use prio::{
     dp::{
-        distributions::PureDpDiscreteLaplace, DifferentialPrivacyStrategy, PureDpBudget, Rational,
+        DifferentialPrivacyStrategy, PureDpBudget, Rational, distributions::PureDpDiscreteLaplace,
     },
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
@@ -534,7 +534,7 @@ async fn janus_in_process_histogram_dp_noise() {
         .min_batch_size
         .try_into()
         .unwrap();
-    let measurements = iter::repeat(0).take(total_measurements).collect::<Vec<_>>();
+    let measurements = iter::repeat_n(0, total_measurements).collect::<Vec<_>>();
     let client_implementation = ClientBackend::InProcess
         .build(
             TEST_NAME,
@@ -567,9 +567,11 @@ async fn janus_in_process_histogram_dp_noise() {
     // noise values will be zero simultaneously.
     assert_ne!(aggregate_result, un_noised_result);
 
-    assert!(aggregate_result
-        .iter()
-        .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3));
+    assert!(
+        aggregate_result
+            .iter()
+            .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -603,9 +605,8 @@ async fn janus_in_process_sumvec_dp_noise() {
         .min_batch_size
         .try_into()
         .unwrap();
-    let measurements = iter::repeat(vec![0; VECTOR_LENGTH])
-        .take(total_measurements)
-        .collect::<Vec<_>>();
+    let measurements =
+        iter::repeat_n(vec![0; VECTOR_LENGTH], total_measurements).collect::<Vec<_>>();
     let client_implementation = ClientBackend::InProcess
         .build(
             TEST_NAME,
@@ -637,7 +638,9 @@ async fn janus_in_process_sumvec_dp_noise() {
     // noise values will be zero simultaneously.
     assert_ne!(aggregate_result, un_noised_result);
 
-    assert!(aggregate_result
-        .iter()
-        .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3));
+    assert!(
+        aggregate_result
+            .iter()
+            .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3)
+    );
 }
