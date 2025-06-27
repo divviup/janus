@@ -234,8 +234,8 @@ impl Simulation {
     }
 
     async fn execute_upload_replay(&mut self, report_time: &Time) -> ControlFlow<TestResult> {
-        if let Some(measurement) = self.state.next_measurement() {
-            if let Err(error) = upload_replay_report(
+        if let Some(measurement) = self.state.next_measurement()
+            && let Err(error) = upload_replay_report(
                 measurement,
                 &self.task,
                 &self.state.vdaf,
@@ -243,18 +243,17 @@ impl Simulation {
                 &self.components.http_client,
             )
             .await
-            {
-                warn!(?error, "client error");
-                // We expect to receive an error if the report timestamp is too far away from the
-                // current time, so we'll allow errors for now.
-            }
+        {
+            warn!(?error, "client error");
+            // We expect to receive an error if the report timestamp is too far away from the
+            // current time, so we'll allow errors for now.
         }
         ControlFlow::Continue(())
     }
 
     async fn execute_upload_not_rounded(&mut self, report_time: &Time) -> ControlFlow<TestResult> {
-        if let Some(measurement) = self.state.next_measurement() {
-            if let Err(error) = upload_report_not_rounded(
+        if let Some(measurement) = self.state.next_measurement()
+            && let Err(error) = upload_report_not_rounded(
                 measurement,
                 &self.task,
                 &self.state.vdaf,
@@ -262,11 +261,10 @@ impl Simulation {
                 &self.components.http_client,
             )
             .await
-            {
-                warn!(?error, "client error");
-                // We expect to receive an error if the report timestamp is too far away from the
-                // current time, so we'll allow errors for now.
-            }
+        {
+            warn!(?error, "client error");
+            // We expect to receive an error if the report timestamp is too far away from the
+            // current time, so we'll allow errors for now.
         }
         ControlFlow::Continue(())
     }
@@ -478,14 +476,13 @@ impl Simulation {
                         .state
                         .aggregate_results_time_interval
                         .insert(*collection_job_id, collection);
-                    if let Some(old_collection) = old_opt {
-                        if report_count != old_collection.report_count()
+                    if let Some(old_collection) = old_opt
+                        && (report_count != old_collection.report_count()
                             || &interval != old_collection.interval()
-                            || &aggregate_result != old_collection.aggregate_result()
-                        {
-                            error!("repeated collection did not match");
-                            return ControlFlow::Break(TestResult::failed());
-                        }
+                            || &aggregate_result != old_collection.aggregate_result())
+                    {
+                        error!("repeated collection did not match");
+                        return ControlFlow::Break(TestResult::failed());
                     }
                 }
                 Ok(PollResult::NotReady(_)) => {}
@@ -507,15 +504,14 @@ impl Simulation {
                         .state
                         .aggregate_results_leader_selected
                         .insert(*collection_job_id, collection);
-                    if let Some(old_collection) = old_opt {
-                        if &partial_batch_selector != old_collection.partial_batch_selector()
+                    if let Some(old_collection) = old_opt
+                        && (&partial_batch_selector != old_collection.partial_batch_selector()
                             || report_count != old_collection.report_count()
                             || &interval != old_collection.interval()
-                            || &aggregate_result != old_collection.aggregate_result()
-                        {
-                            error!("repeated collection did not match");
-                            return ControlFlow::Break(TestResult::failed());
-                        }
+                            || &aggregate_result != old_collection.aggregate_result())
+                    {
+                        error!("repeated collection did not match");
+                        return ControlFlow::Break(TestResult::failed());
                     }
                 }
                 Ok(PollResult::NotReady(_)) => {}

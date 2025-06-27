@@ -200,8 +200,6 @@ pub(super) async fn post_task<C: Clock>(
         let task = Arc::clone(&task);
         Box::pin(async move {
             if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
-            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
-            // those fields that are randomly generated.
             if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
                 && existing_task.batch_mode() == task.batch_mode()
                 && existing_task.vdaf() == task.vdaf()

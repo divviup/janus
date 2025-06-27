@@ -131,11 +131,11 @@ impl<H: Handler> InspectHandler<H> {
     async fn before_send(&self, conn: Conn) -> Conn {
         let mut conn = self.inner.before_send(conn).await;
         if conn.state::<InspectMarker>().is_some() {
-            if let Some(status) = conn.status() {
-                if status.is_server_error() {
-                    error!(?status, "server error");
-                    *self.failure.lock().unwrap() = true;
-                }
+            if let Some(status) = conn.status()
+                && status.is_server_error()
+            {
+                error!(?status, "server error");
+                *self.failure.lock().unwrap() = true;
             }
             if conn.status() == Some(Status::Conflict) {
                 error!("409 Conflict response");

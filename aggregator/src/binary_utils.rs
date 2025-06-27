@@ -515,10 +515,10 @@ pub async fn setup_server(
         .ok_or_else(|| anyhow!("could not get server's socket address"))?;
 
     let future = async {
-        if let Err(err) = task_handle.await {
-            if let Ok(reason) = err.try_into_panic() {
-                panic::resume_unwind(reason);
-            }
+        if let Err(err) = task_handle.await
+            && let Ok(reason) = err.try_into_panic()
+        {
+            panic::resume_unwind(reason);
         }
     };
 
