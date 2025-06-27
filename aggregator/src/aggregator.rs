@@ -1668,18 +1668,18 @@ impl VdafOps {
         }
 
         // Reject reports before a task has started.
-        if let Some(task_start) = task.task_start() {
-            if report.metadata().time().is_before(task_start) {
-                return Err(reject_report(ReportRejectionReason::TaskNotStarted).await?);
-            }
+        if let Some(task_start) = task.task_start()
+            && report.metadata().time().is_before(task_start)
+        {
+            return Err(reject_report(ReportRejectionReason::TaskNotStarted).await?);
         }
 
         // Reject reports after a task has ended.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
-        if let Some(task_end) = task.task_end() {
-            if report.metadata().time().is_after(task_end) {
-                return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
-            }
+        if let Some(task_end) = task.task_end()
+            && report.metadata().time().is_after(task_end)
+        {
+            return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
         }
 
         // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
@@ -3217,17 +3217,16 @@ impl VdafOps {
 
         // Reject requests for aggregation shares that are eligible for GC, to prevent replay
         // attacks.
-        if let Some(report_expiry_age) = task.report_expiry_age() {
-            if let Some(batch_interval) =
+        if let Some(report_expiry_age) = task.report_expiry_age()
+            && let Some(batch_interval) =
                 B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
-            {
-                let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
-                if clock.now().is_after(&aggregate_share_expiry_time) {
-                    return Err(Error::AggregateShareRequestRejected(
-                        *task.id(),
-                        "aggregate share request too late".to_string(),
-                    ));
-                }
+        {
+            let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
+            if clock.now().is_after(&aggregate_share_expiry_time) {
+                return Err(Error::AggregateShareRequestRejected(
+                    *task.id(),
+                    "aggregate share request too late".to_string(),
+                ));
             }
         }
 

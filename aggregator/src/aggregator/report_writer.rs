@@ -212,12 +212,12 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 // Individual, per-request results.
                 assert_eq!(result_senders.len(), results.len()); // sanity check: should be guaranteed.
                 for (result_tx, result) in result_senders.into_iter().zip(results.into_iter()) {
-                    if let Some(result_tx) = result_tx {
-                        if result_tx.send(result.map_err(Arc::new)).is_err() {
-                            debug!(
-                                "ReportWriter couldn't send result to requester (request cancelled?)"
-                            );
-                        }
+                    if let Some(result_tx) = result_tx
+                        && result_tx.send(result.map_err(Arc::new)).is_err()
+                    {
+                        debug!(
+                            "ReportWriter couldn't send result to requester (request cancelled?)"
+                        );
                     }
                 }
             }

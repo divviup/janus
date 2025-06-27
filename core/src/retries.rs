@@ -253,14 +253,13 @@ where
                 return HttpRetryError::retryable_error(err);
             }
 
-            if let Some(io_error) = find_io_error(&err) {
-                if let std::io::ErrorKind::ConnectionRefused
+            if let Some(io_error) = find_io_error(&err)
+                && let std::io::ErrorKind::ConnectionRefused
                 | std::io::ErrorKind::ConnectionReset
                 | std::io::ErrorKind::ConnectionAborted = io_error.kind()
-                {
-                    warn!(?err, "Encountered retryable network error");
-                    return HttpRetryError::retryable_error(err);
-                }
+            {
+                warn!(?err, "Encountered retryable network error");
+                return HttpRetryError::retryable_error(err);
             }
 
             debug!("Encountered non-retryable network error");

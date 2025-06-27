@@ -147,19 +147,18 @@ impl CommonTaskParameters {
         if let BatchMode::LeaderSelected {
             batch_time_window_size: Some(batch_time_window_size),
         } = batch_mode
+            && batch_time_window_size.as_seconds() == 0
         {
-            if batch_time_window_size.as_seconds() == 0 {
-                return Err(Error::InvalidParameter("batch_time_window_size is zero"));
-            }
+            return Err(Error::InvalidParameter("batch_time_window_size is zero"));
         }
 
         // These fields are stored as 64-bit signed integers in the database but are held in
         // memory as unsigned. Reject values that are too large. (perhaps these should be
         // represented by different types?)
-        if let Some(report_expiry_age) = report_expiry_age {
-            if report_expiry_age > Duration::from_seconds(i64::MAX as u64) {
-                return Err(Error::InvalidParameter("report_expiry_age too large"));
-            }
+        if let Some(report_expiry_age) = report_expiry_age
+            && report_expiry_age > Duration::from_seconds(i64::MAX as u64)
+        {
+            return Err(Error::InvalidParameter("report_expiry_age too large"));
         }
         if let Some(task_start) = task_start {
             task_start
@@ -171,10 +170,10 @@ impl CommonTaskParameters {
                 .as_naive_date_time()
                 .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
         }
-        if let (Some(task_start), Some(task_end)) = (task_start, task_end) {
-            if task_end < task_start {
-                return Err(Error::InvalidParameter("task_end before task_start"));
-            }
+        if let (Some(task_start), Some(task_end)) = (task_start, task_end)
+            && task_end < task_start
+        {
+            return Err(Error::InvalidParameter("task_end before task_start"));
         }
 
         if time_precision.as_seconds() == 0 {

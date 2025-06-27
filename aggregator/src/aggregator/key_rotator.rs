@@ -270,23 +270,22 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                 let latest_pending_key = pending_keypairs.front();
                 let latest_active_key = active_keypairs.front();
 
-                if let Some(latest_pending_key) = latest_pending_key {
-                    if duration_since(&self.clock, latest_pending_key.last_state_change_at())
+                if let Some(latest_pending_key) = latest_pending_key
+                    && duration_since(&self.clock, latest_pending_key.last_state_change_at())
                         > self.config.pending_duration
-                    {
-                        ops.push(HpkeOp::Update(
-                            *latest_pending_key.id(),
-                            HpkeKeyState::Active,
-                            "ready for promotion",
-                        ));
+                {
+                    ops.push(HpkeOp::Update(
+                        *latest_pending_key.id(),
+                        HpkeKeyState::Active,
+                        "ready for promotion",
+                    ));
 
-                        if let Some(latest_active_key) = latest_active_key {
-                            ops.push(HpkeOp::Update(
-                                *latest_active_key.id(),
-                                HpkeKeyState::Expired,
-                                "pending key ready",
-                            ));
-                        }
+                    if let Some(latest_active_key) = latest_active_key {
+                        ops.push(HpkeOp::Update(
+                            *latest_active_key.id(),
+                            HpkeKeyState::Expired,
+                            "pending key ready",
+                        ));
                     }
                 } else if latest_active_key.is_some_and(|keypair| {
                     duration_since(&self.clock, keypair.last_state_change_at())

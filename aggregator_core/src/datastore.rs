@@ -438,10 +438,10 @@ fn check_error<T>(
     retry: &AtomicBool,
     rslt: Result<T, tokio_postgres::Error>,
 ) -> Result<T, tokio_postgres::Error> {
-    if let Err(err) = &rslt {
-        if is_retryable_error(err) {
-            retry.store(true, Ordering::Relaxed);
-        }
+    if let Err(err) = &rslt
+        && is_retryable_error(err)
+    {
+        retry.store(true, Ordering::Relaxed);
     }
     rslt
 }

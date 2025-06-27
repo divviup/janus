@@ -259,10 +259,10 @@ impl ConnExt for Conn {
 /// environment variable `GIT_REVISION`. Returns `"unknown"` instead if neither is available.
 pub fn git_revision() -> &'static str {
     let mut git_revision: &'static str = git_version!(fallback = "unknown");
-    if git_revision == "unknown" {
-        if let Some(value) = option_env!("GIT_REVISION") {
-            git_revision = value;
-        }
+    if let Some(value) = option_env!("GIT_REVISION")
+        && git_revision == "unknown"
+    {
+        git_revision = value;
     }
     git_revision
 }

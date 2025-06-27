@@ -23,20 +23,18 @@ impl HttpErrorResponse {
     pub async fn from_response(response: Response) -> Self {
         let status = response.status();
 
-        if let Some(content_type) = response.headers().get(CONTENT_TYPE) {
-            if let Ok(content_type_str) = content_type.to_str() {
-                if let Ok(mime) = content_type_str.parse::<mime::Mime>() {
-                    if mime.essence_str() == PROBLEM_JSON_MEDIA_TYPE {
-                        match response.json::<HttpApiProblem>().await {
-                            Ok(mut problem) => {
-                                problem.status = Some(status);
-                                // Unwrap safety: the conversion always succeeds if the status is populated.
-                                return problem.try_into().unwrap();
-                            }
-                            Err(error) => warn!(%error, "Failed to parse problem details"),
-                        }
-                    }
+        if let Some(content_type) = response.headers().get(CONTENT_TYPE)
+            && let Ok(content_type_str) = content_type.to_str()
+            && let Ok(mime) = content_type_str.parse::<mime::Mime>()
+            && mime.essence_str() == PROBLEM_JSON_MEDIA_TYPE
+        {
+            match response.json::<HttpApiProblem>().await {
+                Ok(mut problem) => {
+                    problem.status = Some(status);
+                    // Unwrap safety: the conversion always succeeds if the status is populated.
+                    return problem.try_into().unwrap();
                 }
+                Err(error) => warn!(%error, "Failed to parse problem details"),
             }
         }
         status.into()
