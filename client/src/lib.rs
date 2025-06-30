@@ -49,7 +49,7 @@ use http::{header::CONTENT_TYPE, StatusCode};
 use itertools::Itertools;
 use janus_core::{
     hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
-    http::HttpErrorResponse,
+    http::{cached_resource::CachedResource, HttpErrorResponse},
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
@@ -60,14 +60,12 @@ use janus_messages::{
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
-use prio::{
-    codec::{Decode, Encode},
-    vdaf,
-};
+use prio::{codec::Encode, vdaf};
 use rand::random;
 #[cfg(feature = "ohttp")]
 use std::io::Cursor;
-use std::{convert::Infallible, fmt::Debug, time::SystemTimeError};
+use std::{convert::Infallible, fmt::Debug, sync::Arc, time::SystemTimeError};
+use tokio::{sync::Mutex, try_join};
 use url::Url;
 
 #[cfg(test)]
@@ -89,6 +87,8 @@ pub enum Error {
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
+    #[error("Cached resource error: {0}")]
+    CachedResource(#[from] janus_core::http::cached_resource::Error),
     #[error("unexpected server response {0}")]
     UnexpectedServerResponse(&'static str),
     #[error("time conversion error: {0}")]
@@ -194,56 +194,6 @@ impl ClientParameters {
             .leader_aggregator_endpoint
             .join(&format!("tasks/{task_id}/reports"))?)
     }
-}
-
-/// Fetches HPKE configuration from the specified aggregator using the aggregator endpoints in the
-/// provided [`ClientParameters`].
-#[tracing::instrument(err)]
-async fn aggregator_hpke_config(
-    hpke_config: Option<HpkeConfig>,
-    client_parameters: &ClientParameters,
-    aggregator_role: &Role,
-    http_client: &reqwest::Client,
-) -> Result<HpkeConfig, Error> {
-    if let Some(hpke_config) = hpke_config {
-        return Ok(hpke_config);
-    }
-
-    let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
-    request_url.set_query(Some(&format!("task_id={}", client_parameters.task_id)));
-    let hpke_config_response = retry_http_request(
-        client_parameters.http_request_retry_parameters.clone(),
-        || async { http_client.get(request_url.clone()).send().await },
-    )
-    .await?;
-    let status = hpke_config_response.status();
-    if !status.is_success() {
-        return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
-    }
-
-    let hpke_configs = HpkeConfigList::get_decoded(hpke_config_response.body())?;
-
-    if hpke_configs.hpke_configs().is_empty() {
-        return Err(Error::UnexpectedServerResponse(
-            "aggregator provided empty HpkeConfigList",
-        ));
-    }
-
-    // Take the first supported HpkeConfig from the list. Return the first error otherwise.
-    let mut first_error = None;
-    for config in hpke_configs.hpke_configs() {
-        match is_hpke_config_supported(config) {
-            Ok(()) => return Ok(config.clone()),
-            Err(e) => {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-            }
-        }
-    }
-    // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
-    // have seen at least one error.
-    Err(first_error.unwrap().into())
 }
 
 /// Fetches OHTTP HPKE key configurations for the provided OHTTP config.
@@ -354,20 +304,15 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         } else {
             default_http_client()?
         };
-        // TODO(#3159): store/fetch HPKE configurations in a cache-control aware persistent cache
+
+        let fetch_hpke_config = async |hpke_config, role| match hpke_config {
+            Some(hpke_config) => Ok(HpkeConfiguration::new_static(hpke_config)),
+            None => HpkeConfiguration::new(&self.parameters, role, &http_client).await,
+        };
+
         let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
-            aggregator_hpke_config(
-                self.leader_hpke_config,
-                &self.parameters,
-                &Role::Leader,
-                &http_client
-            ),
-            aggregator_hpke_config(
-                self.helper_hpke_config,
-                &self.parameters,
-                &Role::Helper,
-                &http_client
-            ),
+            fetch_hpke_config(self.leader_hpke_config, &Role::Leader),
+            fetch_hpke_config(self.helper_hpke_config, &Role::Helper),
         )?;
 
         #[cfg(feature = "ohttp")]
@@ -389,8 +334,8 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
             parameters: self.parameters,
             vdaf: self.vdaf,
             http_client,
-            leader_hpke_config,
-            helper_hpke_config,
+            leader_hpke_config: Arc::new(Mutex::new(leader_hpke_config)),
+            helper_hpke_config: Arc::new(Mutex::new(helper_hpke_config)),
         })
     }
 
@@ -420,8 +365,12 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
             #[cfg(feature = "ohttp")]
             ohttp_config: None,
             http_client,
-            leader_hpke_config,
-            helper_hpke_config,
+            leader_hpke_config: Arc::new(Mutex::new(HpkeConfiguration::new_static(
+                leader_hpke_config,
+            ))),
+            helper_hpke_config: Arc::new(Mutex::new(HpkeConfiguration::new_static(
+                helper_hpke_config,
+            ))),
         })
     }
 
@@ -501,8 +450,8 @@ pub struct Client<V: vdaf::Client<16>> {
     #[cfg(feature = "ohttp")]
     ohttp_config: Option<(OhttpConfig, Vec<KeyConfig>)>,
     http_client: reqwest::Client,
-    leader_hpke_config: HpkeConfig,
-    helper_hpke_config: HpkeConfig,
+    leader_hpke_config: Arc<Mutex<HpkeConfiguration>>,
+    helper_hpke_config: Arc<Mutex<HpkeConfiguration>>,
 }
 
 impl<V: vdaf::Client<16>> Client<V> {
@@ -575,7 +524,13 @@ impl<V: vdaf::Client<16>> Client<V> {
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_messages::Report`] to be
     /// uploaded.
-    fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
+    fn prepare_report(
+        &self,
+        measurement: &V::Measurement,
+        time: &Time,
+        leader_hpke_config: &HpkeConfig,
+        helper_hpke_config: &HpkeConfig,
+    ) -> Result<Report, Error> {
         let report_id: ReportId = random();
         let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
@@ -587,8 +542,8 @@ impl<V: vdaf::Client<16>> Client<V> {
         let encoded_public_share = public_share.get_encoded()?;
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
-            (&self.leader_hpke_config, &Role::Leader),
-            (&self.helper_hpke_config, &Role::Helper),
+            (leader_hpke_config, &Role::Leader),
+            (helper_hpke_config, &Role::Helper),
         ]
         .into_iter()
         .zip(input_shares)
@@ -669,8 +624,18 @@ impl<V: vdaf::Client<16>> Client<V> {
         T: TryInto<Time> + Debug,
         Error: From<<T as TryInto<Time>>::Error>,
     {
+        let mut leader_hpke_config = self.leader_hpke_config.lock().await;
+        let mut helper_hpke_config = self.helper_hpke_config.lock().await;
+        let (leader_hpke_config, helper_hpke_config) =
+            try_join!(leader_hpke_config.get(), helper_hpke_config.get())?;
+
         let report = self
-            .prepare_report(measurement, &time.try_into()?)?
+            .prepare_report(
+                measurement,
+                &time.try_into()?,
+                leader_hpke_config,
+                helper_hpke_config,
+            )?
             .get_encoded()?;
         let upload_endpoint = self
             .parameters
@@ -797,5 +762,64 @@ impl<V: vdaf::Client<16>> Client<V> {
         };
 
         Ok(status)
+    }
+}
+
+/// An HPKE configuration advertised by an aggregator.
+#[derive(Debug, Clone)]
+pub(crate) struct HpkeConfiguration {
+    hpke_config_list: CachedResource<HpkeConfigList>,
+}
+
+impl HpkeConfiguration {
+    pub(crate) async fn new(
+        client_parameters: &ClientParameters,
+        aggregator_role: &Role,
+        http_client: &reqwest::Client,
+    ) -> Result<Self, Error> {
+        let mut hpke_config_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
+        hpke_config_url.set_query(Some(&format!("task_id={}", client_parameters.task_id)));
+
+        Ok(Self {
+            hpke_config_list: CachedResource::new(
+                hpke_config_url,
+                HpkeConfigList::MEDIA_TYPE,
+                http_client,
+                client_parameters.http_request_retry_parameters.clone(),
+            )
+            .await?,
+        })
+    }
+
+    pub(crate) fn new_static(hpke_configuration: HpkeConfig) -> Self {
+        Self {
+            hpke_config_list: CachedResource::Static(HpkeConfigList::new(vec![hpke_configuration])),
+        }
+    }
+
+    pub(crate) async fn get(&mut self) -> Result<&HpkeConfig, Error> {
+        let hpke_config_list = self.hpke_config_list.resource().await?;
+
+        if hpke_config_list.hpke_configs().is_empty() {
+            return Err(Error::UnexpectedServerResponse(
+                "aggregator provided empty HpkeConfigList",
+            ));
+        }
+
+        // Take the first supported HpkeConfig from the list. Return the first error otherwise.
+        let mut first_error = None;
+        for config in hpke_config_list.hpke_configs() {
+            match is_hpke_config_supported(config) {
+                Ok(()) => return Ok(config),
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+            }
+        }
+        // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
+        // have seen at least one error.
+        Err(first_error.unwrap().into())
     }
 }
