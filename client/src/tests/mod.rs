@@ -1,4 +1,4 @@
-use crate::{aggregator_hpke_config, default_http_client, Client, ClientParameters, Error};
+use crate::{default_http_client, Client, ClientParameters, Error, HpkeConfiguration};
 use assert_matches::assert_matches;
 use hex_literal::hex;
 use http::{header::CONTENT_TYPE, StatusCode};
@@ -186,7 +186,12 @@ async fn report_timestamp() {
     client.parameters.time_precision = Duration::from_seconds(100);
     assert_eq!(
         client
-            .prepare_report(&true, &Time::from_seconds_since_epoch(101))
+            .prepare_report(
+                &true,
+                &Time::from_seconds_since_epoch(101),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
+            )
             .unwrap()
             .metadata()
             .time(),
@@ -195,7 +200,12 @@ async fn report_timestamp() {
 
     assert_eq!(
         client
-            .prepare_report(&true, &Time::from_seconds_since_epoch(5200))
+            .prepare_report(
+                &true,
+                &Time::from_seconds_since_epoch(5200),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
+            )
             .unwrap()
             .metadata()
             .time(),
@@ -204,7 +214,12 @@ async fn report_timestamp() {
 
     assert_eq!(
         client
-            .prepare_report(&true, &Time::from_seconds_since_epoch(9814))
+            .prepare_report(
+                &true,
+                &Time::from_seconds_since_epoch(9814),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
+            )
             .unwrap()
             .metadata()
             .time(),
@@ -213,56 +228,9 @@ async fn report_timestamp() {
 }
 
 #[tokio::test]
-async fn aggregator_hpke() {
-    install_test_trace_subscriber();
-    let mut server = mockito::Server::new_async().await;
-    let server_url = Url::parse(&server.url()).unwrap();
-    let http_client = &default_http_client().unwrap();
-    let mut client_parameters = ClientParameters::new(
-        random(),
-        server_url.clone(),
-        server_url,
-        Duration::from_seconds(1),
-    );
-    client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
-
-    let keypair = HpkeKeypair::test();
-    let hpke_config_list = HpkeConfigList::new(Vec::from([keypair.config().clone()]));
-    let mock = server
-        .mock(
-            "GET",
-            format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
-        )
-        .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
-        .with_body(hpke_config_list.get_encoded().unwrap())
-        .expect(1)
-        .create_async()
-        .await;
-
-    let got_hpke_config =
-        aggregator_hpke_config(None, &client_parameters, &Role::Leader, http_client)
-            .await
-            .unwrap();
-    assert_eq!(&got_hpke_config, keypair.config());
-
-    // Fetching HPKE config again should not hit the mock server
-    let got_hpke_config = aggregator_hpke_config(
-        Some(got_hpke_config),
-        &client_parameters,
-        &Role::Leader,
-        http_client,
-    )
-    .await
-    .unwrap();
-    assert_eq!(&got_hpke_config, keypair.config());
-
-    mock.assert_async().await;
-}
-
-#[tokio::test]
 async fn unsupported_hpke_algorithms() {
     install_test_trace_subscriber();
+
     let mut server = mockito::Server::new_async().await;
     let server_url = Url::parse(&server.url()).unwrap();
     let http_client = &default_http_client().unwrap();
@@ -308,11 +276,10 @@ async fn unsupported_hpke_algorithms() {
         .create_async()
         .await;
 
-    let got_hpke_config =
-        aggregator_hpke_config(None, &client_parameters, &Role::Leader, http_client)
-            .await
-            .unwrap();
-    assert_eq!(got_hpke_config, good_hpke_config);
+    let mut hpke_config = HpkeConfiguration::new(&client_parameters, &Role::Leader, http_client)
+        .await
+        .unwrap();
+    assert_eq!(hpke_config.get().await.unwrap(), &good_hpke_config);
 
     mock.assert_async().await;
 }
