@@ -9,6 +9,10 @@ use std::fmt::{self, Display, Formatter};
 use tracing::warn;
 use trillium::{Conn, HeaderValue};
 
+pub mod cached_resource;
+#[cfg(test)]
+mod cached_resource_tests;
+
 /// This captures an HTTP status code and parsed problem details document from an HTTP response.
 #[derive(Debug)]
 pub struct HttpErrorResponse {

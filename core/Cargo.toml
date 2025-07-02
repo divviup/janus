@@ -31,6 +31,7 @@ test-util = [
     "prio/test-util",
     "tokio/macros",
     "tokio/sync",
+    "tokio/test-util",
 ]
 
 [dependencies]
