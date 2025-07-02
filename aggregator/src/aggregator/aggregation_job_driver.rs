@@ -42,7 +42,7 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
+    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, MediaType,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
     ReportError, ReportMetadata, ReportShare, Role,
     batch_mode::{LeaderSelected, TimeInterval},

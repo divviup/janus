@@ -201,7 +201,9 @@ pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use assert_matches::assert_matches;
     use janus_aggregator_core::task::test_util::Task;
-    use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
+    use janus_messages::{
+        AggregationJobContinueReq, AggregationJobId, AggregationJobResp, MediaType,
+    };
     use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};

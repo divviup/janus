@@ -24,7 +24,7 @@ use janus_core::{
     vdaf_dispatch,
 };
 use janus_messages::{
-    AggregateShare, AggregateShareReq, BatchSelector,
+    AggregateShare, AggregateShareReq, BatchSelector, MediaType,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use opentelemetry::{
@@ -846,8 +846,8 @@ mod tests {
     };
     use janus_messages::{
         AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, Query, ReportIdChecksum, batch_mode::TimeInterval,
-        problem_type::DapProblemType,
+        HpkeCiphertext, HpkeConfigId, Interval, MediaType, Query, ReportIdChecksum,
+        batch_mode::TimeInterval, problem_type::DapProblemType,
     };
     use prio::{
         codec::{Decode, Encode},

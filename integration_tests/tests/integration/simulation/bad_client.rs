@@ -20,7 +20,7 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_application_context, vdaf_dp_strategies},
 };
 use janus_messages::{
-    HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
+    HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
     ReportMetadata, Role, TaskId, Time,
 };
 use prio::{

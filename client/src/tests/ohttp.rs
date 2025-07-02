@@ -1,5 +1,3 @@
-use std::io::Cursor;
-
 use crate::{
     Client, Error, OHTTP_KEYS_MEDIA_TYPE, OHTTP_REQUEST_MEDIA_TYPE, OHTTP_RESPONSE_MEDIA_TYPE,
     OhttpConfig,
@@ -12,7 +10,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Duration, Report};
+use janus_messages::{Duration, MediaType, Report};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},
@@ -22,6 +20,7 @@ use prio::{
     vdaf::prio3::{Prio3, Prio3Count},
 };
 use rand::random;
+use std::io::Cursor;
 use url::Url;
 
 async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count>, Error> {

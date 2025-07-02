@@ -22,8 +22,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
     AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, HpkeConfigList, Report, TaskId, batch_mode::TimeInterval,
-    codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
+    CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report, TaskId,
+    batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{

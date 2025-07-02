@@ -36,7 +36,7 @@ use janus_core::{
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
+    AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval, MediaType,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
     ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
     batch_mode::{self, LeaderSelected},

@@ -20,7 +20,7 @@ use janus_core::{
     test_util::runtime::TestRuntime,
     vdaf::VdafInstance,
 };
-use janus_messages::{HpkeConfigId, HpkeConfigList, Role};
+use janus_messages::{HpkeConfigId, HpkeConfigList, MediaType, Role};
 use prio::codec::Decode as _;
 use std::{collections::HashMap, sync::Arc};
 use trillium::{KnownHeaderName, Status};
