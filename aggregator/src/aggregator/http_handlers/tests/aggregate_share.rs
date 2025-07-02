@@ -20,7 +20,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq, BatchSelector,
-    Duration, Interval, ReportIdChecksum, Role, Time,
+    Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
     batch_mode::{self, TimeInterval},
 };
 use prio::{

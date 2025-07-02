@@ -41,7 +41,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    Duration, Extension, ExtensionType, Interval, PartialBatchSelector, PrepareContinue,
+    Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, PrepareContinue,
     PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, Time,
     batch_mode::{LeaderSelected, TimeInterval},

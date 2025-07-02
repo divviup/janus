@@ -28,8 +28,9 @@ use janus_core::{
 };
 use janus_messages::{
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Extension, ExtensionType,
-    HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector, PrepareInit,
-    PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+    HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, MediaType, PartialBatchSelector,
+    PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
+    Role, Time,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::{codec::Encode, vdaf::dummy};

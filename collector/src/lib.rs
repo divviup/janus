@@ -80,7 +80,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    PartialBatchSelector, Query, Role, TaskId,
+    MediaType, PartialBatchSelector, Query, Role, TaskId,
     batch_mode::{BatchMode, TimeInterval},
 };
 use mime::Mime;
@@ -784,8 +784,8 @@ mod tests {
     };
     use janus_messages::{
         AggregateShareAad, BatchId, BatchSelector, CollectionJobId, CollectionJobReq,
-        CollectionJobResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector, Query, Role,
-        TaskId, Time,
+        CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
+        Query, Role, TaskId, Time,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
     };

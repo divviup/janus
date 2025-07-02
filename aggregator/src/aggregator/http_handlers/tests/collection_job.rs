@@ -14,7 +14,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, Interval, Query, Role, Time, batch_mode::TimeInterval,
+    Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
 };
 use prio::{
     codec::{Decode, Encode},

@@ -456,8 +456,8 @@ pub mod test_util {
         time::{Clock, MockClock, TimeExt as _},
     };
     use janus_messages::{
-        AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, PrepareInit,
-        ReportMetadata, ReportShare,
+        AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, MediaType,
+        PrepareInit, ReportMetadata, ReportShare,
         batch_mode::{self},
     };
     use prio::{
@@ -637,8 +637,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
-        ExtensionType, PartialBatchSelector, PrepareResp, PrepareStepResult, ReportError,
-        ReportMetadata, batch_mode::TimeInterval,
+        ExtensionType, MediaType, PartialBatchSelector, PrepareResp, PrepareStepResult,
+        ReportError, ReportMetadata, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,

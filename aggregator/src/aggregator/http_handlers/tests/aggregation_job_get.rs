@@ -17,8 +17,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportMetadata, batch_mode::TimeInterval,
+    AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, MediaType, PrepareInit,
+    PrepareResp, PrepareStepResult, ReportMetadata, batch_mode::TimeInterval,
 };
 use prio::vdaf::dummy;
 use rand::random;

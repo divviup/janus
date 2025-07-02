@@ -29,7 +29,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, Interval, Query, Role, Time,
+    CollectionJobReq, CollectionJobResp, Interval, MediaType, Query, Role, Time,
     batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
 };
 use prio::{

@@ -22,7 +22,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare, Report,
+    Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType, PlaintextInputShare, Report,
     ReportMetadata, Role, TaskId,
 };
 use opentelemetry::Key;

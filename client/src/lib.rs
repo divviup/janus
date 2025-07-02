@@ -58,8 +58,8 @@ use janus_core::{
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
-    Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, TaskId, Time,
+    Duration, HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report,
+    ReportId, ReportMetadata, Role, TaskId, Time,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};

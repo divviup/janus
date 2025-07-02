@@ -38,6 +38,12 @@ pub mod taskprov;
 #[cfg(test)]
 mod tests;
 
+/// Messages which have an HTTP media type associated with them.
+pub trait MediaType: Encode {
+    /// The HTTP media type used with the encoded representation of this object.
+    const MEDIA_TYPE: &'static str;
+}
+
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -1220,9 +1226,6 @@ impl Decode for HpkeConfig {
 pub struct HpkeConfigList(Vec<HpkeConfig>);
 
 impl HpkeConfigList {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-hpke-config-list";
-
     /// Construct an HPKE configuration list.
     pub fn new(hpke_configs: Vec<HpkeConfig>) -> Self {
         Self(hpke_configs)
@@ -1231,6 +1234,10 @@ impl HpkeConfigList {
     pub fn hpke_configs(&self) -> &[HpkeConfig] {
         &self.0
     }
+}
+
+impl MediaType for HpkeConfigList {
+    const MEDIA_TYPE: &'static str = "application/dap-hpke-config-list";
 }
 
 impl Encode for HpkeConfigList {
@@ -1383,9 +1390,6 @@ pub struct Report {
 }
 
 impl Report {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-report";
-
     /// Construct a report from its components.
     pub fn new(
         metadata: ReportMetadata,
@@ -1420,6 +1424,10 @@ impl Report {
     pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
         &self.helper_encrypted_input_share
     }
+}
+
+impl MediaType for Report {
+    const MEDIA_TYPE: &'static str = "application/dap-report";
 }
 
 impl Encode for Report {
@@ -1534,9 +1542,6 @@ pub struct CollectionJobReq<B: BatchMode> {
 }
 
 impl<B: BatchMode> CollectionJobReq<B> {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-collection-job-req";
-
     /// Constructs a new collect request from its components.
     pub fn new(query: Query<B>, aggregation_parameter: Vec<u8>) -> Self {
         Self {
@@ -1554,6 +1559,10 @@ impl<B: BatchMode> CollectionJobReq<B> {
     pub fn aggregation_parameter(&self) -> &[u8] {
         &self.aggregation_parameter
     }
+}
+
+impl<B: BatchMode> MediaType for CollectionJobReq<B> {
+    const MEDIA_TYPE: &'static str = "application/dap-collection-job-req";
 }
 
 impl<B: BatchMode> Encode for CollectionJobReq<B> {
@@ -1715,9 +1724,8 @@ pub enum CollectionJobResp<B: BatchMode> {
     },
 }
 
-impl<B: BatchMode> CollectionJobResp<B> {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-collection-job-resp";
+impl<B: BatchMode> MediaType for CollectionJobResp<B> {
+    const MEDIA_TYPE: &'static str = "application/dap-collection-job-resp";
 }
 
 impl<B: BatchMode> Encode for CollectionJobResp<B> {
@@ -2302,9 +2310,6 @@ pub struct AggregationJobInitializeReq<B: BatchMode> {
 }
 
 impl<B: BatchMode> AggregationJobInitializeReq<B> {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-init-req";
-
     /// Constructs an aggregate initialization request from its components.
     pub fn new(
         aggregation_parameter: Vec<u8>,
@@ -2333,6 +2338,10 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
     pub fn prepare_inits(&self) -> &[PrepareInit] {
         &self.prepare_inits
     }
+}
+
+impl<B: BatchMode> MediaType for AggregationJobInitializeReq<B> {
+    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-init-req";
 }
 
 impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
@@ -2432,9 +2441,6 @@ pub struct AggregationJobContinueReq {
 }
 
 impl AggregationJobContinueReq {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
-
     /// Constructs a new aggregate continuation response from its components.
     pub fn new(step: AggregationJobStep, prepare_continues: Vec<PrepareContinue>) -> Self {
         Self {
@@ -2453,6 +2459,10 @@ impl AggregationJobContinueReq {
     pub fn prepare_continues(&self) -> &[PrepareContinue] {
         &self.prepare_continues
     }
+}
+
+impl MediaType for AggregationJobContinueReq {
+    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
 }
 
 impl Encode for AggregationJobContinueReq {
@@ -2487,9 +2497,9 @@ pub enum AggregationJobResp {
     Finished { prepare_resps: Vec<PrepareResp> },
 }
 
-impl AggregationJobResp {
+impl MediaType for AggregationJobResp {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
+    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
 }
 
 impl Encode for AggregationJobResp {
@@ -2618,9 +2628,6 @@ pub struct AggregateShareReq<B: BatchMode> {
 }
 
 impl<B: BatchMode> AggregateShareReq<B> {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-req";
-
     /// Constructs a new aggregate share request from its components.
     pub fn new(
         batch_selector: BatchSelector<B>,
@@ -2655,6 +2662,10 @@ impl<B: BatchMode> AggregateShareReq<B> {
     pub fn checksum(&self) -> &ReportIdChecksum {
         &self.checksum
     }
+}
+
+impl<B: BatchMode> MediaType for AggregateShareReq<B> {
+    const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-req";
 }
 
 impl<B: BatchMode> Encode for AggregateShareReq<B> {
@@ -2700,9 +2711,6 @@ pub struct AggregateShare {
 }
 
 impl AggregateShare {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-share";
-
     /// Constructs a new aggregate share response from its components.
     pub fn new(encrypted_aggregate_share: HpkeCiphertext) -> Self {
         Self {
@@ -2714,6 +2722,10 @@ impl AggregateShare {
     pub fn encrypted_aggregate_share(&self) -> &HpkeCiphertext {
         &self.encrypted_aggregate_share
     }
+}
+
+impl MediaType for AggregateShare {
+    const MEDIA_TYPE: &'static str = "application/dap-aggregate-share";
 }
 
 impl Encode for AggregateShare {
