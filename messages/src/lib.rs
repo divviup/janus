@@ -39,7 +39,7 @@ pub mod taskprov;
 mod tests;
 
 /// Messages which have an HTTP media type associated with them.
-pub trait MediaType: Encode {
+pub trait MediaType {
     /// The HTTP media type used with the encoded representation of this object.
     const MEDIA_TYPE: &'static str;
 }

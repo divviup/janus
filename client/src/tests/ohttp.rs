@@ -6,7 +6,9 @@ use assert_matches::assert_matches;
 use bhttp::{Message, Mode, StatusCode};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use janus_core::{
-    hpke::HpkeKeypair, http::HttpErrorResponse, initialize_rustls,
+    hpke::HpkeKeypair,
+    http::{HttpErrorResponse, cached_resource},
+    initialize_rustls,
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
@@ -163,7 +165,10 @@ async fn ohttp_keyconfigs_http_error() {
         .await;
 
     let error = build_client(&server).await.unwrap_err();
-    assert_matches!(error, Error::Http(_));
+    assert_matches!(
+        error,
+        Error::CachedResource(cached_resource::Error::Http(_))
+    );
 
     mocked_ohttp_keys.assert_async().await;
 }
@@ -187,7 +192,10 @@ async fn ohttp_keyconfigs_malformed_response_body() {
 
     let error = build_client(&server).await.unwrap_err();
 
-    assert_matches!(error, Error::Ohttp(_));
+    assert_matches!(
+        error,
+        Error::CachedResource(cached_resource::Error::Decode(_))
+    );
 
     mocked_ohttp_keys.assert_async().await;
 }
@@ -218,7 +226,10 @@ async fn ohttp_keyconfigs_wrong_content_type() {
 
     let error = build_client(&server).await.unwrap_err();
 
-    assert_matches!(error, Error::UnexpectedServerResponse(_));
+    assert_matches!(
+        error,
+        Error::CachedResource(cached_resource::Error::UnexpectedServerResponse(_))
+    );
 
     mocked_ohttp_keys.assert_async().await;
 }
