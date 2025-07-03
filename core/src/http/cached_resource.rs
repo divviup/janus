@@ -165,9 +165,10 @@ pub(crate) fn expires_at<'a, I: IntoIterator<Item = &'a HeaderValue>>(
         }
         .to_lowercase();
 
-        // If we encounter no-cache, then regardless of other directives, never cache the resource.
+        // If we encounter no-cache, then regardless of other directives, never cache the resource
+        // by indicating it expires now.
         if directive == "no-cache" {
-            return None;
+            return Some(Instant::now());
         }
 
         if let Some(max_age) = directive.strip_prefix("max-age=") {
