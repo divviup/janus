@@ -49,7 +49,7 @@ use http::{StatusCode, header::CONTENT_TYPE};
 use itertools::Itertools;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label, is_hpke_config_supported},
-    http::HttpErrorResponse,
+    http::{HttpErrorResponse, cached_resource::CachedResource},
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
@@ -63,14 +63,14 @@ use janus_messages::{
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
-use prio::{
-    codec::{Decode, Encode},
-    vdaf,
-};
+#[cfg(feature = "ohttp")]
+use ohttp_keys::OhttpKeys;
+use prio::{codec::Encode, vdaf};
 use rand::random;
 #[cfg(feature = "ohttp")]
 use std::io::Cursor;
-use std::{convert::Infallible, fmt::Debug, time::SystemTimeError};
+use std::{convert::Infallible, fmt::Debug, sync::Arc, time::SystemTimeError};
+use tokio::sync::Mutex;
 use url::Url;
 
 #[cfg(test)]
@@ -92,6 +92,8 @@ pub enum Error {
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
+    #[error("Cached resource error: {0}")]
+    CachedResource(#[from] janus_core::http::cached_resource::Error),
     #[error("unexpected server response {0}")]
     UnexpectedServerResponse(&'static str),
     #[error("time conversion error: {0}")]
@@ -199,93 +201,6 @@ impl ClientParameters {
     }
 }
 
-/// Fetches HPKE configuration from the specified aggregator using the aggregator endpoints in the
-/// provided [`ClientParameters`].
-#[tracing::instrument(err)]
-async fn aggregator_hpke_config(
-    hpke_config: Option<HpkeConfig>,
-    client_parameters: &ClientParameters,
-    aggregator_role: &Role,
-    http_client: &reqwest::Client,
-) -> Result<HpkeConfig, Error> {
-    if let Some(hpke_config) = hpke_config {
-        return Ok(hpke_config);
-    }
-
-    let request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
-    let hpke_config_response = retry_http_request(
-        client_parameters.http_request_retry_parameters.build(),
-        || async { http_client.get(request_url.clone()).send().await },
-    )
-    .await?;
-    let status = hpke_config_response.status();
-    if !status.is_success() {
-        return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
-    }
-
-    let hpke_configs = HpkeConfigList::get_decoded(hpke_config_response.body())?;
-
-    if hpke_configs.hpke_configs().is_empty() {
-        return Err(Error::UnexpectedServerResponse(
-            "aggregator provided empty HpkeConfigList",
-        ));
-    }
-
-    // Take the first supported HpkeConfig from the list. Return the first error otherwise.
-    let mut first_error = None;
-    for config in hpke_configs.hpke_configs() {
-        match is_hpke_config_supported(config) {
-            Ok(()) => return Ok(config.clone()),
-            Err(e) => {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-            }
-        }
-    }
-    // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
-    // have seen at least one error.
-    Err(first_error.unwrap().into())
-}
-
-/// Fetches OHTTP HPKE key configurations for the provided OHTTP config.
-#[tracing::instrument(err)]
-#[cfg(feature = "ohttp")]
-async fn ohttp_key_configs(
-    http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
-    ohttp_config: &OhttpConfig,
-    http_client: &reqwest::Client,
-) -> Result<Vec<KeyConfig>, Error> {
-    // TODO(#3159): store/fetch OHTTP key configs in a cache-control aware persistent cache.
-    let keys_response = retry_http_request(http_request_retry_parameters.build(), || async {
-        http_client
-            .get(ohttp_config.key_configs.clone())
-            .header(ACCEPT, OHTTP_KEYS_MEDIA_TYPE)
-            .send()
-            .await
-    })
-    .await?;
-
-    if !keys_response.status().is_success() {
-        return Err(Error::Http(Box::new(HttpErrorResponse::from(
-            keys_response.status(),
-        ))));
-    }
-
-    if keys_response
-        .headers()
-        .get(CONTENT_TYPE)
-        .map(HeaderValue::as_bytes)
-        != Some(OHTTP_KEYS_MEDIA_TYPE.as_bytes())
-    {
-        return Err(Error::UnexpectedServerResponse(
-            "content type wrong for OHTTP keys",
-        ));
-    }
-
-    Ok(KeyConfig::decode_list(keys_response.body().as_ref())?)
-}
-
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
@@ -356,31 +271,22 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         } else {
             default_http_client()?
         };
-        // TODO(#3159): store/fetch HPKE configurations in a cache-control aware persistent cache
+
+        let fetch_hpke_config = async |hpke_config, role| match hpke_config {
+            Some(hpke_config) => Ok(HpkeConfiguration::new_static(hpke_config)),
+            None => HpkeConfiguration::new(&self.parameters, role, http_client.clone()).await,
+        };
+
         let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
-            aggregator_hpke_config(
-                self.leader_hpke_config,
-                &self.parameters,
-                &Role::Leader,
-                &http_client
-            ),
-            aggregator_hpke_config(
-                self.helper_hpke_config,
-                &self.parameters,
-                &Role::Helper,
-                &http_client
-            ),
+            fetch_hpke_config(self.leader_hpke_config, &Role::Leader),
+            fetch_hpke_config(self.helper_hpke_config, &Role::Helper),
         )?;
 
         #[cfg(feature = "ohttp")]
         let ohttp_config = if let Some(ohttp_config) = self.ohttp_config {
-            let key_configs = ohttp_key_configs(
-                self.parameters.http_request_retry_parameters,
-                &ohttp_config,
-                &http_client,
-            )
-            .await?;
-            Some((ohttp_config, key_configs))
+            let key_configs =
+                OhttpKeys::new(ohttp_config, &self.parameters, http_client.clone()).await?;
+            Some(Arc::new(Mutex::new(key_configs)))
         } else {
             None
         };
@@ -391,8 +297,8 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
             parameters: self.parameters,
             vdaf: self.vdaf,
             http_client,
-            leader_hpke_config,
-            helper_hpke_config,
+            leader_hpke_config: Arc::new(Mutex::new(leader_hpke_config)),
+            helper_hpke_config: Arc::new(Mutex::new(helper_hpke_config)),
         })
     }
 
@@ -422,8 +328,12 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
             #[cfg(feature = "ohttp")]
             ohttp_config: None,
             http_client,
-            leader_hpke_config,
-            helper_hpke_config,
+            leader_hpke_config: Arc::new(Mutex::new(HpkeConfiguration::new_static(
+                leader_hpke_config,
+            ))),
+            helper_hpke_config: Arc::new(Mutex::new(HpkeConfiguration::new_static(
+                helper_hpke_config,
+            ))),
         })
     }
 
@@ -504,10 +414,10 @@ pub struct Client<V: vdaf::Client<16>> {
     parameters: ClientParameters,
     vdaf: V,
     #[cfg(feature = "ohttp")]
-    ohttp_config: Option<(OhttpConfig, Vec<KeyConfig>)>,
+    ohttp_config: Option<Arc<Mutex<OhttpKeys>>>,
     http_client: reqwest::Client,
-    leader_hpke_config: HpkeConfig,
-    helper_hpke_config: HpkeConfig,
+    leader_hpke_config: Arc<Mutex<HpkeConfiguration>>,
+    helper_hpke_config: Arc<Mutex<HpkeConfiguration>>,
 }
 
 impl<V: vdaf::Client<16>> Client<V> {
@@ -580,7 +490,13 @@ impl<V: vdaf::Client<16>> Client<V> {
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_messages::Report`] to be
     /// uploaded.
-    fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
+    fn prepare_report(
+        &self,
+        measurement: &V::Measurement,
+        time: &Time,
+        leader_hpke_config: &HpkeConfig,
+        helper_hpke_config: &HpkeConfig,
+    ) -> Result<Report, Error> {
         let report_id: ReportId = random();
         let (public_share, input_shares) = self.vdaf.shard(
             &vdaf_application_context(&self.parameters.task_id),
@@ -600,8 +516,8 @@ impl<V: vdaf::Client<16>> Client<V> {
         let encoded_public_share = public_share.get_encoded()?;
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
-            (&self.leader_hpke_config, &Role::Leader),
-            (&self.helper_hpke_config, &Role::Helper),
+            (leader_hpke_config, &Role::Leader),
+            (helper_hpke_config, &Role::Helper),
         ]
         .into_iter()
         .zip(input_shares)
@@ -683,7 +599,12 @@ impl<V: vdaf::Client<16>> Client<V> {
         Error: From<<T as TryInto<Time>>::Error>,
     {
         let report = self
-            .prepare_report(measurement, &time.try_into()?)?
+            .prepare_report(
+                measurement,
+                &time.try_into()?,
+                self.leader_hpke_config.lock().await.get().await?,
+                self.helper_hpke_config.lock().await.get().await?,
+            )?
             .get_encoded()?;
         let upload_endpoint = self
             .parameters
@@ -732,12 +653,14 @@ impl<V: vdaf::Client<16>> Client<V> {
         upload_endpoint: &Url,
         request_body: &[u8],
     ) -> Result<StatusCode, Error> {
-        let (ohttp_config, key_configs) =
-            if let Some((ohttp_config, key_configs)) = &self.ohttp_config {
-                (ohttp_config, key_configs)
-            } else {
-                return self.put_report(upload_endpoint, request_body).await;
-            };
+        let ohttp_config = if let Some(ohttp_config) = &self.ohttp_config {
+            ohttp_config
+        } else {
+            return self.put_report(upload_endpoint, request_body).await;
+        };
+
+        let mut ohttp_config = ohttp_config.lock().await;
+        let key_configs = ohttp_config.get().await?;
 
         // Construct a Message representing the upload request...
         let mut message = Message::request(
@@ -810,5 +733,119 @@ impl<V: vdaf::Client<16>> Client<V> {
         };
 
         Ok(status)
+    }
+}
+
+/// An HPKE configuration advertised by an aggregator.
+#[derive(Debug, Clone)]
+pub(crate) struct HpkeConfiguration {
+    hpke_config_list: CachedResource<HpkeConfigList>,
+}
+
+impl HpkeConfiguration {
+    pub(crate) async fn new(
+        client_parameters: &ClientParameters,
+        aggregator_role: &Role,
+        http_client: reqwest::Client,
+    ) -> Result<Self, Error> {
+        let hpke_config_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
+
+        Ok(Self {
+            hpke_config_list: CachedResource::new(
+                hpke_config_url,
+                http_client,
+                client_parameters.http_request_retry_parameters,
+            )
+            .await?,
+        })
+    }
+
+    pub(crate) fn new_static(hpke_configuration: HpkeConfig) -> Self {
+        Self {
+            hpke_config_list: CachedResource::Static(HpkeConfigList::new(vec![hpke_configuration])),
+        }
+    }
+
+    pub(crate) async fn get(&mut self) -> Result<&HpkeConfig, Error> {
+        let hpke_config_list = self.hpke_config_list.resource().await?;
+
+        if hpke_config_list.hpke_configs().is_empty() {
+            return Err(Error::UnexpectedServerResponse(
+                "aggregator provided empty HpkeConfigList",
+            ));
+        }
+
+        // Take the first supported HpkeConfig from the list. Return the first error otherwise.
+        let mut first_error = None;
+        for config in hpke_config_list.hpke_configs() {
+            match is_hpke_config_supported(config) {
+                Ok(()) => return Ok(config),
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+            }
+        }
+        // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
+        // have seen at least one error.
+        Err(first_error.unwrap().into())
+    }
+}
+
+#[cfg(feature = "ohttp")]
+pub mod ohttp_keys {
+    use crate::{ClientParameters, Error, OHTTP_KEYS_MEDIA_TYPE, OhttpConfig};
+    use janus_core::http::cached_resource::{CachedResource, FromBytes};
+    use janus_messages::MediaType;
+    use ohttp::KeyConfig;
+    use url::Url;
+
+    /// Shim around a vector of OHTTP key configs so that we can implement traits on it locally.
+    #[derive(Debug, Clone)]
+    pub(crate) struct OhttpKeyConfigs(pub Vec<KeyConfig>);
+
+    impl FromBytes for OhttpKeyConfigs {
+        fn from_bytes(
+            bytes: &[u8],
+        ) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>> {
+            Ok(Self(KeyConfig::decode_list(bytes).map_err(|e| {
+                janus_core::http::cached_resource::Error::Decode(Box::new(e))
+            })?))
+        }
+    }
+
+    impl MediaType for OhttpKeyConfigs {
+        const MEDIA_TYPE: &'static str = OHTTP_KEYS_MEDIA_TYPE;
+    }
+
+    /// Key configurations advertised by an OHTTP relay.
+    #[derive(Debug, Clone)]
+    pub(crate) struct OhttpKeys {
+        pub relay: Url,
+        key_configs: CachedResource<OhttpKeyConfigs>,
+    }
+
+    impl OhttpKeys {
+        pub(crate) async fn new(
+            ohttp_config: OhttpConfig,
+            client_parameters: &ClientParameters,
+            http_client: reqwest::Client,
+        ) -> Result<Self, Error> {
+            Ok(Self {
+                relay: ohttp_config.relay,
+                key_configs: CachedResource::new(
+                    ohttp_config.key_configs,
+                    http_client,
+                    client_parameters.http_request_retry_parameters,
+                )
+                .await?,
+            })
+        }
+
+        #[tracing::instrument(err)]
+        pub(crate) async fn get(&mut self) -> Result<&[KeyConfig], Error> {
+            Ok(&self.key_configs.resource().await?.0)
+        }
     }
 }
