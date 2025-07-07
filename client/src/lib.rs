@@ -274,7 +274,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
 
         let fetch_hpke_config = async |hpke_config, role| match hpke_config {
             Some(hpke_config) => Ok(HpkeConfiguration::new_static(hpke_config)),
-            None => HpkeConfiguration::new(&self.parameters, role, &http_client).await,
+            None => HpkeConfiguration::new(&self.parameters, role, http_client.clone()).await,
         };
 
         let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
@@ -284,7 +284,8 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
 
         #[cfg(feature = "ohttp")]
         let ohttp_config = if let Some(ohttp_config) = self.ohttp_config {
-            let key_configs = OhttpKeys::new(ohttp_config, &self.parameters, &http_client).await?;
+            let key_configs =
+                OhttpKeys::new(ohttp_config, &self.parameters, http_client.clone()).await?;
             Some(Arc::new(Mutex::new(key_configs)))
         } else {
             None
@@ -601,16 +602,8 @@ impl<V: vdaf::Client<16>> Client<V> {
             .prepare_report(
                 measurement,
                 &time.try_into()?,
-                self.leader_hpke_config
-                    .lock()
-                    .await
-                    .get(&self.http_client)
-                    .await?,
-                self.helper_hpke_config
-                    .lock()
-                    .await
-                    .get(&self.http_client)
-                    .await?,
+                self.leader_hpke_config.lock().await.get().await?,
+                self.helper_hpke_config.lock().await.get().await?,
             )?
             .get_encoded()?;
         let upload_endpoint = self
@@ -667,9 +660,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         };
 
         let mut ohttp_config = ohttp_config.lock().await;
-        let key_configs = ohttp_config
-            .get(&self.http_client, &self.parameters)
-            .await?;
+        let key_configs = ohttp_config.get().await?;
 
         // Construct a Message representing the upload request...
         let mut message = Message::request(
@@ -755,7 +746,7 @@ impl HpkeConfiguration {
     pub(crate) async fn new(
         client_parameters: &ClientParameters,
         aggregator_role: &Role,
-        http_client: &reqwest::Client,
+        http_client: reqwest::Client,
     ) -> Result<Self, Error> {
         let hpke_config_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
 
@@ -775,11 +766,8 @@ impl HpkeConfiguration {
         }
     }
 
-    pub(crate) async fn get(
-        &mut self,
-        http_client: &reqwest::Client,
-    ) -> Result<&HpkeConfig, Error> {
-        let hpke_config_list = self.hpke_config_list.resource(http_client).await?;
+    pub(crate) async fn get(&mut self) -> Result<&HpkeConfig, Error> {
+        let hpke_config_list = self.hpke_config_list.resource().await?;
 
         if hpke_config_list.hpke_configs().is_empty() {
             return Err(Error::UnexpectedServerResponse(
@@ -842,7 +830,7 @@ pub mod ohttp_keys {
         pub(crate) async fn new(
             ohttp_config: OhttpConfig,
             client_parameters: &ClientParameters,
-            http_client: &reqwest::Client,
+            http_client: reqwest::Client,
         ) -> Result<Self, Error> {
             Ok(Self {
                 relay: ohttp_config.relay,
@@ -856,12 +844,8 @@ pub mod ohttp_keys {
         }
 
         #[tracing::instrument(err)]
-        pub(crate) async fn get(
-            &mut self,
-            http_client: &reqwest::Client,
-            client_parameters: &ClientParameters,
-        ) -> Result<&[KeyConfig], Error> {
-            Ok(&self.key_configs.resource(http_client).await?.0)
+        pub(crate) async fn get(&mut self) -> Result<&[KeyConfig], Error> {
+            Ok(&self.key_configs.resource().await?.0)
         }
     }
 }

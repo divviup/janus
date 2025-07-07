@@ -196,20 +196,8 @@ async fn report_timestamp() {
             .prepare_report(
                 &true,
                 &Time::from_seconds_since_epoch(101),
-                client
-                    .leader_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
-                client
-                    .helper_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
@@ -222,20 +210,8 @@ async fn report_timestamp() {
             .prepare_report(
                 &true,
                 &Time::from_seconds_since_epoch(5200),
-                client
-                    .leader_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
-                client
-                    .helper_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
@@ -248,20 +224,8 @@ async fn report_timestamp() {
             .prepare_report(
                 &true,
                 &Time::from_seconds_since_epoch(9814),
-                client
-                    .leader_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
-                client
-                    .helper_hpke_config
-                    .lock()
-                    .await
-                    .get(&client.http_client)
-                    .await
-                    .unwrap(),
+                client.leader_hpke_config.lock().await.get().await.unwrap(),
+                client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
@@ -277,7 +241,7 @@ async fn unsupported_hpke_algorithms() {
 
     let mut server = mockito::Server::new_async().await;
     let server_url = Url::parse(&server.url()).unwrap();
-    let http_client = &default_http_client().unwrap();
+    let http_client = default_http_client().unwrap();
     let mut client_parameters = ClientParameters::new(
         random(),
         server_url.clone(),
@@ -320,10 +284,7 @@ async fn unsupported_hpke_algorithms() {
     let mut hpke_config = HpkeConfiguration::new(&client_parameters, &Role::Leader, http_client)
         .await
         .unwrap();
-    assert_eq!(
-        hpke_config.get(http_client).await.unwrap(),
-        &good_hpke_config
-    );
+    assert_eq!(hpke_config.get().await.unwrap(), &good_hpke_config);
 
     mock.assert_async().await;
 }

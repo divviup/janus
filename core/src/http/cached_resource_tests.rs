@@ -64,18 +64,15 @@ async fn no_cache_control() {
         .await;
 
     // new() will fetch the resource from server. Because no cache-control is provided, resource()
-    // should refetch.
+    // should not refetch.
     let mut resource = CachedResource::<TestResource>::new(
         server_url.join("resource").unwrap(),
-        &http_client,
+        http_client,
         test_http_request_exponential_backoff(),
     )
     .await
     .unwrap();
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     mock.assert_async().await;
 }
@@ -105,25 +102,19 @@ async fn with_no_cache_directive() {
     // resource() should refetch, but only after time advances at all.
     let mut resource = CachedResource::<TestResource>::new(
         server_url.join("resource").unwrap(),
-        &http_client,
+        http_client,
         test_http_request_exponential_backoff(),
     )
     .await
     .unwrap();
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     // Should not have two matches yet.
     assert!(!mock.matched());
 
     // Advance time by the smallest increment to invalidate cached resource.
     tokio::time::advance(Duration::from_nanos(1)).await;
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     mock.assert_async().await;
 }
@@ -153,15 +144,12 @@ async fn with_max_age_directive() {
     // should not refetch.
     let mut resource = CachedResource::<TestResource>::new(
         server_url.join("resource").unwrap(),
-        &http_client,
+        http_client,
         test_http_request_exponential_backoff(),
     )
     .await
     .unwrap();
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     // Should not have two matches yet
     assert!(!mock.matched());
@@ -169,10 +157,7 @@ async fn with_max_age_directive() {
     // Advance time far enough to invalidate cache. resource() should refetch.
     tokio::time::advance(Duration::from_secs(86401)).await;
 
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     // Now we should have matched twice
     mock.assert_async().await;
@@ -203,15 +188,12 @@ async fn malformed_cache_control() {
     // be fetched only once.
     let mut resource = CachedResource::<TestResource>::new(
         server_url.join("resource").unwrap(),
-        &http_client,
+        http_client,
         test_http_request_exponential_backoff(),
     )
     .await
     .unwrap();
-    assert_eq!(
-        resource.resource(&http_client).await.unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 
     mock.assert_async().await;
 }
@@ -239,7 +221,7 @@ async fn wrong_content_type() {
 
     CachedResource::<TestResource>::new(
         server_url.join("resource").unwrap(),
-        &http_client,
+        http_client,
         test_http_request_exponential_backoff(),
     )
     .await
@@ -255,13 +237,7 @@ async fn static_resource() {
 
     // When a static resource is provided, the refresher shouldn't make any network requests
     let mut resource = CachedResource::Static(TestResource {});
-    assert_eq!(
-        resource
-            .resource(&reqwest::Client::builder().build().unwrap())
-            .await
-            .unwrap(),
-        &TestResource {}
-    );
+    assert_eq!(resource.resource().await.unwrap(), &TestResource {});
 }
 
 #[rstest::rstest]

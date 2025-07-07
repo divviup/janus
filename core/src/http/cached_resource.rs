@@ -68,24 +68,25 @@ impl<Resource: FromBytes + MediaType> CachedResource<Resource> {
     /// Fetch and cache the resource at the provided URL.
     pub async fn new(
         resource_url: Url,
-        http_client: &reqwest::Client,
+        http_client: reqwest::Client,
         http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
     ) -> Result<Self, Error> {
         let (resource, expires_at) =
-            Refresher::refresh(http_client, http_request_retry_parameters, &resource_url).await?;
+            Refresher::refresh(&http_client, http_request_retry_parameters, &resource_url).await?;
 
         Ok(Self::Refreshable(Refresher {
             resource,
             expires_at,
             resource_url,
+            http_client,
             http_request_retry_parameters,
         }))
     }
 
     /// Returns the cached resource. Refetches if it has expired.
-    pub async fn resource(&mut self, http_client: &reqwest::Client) -> Result<&Resource, Error> {
+    pub async fn resource(&mut self) -> Result<&Resource, Error> {
         match self {
-            Self::Refreshable(refresher) => refresher.resource(http_client).await,
+            Self::Refreshable(refresher) => refresher.resource().await,
             Self::Static(resource) => Ok(resource),
         }
     }
@@ -97,11 +98,12 @@ pub struct Refresher<Resource> {
     resource: Resource,
     expires_at: Option<Instant>,
     resource_url: Url,
+    http_client: reqwest::Client,
     http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
 }
 
 impl<Resource: FromBytes + MediaType> Refresher<Resource> {
-    async fn resource(&mut self, http_client: &reqwest::Client) -> Result<&Resource, Error> {
+    async fn resource(&mut self) -> Result<&Resource, Error> {
         // Refresh if we are past expiration.
         if self
             .expires_at
@@ -110,7 +112,7 @@ impl<Resource: FromBytes + MediaType> Refresher<Resource> {
             .unwrap_or(false)
         {
             (self.resource, self.expires_at) = Self::refresh(
-                http_client,
+                &self.http_client,
                 self.http_request_retry_parameters,
                 &self.resource_url,
             )
@@ -160,9 +162,9 @@ impl<Resource: FromBytes + MediaType> Refresher<Resource> {
 }
 
 /// Parse the provided cache-control header values ([1]) and determine when the resource they were
-/// attached to expires, or None if the resource cannot be cached. This function only handles the
-/// "max-age" and "no-cache" response directives ([2]). If any unrecognized or malformed response
-/// directive is encountered, then the resource will not be cached.
+/// attached to expires, or None if no maximum age is set. This function only handles the "max-age"
+/// and "no-cache" response directives ([2]). If any unrecognized or malformed response directive is
+/// encountered, then the resource will not be cached.
 ///
 /// [1]: https://datatracker.ietf.org/doc/html/rfc9111#section-5.2
 /// [2]: https://datatracker.ietf.org/doc/html/rfc9111#section-5.2.2
