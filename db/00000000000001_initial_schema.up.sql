@@ -54,7 +54,7 @@ CREATE TABLE taskprov_peer_aggregators(
 
     -- Parameters applied to every task created with this peer aggregator.
     aggregation_mode AGGREGATION_MODE,       -- the aggregation mode in use for tasks with this aggregator (populated when the peer is the Leader, and we are the Helper)
-    verify_key_init BYTEA NOT NULL,          -- the preshared key used for VDAF verify key derivation.
+    verify_key_init BYTEA NOT NULL,          -- the preshared key used for VDAF verify key derivation (encrypted).
     report_expiry_age      BIGINT,           -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     collector_hpke_config BYTEA NOT NULL,    -- the HPKE config of the collector (encoded HpkeConfig message)
 
@@ -68,7 +68,7 @@ CREATE TABLE taskprov_peer_aggregators(
 -- Task aggregator auth tokens that we've shared with the peer aggregator.
 CREATE TABLE taskprov_aggregator_auth_tokens(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    peer_aggregator_id BIGINT NOT NULL,  -- task ID the token is associated with
+    peer_aggregator_id BIGINT NOT NULL,  -- peer aggregator the token is associated with
     ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
@@ -84,7 +84,7 @@ CREATE TABLE taskprov_aggregator_auth_tokens(
 -- Task collector auth tokens that we've shared with the peer aggregator.
 CREATE TABLE taskprov_collector_auth_tokens(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    peer_aggregator_id BIGINT NOT NULL,  -- task ID the token is associated with
+    peer_aggregator_id BIGINT NOT NULL,  -- peer aggregator the token is associated with
     ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
