@@ -23,7 +23,7 @@ use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
-use http::{HeaderValue, header::RETRY_AFTER};
+use http::HeaderValue;
 use janus_aggregator_core::{
     AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
@@ -603,7 +603,7 @@ where
         );
         assert_eq!(prepare_inits.len(), stepped_aggregations.len());
 
-        let (resp, retry_after) = if !prepare_inits.is_empty() {
+        let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
             let request = AggregationJobInitializeReq::<B>::new(
                 aggregation_job
@@ -636,25 +636,14 @@ where
             )
             .await?;
 
-            let retry_after = http_response
-                .headers()
-                .get(RETRY_AFTER)
-                .map(parse_retry_after)
-                .transpose()?;
-            let resp = AggregationJobResp::get_decoded(http_response.body())
-                .map_err(Error::MessageDecode)?;
-
-            (resp, retry_after)
+            AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?
         } else {
             // If there are no prepare inits to send (because every report aggregation was filtered
             // by the block above), don't send a request to the Helper at all and process an
             // artificial aggregation job response instead, which will finish the aggregation job.
-            (
-                AggregationJobResp::Finished {
-                    prepare_resps: Vec::new(),
-                },
-                None,
-            )
+            AggregationJobResp {
+                prepare_resps: Vec::new(),
+            }
         };
 
         let aggregation_job: AggregationJob<SEED_SIZE, B, A> =
@@ -667,7 +656,6 @@ where
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            retry_after.as_ref(),
             resp,
         )
         .await
@@ -843,11 +831,6 @@ where
         )
         .await?;
 
-        let retry_after = http_response
-            .headers()
-            .get(RETRY_AFTER)
-            .map(parse_retry_after)
-            .transpose()?;
         let resp =
             AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
 
@@ -859,7 +842,6 @@ where
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            retry_after.as_ref(),
             resp,
         )
         .await
@@ -938,11 +920,6 @@ where
         )
         .await?;
 
-        let retry_after = http_response
-            .headers()
-            .get(RETRY_AFTER)
-            .map(parse_retry_after)
-            .transpose()?;
         let resp =
             AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
 
@@ -954,7 +931,6 @@ where
             aggregation_job,
             stepped_aggregations,
             Vec::new(),
-            retry_after.as_ref(),
             resp,
         )
         .await
@@ -975,38 +951,20 @@ where
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-        retry_after: Option<&RetryAfter>,
         helper_resp: AggregationJobResp,
     ) -> Result<(), Error> {
-        match helper_resp {
-            AggregationJobResp::Processing => {
-                self.step_aggregation_job_leader_process_response_processing(
-                    datastore,
-                    vdaf,
-                    lease,
-                    task,
-                    aggregation_job,
-                    stepped_aggregations,
-                    report_aggregations_to_write,
-                    retry_after,
-                )
-                .await
-            }
-
-            AggregationJobResp::Finished { prepare_resps } => {
-                self.step_aggregation_job_leader_process_response_finished(
-                    datastore,
-                    vdaf,
-                    lease,
-                    task,
-                    aggregation_job,
-                    stepped_aggregations,
-                    report_aggregations_to_write,
-                    prepare_resps,
-                )
-                .await
-            }
-        }
+        let AggregationJobResp { prepare_resps } = helper_resp;
+        self.step_aggregation_job_leader_process_response_finished(
+            datastore,
+            vdaf,
+            lease,
+            task,
+            aggregation_job,
+            stepped_aggregations,
+            report_aggregations_to_write,
+            prepare_resps,
+        )
+        .await
     }
 
     async fn step_aggregation_job_leader_process_response_processing<

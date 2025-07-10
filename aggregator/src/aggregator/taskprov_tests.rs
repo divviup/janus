@@ -330,7 +330,7 @@ async fn taskprov_aggregate_init() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
         let prepare_resps = assert_matches!(
             aggregate_resp,
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+            AggregationJobResp { prepare_resps } => prepare_resps
         );
 
         assert_eq!(prepare_resps.len(), 1, "{name}");
@@ -440,7 +440,7 @@ async fn taskprov_aggregate_init_missing_extension() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     assert_eq!(prepare_resps.len(), 1);
@@ -530,7 +530,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     assert_eq!(prepare_resps.len(), 1);
@@ -969,7 +969,7 @@ async fn taskprov_aggregate_continue() {
     // authorization of the request.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_share.metadata().id(),
                 PrepareStepResult::Finished
@@ -1133,7 +1133,7 @@ async fn end_to_end() {
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     assert_eq!(prepare_resps.len(), 1);
@@ -1183,7 +1183,7 @@ async fn end_to_end() {
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     assert_eq!(prepare_resps.len(), 1);
@@ -1292,7 +1292,7 @@ async fn end_to_end_sumvec_hmac() {
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     assert_eq!(prepare_resps.len(), 1);

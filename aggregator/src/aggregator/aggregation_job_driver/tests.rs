@@ -180,7 +180,7 @@ async fn aggregation_job_driver() {
             "PUT",
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
-            AggregationJobResp::Finished {
+            AggregationJobResp {
                 prepare_resps: Vec::from([PrepareResp::new(
                     *report.metadata().id(),
                     PrepareStepResult::Continue {
@@ -198,7 +198,7 @@ async fn aggregation_job_driver() {
             "POST",
             AggregationJobContinueReq::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
-            AggregationJobResp::Finished {
+            AggregationJobResp {
                 prepare_resps: Vec::from([PrepareResp::new(
                     *report.metadata().id(),
                     PrepareStepResult::Finished,
@@ -555,7 +555,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -938,7 +938,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -1309,7 +1309,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
             ),
         ]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([
             PrepareResp::new(
                 *gc_eligible_report.metadata().id(),
@@ -1619,7 +1619,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -1930,7 +1930,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -2240,7 +2240,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
@@ -2569,7 +2569,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
@@ -2850,7 +2850,6 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -2866,8 +2865,6 @@ async fn leader_async_aggregation_job_init_to_pending() {
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -3111,7 +3108,6 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3127,8 +3123,6 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -3378,7 +3372,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3391,8 +3384,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -3631,7 +3622,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
@@ -3644,8 +3634,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .match_query("step=0")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -3881,7 +3869,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
@@ -3894,8 +3881,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .match_query("step=0")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -4131,7 +4116,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -4389,7 +4374,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
@@ -4660,7 +4645,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP responses.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
@@ -4672,8 +4656,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .match_query("step=1")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -4919,7 +4901,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP responses.
-    let helper_response = AggregationJobResp::Finished {
+    let helper_response = AggregationJobResp {
         prepare_resps: Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,

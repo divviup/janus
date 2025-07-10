@@ -134,7 +134,7 @@ async fn aggregation_job_get_ready() {
     // Validate result.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_metadata.id(),
                 PrepareStepResult::Continue {
@@ -258,7 +258,12 @@ async fn aggregation_job_get_unready() {
     .await;
 
     // Validate result.
-    assert_eq!(aggregate_resp, AggregationJobResp::Processing);
+    assert_eq!(
+        aggregate_resp,
+        AggregationJobResp {
+            prepare_resps: vec!() // TKTK
+        }
+    );
 }
 
 #[tokio::test]

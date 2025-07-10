@@ -227,9 +227,11 @@ const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 /// inner object and sending it as the response body, setting the Content-Type header to the
 /// provided media type, and setting the status to the specified value (or 200 if unspecified).
 struct EncodedBody<T> {
-    object: T,
+    object: Option<T>,
     media_type: &'static str,
     status: Status,
+    location: Option<&'static str>,
+    retry_after_seconds: Option<i32>, // TKTK use retry_after::RetryAfter
 }
 
 impl<T> EncodedBody<T>
@@ -238,14 +240,33 @@ where
 {
     fn new(object: T, media_type: &'static str) -> Self {
         Self {
-            object,
+            object: Some(object),
             media_type,
             status: Status::Ok,
+            location: None,
+            retry_after_seconds: None,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            object: None,
+            media_type: "",
+            status: Status::Ok,
+            location: None,
+            retry_after_seconds: None,
         }
     }
 
     fn with_status(self, status: Status) -> Self {
         Self { status, ..self }
+    }
+
+    fn with_retry_after(self, retry_after_seconds: i32) -> Self {
+        Self {
+            retry_after_seconds: Some(retry_after_seconds),
+            ..self
+        }
     }
 }
 
@@ -255,13 +276,24 @@ where
     T: Encode + Sync + Send + 'static,
 {
     async fn run(&self, conn: Conn) -> Conn {
-        match self.object.get_encoded() {
-            Ok(encoded) => conn
-                .with_response_header(KnownHeaderName::ContentType, self.media_type)
-                .with_status(self.status)
-                .with_body(encoded)
-                .halt(),
-            Err(e) => Error::MessageEncode(e).run(conn).await,
+        match &self.object {
+            Some(object) => match object.get_encoded() {
+                Ok(encoded) => conn
+                    .with_response_header(KnownHeaderName::ContentType, self.media_type)
+                    .with_status(self.status)
+                    .with_body(encoded)
+                    .halt(),
+                Err(e) => Error::MessageEncode(e).run(conn).await,
+            },
+            None => {
+                let mut c = conn.with_status(self.status);
+                // TKTK self.location
+                //     .inspect(|l| c.with_response_header(KnownHeaderName::Location, l));
+                if let Some(s) = self.retry_after_seconds {
+                    c = c.with_response_header(KnownHeaderName::RetryAfter, format!("{s}"));
+                }
+                c.halt()
+            }
         }
     }
 }
@@ -591,7 +623,13 @@ async fn aggregation_jobs_put<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Created))
+    match response {
+        Some(response) => {
+            Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
+                .with_status(Status::Created))
+        }
+        None => Ok(EncodedBody::empty().with_retry_after(30)), // TKTK retry-after header
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
@@ -616,7 +654,11 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Accepted))
+    match response {
+        Some(response) => Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
+            .with_status(Status::Accepted)),
+        None => Ok(EncodedBody::empty().with_retry_after(30)), // TKTK
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
@@ -642,7 +684,12 @@ async fn aggregation_jobs_get<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Ok))
+    match response {
+        Some(response) => {
+            Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Ok))
+        }
+        None => Ok(EncodedBody::empty().with_retry_after(30)), // TKTK
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.

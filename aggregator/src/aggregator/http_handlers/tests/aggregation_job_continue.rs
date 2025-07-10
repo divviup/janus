@@ -289,7 +289,7 @@ async fn aggregate_continue_sync() {
     // Validate response.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([
                 PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
                 PrepareResp::new(
@@ -563,7 +563,12 @@ async fn aggregate_continue_async() {
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
 
     // Validate response.
-    assert_eq!(aggregate_resp, AggregationJobResp::Processing);
+    assert_eq!(
+        aggregate_resp,
+        AggregationJobResp {
+            prepare_resps: vec!() // TKTK
+        }
+    );
 
     // Validate datastore.
     let (aggregation_job, report_aggregations) = datastore
@@ -1437,8 +1442,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
 
     let resp =
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
-    let prepare_resps =
-        assert_matches!(resp, AggregationJobResp::Finished{prepare_resps} => prepare_resps);
+    let prepare_resps = assert_matches!(resp, AggregationJobResp{prepare_resps} => prepare_resps);
     assert_eq!(prepare_resps.len(), 1);
     assert_eq!(
         prepare_resps[0],
@@ -1560,7 +1564,7 @@ async fn aggregate_continue_prep_step_fails() {
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_metadata.id(),
                 PrepareStepResult::Reject(ReportError::VdafPrepError),
