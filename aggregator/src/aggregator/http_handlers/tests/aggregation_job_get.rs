@@ -134,7 +134,7 @@ async fn aggregation_job_get_ready() {
     // Validate result.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_metadata.id(),
                 PrepareStepResult::Continue {

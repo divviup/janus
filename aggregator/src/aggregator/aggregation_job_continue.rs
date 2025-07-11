@@ -505,7 +505,7 @@ mod tests {
         // Validate response.
         assert_eq!(
             first_continue_response,
-            AggregationJobResp::Finished {
+            AggregationJobResp {
                 prepare_resps: test_case
                     .first_continue_request
                     .prepare_continues()

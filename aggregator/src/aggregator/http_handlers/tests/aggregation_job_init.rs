@@ -536,7 +536,7 @@ async fn aggregate_init_sync() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
         let prepare_resps = assert_matches!(
             aggregate_resp,
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+            AggregationJobResp { prepare_resps } => prepare_resps
         );
 
         // Validate response.
@@ -945,7 +945,7 @@ async fn aggregate_init_batch_already_collected() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     let prepare_step = prepare_resps.first().unwrap();
@@ -1012,7 +1012,7 @@ async fn aggregate_init_prep_init_failed() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     // Validate response.
@@ -1081,7 +1081,7 @@ async fn aggregate_init_prep_step_failed() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     // Validate response.
