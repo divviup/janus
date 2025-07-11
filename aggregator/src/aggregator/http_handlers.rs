@@ -570,7 +570,7 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
     validate_content_type(
         conn,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -591,14 +591,21 @@ async fn aggregation_jobs_put<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Created))
+    match response {
+        Some(response) => Ok(Ok(EncodedBody::new(
+            response,
+            AggregationJobResp::MEDIA_TYPE,
+        )
+        .with_status(Status::Created))),
+        None => Ok(Err("TKTK")),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
@@ -616,14 +623,21 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Accepted))
+    match response {
+        Some(response) => Ok(Ok(EncodedBody::new(
+            response,
+            AggregationJobResp::MEDIA_TYPE,
+        )
+        .with_status(Status::Accepted))),
+        None => Ok(Err("TKTK")),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
 async fn aggregation_jobs_get<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
     let task_id = parse_task_id(conn)?;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
@@ -642,7 +656,14 @@ async fn aggregation_jobs_get<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Ok))
+    match response {
+        Some(response) => Ok(Ok(EncodedBody::new(
+            response,
+            AggregationJobResp::MEDIA_TYPE,
+        )
+        .with_status(Status::Ok))),
+        None => Ok(Err("TKTK")),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.

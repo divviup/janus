@@ -2850,7 +2850,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
+
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -2867,7 +2867,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
+        .with_body("")
         .create_async()
         .await;
 
@@ -3111,7 +3111,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
+
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3128,7 +3128,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
+        .with_body("")
         .create_async()
         .await;
 
@@ -3378,7 +3378,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .clone(),
         )]),
     );
-    let helper_response = AggregationJobResp::Processing;
+
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3392,7 +3392,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
+        .with_body("")
         .create_async()
         .await;
 
@@ -3631,7 +3631,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
@@ -3645,7 +3644,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .match_header(header, value.as_str())
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
         .create_async()
         .await;
 
@@ -3881,7 +3879,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
@@ -3895,7 +3892,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .match_header(header, value.as_str())
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
+        .with_body("")
         .create_async()
         .await;
 
@@ -4660,7 +4657,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP responses.
-    let helper_response = AggregationJobResp::Processing;
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
@@ -4673,7 +4669,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .match_header(header, value.as_str())
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-        .with_body(helper_response.get_encoded().unwrap())
+        .with_body("")
         .create_async()
         .await;
 

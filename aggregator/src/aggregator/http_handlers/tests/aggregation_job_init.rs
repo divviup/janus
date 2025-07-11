@@ -771,7 +771,7 @@ async fn aggregate_init_async() {
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-        assert_matches!(aggregate_resp, AggregationJobResp::Processing);
+        todo!("Validate that we got a processing response");
 
         // Check aggregation job in datastore.
         let (aggregation_jobs, report_aggregations, batch_aggregations) = datastore

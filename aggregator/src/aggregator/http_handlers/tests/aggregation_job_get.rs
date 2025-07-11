@@ -258,7 +258,7 @@ async fn aggregation_job_get_unready() {
     .await;
 
     // Validate result.
-    assert_eq!(aggregate_resp, AggregationJobResp::Processing);
+    todo!("TKTK: validate that we got a processing response")
 }
 
 #[tokio::test]
