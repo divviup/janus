@@ -23,7 +23,10 @@ use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
-use http::{HeaderValue, header::RETRY_AFTER};
+use http::{
+    HeaderValue,
+    header::{CONTENT_LENGTH, RETRY_AFTER},
+};
 use janus_aggregator_core::{
     AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
@@ -641,9 +644,18 @@ where
                 .get(RETRY_AFTER)
                 .map(parse_retry_after)
                 .transpose()?;
-            let resp = if retry_after.is_some() {
+
+            let length = http_response
+                .headers()
+                .get(CONTENT_LENGTH)
+                .map(parse_content_length)
+                .transpose()?;
+
+            let resp = if length == Some(0) {
+                // TKTK our delineation elsewhere is status, not length
                 None
             } else {
+                warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
                 Some(
                     AggregationJobResp::get_decoded(http_response.body())
                         .map_err(Error::MessageDecode)?,
@@ -854,9 +866,16 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let resp = if retry_after.is_some() {
+        let length = http_response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .map(parse_content_length)
+            .transpose()?;
+
+        let resp = if length == Some(0) {
             None
         } else {
+            warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
@@ -955,9 +974,17 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let resp = if retry_after.is_some() {
+
+        let length = http_response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .map(parse_content_length)
+            .transpose()?;
+
+        let resp = if length == Some(0) {
             None
         } else {
+            warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
@@ -1944,6 +1971,17 @@ enum Either<PS, OS> {
 fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {
     RetryAfter::try_from(header_value)
         .context("couldn't parse retry-after header")
+        .map_err(|err| Error::BadRequest(err.into()))
+}
+
+fn parse_content_length(header_value: &HeaderValue) -> Result<i32, Error> {
+    let header_str = header_value
+        .to_str()
+        .context("couldn't decode content-length header")
+        .map_err(|err| Error::BadRequest(err.into()))?;
+    header_str
+        .parse()
+        .context("couldn't parse content-length header")
         .map_err(|err| Error::BadRequest(err.into()))
 }
 
