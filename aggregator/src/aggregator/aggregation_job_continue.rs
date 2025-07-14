@@ -236,12 +236,17 @@ pub mod test_util {
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
-    ) -> AggregationJobResp {
+    ) -> Option<AggregationJobResp> {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Accepted));
         assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-        decode_response_body::<AggregationJobResp>(&mut test_conn).await
+        match test_conn.status() {
+            Some(Status::Accepted) => {
+                Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
+            }
+            Some(Status::Ok) => None,
+            _ => panic!(),
+        }
     }
 
     pub async fn post_aggregation_job_expecting_status(
@@ -505,17 +510,17 @@ mod tests {
         // Validate response.
         assert_eq!(
             first_continue_response,
-            AggregationJobResp {
+            Some(AggregationJobResp {
                 prepare_resps: test_case
                     .first_continue_request
                     .prepare_continues()
                     .iter()
                     .map(|step| PrepareResp::new(*step.report_id(), PrepareStepResult::Finished))
                     .collect()
-            }
+            })
         );
 
-        test_case.first_continue_response = Some(first_continue_response);
+        test_case.first_continue_response = first_continue_response;
         test_case
     }
 
@@ -641,7 +646,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            test_case.first_continue_response.unwrap(),
+            Some(test_case.first_continue_response.unwrap()),
             second_continue_resp
         );
     }

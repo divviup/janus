@@ -266,6 +266,33 @@ where
     }
 }
 
+/// A Trillium handler that returns an empty body.
+#[derive(Clone, Copy)]
+struct EmptyBody {
+    media_type: &'static str,
+    status: Status, // TODO: Make this editable? TKTK
+}
+
+impl EmptyBody {
+    fn new(media_type: &'static str) -> Self {
+        Self {
+            media_type,
+            status: Status::Ok,
+        }
+    }
+}
+
+#[async_trait]
+impl Handler for EmptyBody {
+    async fn run(&self, conn: Conn) -> Conn {
+        warn!(?conn, "EmptyBody TKTK");
+        conn.with_response_header(KnownHeaderName::ContentType, self.media_type)
+            .with_response_header(KnownHeaderName::RetryAfter, format!("30")) // TKTK
+            .with_status(self.status)
+            .halt()
+    }
+}
+
 /// A Trillium handler that checks for state set when sending an error response, and updates an
 /// OpenTelemetry counter accordingly.
 struct StatusCounter(Counter<u64>);
@@ -570,7 +597,7 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     validate_content_type(
         conn,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -597,7 +624,7 @@ async fn aggregation_jobs_put<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Created))),
-        None => Ok(Err("TKTK")),
+        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
     }
 }
 
@@ -605,7 +632,7 @@ async fn aggregation_jobs_put<C: Clock>(
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
@@ -623,13 +650,15 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
+    warn!(?response, "aggregation_jobs_post TKTK");
+
     match response {
         Some(response) => Ok(Ok(EncodedBody::new(
             response,
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Accepted))),
-        None => Ok(Err("TKTK")),
+        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
     }
 }
 
@@ -637,7 +666,7 @@ async fn aggregation_jobs_post<C: Clock>(
 async fn aggregation_jobs_get<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<Result<EncodedBody<AggregationJobResp>, &'static str>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     let task_id = parse_task_id(conn)?;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
@@ -662,7 +691,7 @@ async fn aggregation_jobs_get<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Ok))),
-        None => Ok(Err("TKTK")),
+        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
     }
 }
 

@@ -763,15 +763,13 @@ async fn aggregate_init_async() {
     let mut report_aggregations_results = Vec::new();
     let mut batch_aggregations_results = Vec::new();
     for _ in 0..2 {
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Created));
+        let test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-        todo!("Validate that we got a processing response");
 
         // Check aggregation job in datastore.
         let (aggregation_jobs, report_aggregations, batch_aggregations) = datastore
