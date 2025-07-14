@@ -1,5 +1,5 @@
 use crate::aggregator::{
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
+    http_handlers::test_util::{HttpHandlerTest, assert_empty_response_body, decode_response_body},
     test_util::generate_helper_report_share,
 };
 use janus_aggregator_core::{
@@ -249,7 +249,7 @@ async fn aggregation_job_get_unready() {
         .unwrap();
 
     // Send request.
-    let aggregate_conn = get_aggregation_job(
+    let mut aggregate_conn = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(0)),
@@ -259,6 +259,7 @@ async fn aggregation_job_get_unready() {
 
     // Validate result.
     assert_eq!(aggregate_conn.status(), Some(Status::Ok));
+    assert_empty_response_body(&mut aggregate_conn).await;
 }
 
 #[tokio::test]
