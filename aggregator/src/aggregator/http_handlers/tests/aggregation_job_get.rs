@@ -249,7 +249,7 @@ async fn aggregation_job_get_unready() {
         .unwrap();
 
     // Send request.
-    let aggregate_resp = get_aggregation_job_and_decode(
+    let aggregate_conn = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(0)),
@@ -258,7 +258,7 @@ async fn aggregation_job_get_unready() {
     .await;
 
     // Validate result.
-    todo!("TKTK: validate that we got a processing response")
+    assert_eq!(aggregate_conn.status(), Some(Status::Ok));
 }
 
 #[tokio::test]

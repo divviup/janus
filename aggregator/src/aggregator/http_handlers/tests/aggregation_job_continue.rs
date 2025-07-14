@@ -944,7 +944,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // Send request, and parse response.
     let resp =
         post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
-    assert!(resp.is_none());
+    assert!(resp.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
     let first_batch_got_batch_aggregations = datastore
@@ -1237,9 +1237,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         ]),
     );
 
-    let resp =
+    let resp_2 =
         post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
-    assert!(resp.is_some());
+    assert!(resp_2.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
     // batch aggregations over the same interval. (the task & aggregation parameter will always
