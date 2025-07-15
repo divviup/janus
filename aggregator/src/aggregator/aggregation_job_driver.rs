@@ -651,6 +651,12 @@ where
                 .map(parse_content_length)
                 .transpose()?;
 
+            warn!(
+                ?retry_after,
+                ?length,
+                "step_aggregation_job_leader_init TKTK"
+            );
+
             let resp = if length == Some(0) {
                 // TKTK our delineation elsewhere is status, not length
                 None
@@ -872,6 +878,12 @@ where
             .map(parse_content_length)
             .transpose()?;
 
+        warn!(
+            ?retry_after,
+            ?length,
+            "step_aggregation_job_leader_continue TKTK"
+        );
+
         let resp = if length == Some(0) {
             None
         } else {
@@ -980,6 +992,12 @@ where
             .get(CONTENT_LENGTH)
             .map(parse_content_length)
             .transpose()?;
+
+        warn!(
+            ?retry_after,
+            ?length,
+            "step_aggregation_job_leader_poll TKTK"
+        );
 
         let resp = if length == Some(0) {
             None

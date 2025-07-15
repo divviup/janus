@@ -270,13 +270,15 @@ where
 #[derive(Clone, Copy)]
 struct EmptyBody {
     media_type: &'static str,
-    status: Status, // TODO: Make this editable? TKTK
+    retry_after: &'static str, // TODO: make this editable? TKTK
+    status: Status,            // TODO: Make this editable? TKTK
 }
 
 impl EmptyBody {
     fn new(media_type: &'static str) -> Self {
         Self {
             media_type,
+            retry_after: "2",
             status: Status::Ok,
         }
     }
@@ -285,9 +287,12 @@ impl EmptyBody {
 #[async_trait]
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
-        warn!(?conn, "EmptyBody TKTK");
+        warn!(
+            ?conn,
+            self.media_type, ?self.status, "Writing an EmptyBody response to the wire TKTK"
+        );
         conn.with_response_header(KnownHeaderName::ContentType, self.media_type)
-            .with_response_header(KnownHeaderName::RetryAfter, format!("30")) // TKTK
+            .with_response_header(KnownHeaderName::RetryAfter, self.retry_after)
             .with_status(self.status)
             .halt()
     }

@@ -2507,7 +2507,7 @@ impl Encode for AggregationJobResp {
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut len = 0;
+        let mut len = 4;
         for prepare_resp in &self.prepare_resps {
             len += prepare_resp.encoded_len()?;
         }
