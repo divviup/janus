@@ -651,17 +651,9 @@ where
                 .map(parse_content_length)
                 .transpose()?;
 
-            warn!(
-                ?retry_after,
-                ?length,
-                "step_aggregation_job_leader_init TKTK"
-            );
-
             let resp = if length == Some(0) {
-                // TKTK our delineation elsewhere is status, not length
                 None
             } else {
-                warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
                 Some(
                     AggregationJobResp::get_decoded(http_response.body())
                         .map_err(Error::MessageDecode)?,
@@ -878,16 +870,9 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        warn!(
-            ?retry_after,
-            ?length,
-            "step_aggregation_job_leader_continue TKTK"
-        );
-
         let resp = if length == Some(0) {
             None
         } else {
-            warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
@@ -993,16 +978,9 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        warn!(
-            ?retry_after,
-            ?length,
-            "step_aggregation_job_leader_poll TKTK"
-        );
-
         let resp = if length == Some(0) {
             None
         } else {
-            warn!(status = ?http_response.status(), ?http_response, "decoding body TKTK");
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,

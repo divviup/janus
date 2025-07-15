@@ -270,7 +270,7 @@ where
 #[derive(Clone, Copy)]
 struct EmptyBody {
     media_type: &'static str,
-    retry_after: &'static str, // TODO: make this editable? TKTK
+    retry_after: &'static str, // TODO: Make this editable? TKTK
     status: Status,            // TODO: Make this editable? TKTK
 }
 
@@ -654,8 +654,6 @@ async fn aggregation_jobs_post<C: Clock>(
         ))
         .await
         .ok_or(Error::ClientDisconnected)??;
-
-    warn!(?response, "aggregation_jobs_post TKTK");
 
     match response {
         Some(response) => Ok(Ok(EncodedBody::new(
