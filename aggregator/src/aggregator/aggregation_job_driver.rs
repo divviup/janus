@@ -651,13 +651,13 @@ where
                 .map(parse_content_length)
                 .transpose()?;
 
-            let resp = if length == Some(0) {
-                None
-            } else {
+            let resp = if length.map_or(false, |l| l > 0) {
                 Some(
                     AggregationJobResp::get_decoded(http_response.body())
                         .map_err(Error::MessageDecode)?,
                 )
+            } else {
+                None
             };
 
             (resp, retry_after)
@@ -870,13 +870,13 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        let resp = if length == Some(0) {
-            None
-        } else {
+        let resp = if length.map_or(false, |l| l > 0) {
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
             )
+        } else {
+            None
         };
 
         self.step_aggregation_job_leader_process_response(
@@ -978,13 +978,13 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        let resp = if length == Some(0) {
-            None
-        } else {
+        let resp = if length.map_or(false, |l| l > 0) {
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
             )
+        } else {
+            None
         };
 
         self.step_aggregation_job_leader_process_response(
