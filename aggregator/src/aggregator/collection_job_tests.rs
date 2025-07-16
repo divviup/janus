@@ -41,7 +41,7 @@ use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
-    TestConn, assert_headers,
+    TestConn, assert_body, assert_headers,
     prelude::{get, put},
 };
 
@@ -349,23 +349,11 @@ async fn collection_job_success_leader_selected() {
             .put_collection_job(&collection_job_id, &request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Created));
-        assert_headers!(
-            &test_conn,
-            "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
-        );
-        let collect_resp: CollectionJobResp<TimeInterval> =
-            decode_response_body(&mut test_conn).await;
-        assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
+        assert_body!(&mut test_conn, "");
 
         let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_headers!(
-            &test_conn,
-            "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
-        );
-        let collect_resp: CollectionJobResp<TimeInterval> =
-            decode_response_body(&mut test_conn).await;
-        assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
+        assert_body!(&mut test_conn, "");
 
         // Update the collection job with the aggregate shares. collection job should now be complete.
         let batch_id = test_case
@@ -441,7 +429,7 @@ async fn collection_job_success_leader_selected() {
             helper_encrypted_aggregate_share,
         ) = assert_matches!(
             collect_resp,
-            CollectionJobResp::Finished {
+            CollectionJobResp {
                 report_count,
                 interval,
                 leader_encrypted_agg_share,

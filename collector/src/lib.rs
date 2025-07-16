@@ -548,6 +548,16 @@ impl<V: vdaf::Collector> Collector<V> {
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
 
+        let body = response.body();
+        if body.is_empty() {
+            let retry_after_opt = response
+                .headers()
+                .get(RETRY_AFTER)
+                .map(RetryAfter::try_from)
+                .transpose()?;
+            return Ok(PollResult::NotReady(retry_after_opt));
+        }
+
         let content_type = response
             .headers()
             .get(CONTENT_TYPE)
@@ -560,55 +570,24 @@ impl<V: vdaf::Collector> Collector<V> {
         if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
-
-        let collect_response = CollectionJobResp::<B>::get_decoded(response.body())?;
-        let (
-            partial_batch_selector,
-            report_count,
-            interval,
-            leader_encrypted_aggregate_share,
-            helper_encrypted_aggregate_share,
-        ) = match &collect_response {
-            CollectionJobResp::Finished {
-                partial_batch_selector,
-                report_count,
-                interval,
-                leader_encrypted_agg_share,
-                helper_encrypted_agg_share,
-            } => (
-                partial_batch_selector,
-                report_count,
-                interval,
-                leader_encrypted_agg_share,
-                helper_encrypted_agg_share,
-            ),
-
-            CollectionJobResp::Processing => {
-                let retry_after_opt = response
-                    .headers()
-                    .get(RETRY_AFTER)
-                    .map(RetryAfter::try_from)
-                    .transpose()?;
-                return Ok(PollResult::NotReady(retry_after_opt));
-            }
-        };
+        let collect_response = CollectionJobResp::<B>::get_decoded(body)?;
 
         let aggregate_shares = [
-            (Role::Leader, leader_encrypted_aggregate_share),
-            (Role::Helper, helper_encrypted_aggregate_share),
+            (Role::Leader, collect_response.leader_encrypted_agg_share),
+            (Role::Helper, collect_response.helper_encrypted_agg_share),
         ]
         .into_iter()
         .map(|(role, encrypted_aggregate_share)| {
             let bytes = hpke::open(
                 &self.hpke_keypair,
                 &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
-                encrypted_aggregate_share,
+                &encrypted_aggregate_share,
                 &AggregateShareAad::new(
                     self.task_id,
                     job.aggregation_parameter.get_encoded()?,
                     BatchSelector::<B>::new(B::batch_identifier_for_collection(
                         &job.query,
-                        partial_batch_selector.batch_identifier(),
+                        collect_response.partial_batch_selector.batch_identifier(),
                     )),
                 )
                 .get_encoded()?,
@@ -624,15 +603,16 @@ impl<V: vdaf::Collector> Collector<V> {
         let aggregate_result = self.vdaf.unshard(
             &job.aggregation_parameter,
             aggregate_shares,
-            usize::try_from(*report_count).map_err(|_| Error::ReportCountOverflow)?,
+            usize::try_from(collect_response.report_count)
+                .map_err(|_| Error::ReportCountOverflow)?,
         )?;
 
         Ok(PollResult::CollectionResult(Collection {
-            partial_batch_selector: partial_batch_selector.clone(),
-            report_count: *report_count,
+            partial_batch_selector: collect_response.partial_batch_selector.clone(),
+            report_count: collect_response.report_count,
             interval: (
-                Utc.from_utc_datetime(&interval.start().as_naive_date_time()?),
-                interval.duration().as_chrono_duration()?,
+                Utc.from_utc_datetime(&collect_response.interval.start().as_naive_date_time()?),
+                collect_response.interval.duration().as_chrono_duration()?,
             ),
             aggregate_result,
         }))
@@ -841,7 +821,7 @@ mod tests {
             aggregation_parameter.get_encoded().unwrap(),
             BatchSelector::new_time_interval(batch_interval),
         );
-        CollectionJobResp::Finished {
+        CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
             report_count: 1,
             interval: batch_interval,
@@ -877,7 +857,7 @@ mod tests {
             aggregation_parameter.get_encoded().unwrap(),
             BatchSelector::new_leader_selected(batch_id),
         );
-        CollectionJobResp::Finished {
+        CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
             report_count: 1,
             interval: Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
@@ -945,7 +925,6 @@ mod tests {
             Duration::from_seconds(3600),
         )
         .unwrap();
-        let processing_collect_resp = CollectionJobResp::<TimeInterval>::Processing;
         let collect_resp =
             build_collect_response_time(&transcript, &collector, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.task_id);
@@ -995,11 +974,6 @@ mod tests {
         let mocked_collect_accepted = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(processing_collect_resp.get_encoded().unwrap())
             .expect(2)
             .create_async()
             .await;
@@ -1588,22 +1562,35 @@ mod tests {
 
         mock_collection_job_bad_request.assert_async().await;
 
-        let mock_collection_job_bad_message_bytes = server
+        let mock_collection_job_empty_body_no_retry = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(b"")
             .expect_at_least(1)
             .create_async()
             .await;
 
-        let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Codec(_));
+        let poll_result = collector.poll_once(&job).await.unwrap();
+        assert_matches!(poll_result, PollResult::NotReady(None));
 
-        mock_collection_job_bad_message_bytes.assert_async().await;
+        mock_collection_job_empty_body_no_retry.assert_async().await;
+
+        let mock_collection_job_empty_body_with_retry = server
+            .mock("GET", collection_job_path.as_str())
+            .with_status(200)
+            .with_header("Retry-After", "65535")
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let poll_result = collector.poll_once(&job).await.unwrap();
+        assert_matches!(
+            poll_result,
+            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(65535))
+        );
+
+        mock_collection_job_empty_body_with_retry
+            .assert_async()
+            .await;
 
         let mock_collection_job_bad_ciphertext = server
             .mock("GET", collection_job_path.as_str())
@@ -1613,7 +1600,7 @@ mod tests {
                 CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectionJobResp::Finished {
+                CollectionJobResp {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 1,
                     interval: batch_interval,
@@ -1645,7 +1632,7 @@ mod tests {
             ().get_encoded().unwrap(),
             BatchSelector::new_time_interval(batch_interval),
         );
-        let collect_resp = CollectionJobResp::Finished {
+        let collect_resp = CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
             report_count: 1,
             interval: batch_interval,
@@ -1681,7 +1668,7 @@ mod tests {
 
         mock_collection_job_bad_shares.assert_async().await;
 
-        let collect_resp = CollectionJobResp::Finished {
+        let collect_resp = CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_time_interval(),
             report_count: 1,
             interval: batch_interval,
@@ -1772,16 +1759,10 @@ mod tests {
             "/tasks/{}/collection_jobs/{}",
             collector.task_id, job.collection_job_id
         );
-        let collect_resp = CollectionJobResp::<TimeInterval>::Processing;
 
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1795,11 +1776,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "60")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1813,11 +1789,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1861,17 +1832,10 @@ mod tests {
             (),
         );
 
-        let collect_resp = CollectionJobResp::<TimeInterval>::Processing;
-
         let mock_collect_poll_retry_after_1s = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "1")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1879,11 +1843,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "10")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1901,11 +1860,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", &near_future_formatted)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1913,11 +1867,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1925,11 +1874,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1959,11 +1903,6 @@ mod tests {
         let mock_collect_poll_no_retry_after = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
             .expect_at_least(1)
             .create_async()
             .await;
@@ -2061,7 +2000,6 @@ mod tests {
             Duration::from_seconds(3600),
         )
         .unwrap();
-        let processing_collect_resp = CollectionJobResp::<TimeInterval>::Processing;
         let collect_resp =
             build_collect_response_time(&transcript, &collector, &(), batch_interval);
 
@@ -2085,11 +2023,6 @@ mod tests {
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
             .match_header(CONTENT_LENGTH.as_str(), "0")
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(processing_collect_resp.get_encoded().unwrap())
             .expect(2)
             .create_async()
             .await;

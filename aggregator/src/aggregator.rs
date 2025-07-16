@@ -2893,9 +2893,7 @@ impl VdafOps {
             })
             .await?;
 
-        CollectionJobResp::<B>::Processing
-            .get_encoded()
-            .map_err(Error::MessageEncode)
+        Ok(vec![0; 0])
     }
 
     /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
@@ -2966,7 +2964,7 @@ impl VdafOps {
         match collection_job.state() {
             CollectionJobState::Start => {
                 debug!(%collection_job_id, task_id = %task.id(), "collection job has not run yet");
-                Ok(CollectionJobResp::<B>::Processing)
+                Ok(vec![0; 0])
             }
 
             CollectionJobState::Finished {
@@ -3015,7 +3013,7 @@ impl VdafOps {
                     .map_err(Error::MessageEncode)?,
                 )?;
 
-                Ok(CollectionJobResp::<B>::Finished {
+                CollectionJobResp::<B> {
                     partial_batch_selector: PartialBatchSelector::new(
                         B::partial_batch_identifier(collection_job.batch_identifier()).clone(),
                     ),
@@ -3023,7 +3021,9 @@ impl VdafOps {
                     interval: *client_timestamp_interval,
                     leader_encrypted_agg_share: encrypted_leader_aggregate_share,
                     helper_encrypted_agg_share: encrypted_helper_aggregate_share.clone(),
-                })
+                }
+                .get_encoded()
+                .map_err(Error::MessageEncode)
             }
 
             CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(
@@ -3035,11 +3035,6 @@ impl VdafOps {
                 Err(Error::DeletedCollectionJob(*task.id(), *collection_job_id))
             }
         }
-        .and_then(|collection_job_resp| {
-            collection_job_resp
-                .get_encoded()
-                .map_err(Error::MessageEncode)
-        })
     }
 
     #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err(level = Level::DEBUG))]

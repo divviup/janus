@@ -153,11 +153,7 @@ fn roundtrip_collection_job_resp() {
     // TimeInterval.
     roundtrip_encoding(&[
         (
-            CollectionJobResp::<TimeInterval>::Processing,
-            "00", // status
-        ),
-        (
-            CollectionJobResp::Finished {
+            CollectionJobResp {
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_count: 0,
                 interval,
@@ -173,7 +169,6 @@ fn roundtrip_collection_job_resp() {
                 ),
             },
             concat!(
-                "01", // status
                 concat!(
                     // partial_batch_selector
                     "01",   // batch_mode
@@ -217,7 +212,7 @@ fn roundtrip_collection_job_resp() {
             ),
         ),
         (
-            CollectionJobResp::Finished {
+            CollectionJobResp {
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_count: 23,
                 interval,
@@ -233,7 +228,6 @@ fn roundtrip_collection_job_resp() {
                 ),
             },
             concat!(
-                "01", // status
                 concat!(
                     // partial_batch_selector
                     "01",   // batch_mode
@@ -281,11 +275,7 @@ fn roundtrip_collection_job_resp() {
     // LeaderSelected.
     roundtrip_encoding(&[
         (
-            CollectionJobResp::<LeaderSelected>::Processing,
-            "00", // status
-        ),
-        (
-            CollectionJobResp::Finished {
+            CollectionJobResp {
                 partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [3u8; 32],
                 )),
@@ -303,7 +293,6 @@ fn roundtrip_collection_job_resp() {
                 ),
             },
             concat!(
-                "01", // status
                 concat!(
                     // partial_batch_selector
                     "02",   // batch_mode
@@ -347,7 +336,7 @@ fn roundtrip_collection_job_resp() {
             ),
         ),
         (
-            CollectionJobResp::Finished {
+            CollectionJobResp {
                 partial_batch_selector: PartialBatchSelector::new_leader_selected(BatchId::from(
                     [4u8; 32],
                 )),
@@ -365,7 +354,6 @@ fn roundtrip_collection_job_resp() {
                 ),
             },
             concat!(
-                "01", // status
                 concat!(
                     // partial_batch_selector
                     "02",   // batch_mode
