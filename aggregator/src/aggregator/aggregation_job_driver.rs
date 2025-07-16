@@ -651,7 +651,7 @@ where
                 .map(parse_content_length)
                 .transpose()?;
 
-            let resp = if length.map_or(false, |l| l > 0) {
+            let resp = if length.is_some_and(|l| l > 0) {
                 Some(
                     AggregationJobResp::get_decoded(http_response.body())
                         .map_err(Error::MessageDecode)?,
@@ -870,7 +870,7 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        let resp = if length.map_or(false, |l| l > 0) {
+        let resp = if length.is_some_and(|l| l > 0) {
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
@@ -978,7 +978,7 @@ where
             .map(parse_content_length)
             .transpose()?;
 
-        let resp = if length.map_or(false, |l| l > 0) {
+        let resp = if length.is_some_and(|l| l > 0) {
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
