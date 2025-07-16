@@ -139,6 +139,14 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
     Ok(None)
 }
 
+/// Parse the Content Length of an HTTP Header Value to a usize
+pub fn parse_content_length(header_value: &http::HeaderValue) -> Result<usize, anyhow::Error> {
+    let header_str = header_value.to_str()?;
+    header_str
+        .parse()
+        .map_err(|_| anyhow!("invalid content-length header"))
+}
+
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
