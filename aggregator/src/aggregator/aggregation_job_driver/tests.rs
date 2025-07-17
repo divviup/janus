@@ -2866,7 +2866,6 @@ async fn leader_async_aggregation_job_init_to_pending() {
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
@@ -3126,7 +3125,6 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
         )
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(201)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
@@ -3389,7 +3387,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
@@ -3640,7 +3637,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         .match_query("step=0")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
@@ -3888,7 +3884,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         .match_query("step=0")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
@@ -4664,7 +4659,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         .match_query("step=1")
         .match_header(header, value.as_str())
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .create_async()
         .await;
 
