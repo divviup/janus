@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use http::StatusCode;
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
-use mime;
+use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use std::fmt::{self, Display, Formatter};
 use tracing::warn;
@@ -29,7 +29,7 @@ impl HttpErrorResponse {
 
         if let Some(content_type) = response.headers().get(CONTENT_TYPE) {
             if let Ok(content_type_str) = content_type.to_str() {
-                if let Ok(mime) = content_type_str.parse::<mime::Mime>() {
+                if let Ok(mime) = content_type_str.parse::<Mime>() {
                     if mime.essence_str() == PROBLEM_JSON_MEDIA_TYPE {
                         match response.json::<HttpApiProblem>().await {
                             Ok(mut problem) => {
@@ -139,12 +139,35 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
     Ok(None)
 }
 
-/// Parse the Content Length of an HTTP Header Value to a usize
+/// Parse the Content Length of an HTTP Header Value to a usize.
 pub fn parse_content_length(header_value: &http::HeaderValue) -> Result<usize, anyhow::Error> {
     let header_str = header_value.to_str()?;
     header_str
         .parse()
         .map_err(|_| anyhow!("invalid content-length header"))
+}
+
+/// Return OK if there is a Content-Type header and it matches the expected value.
+pub fn check_content_type(
+    headers: &http::HeaderMap,
+    expected: &'static str,
+) -> Result<(), anyhow::Error> {
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .ok_or(anyhow!("Content-Type header not found"))?;
+    let mime: Mime = content_type
+        .to_str()
+        .map_err(|e| anyhow!(e))?
+        .parse()
+        .map_err(|e| anyhow!("failed to parse Content-Type header: {}", e))?;
+    if mime.essence_str() != expected {
+        return Err(anyhow!(
+            "unexpected Content-Type header {} != {}",
+            mime.essence_str(),
+            expected
+        ));
+    };
+    Ok(())
 }
 
 #[cfg(test)]
