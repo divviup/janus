@@ -274,7 +274,8 @@ struct EmptyBody {
 }
 
 impl EmptyBody {
-    /// Return a relative path to the aggregation job and task
+    /// Return an EmptyBody with the location set to the relative path to the
+    /// aggregation job for the task.
     fn for_task_and_job(task_id: &TaskId, aggregation_job_id: &AggregationJobId) -> Self {
         Self {
             location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step=0"),
