@@ -1005,10 +1005,6 @@ pub mod test_util {
         serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 
-    pub async fn assert_empty_response_body(test_conn: &mut TestConn) {
-        assert!(test_conn.take_response_body().is_none())
-    }
-
     /// Contains structures necessary for completing an HTTP handler test. The contained
     /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
     /// dropped.

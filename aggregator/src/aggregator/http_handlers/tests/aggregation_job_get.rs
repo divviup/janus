@@ -1,5 +1,5 @@
 use crate::aggregator::{
-    http_handlers::test_util::{HttpHandlerTest, assert_empty_response_body, decode_response_body},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
     test_util::generate_helper_report_share,
 };
 use janus_aggregator_core::{
@@ -24,7 +24,7 @@ use prio::vdaf::dummy;
 use rand::random;
 use std::sync::Arc;
 use trillium::{Handler, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::get};
+use trillium_testing::{TestConn, assert_body, assert_headers, prelude::get};
 
 #[tokio::test]
 async fn aggregation_job_get_ready() {
@@ -259,7 +259,7 @@ async fn aggregation_job_get_unready() {
 
     // Validate result.
     assert_eq!(aggregate_conn.status(), Some(Status::Ok));
-    assert_empty_response_body(&mut aggregate_conn).await;
+    assert_body!(&mut aggregate_conn, "");
 }
 
 #[tokio::test]
