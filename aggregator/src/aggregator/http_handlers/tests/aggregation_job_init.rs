@@ -770,7 +770,7 @@ async fn aggregate_init_async() {
         assert_body!(&mut test_conn, "");
         assert_headers!(
             &test_conn,
-            "content-length" => ("0")
+            "content-length" => "0"
         );
 
         // Check aggregation job in datastore.
