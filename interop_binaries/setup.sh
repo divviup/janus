@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-timeout 5m bash -c 'until pg_isready -U postgres; do sleep 1; done'
+timeout 5m bash -c 'until pg_isready -U postgres && psql -U postgres -c "SELECT 1;"; do sleep 1; done'
 sqlx migrate run --source /etc/janus/migrations --database-url postgres://postgres@127.0.0.1:5432/postgres
 /usr/bin/supervisorctl -c /etc/janus/supervisord.conf start janus_interop_aggregator
 /usr/bin/supervisorctl -c /etc/janus/supervisord.conf start aggregator
