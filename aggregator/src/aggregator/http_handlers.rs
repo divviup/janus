@@ -267,13 +267,18 @@ where
     }
 }
 
-/// A Trillium handler that returns an empty body.
-#[derive(Clone, Copy)]
-struct EmptyBody {}
+/// A Trillium handler that returns an empty body with retry-after and location headers.
+#[derive(Clone)]
+struct EmptyBody {
+    location: String,
+}
 
 impl EmptyBody {
-    fn new() -> Self {
-        Self {}
+    /// Return a relative path to the aggregation job and task
+    fn for_task_and_job(task_id: &TaskId, aggregation_job_id: &AggregationJobId) -> Self {
+        Self {
+            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step=0"),
+        }
     }
 }
 
@@ -281,6 +286,7 @@ impl EmptyBody {
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
         conn.with_response_header(KnownHeaderName::RetryAfter, "2")
+            .with_response_header(KnownHeaderName::Location, self.location.clone())
             .with_status(Status::Ok)
             .halt()
     }
@@ -617,7 +623,10 @@ async fn aggregation_jobs_put<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Created))),
-        None => Ok(Err(EmptyBody::new())),
+        None => Ok(Err(EmptyBody::for_task_and_job(
+            &task_id,
+            &aggregation_job_id,
+        ))),
     }
 }
 
@@ -649,7 +658,10 @@ async fn aggregation_jobs_post<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Accepted))),
-        None => Ok(Err(EmptyBody::new())),
+        None => Ok(Err(EmptyBody::for_task_and_job(
+            &task_id,
+            &aggregation_job_id,
+        ))),
     }
 }
 
@@ -682,7 +694,10 @@ async fn aggregation_jobs_get<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Ok))),
-        None => Ok(Err(EmptyBody::new())),
+        None => Ok(Err(EmptyBody::for_task_and_job(
+            &task_id,
+            &aggregation_job_id,
+        ))),
     }
 }
 

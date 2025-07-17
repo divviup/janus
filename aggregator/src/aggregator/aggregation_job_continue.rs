@@ -207,7 +207,7 @@ pub mod test_util {
     use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{TestConn, assert_headers, prelude::post};
+    use trillium_testing::{TestConn, assert_headers, assert_status, prelude::post};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -239,13 +239,26 @@ pub mod test_util {
     ) -> Option<AggregationJobResp> {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        match test_conn.status() {
-            Some(Status::Accepted) => {
-                assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-                Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
-            }
-            Some(Status::Ok) => None,
-            _ => panic!(),
+        let length: Option<usize> = test_conn
+            .response_headers()
+            .get_str(KnownHeaderName::ContentLength)
+            .map(|s| s.parse())
+            .transpose()
+            .unwrap();
+
+        if length.is_some_and(|l| l > 0) {
+            assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
+            assert_status!(&test_conn, Status::Accepted);
+            Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
+        } else {
+            let expected_location = format!(
+                "/tasks/{}/aggregation_jobs/{}?step=0",
+                task.id(),
+                aggregation_job_id
+            );
+            assert_headers!(&test_conn, "retry-after" => "2", "location" => (expected_location.as_str()));
+            assert_status!(&test_conn, Status::Ok);
+            None
         }
     }
 
