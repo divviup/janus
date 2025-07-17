@@ -2850,7 +2850,6 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .clone(),
         )]),
     );
-
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3109,7 +3108,6 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .clone(),
         )]),
     );
-
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
@@ -3374,7 +3372,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .clone(),
         )]),
     );
-
     let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
