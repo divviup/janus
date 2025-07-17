@@ -25,7 +25,7 @@ use educe::Educe;
 use futures::future::BoxFuture;
 use http::{
     HeaderValue,
-    header::{CONTENT_LENGTH, RETRY_AFTER},
+    header::{CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER},
 };
 use janus_aggregator_core::{
     AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
@@ -51,6 +51,7 @@ use janus_messages::{
     ReportError, ReportMetadata, ReportShare, Role,
     batch_mode::{LeaderSelected, TimeInterval},
 };
+use mime::Mime;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -78,6 +79,25 @@ use tracing::{Span, debug, error, info, info_span, trace_span, warn};
 
 #[cfg(test)]
 mod tests;
+
+/// Return OK if there is a Content-Type header and it matches the expected value.
+fn check_content_type(headers: &http::HeaderMap, expected: &'static str) -> Result<(), Error> {
+    let content_type = headers.get(CONTENT_TYPE).ok_or(Error::BadContentType(
+        "Content-Type header not found".into(),
+    ))?;
+    let mime: Mime = content_type
+        .to_str()
+        .map_err(|e| Error::BadContentType(e.into()))?
+        .parse()
+        .context("failed to parse Content-Type header")
+        .map_err(|e| Error::BadContentType(e.into()))?;
+    if mime.essence_str() != expected {
+        return Err(Error::BadContentType(
+            "unexpected Content-Type header".into(),
+        ));
+    };
+    Ok(())
+}
 
 #[derive(Educe)]
 #[educe(Debug)]
@@ -653,6 +673,7 @@ where
                 .map_err(|e| Error::BadRequest(e.into()))?;
 
             let resp = if length.is_some_and(|l| l > 0) {
+                check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)?;
                 Some(
                     AggregationJobResp::get_decoded(http_response.body())
                         .map_err(Error::MessageDecode)?,
@@ -873,6 +894,7 @@ where
             .map_err(|e| Error::BadRequest(e.into()))?;
 
         let resp = if length.is_some_and(|l| l > 0) {
+            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)?;
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,
@@ -981,6 +1003,7 @@ where
             .map_err(|e| Error::BadRequest(e.into()))?;
 
         let resp = if length.is_some_and(|l| l > 0) {
+            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)?;
             Some(
                 AggregationJobResp::get_decoded(http_response.body())
                     .map_err(Error::MessageDecode)?,

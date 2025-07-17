@@ -239,9 +239,9 @@ pub mod test_util {
     ) -> Option<AggregationJobResp> {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
         match test_conn.status() {
             Some(Status::Accepted) => {
+                assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
                 Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
             }
             Some(Status::Ok) => None,
