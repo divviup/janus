@@ -37,7 +37,7 @@ use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::put};
+use trillium_testing::{TestConn, assert_body, assert_headers, prelude::put};
 
 #[tokio::test]
 async fn aggregate_leader() {
@@ -763,12 +763,14 @@ async fn aggregate_init_async() {
     let mut report_aggregations_results = Vec::new();
     let mut batch_aggregations_results = Vec::new();
     for _ in 0..2 {
-        let test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_body!(&mut test_conn, "");
         assert_headers!(
             &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+            "content-length" => ("0")
         );
 
         // Check aggregation job in datastore.

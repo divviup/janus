@@ -269,28 +269,19 @@ where
 
 /// A Trillium handler that returns an empty body.
 #[derive(Clone, Copy)]
-struct EmptyBody {
-    media_type: &'static str,
-    retry_after: &'static str, // TODO: Make this editable? TKTK
-    status: Status,            // TODO: Make this editable? TKTK
-}
+struct EmptyBody {}
 
 impl EmptyBody {
-    fn new(media_type: &'static str) -> Self {
-        Self {
-            media_type,
-            retry_after: "2",
-            status: Status::Ok,
-        }
+    fn new() -> Self {
+        Self {}
     }
 }
 
 #[async_trait]
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
-        conn.with_response_header(KnownHeaderName::ContentType, self.media_type)
-            .with_response_header(KnownHeaderName::RetryAfter, self.retry_after)
-            .with_status(self.status)
+        conn.with_response_header(KnownHeaderName::RetryAfter, "2")
+            .with_status(Status::Ok)
             .halt()
     }
 }
@@ -626,7 +617,7 @@ async fn aggregation_jobs_put<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Created))),
-        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
+        None => Ok(Err(EmptyBody::new())),
     }
 }
 
@@ -658,7 +649,7 @@ async fn aggregation_jobs_post<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Accepted))),
-        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
+        None => Ok(Err(EmptyBody::new())),
     }
 }
 
@@ -691,7 +682,7 @@ async fn aggregation_jobs_get<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Ok))),
-        None => Ok(Err(EmptyBody::new(AggregationJobResp::MEDIA_TYPE))),
+        None => Ok(Err(EmptyBody::new())),
     }
 }
 
