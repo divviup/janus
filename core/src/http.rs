@@ -144,7 +144,7 @@ pub fn parse_content_length(header_value: &http::HeaderValue) -> Result<usize, a
     let header_str = header_value.to_str()?;
     header_str
         .parse()
-        .map_err(|_| anyhow!("invalid content-length header"))
+        .map_err(|_| anyhow!("invalid Content-Length header"))
 }
 
 /// Return OK if there is a Content-Type header and it matches the expected value.
