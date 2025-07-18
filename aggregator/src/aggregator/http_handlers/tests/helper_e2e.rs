@@ -102,7 +102,7 @@ async fn helper_aggregation_report_share_replay() {
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
     let prepare_resps_1 = assert_matches!(
         agg_init_resp_1,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
     assert_matches!(
         prepare_resps_1[0].result(),
@@ -120,7 +120,7 @@ async fn helper_aggregation_report_share_replay() {
         AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
     let prepare_resps_2 = assert_matches!(
         agg_init_resp_2,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
     assert_matches!(
         prepare_resps_2[0].result(),
