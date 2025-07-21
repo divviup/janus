@@ -3,6 +3,7 @@ use super::{
     error::{ArcError, ReportRejectionReason},
     queue::{LIFORequestQueue, queued_lifo},
 };
+use crate::aggregator::AggregationJobContinueResult;
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -276,9 +277,13 @@ struct EmptyBody {
 impl EmptyBody {
     /// Return an EmptyBody with the location set to the relative path to the
     /// aggregation job for the task.
-    fn for_task_and_job(task_id: &TaskId, aggregation_job_id: &AggregationJobId) -> Self {
+    fn for_aggregation_job(
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+        step: u16,
+    ) -> Self {
         Self {
-            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step=0"),
+            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
         }
     }
 }
@@ -624,9 +629,10 @@ async fn aggregation_jobs_put<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Created))),
-        None => Ok(Err(EmptyBody::for_task_and_job(
+        None => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
+            0,
         ))),
     }
 }
@@ -654,14 +660,14 @@ async fn aggregation_jobs_post<C: Clock>(
         .ok_or(Error::ClientDisconnected)??;
 
     match response {
-        Some(response) => Ok(Ok(EncodedBody::new(
-            response,
-            AggregationJobResp::MEDIA_TYPE,
-        )
-        .with_status(Status::Accepted))),
-        None => Ok(Err(EmptyBody::for_task_and_job(
+        AggregationJobContinueResult::Sync { resp } => {
+            Ok(Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
+                .with_status(Status::Accepted)))
+        }
+        AggregationJobContinueResult::Async { step } => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
+            step.into(),
         ))),
     }
 }
@@ -695,9 +701,10 @@ async fn aggregation_jobs_get<C: Clock>(
             AggregationJobResp::MEDIA_TYPE,
         )
         .with_status(Status::Ok))),
-        None => Ok(Err(EmptyBody::for_task_and_job(
+        None => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
+            step.into(),
         ))),
     }
 }

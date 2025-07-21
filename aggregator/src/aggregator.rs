@@ -188,6 +188,13 @@ impl AggregatorMetrics {
     }
 }
 
+/// Represents the result of a Job Continue operation, which varies whether that was synchronous
+/// or async.
+enum AggregationJobContinueResult {
+    Sync { resp: AggregationJobResp },
+    Async { step: AggregationJobStep },
+}
+
 /// Config represents a configuration for an Aggregator.
 #[derive(Debug)]
 pub struct Config {
@@ -456,7 +463,7 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -1048,7 +1055,7 @@ impl<C: Clock> TaskAggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
         request_hash: [u8; 32],
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         self.vdaf_ops
             .handle_aggregate_continue(
                 datastore,
@@ -1518,7 +1525,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
         request_hash: [u8; 32],
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -2279,7 +2286,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
         request_hash: [u8; 32],
-    ) -> Result<Option<AggregationJobResp>, Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         if req.step() == AggregationJobStep::from(0) {
             return Err(Error::InvalidMessage(
                 Some(*task.id()),
@@ -2356,16 +2363,16 @@ impl VdafOps {
 
                         let resp = match task.aggregation_mode() {
                             Some(AggregationMode::Synchronous) => {
-                                Some(AggregationJobResp {
+                                AggregationJobContinueResult::Sync { resp:  AggregationJobResp {
                                     prepare_resps: report_aggregations
                                         .iter()
                                         .filter_map(ReportAggregation::last_prep_resp)
                                         .cloned()
                                         .collect(),
-                                })
+                                }}
                             }
                             Some(AggregationMode::Asynchronous) => {
-                                None
+                                AggregationJobContinueResult::Async { step: aggregation_job.step() }
                             }
                             None => {
                                 return Err(datastore::Error::User(
@@ -2523,7 +2530,7 @@ impl VdafOps {
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(Option<AggregationJobResp>, TaskAggregationCounter), Error> {
+    ) -> Result<(AggregationJobContinueResult, TaskAggregationCounter), Error> {
         // Compute the next aggregation step.
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         let aggregation_job = Arc::new(aggregation_job);
@@ -2549,7 +2556,12 @@ impl VdafOps {
             report_aggregations_to_write,
         )
         .await?;
-        Ok((Some(AggregationJobResp { prepare_resps }), counters))
+        Ok((
+            AggregationJobContinueResult::Sync {
+                resp: AggregationJobResp { prepare_resps },
+            },
+            counters,
+        ))
     }
 
     // All report aggregations must be in the HelperContinueProcessing state.
@@ -2567,13 +2579,14 @@ impl VdafOps {
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(Option<AggregationJobResp>, TaskAggregationCounter), Error> {
+    ) -> Result<(AggregationJobContinueResult, TaskAggregationCounter), Error> {
         report_aggregations_to_write.extend(
             report_aggregations
                 .into_iter()
                 .map(|ra| WritableReportAggregation::new(ra, None)),
         );
 
+        let step = aggregation_job.step();
         let (_, counters) = Self::handle_aggregate_continue_generic_write(
             tx,
             task,
@@ -2585,7 +2598,7 @@ impl VdafOps {
         )
         .await?;
 
-        Ok((None, counters))
+        Ok((AggregationJobContinueResult::Async { step }, counters))
     }
 
     async fn handle_aggregate_continue_generic_write<

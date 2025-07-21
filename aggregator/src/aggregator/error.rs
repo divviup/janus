@@ -128,6 +128,7 @@ pub enum Error {
         resource_type: &'static str,
         identifier: String,
     },
+    /// The content-type was incorrect
     #[error("wrong Content-Type header: {0}")]
     BadContentType(Box<dyn std::error::Error + Send + Sync>),
     /// A catch-all error representing an issue with a request.

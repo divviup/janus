@@ -23,10 +23,7 @@ use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
-use http::{
-    HeaderValue,
-    header::{CONTENT_LENGTH, RETRY_AFTER},
-};
+use http::{HeaderValue, header::RETRY_AFTER};
 use janus_aggregator_core::{
     AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
@@ -39,7 +36,7 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask},
 };
 use janus_core::{
-    http::{check_content_type, parse_content_length},
+    http::check_content_type,
     retries::{is_retryable_http_client_error, is_retryable_http_status},
     time::Clock,
     vdaf::vdaf_application_context,
@@ -645,21 +642,13 @@ where
                 .get(RETRY_AFTER)
                 .map(parse_retry_after)
                 .transpose()?;
-            let length = http_response
-                .headers()
-                .get(CONTENT_LENGTH)
-                .map(parse_content_length)
-                .transpose()
-                .map_err(|e| Error::BadRequest(e.into()))?;
 
-            let resp = if length.is_some_and(|l| l > 0) {
+            let body = http_response.body();
+            let resp = if !body.is_empty() {
                 check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
                     .map_err(|e| Error::BadContentType(e.into()))?;
 
-                Some(
-                    AggregationJobResp::get_decoded(http_response.body())
-                        .map_err(Error::MessageDecode)?,
-                )
+                Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
             } else {
                 None
             };
@@ -868,20 +857,12 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let length = http_response
-            .headers()
-            .get(CONTENT_LENGTH)
-            .map(parse_content_length)
-            .transpose()
-            .map_err(|e| Error::BadRequest(e.into()))?;
 
-        let resp = if length.is_some_and(|l| l > 0) {
+        let body = http_response.body();
+        let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
                 .map_err(|e| Error::BadContentType(e.into()))?;
-            Some(
-                AggregationJobResp::get_decoded(http_response.body())
-                    .map_err(Error::MessageDecode)?,
-            )
+            Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
         } else {
             None
         };
@@ -978,20 +959,12 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let length = http_response
-            .headers()
-            .get(CONTENT_LENGTH)
-            .map(parse_content_length)
-            .transpose()
-            .map_err(|e| Error::BadRequest(e.into()))?;
 
-        let resp = if length.is_some_and(|l| l > 0) {
+        let body = http_response.body();
+        let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
                 .map_err(|e| Error::BadContentType(e.into()))?;
-            Some(
-                AggregationJobResp::get_decoded(http_response.body())
-                    .map_err(Error::MessageDecode)?,
-            )
+            Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
         } else {
             None
         };

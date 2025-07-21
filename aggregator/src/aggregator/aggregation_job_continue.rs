@@ -252,9 +252,10 @@ pub mod test_util {
             Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
         } else {
             let expected_location = format!(
-                "/tasks/{}/aggregation_jobs/{}?step=0",
+                "/tasks/{}/aggregation_jobs/{}?step={}",
                 task.id(),
-                aggregation_job_id
+                aggregation_job_id,
+                request.step(),
             );
             assert_headers!(&test_conn, "retry-after" => "2", "location" => (expected_location.as_str()));
             assert_status!(&test_conn, Status::Ok);

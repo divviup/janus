@@ -139,14 +139,6 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
     Ok(None)
 }
 
-/// Parse the Content Length of an HTTP Header Value to a usize.
-pub fn parse_content_length(header_value: &http::HeaderValue) -> Result<usize, anyhow::Error> {
-    let header_str = header_value.to_str()?;
-    header_str
-        .parse()
-        .map_err(|_| anyhow!("invalid Content-Length header"))
-}
-
 /// Return OK if there is a Content-Type header and it matches the expected value.
 pub fn check_content_type(
     headers: &http::HeaderMap,
@@ -156,8 +148,7 @@ pub fn check_content_type(
         .get(CONTENT_TYPE)
         .ok_or(anyhow!("Content-Type header not found"))?;
     let mime: Mime = content_type
-        .to_str()
-        .map_err(|e| anyhow!(e))?
+        .to_str()?
         .parse()
         .map_err(|e| anyhow!("failed to parse Content-Type header: {}", e))?;
     if mime.essence_str() != expected {
