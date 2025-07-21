@@ -291,6 +291,7 @@ impl EmptyBody {
 #[async_trait]
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
+        // To be fixed in issue #3921
         conn.with_response_header(KnownHeaderName::RetryAfter, "2")
             .with_response_header(KnownHeaderName::Location, self.location.clone())
             .with_status(Status::Ok)

@@ -642,7 +642,6 @@ where
                 .get(RETRY_AFTER)
                 .map(parse_retry_after)
                 .transpose()?;
-
             let body = http_response.body();
             let resp = if !body.is_empty() {
                 check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
@@ -857,7 +856,6 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-
         let body = http_response.body();
         let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
@@ -959,7 +957,6 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-
         let body = http_response.body();
         let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
