@@ -37,7 +37,7 @@ use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::put};
+use trillium_testing::{TestConn, assert_body, assert_headers, prelude::put};
 
 #[tokio::test]
 async fn aggregate_leader() {
@@ -536,7 +536,7 @@ async fn aggregate_init_sync() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
         let prepare_resps = assert_matches!(
             aggregate_resp,
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+            AggregationJobResp { prepare_resps } => prepare_resps
         );
 
         // Validate response.
@@ -765,13 +765,13 @@ async fn aggregate_init_async() {
     for _ in 0..2 {
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Created));
+
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_body!(&mut test_conn, "");
         assert_headers!(
             &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+            "content-length" => "0"
         );
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-        assert_matches!(aggregate_resp, AggregationJobResp::Processing);
 
         // Check aggregation job in datastore.
         let (aggregation_jobs, report_aggregations, batch_aggregations) = datastore
@@ -945,7 +945,7 @@ async fn aggregate_init_batch_already_collected() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     let prepare_step = prepare_resps.first().unwrap();
@@ -1012,7 +1012,7 @@ async fn aggregate_init_prep_init_failed() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     // Validate response.
@@ -1081,7 +1081,7 @@ async fn aggregate_init_prep_step_failed() {
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
-        AggregationJobResp::Finished { prepare_resps } => prepare_resps
+        AggregationJobResp { prepare_resps } => prepare_resps
     );
 
     // Validate response.

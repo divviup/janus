@@ -24,7 +24,7 @@ use prio::vdaf::dummy;
 use rand::random;
 use std::sync::Arc;
 use trillium::{Handler, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::get};
+use trillium_testing::{TestConn, assert_body, assert_headers, prelude::get};
 
 #[tokio::test]
 async fn aggregation_job_get_ready() {
@@ -134,7 +134,7 @@ async fn aggregation_job_get_ready() {
     // Validate result.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_metadata.id(),
                 PrepareStepResult::Continue {
@@ -249,7 +249,7 @@ async fn aggregation_job_get_unready() {
         .unwrap();
 
     // Send request.
-    let aggregate_resp = get_aggregation_job_and_decode(
+    let mut aggregate_conn = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(0)),
@@ -258,7 +258,8 @@ async fn aggregation_job_get_unready() {
     .await;
 
     // Validate result.
-    assert_eq!(aggregate_resp, AggregationJobResp::Processing);
+    assert_eq!(aggregate_conn.status(), Some(Status::Ok));
+    assert_body!(&mut aggregate_conn, "");
 }
 
 #[tokio::test]

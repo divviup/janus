@@ -3,6 +3,7 @@ use super::{
     error::{ArcError, ReportRejectionReason},
     queue::{LIFORequestQueue, queued_lifo},
 };
+use crate::aggregator::AggregationJobContinueResult;
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -167,6 +168,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
         ),
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
+        Error::BadContentType(_) => conn.with_status(Status::UnsupportedMediaType),
         Error::BadRequest(detail) => conn.with_problem_document(
             &ProblemDocument::new(
                 "about:blank", // No additional semantics over-and-above the HTTP status code.
@@ -263,6 +265,37 @@ where
                 .halt(),
             Err(e) => Error::MessageEncode(e).run(conn).await,
         }
+    }
+}
+
+/// A Trillium handler that returns an empty body with retry-after and location headers.
+#[derive(Clone)]
+struct EmptyBody {
+    location: String,
+}
+
+impl EmptyBody {
+    /// Return an EmptyBody with the location set to the relative path to the
+    /// aggregation job for the task.
+    fn for_aggregation_job(
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+        step: u16,
+    ) -> Self {
+        Self {
+            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
+        }
+    }
+}
+
+#[async_trait]
+impl Handler for EmptyBody {
+    async fn run(&self, conn: Conn) -> Conn {
+        // To be fixed in issue #3921
+        conn.with_response_header(KnownHeaderName::RetryAfter, "2")
+            .with_response_header(KnownHeaderName::Location, self.location.clone())
+            .with_status(Status::Ok)
+            .halt()
     }
 }
 
@@ -570,7 +603,7 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     validate_content_type(
         conn,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -591,14 +624,25 @@ async fn aggregation_jobs_put<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Created))
+    match response {
+        Some(response) => Ok(Ok(EncodedBody::new(
+            response,
+            AggregationJobResp::MEDIA_TYPE,
+        )
+        .with_status(Status::Created))),
+        None => Ok(Err(EmptyBody::for_aggregation_job(
+            &task_id,
+            &aggregation_job_id,
+            0,
+        ))),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
@@ -616,14 +660,24 @@ async fn aggregation_jobs_post<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Accepted))
+    match response {
+        AggregationJobContinueResult::Sync(resp) => {
+            Ok(Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
+                .with_status(Status::Accepted)))
+        }
+        AggregationJobContinueResult::Async(step) => Ok(Err(EmptyBody::for_aggregation_job(
+            &task_id,
+            &aggregation_job_id,
+            step.into(),
+        ))),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
 async fn aggregation_jobs_get<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
+) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
     let task_id = parse_task_id(conn)?;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
@@ -642,7 +696,18 @@ async fn aggregation_jobs_get<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE).with_status(Status::Ok))
+    match response {
+        Some(response) => Ok(Ok(EncodedBody::new(
+            response,
+            AggregationJobResp::MEDIA_TYPE,
+        )
+        .with_status(Status::Ok))),
+        None => Ok(Err(EmptyBody::for_aggregation_job(
+            &task_id,
+            &aggregation_job_id,
+            step.into(),
+        ))),
+    }
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.

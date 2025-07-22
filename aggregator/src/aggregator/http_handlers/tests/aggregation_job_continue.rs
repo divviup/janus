@@ -289,7 +289,7 @@ async fn aggregate_continue_sync() {
     // Validate response.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        Some(AggregationJobResp {
             prepare_resps: Vec::from([
                 PrepareResp::new(*report_metadata_0.id(), PrepareStepResult::Finished),
                 PrepareResp::new(
@@ -297,7 +297,7 @@ async fn aggregate_continue_sync() {
                     PrepareStepResult::Reject(ReportError::BatchCollected),
                 )
             ])
-        }
+        })
     );
 
     // Validate datastore.
@@ -562,8 +562,8 @@ async fn aggregate_continue_async() {
     let aggregate_resp =
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
 
-    // Validate response.
-    assert_eq!(aggregate_resp, AggregationJobResp::Processing);
+    // Validate response was empty.
+    assert!(aggregate_resp.is_none());
 
     // Validate datastore.
     let (aggregation_job, report_aggregations) = datastore
@@ -942,7 +942,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
 
     // Send request, and parse response.
-    let _ = post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
+    let resp =
+        post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
+    assert!(resp.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
     let first_batch_got_batch_aggregations = datastore
@@ -1235,7 +1237,9 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         ]),
     );
 
-    let _ = post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
+    let resp_2 =
+        post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
+    assert!(resp_2.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
     // batch aggregations over the same interval. (the task & aggregation parameter will always
@@ -1438,7 +1442,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let resp =
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
     let prepare_resps =
-        assert_matches!(resp, AggregationJobResp::Finished{prepare_resps} => prepare_resps);
+        assert_matches!(resp, Some(AggregationJobResp{prepare_resps}) => prepare_resps);
     assert_eq!(prepare_resps.len(), 1);
     assert_eq!(
         prepare_resps[0],
@@ -1560,12 +1564,12 @@ async fn aggregate_continue_prep_step_fails() {
         post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::Finished {
+        Some(AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 *report_metadata.id(),
                 PrepareStepResult::Reject(ReportError::VdafPrepError),
             )])
-        }
+        })
     );
 
     // Check datastore state.

@@ -207,7 +207,7 @@ pub mod test_util {
     use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{TestConn, assert_headers, prelude::post};
+    use trillium_testing::{TestConn, assert_headers, assert_status, prelude::post};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -236,12 +236,31 @@ pub mod test_util {
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
-    ) -> AggregationJobResp {
+    ) -> Option<AggregationJobResp> {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Accepted));
-        assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-        decode_response_body::<AggregationJobResp>(&mut test_conn).await
+        let length: Option<usize> = test_conn
+            .response_headers()
+            .get_str(KnownHeaderName::ContentLength)
+            .map(|s| s.parse())
+            .transpose()
+            .unwrap();
+
+        if length.is_some_and(|l| l > 0) {
+            assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
+            assert_status!(&test_conn, Status::Accepted);
+            Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
+        } else {
+            let expected_location = format!(
+                "/tasks/{}/aggregation_jobs/{}?step={}",
+                task.id(),
+                aggregation_job_id,
+                request.step(),
+            );
+            assert_headers!(&test_conn, "retry-after" => "2", "location" => (expected_location.as_str()));
+            assert_status!(&test_conn, Status::Ok);
+            None
+        }
     }
 
     pub async fn post_aggregation_job_expecting_status(
@@ -505,17 +524,17 @@ mod tests {
         // Validate response.
         assert_eq!(
             first_continue_response,
-            AggregationJobResp::Finished {
+            Some(AggregationJobResp {
                 prepare_resps: test_case
                     .first_continue_request
                     .prepare_continues()
                     .iter()
                     .map(|step| PrepareResp::new(*step.report_id(), PrepareStepResult::Finished))
                     .collect()
-            }
+            })
         );
 
-        test_case.first_continue_response = Some(first_continue_response);
+        test_case.first_continue_response = first_continue_response;
         test_case
     }
 
@@ -641,7 +660,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            test_case.first_continue_response.unwrap(),
+            Some(test_case.first_continue_response.unwrap()),
             second_continue_resp
         );
     }

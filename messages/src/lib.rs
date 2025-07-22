@@ -2492,9 +2492,8 @@ impl Decode for AggregationJobContinueReq {
 /// DAP protocol message representing the response to an aggregation job initialization or
 /// continuation request.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AggregationJobResp {
-    Processing,
-    Finished { prepare_resps: Vec<PrepareResp> },
+pub struct AggregationJobResp {
+    pub prepare_resps: Vec<PrepareResp>,
 }
 
 impl MediaType for AggregationJobResp {
@@ -2504,41 +2503,22 @@ impl MediaType for AggregationJobResp {
 
 impl Encode for AggregationJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        // The encoding includes an implicit discriminator byte called AggregationJobStatus in the
-        // DAP specification.
-        match self {
-            Self::Processing => 0u8.encode(bytes),
-            Self::Finished { prepare_resps } => {
-                1u8.encode(bytes)?;
-                encode_u32_items(bytes, &(), prepare_resps)
-            }
-        }
+        encode_u32_items(bytes, &(), &self.prepare_resps)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(match self {
-            Self::Processing => 1,
-            Self::Finished { prepare_resps } => {
-                let mut len = 5;
-                for prepare_resp in prepare_resps {
-                    len += prepare_resp.encoded_len()?;
-                }
-                len
-            }
-        })
+        let mut len = 4;
+        for prepare_resp in &self.prepare_resps {
+            len += prepare_resp.encoded_len()?;
+        }
+        Some(len)
     }
 }
 
 impl Decode for AggregationJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u8::decode(bytes)?;
-        Ok(match val {
-            0 => Self::Processing,
-            1 => {
-                let prepare_resps = decode_u32_items(&(), bytes)?;
-                Self::Finished { prepare_resps }
-            }
-            _ => return Err(CodecError::UnexpectedValue),
+        Ok(Self {
+            prepare_resps: decode_u32_items(&(), bytes)?,
         })
     }
 }

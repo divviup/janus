@@ -36,6 +36,7 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask},
 };
 use janus_core::{
+    http::check_content_type,
     retries::{is_retryable_http_client_error, is_retryable_http_status},
     time::Clock,
     vdaf::vdaf_application_context,
@@ -641,8 +642,15 @@ where
                 .get(RETRY_AFTER)
                 .map(parse_retry_after)
                 .transpose()?;
-            let resp = AggregationJobResp::get_decoded(http_response.body())
-                .map_err(Error::MessageDecode)?;
+            let body = http_response.body();
+            let resp = if !body.is_empty() {
+                check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+                    .map_err(|e| Error::BadContentType(e.into()))?;
+
+                Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
+            } else {
+                None
+            };
 
             (resp, retry_after)
         } else {
@@ -650,9 +658,9 @@ where
             // by the block above), don't send a request to the Helper at all and process an
             // artificial aggregation job response instead, which will finish the aggregation job.
             (
-                AggregationJobResp::Finished {
+                Some(AggregationJobResp {
                     prepare_resps: Vec::new(),
-                },
+                }),
                 None,
             )
         };
@@ -848,8 +856,14 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let resp =
-            AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
+        let body = http_response.body();
+        let resp = if !body.is_empty() {
+            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+                .map_err(|e| Error::BadContentType(e.into()))?;
+            Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
+        } else {
+            None
+        };
 
         self.step_aggregation_job_leader_process_response(
             datastore,
@@ -943,8 +957,14 @@ where
             .get(RETRY_AFTER)
             .map(parse_retry_after)
             .transpose()?;
-        let resp =
-            AggregationJobResp::get_decoded(http_response.body()).map_err(Error::MessageDecode)?;
+        let body = http_response.body();
+        let resp = if !body.is_empty() {
+            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+                .map_err(|e| Error::BadContentType(e.into()))?;
+            Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
+        } else {
+            None
+        };
 
         self.step_aggregation_job_leader_process_response(
             datastore,
@@ -976,10 +996,10 @@ where
         stepped_aggregations: Vec<SteppedAggregation<SEED_SIZE, A>>,
         report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
-        helper_resp: AggregationJobResp,
+        helper_resp: Option<AggregationJobResp>,
     ) -> Result<(), Error> {
         match helper_resp {
-            AggregationJobResp::Processing => {
+            None => {
                 self.step_aggregation_job_leader_process_response_processing(
                     datastore,
                     vdaf,
@@ -993,7 +1013,7 @@ where
                 .await
             }
 
-            AggregationJobResp::Finished { prepare_resps } => {
+            Some(AggregationJobResp { prepare_resps }) => {
                 self.step_aggregation_job_leader_process_response_finished(
                     datastore,
                     vdaf,

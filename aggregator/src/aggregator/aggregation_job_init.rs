@@ -715,7 +715,7 @@ mod tests {
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
             &aggregation_job_resp,
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+            AggregationJobResp { prepare_resps } => prepare_resps
         );
         assert_eq!(
             prepare_resps.len(),
@@ -913,7 +913,7 @@ mod tests {
         .await;
         assert_eq!(response.status(), Some(Status::Created));
 
-        let want_aggregation_job_resp = AggregationJobResp::Finished {
+        let want_aggregation_job_resp = AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
                 report_id,
                 PrepareStepResult::Reject(ReportError::InvalidMessage),
@@ -1088,7 +1088,7 @@ mod tests {
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
             aggregation_job_resp,
-            AggregationJobResp::Finished { prepare_resps } => prepare_resps
+            AggregationJobResp { prepare_resps } => prepare_resps
         );
         assert_eq!(
             prepare_resps.len(),
