@@ -24,7 +24,7 @@ use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{
-    assert_headers,
+    assert_body, assert_headers,
     prelude::{delete, get, put},
 };
 
@@ -346,23 +346,12 @@ async fn collection_job_success_time_interval() {
         .unwrap();
 
     assert_eq!(want_collection_job, got_collection_job);
-
     assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
-    );
-    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
-    assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
+    assert_body!(&mut test_conn, "");
 
     let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
-    );
-    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
-    assert_eq!(collect_resp, CollectionJobResp::<TimeInterval>::Processing);
+    assert_body!(&mut test_conn, "");
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
     // job should now be complete.
@@ -430,7 +419,7 @@ async fn collection_job_success_time_interval() {
         helper_encrypted_aggregate_share,
     ) = assert_matches!(
         collect_resp,
-        CollectionJobResp::Finished{
+        CollectionJobResp{
             report_count,
             interval,
             leader_encrypted_agg_share,
