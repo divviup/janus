@@ -191,8 +191,8 @@ impl AggregatorMetrics {
 /// Represents the result of a Job Continue operation, which varies whether that was synchronous
 /// or async.
 enum AggregationJobContinueResult {
-    Sync { resp: AggregationJobResp },
-    Async { step: AggregationJobStep },
+    Sync(AggregationJobResp),
+    Async(AggregationJobStep),
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -2363,17 +2363,16 @@ impl VdafOps {
 
                         let resp = match task.aggregation_mode() {
                             Some(AggregationMode::Synchronous) => {
-                                AggregationJobContinueResult::Sync { resp:  AggregationJobResp {
+                                AggregationJobContinueResult::Sync(AggregationJobResp {
                                     prepare_resps: report_aggregations
                                         .iter()
                                         .filter_map(ReportAggregation::last_prep_resp)
                                         .cloned()
                                         .collect(),
-                                }}
-                            }
-                            Some(AggregationMode::Asynchronous) => {
-                                AggregationJobContinueResult::Async { step: aggregation_job.step() }
-                            }
+                                })
+                            },
+                            Some(AggregationMode::Asynchronous) =>
+                                AggregationJobContinueResult::Async(aggregation_job.step()),
                             None => {
                                 return Err(datastore::Error::User(
                                     Error::Internal("task has no aggregation mode".into())
@@ -2557,9 +2556,7 @@ impl VdafOps {
         )
         .await?;
         Ok((
-            AggregationJobContinueResult::Sync {
-                resp: AggregationJobResp { prepare_resps },
-            },
+            AggregationJobContinueResult::Sync(AggregationJobResp { prepare_resps }),
             counters,
         ))
     }
@@ -2598,7 +2595,7 @@ impl VdafOps {
         )
         .await?;
 
-        Ok((AggregationJobContinueResult::Async { step }, counters))
+        Ok((AggregationJobContinueResult::Async(step), counters))
     }
 
     async fn handle_aggregate_continue_generic_write<

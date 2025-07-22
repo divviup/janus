@@ -661,11 +661,11 @@ async fn aggregation_jobs_post<C: Clock>(
         .ok_or(Error::ClientDisconnected)??;
 
     match response {
-        AggregationJobContinueResult::Sync { resp } => {
+        AggregationJobContinueResult::Sync(resp) => {
             Ok(Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
                 .with_status(Status::Accepted)))
         }
-        AggregationJobContinueResult::Async { step } => Ok(Err(EmptyBody::for_aggregation_job(
+        AggregationJobContinueResult::Async(step) => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
             step.into(),
