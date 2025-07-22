@@ -168,7 +168,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
         ),
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
-        Error::BadContentType(_) => conn.with_status(Status::BadRequest),
+        Error::BadContentType(_) => conn.with_status(Status::UnsupportedMediaType),
         Error::BadRequest(detail) => conn.with_problem_document(
             &ProblemDocument::new(
                 "about:blank", // No additional semantics over-and-above the HTTP status code.
