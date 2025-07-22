@@ -817,3 +817,31 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
         .await;
     assert_eq!(response.status(), Some(Status::Created));
 }
+
+#[tokio::test]
+async fn collection_job_batch_mode_misaligned() {
+    let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
+    test_case
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .await;
+
+    // LeaderSelected != TimeInterval
+    let collection_job_id = random();
+    let request: Arc<CollectionJobReq<LeaderSelected>> = Arc::new(CollectionJobReq::new(
+        Query::new_leader_selected(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
+    ));
+
+    let mut response = test_case
+        .put_collection_job(&collection_job_id, &request)
+        .await;
+    assert_eq!(response.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
+        }),
+    );
+}
