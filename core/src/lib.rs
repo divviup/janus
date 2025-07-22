@@ -46,7 +46,7 @@ pub mod taskprov {
 
 /// This value is used in a few places throughout the protocol to identify the draft of DAP being
 /// implemented.
-const DAP_VERSION_IDENTIFIER: &str = "dap-14";
+const DAP_VERSION_IDENTIFIER: &str = "dap-15";
 
 /// Returns the given [`Url`], possibly modified to end with a slash.
 ///
