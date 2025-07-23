@@ -781,10 +781,10 @@ async fn collection_job_put_idempotence_leader_selected_no_extra_reports() {
 
     let collection_job_id_1 = random();
     let collection_job_id_2 = random();
-    let request: Arc<CollectionJobReq<LeaderSelected>> = Arc::new(CollectionJobReq::new(
+    let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-    ));
+    );
 
     // Create the first collection job.
     let response = test_case
@@ -827,10 +827,10 @@ async fn collection_job_batch_mode_misaligned() {
 
     // LeaderSelected != TimeInterval
     let collection_job_id = random();
-    let request: Arc<CollectionJobReq<LeaderSelected>> = Arc::new(CollectionJobReq::new(
+    let request = CollectionJobReq::new(
         Query::new_leader_selected(),
         dummy::AggregationParam(0).get_encoded().unwrap(),
-    ));
+    );
 
     let mut response = test_case
         .put_collection_job(&collection_job_id, &request)
