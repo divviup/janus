@@ -1884,7 +1884,6 @@ WHERE aggregation_jobs.task_id = $1
     }
 
     /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
-    #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregation_jobs_for_task<const SEED_SIZE: usize, Q, A>(
@@ -3111,7 +3110,7 @@ WHERE task_id = $1
         .collect()
     }
 
-    #[cfg(feature = "test-util")]
+    /// Retrieve all collection jobs for the specified task.
     pub async fn get_collection_jobs_for_task<
         const SEED_SIZE: usize,
         Q: QueryType,
