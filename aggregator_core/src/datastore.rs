@@ -32,6 +32,7 @@ use janus_messages::{
     HpkeConfigId, Interval, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, TaskId, Time,
 };
+use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
     KeyValue,
@@ -63,6 +64,7 @@ use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statem
 use tracing::{error, Level};
 use url::Url;
 
+pub mod leases;
 pub mod models;
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -2021,15 +2023,10 @@ RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
         .await?
         .into_iter()
         .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let aggregation_job_id =
-                row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
             Ok(Lease::new(
-                AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
+                acquired_aggregation_job_from_row(&row)?,
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -3381,30 +3378,11 @@ RETURNING
         .await?
         .into_iter()
         .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-            let time_precision =
-                Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
-            let encoded_batch_identifier = row.get("batch_identifier");
-            let encoded_aggregation_param = row.get("aggregation_param");
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-            let step_attempts = row.get_bigint_and_convert("step_attempts")?;
 
             Ok(Lease::new(
-                AcquiredCollectionJob::new(
-                    task_id,
-                    collection_job_id,
-                    query_type,
-                    vdaf,
-                    time_precision,
-                    encoded_batch_identifier,
-                    encoded_aggregation_param,
-                    step_attempts,
-                ),
+                acquired_collection_job_from_row(&row)?,
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -5722,6 +5700,12 @@ trait RowExt {
         for<'a> T: TryFrom<&'a [u8]>,
         for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug;
 
+    /// Like [Self::get_bytea_and_convert`] but handles nullable columns.
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    where
+        for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug;
+
     /// Get a PostgreSQL `BYTEA` from the row and attempt to decode a `T` value from it.
     fn get_bytea_and_decode<T, P>(
         &self,
@@ -5760,6 +5744,21 @@ impl RowExt for Row {
         let encoded: Vec<u8> = self.get(idx);
         T::try_from(&encoded)
             .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
+    }
+
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    where
+        for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        let encoded: Option<Vec<u8>> = self.get(idx);
+        encoded
+            .map(|encoded| {
+                T::try_from(&encoded).map_err(|err| {
+                    Error::DbState(format!("{idx} stored in database is invalid: {err:?}"))
+                })
+            })
+            .transpose()
     }
 
     fn get_bytea_and_decode<T, P>(
