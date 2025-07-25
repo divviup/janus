@@ -1,7 +1,6 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
 use anyhow::Context as _;
-use chrono::NaiveDateTime;
 use janus_aggregator_core::{
     TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, models::Lease},
@@ -225,7 +224,10 @@ where
                         debug!(lease_expiry = %lease.lease_expiry_time(), "Stepping job");
                         let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
-                            this.effective_lease_duration(lease.lease_expiry_time()),
+                            lease.remaining_lease_duration(
+                                &this.clock.now(),
+                                this.worker_lease_clock_skew_allowance.as_secs(),
+                            ),
                             (this.job_stepper)(lease),
                         )
                         .await
@@ -250,20 +252,6 @@ where
                 });
             }
         }
-    }
-
-    fn effective_lease_duration(&self, lease_expiry: &NaiveDateTime) -> Duration {
-        // Lease expiries are expressed as Time values (i.e. an absolute timestamp). Tokio Instant
-        // values, unfortunately, can't be created directly from a timestamp. All we can do is
-        // create an Instant::now(), then add durations to it. This function computes how long
-        // remains until the expiry time, minus the clock skew allowance. All math saturates, since
-        // we want to timeout immediately if any of these subtractions would underflow.
-        Duration::from_secs(
-            u64::try_from(lease_expiry.and_utc().timestamp())
-                .unwrap_or_default()
-                .saturating_sub(self.clock.now().as_seconds_since_epoch())
-                .saturating_sub(self.worker_lease_clock_skew_allowance.as_secs()),
-        )
     }
 }
 

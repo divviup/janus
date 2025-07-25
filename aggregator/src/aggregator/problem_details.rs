@@ -308,6 +308,7 @@ mod tests {
                         }),
                         &random(),
                         &request_histogram,
+                        false,
                     )
                     .await
                     .unwrap_err();

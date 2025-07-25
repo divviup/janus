@@ -58,6 +58,7 @@ mime.workspace = true
 prio = { workspace = true, default-features = true, features = ["experimental"] }
 quickcheck = { workspace = true, optional = true }
 rand.workspace = true
+retry-after.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 rustls.workspace = true

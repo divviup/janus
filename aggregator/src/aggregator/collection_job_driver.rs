@@ -6,7 +6,6 @@ use crate::aggregator::{
     send_request_to_helper,
 };
 use anyhow::bail;
-use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::{future::BoxFuture, stream::TryStreamExt};
@@ -19,7 +18,10 @@ use janus_aggregator_core::{
     task,
 };
 use janus_core::{
-    retries::{is_retryable_http_client_error, is_retryable_http_status},
+    http::{check_content_type, parse_retry_after_to_duration},
+    retries::{
+        ExponentialWithTotalDelayBuilder, is_retryable_http_client_error, is_retryable_http_status,
+    },
     time::Clock,
     vdaf_dispatch,
 };
@@ -43,10 +45,10 @@ use tracing::{error, info, warn};
 /// Drives a collection job.
 #[derive(Educe)]
 #[educe(Debug)]
-pub struct CollectionJobDriver<B> {
+pub struct CollectionJobDriver {
     // Dependencies.
     http_client: reqwest::Client,
-    backoff: B,
+    backoff: ExponentialWithTotalDelayBuilder,
     #[educe(Debug(ignore))]
     metrics: CollectionJobDriverMetrics,
 
@@ -59,14 +61,11 @@ pub struct CollectionJobDriver<B> {
     max_future_concurrency: usize,
 }
 
-impl<R> CollectionJobDriver<R>
-where
-    R: BackoffBuilder + Copy + 'static,
-{
+impl CollectionJobDriver {
     /// Create a new [`CollectionJobDriver`].
     pub fn new(
         http_client: reqwest::Client,
-        backoff: R,
+        backoff: ExponentialWithTotalDelayBuilder,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
         collection_retry_strategy: RetryStrategy,
@@ -98,6 +97,7 @@ where
     pub async fn step_collection_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
+        clock: C,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error> {
         match lease.leased().batch_mode() {
@@ -109,7 +109,7 @@ where
                         TimeInterval,
                         DpStrategy,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease, dp_strategy)
+                    >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
                     .await
                 })
             }
@@ -121,7 +121,7 @@ where
                         LeaderSelected,
                         DpStrategy,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease, dp_strategy)
+                    >(datastore, clock, Arc::new(vdaf), lease, dp_strategy)
                     .await
                 })
             }
@@ -137,6 +137,7 @@ where
     >(
         &self,
         datastore: Arc<Datastore<C>>,
+        clock: C,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
         dp_strategy: S,
@@ -356,7 +357,8 @@ where
         // Send an aggregate share request to the helper.
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff,
+            self.backoff
+                .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
             Method::POST,
             task.aggregate_shares_uri()?.ok_or_else(|| {
                 Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
@@ -383,16 +385,47 @@ where
             task.aggregator_auth_token()
                 .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.metrics.http_request_duration_histogram,
+            false, // TKTK
         )
         .await?;
 
+        let response_headers = http_response.headers();
+        let response_body = http_response.body();
+        if response_body.is_empty() {
+            let retry_delay = match parse_retry_after_to_duration(response_headers) {
+                Ok(Some(retry_delay)) => retry_delay,
+                _ => self
+                    .collection_retry_strategy
+                    .clone()
+                    .compute_retry_delay(lease.leased().step_attempts()),
+            };
+            info!(
+                ?retry_delay,
+                ?response_headers,
+                "Helper has deferred collection of the Aggregate Share request, releasing lease."
+            );
+            datastore
+                .run_tx("step_collection_job_helper_retry", |tx| {
+                    let lease = Arc::clone(&lease);
+                    Box::pin(async move {
+                        tx.release_collection_job(&lease, Some(&retry_delay))
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .await?;
+            return Ok(());
+        };
+
+        check_content_type(response_headers, AggregateShare::MEDIA_TYPE)
+            .map_err(|e| Error::BadContentType(e.into()))?;
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up. Scrub the batch aggregations, as we are now done with them, too.
         let collection_job = Arc::new(
             collection_job.with_state(CollectionJobState::Finished {
                 report_count: leader_aggregate_share.report_count,
                 client_timestamp_interval: leader_aggregate_share.client_timestamp_interval,
-                encrypted_helper_aggregate_share: AggregateShare::get_decoded(http_response.body())
+                encrypted_helper_aggregate_share: AggregateShare::get_decoded(response_body)
                     .map_err(Error::MessageDecode)?
                     .encrypted_aggregate_share()
                     .clone(),
@@ -571,7 +604,7 @@ where
         usize,
     )
         -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
-    + use<C, R> {
+    + use<C> {
         move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
@@ -594,11 +627,13 @@ where
     pub fn make_job_stepper_callback<C: Clock>(
         self: Arc<Self>,
         datastore: Arc<Datastore<C>>,
+        clock: C,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredCollectionJob>) -> BoxFuture<'static, Result<(), super::Error>> {
         move |lease: Lease<AcquiredCollectionJob>| {
             let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
             let lease = Arc::new(lease);
+            let clock = clock.clone();
             Box::pin(async move {
                 let attempts = lease.lease_attempts();
                 if attempts > maximum_attempts_before_failure {
@@ -616,7 +651,7 @@ where
                 }
 
                 match this
-                    .step_collection_job(Arc::clone(&datastore), Arc::clone(&lease))
+                    .step_collection_job(Arc::clone(&datastore), clock, Arc::clone(&lease))
                     .await
                 {
                     Ok(_) => Ok(()),
@@ -1154,7 +1189,7 @@ mod tests {
         // Batch aggregations indicate not all aggregation jobs are complete, and there is an
         // unaggregated report in the interval.
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
             .await
             .unwrap();
 
@@ -1285,7 +1320,7 @@ mod tests {
             .await;
 
         let error = collection_job_driver
-            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
             .await
             .unwrap_err();
         assert_matches!(
@@ -1358,7 +1393,7 @@ mod tests {
             .await;
 
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::clone(&lease))
             .await
             .unwrap();
 
@@ -1443,7 +1478,7 @@ mod tests {
             .unwrap();
 
         collection_job_driver
-            .step_collection_job(Arc::clone(&ds), lease)
+            .step_collection_job(Arc::clone(&ds), clock.clone(), lease)
             .await
             .unwrap();
 
@@ -1581,7 +1616,7 @@ mod tests {
                     Arc::clone(&ds),
                     StdDuration::from_secs(600),
                 ),
-                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), clock.clone(), 3),
             )
             .unwrap(),
         );
@@ -1679,7 +1714,7 @@ mod tests {
                     Arc::clone(&ds),
                     StdDuration::from_secs(600),
                 ),
-                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), clock.clone(), 3),
             )
             .unwrap(),
         );
@@ -1757,7 +1792,7 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (task, lease, collection_job) =
-            setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
+            setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), true).await;
 
         // Delete the collection job
         let collection_job = collection_job.with_state(CollectionJobState::Deleted);
@@ -1799,7 +1834,7 @@ mod tests {
         // Step the collection job. The driver should successfully run the job, but then discard the
         // results when it notices the job has been deleted.
         collection_job_driver
-            .step_collection_job(ds.clone(), Arc::new(lease.unwrap()))
+            .step_collection_job(ds.clone(), clock.clone(), Arc::new(lease.unwrap()))
             .await
             .unwrap();
 
@@ -1880,5 +1915,213 @@ mod tests {
                 "RetryDelay({min_delay_s}, {max_delay_s}, {exponential_factor})"
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn helper_aggregate_share_asynchronous_retry_after_lease() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+        let mut server = mockito::Server::new_async().await;
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let (task, lease, _) =
+            setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), true).await;
+
+        // Set up the collection job driver
+        let collection_job_driver = Arc::new(CollectionJobDriver::new(
+            reqwest::Client::new(),
+            LimitedRetryer::new(10),
+            &noop_meter(),
+            BATCH_AGGREGATION_SHARD_COUNT,
+            RetryStrategy::NO_DELAY.clone(),
+            10000,
+        ));
+
+        let agg_auth_token = task.aggregator_auth_token();
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let aggregation_param = dummy::AggregationParam(0);
+
+        let leader_request = AggregateShareReq::new(
+            BatchSelector::new_time_interval(batch_interval),
+            aggregation_param.get_encoded().unwrap(),
+            10,
+            ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+        );
+
+        // Simulate leader indicating asynchronous operation; e.g., for the first request,
+        // the share isn't yet ready, and it won't be until after the leader's lease ends.
+        let remaining_time =
+            Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
+        let beyond_remaining_time = remaining_time + StdDuration::from_secs(1);
+
+        let (header, value) = agg_auth_token.request_authentication();
+        let mocked_async_aggregate_share_unavailable = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .match_header(header, value.as_str())
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .match_body(leader_request.get_encoded().unwrap())
+            .with_status(200)
+            .with_header("Retry-After", &beyond_remaining_time.as_secs().to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        // This should fail, because of a retry timeout.
+        collection_job_driver
+            .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::new(lease.unwrap()))
+            .await
+            .unwrap();
+
+        // Both mocks should have gotten used.
+        mocked_async_aggregate_share_unavailable
+            .assert_async()
+            .await;
+    }
+
+    #[tokio::test]
+    async fn helper_aggregate_share_is_asynchronous() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+        let mut server = mockito::Server::new_async().await;
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let (task, lease, collection_job) =
+            setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), true).await;
+
+        // Set up the collection job driver
+        let collection_job_driver = Arc::new(CollectionJobDriver::new(
+            reqwest::Client::new(),
+            LimitedRetryer::new(10),
+            &noop_meter(),
+            BATCH_AGGREGATION_SHARD_COUNT,
+            RetryStrategy::NO_DELAY.clone(),
+            10000,
+        ));
+
+        let agg_auth_token = task.aggregator_auth_token();
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let aggregation_param = dummy::AggregationParam(0);
+
+        let leader_request = AggregateShareReq::new(
+            BatchSelector::new_time_interval(batch_interval),
+            aggregation_param.get_encoded().unwrap(),
+            10,
+            ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+        );
+
+        // Simulate leader indicating asynchronous operation; e.g., for the first request,
+        // the share isn't yet ready, then it is.
+
+        // Helper aggregate share is opaque to the leader, so no need to construct a real one
+        let helper_response = AggregateShare::new(HpkeCiphertext::new(
+            HpkeConfigId::from(100),
+            Vec::new(),
+            Vec::new(),
+        ));
+        let helper_encrypted_aggregate_share = helper_response.encrypted_aggregate_share().clone();
+
+        let (header, value) = agg_auth_token.request_authentication();
+        let mocked_async_aggregate_share_unavailable = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .match_header(header, value.as_str())
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .match_body(leader_request.get_encoded().unwrap())
+            .with_status(200)
+            .with_header("Retry-After", "1")
+            .create_async()
+            .await;
+
+        // This should be successful, but the job won't be finished.
+        collection_job_driver
+            .step_collection_job(
+                Arc::clone(&ds),
+                clock.clone(),
+                Arc::new(lease.clone().unwrap()),
+            )
+            .await
+            .unwrap();
+        mocked_async_aggregate_share_unavailable
+            .assert_async()
+            .await;
+
+        // Move forward so we can check that it's still incomplete
+        clock.advance(&Duration::from_seconds(1));
+
+        let task_id = task.id().clone();
+        let collection_job_id = collection_job.id().clone();
+        let incomplete_lease = ds
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move {
+                    let lease = Arc::new(
+                        tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(1), 1)
+                            .await
+                            .unwrap()
+                            .remove(0),
+                    );
+
+                    assert_eq!(&task_id, lease.leased().task_id());
+                    Ok(lease)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Now let's try to complete it
+        let mocked_async_aggregate_share_ready = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .match_header(header, value.as_str())
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .match_body(leader_request.get_encoded().unwrap())
+            .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
+            .with_body(helper_response.get_encoded().unwrap())
+            .create_async()
+            .await;
+
+        collection_job_driver
+            .step_collection_job(Arc::clone(&ds), clock.clone(), incomplete_lease)
+            .await
+            .unwrap();
+        mocked_async_aggregate_share_ready.assert_async().await;
+
+        // Confirm finished
+        ds.run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            let helper_encrypted_aggregate_share = helper_encrypted_aggregate_share.clone();
+
+            Box::pin(async move {
+                let collection_job = tx
+                    .get_collection_job::<0, TimeInterval, dummy::Vdaf>(
+                        &dummy::Vdaf::new(1),
+                        &task_id,
+                        &collection_job_id,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_matches!(collection_job.state(), CollectionJobState::Finished{
+                    report_count, leader_aggregate_share, encrypted_helper_aggregate_share, client_timestamp_interval: _
+                } => {
+                    assert_eq!(report_count, &10);
+                    assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
+                    assert_eq!(encrypted_helper_aggregate_share, &helper_encrypted_aggregate_share);
+                });
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 }

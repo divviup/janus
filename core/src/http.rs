@@ -1,11 +1,14 @@
 use crate::auth_tokens::AuthenticationToken;
+use crate::time::Clock;
 use anyhow::anyhow;
-use http::StatusCode;
+use http::{StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
+use retry_after::RetryAfter;
 use std::fmt::{self, Display, Formatter};
+use std::time::{Duration, UNIX_EPOCH};
 use tracing::warn;
 use trillium::{Conn, HeaderValue};
 
@@ -44,6 +47,14 @@ impl HttpErrorResponse {
             }
         }
         status.into()
+    }
+
+    /// Produce a generic response from a supplied HttpApiProblem.
+    pub fn from_problem(problem: HttpApiProblem) -> Self {
+        HttpErrorResponse {
+            problem_details: problem,
+            dap_problem_type: None,
+        }
     }
 
     /// The HTTP status code returned by the server.
@@ -159,6 +170,46 @@ pub fn check_content_type(
         ));
     };
     Ok(())
+}
+
+/// Parse the HTTP Headers for a RetryAfter duration, if any. This does not handle DateTime
+/// Retry-After headers, but also does not require knowledge of the current clock.
+pub fn parse_retry_after_to_duration(
+    headers: &http::HeaderMap,
+) -> Result<Option<Duration>, anyhow::Error> {
+    match parse_retry_after(headers)? {
+        Some(RetryAfter::Delay(duration)) => Ok(Some(duration)),
+        Some(RetryAfter::DateTime(_)) => Ok(None), // Treat as if missing. See #3943
+        None => Ok(None),
+    }
+}
+
+/// Parse the HTTP Headers for a RetryAfter, if any
+pub fn parse_retry_after(headers: &http::HeaderMap) -> Result<Option<RetryAfter>, anyhow::Error> {
+    headers
+        .get(RETRY_AFTER)
+        .map(RetryAfter::try_from)
+        .transpose()
+        .map_err(|e| anyhow!("Unable to parse Retry-After: {}", e))
+}
+
+/// Return a Duration from the provided RetryAfter
+pub fn retry_after_to_duration<C: Clock>(
+    clock: &C,
+    retry_after: &RetryAfter,
+) -> Result<Duration, anyhow::Error> {
+    match retry_after {
+        RetryAfter::Delay(duration) => Ok(*duration),
+        RetryAfter::DateTime(next_retry_time) => {
+            let now = UNIX_EPOCH + Duration::from_secs(clock.now().as_seconds_since_epoch());
+            if &now > next_retry_time {
+                return Ok(Duration::ZERO);
+            }
+            next_retry_time
+                .duration_since(now)
+                .map_err(|err| anyhow!("Unable to compute Retry-After duration: {}", err))
+        }
+    }
 }
 
 #[cfg(test)]

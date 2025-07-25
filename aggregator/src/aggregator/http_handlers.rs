@@ -271,10 +271,15 @@ where
 /// A Trillium handler that returns an empty body with retry-after and location headers.
 #[derive(Clone)]
 struct EmptyBody {
-    location: String,
+    location: Option<String>,
 }
 
 impl EmptyBody {
+    /// Return an EmptyBody without additional data
+    fn new() -> Self {
+        Self { location: None }
+    }
+
     /// Return an EmptyBody with the location set to the relative path to the
     /// aggregation job for the task.
     fn for_aggregation_job(
@@ -283,7 +288,9 @@ impl EmptyBody {
         step: u16,
     ) -> Self {
         Self {
-            location: format!("/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"),
+            location: Some(format!(
+                "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}?step={step}"
+            )),
         }
     }
 }
@@ -291,9 +298,14 @@ impl EmptyBody {
 #[async_trait]
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
+        let conn = if let Some(location) = &self.location {
+            conn.with_response_header(KnownHeaderName::Location, location.clone())
+        } else {
+            conn
+        };
+
         // To be fixed in issue #3921
         conn.with_response_header(KnownHeaderName::RetryAfter, "2")
-            .with_response_header(KnownHeaderName::Location, self.location.clone())
             .with_status(Status::Ok)
             .halt()
     }
@@ -808,7 +820,7 @@ async fn collection_jobs_delete<C: Clock>(
 async fn aggregate_shares<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregateShare>, Error> {
+) -> Result<Result<EncodedBody<AggregateShare>, EmptyBody>, Error> {
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(conn)?;
@@ -824,7 +836,10 @@ async fn aggregate_shares<C: Clock>(
         .await
         .ok_or(Error::ClientDisconnected)??;
 
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+    match share {
+        Some(share) => Ok(Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))),
+        None => Ok(Err(EmptyBody::new())),
+    }
 }
 
 /// Check the request's Content-Type header, and return an error if it is missing or not equal to

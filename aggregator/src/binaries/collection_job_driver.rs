@@ -62,6 +62,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
             .make_incomplete_job_acquirer_callback(Arc::clone(&datastore), lease_duration),
         collection_job_driver.make_job_stepper_callback(
             Arc::clone(&datastore),
+            ctx.clock,
             ctx.config.job_driver_config.maximum_attempts_before_failure,
         ),
     )?);

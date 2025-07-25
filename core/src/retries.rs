@@ -1,10 +1,11 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
-use crate::http::HttpErrorResponse;
+use crate::http::{HttpErrorResponse, parse_retry_after_to_duration};
 use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::Future;
 use http::HeaderMap;
+use http_api_problem::HttpApiProblem;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
 use tracing::{debug, warn};
@@ -135,41 +136,56 @@ impl HttpResponse {
 }
 
 /// HttpRetryError represents both an HTTP error and whether that error is
-/// retryable. The result field can be either a problem doc
+/// `retryable`. When Soome, the `result` field can be either a problem doc
 /// (`HttpErrorResponse`) or a direct error from `reqwest`. Since there are
 /// error conditions from both which are retryable, a separate boolean tracks
-/// that.
+/// that. When the `result` field is None and `retryable`, the logic will
+/// try again following the Backon strategy.
 #[derive(Debug)]
 struct HttpRetryError {
-    result: Result<HttpErrorResponse, reqwest::Error>,
+    result: Option<Result<HttpErrorResponse, reqwest::Error>>,
     retryable: bool,
+    retry_after: Option<Duration>,
 }
 
 impl HttpRetryError {
     fn retryable_error(err: reqwest::Error) -> HttpRetryError {
         HttpRetryError {
-            result: Err(err),
+            result: Some(Err(err)),
             retryable: true,
+            retry_after: None,
         }
     }
     fn fatal_error(err: reqwest::Error) -> HttpRetryError {
         HttpRetryError {
-            result: Err(err),
+            result: Some(Err(err)),
             retryable: false,
+            retry_after: None,
         }
     }
 
     async fn retryable_response(resp: reqwest::Response) -> HttpRetryError {
+        let headers = resp.headers().clone();
         HttpRetryError {
-            result: Ok(HttpErrorResponse::from_response(resp).await),
+            result: Some(Ok(HttpErrorResponse::from_response(resp).await)),
             retryable: true,
+            retry_after: parse_retry_after_to_duration(&headers).unwrap_or(None),
         }
     }
 
     async fn fatal_response(resp: reqwest::Response) -> HttpRetryError {
         HttpRetryError {
-            result: Ok(HttpErrorResponse::from_response(resp).await),
+            result: Some(Ok(HttpErrorResponse::from_response(resp).await)),
             retryable: false,
+            retry_after: None,
+        }
+    }
+
+    fn retry_after(dur: Option<Duration>) -> HttpRetryError {
+        HttpRetryError {
+            result: None,
+            retryable: true,
+            retry_after: dur,
         }
     }
 }
@@ -181,6 +197,8 @@ impl HttpRetryError {
 ///   - a problem establishing a connection
 ///   - an HTTP status code indicating a server error
 ///   - HTTP status code 429 Too Many Requests
+///
+/// This does not internally handle Retry-After headers.
 ///
 /// If the request eventually succeeds, an [`HttpResponse`] corresponding to the request returned by
 /// `request_fn` is returned.
@@ -206,7 +224,7 @@ pub async fn retry_http_request<ResultFuture>(
 where
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
-    retry_http_request_notify(backoff, |_, _| {}, request_fn).await
+    retry_http_request_notify(backoff, |_, _| {}, false, request_fn).await
 }
 
 /// Executes the provided HTTP request function, retrying using the parameters in the provided
@@ -216,6 +234,15 @@ where
 ///   - a problem establishing a connection
 ///   - an HTTP status code indicating a server error
 ///   - HTTP status code 429 Too Many Requests
+///
+/// Additionally it will retry, when `respect_retry_after` is true, if:
+///   - the HTTP status code is a successful 2XX code, the body is empty, and there's a valid
+///     Retry-After header.
+///
+/// When a retryable response includes a Retry-After header with a Duration, this method will
+/// delay at least that long before retrying, choosing the longer value between that recommended by
+/// the Backoff implementation or that from the Retry-After header. Note it cannot handle Retry-
+/// After headers with a DateTime (see #3943).
 ///
 /// If the request eventually succeeds, an [`HttpResponse`] corresponding to the request returned by
 /// `request_fn` is returned.
@@ -240,7 +267,8 @@ where
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
     backoff: impl Backoff,
-    mut notify: impl FnMut(&Result<HttpErrorResponse, reqwest::Error>, Duration),
+    mut notify: impl FnMut(Option<&Result<HttpErrorResponse, reqwest::Error>>, Duration),
+    respect_retry_after: bool,
     request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
@@ -283,6 +311,20 @@ where
         let headers = response.headers().clone();
         let body = check_reqwest_result(response.bytes().await)?;
 
+        if respect_retry_after
+            && body.is_empty()
+            && let Ok(duration @ Some(..)) = parse_retry_after_to_duration(&headers)
+        {
+            debug!(
+                ?headers,
+                ?status,
+                ?duration,
+                "Response body is empty, but the Status Code is OK and there's a \
+                Retry-After header, scheduling a retry."
+            );
+            return Err(HttpRetryError::retry_after(duration));
+        }
+
         Ok(HttpResponse {
             status,
             headers,
@@ -291,9 +333,34 @@ where
     })
     .retry(backoff)
     .when(|e| e.retryable)
-    .notify(|e, d| notify(&e.result, d))
+    .adjust(adjust_backoff_for_retry_after_header)
+    .notify(|e, d| notify(e.result.as_ref(), d))
     .await
-    .map_err(|e| e.result)
+    .map_err(|e| {
+        e.result.unwrap_or(Ok(HttpErrorResponse::from_problem(
+            HttpApiProblem::new(StatusCode::SERVICE_UNAVAILABLE).detail("All retries exhausted."),
+        )))
+    })
+}
+
+/// Changes the backoff duration before a retry, if our `HttpRetryError` type requests
+/// a longer backoff than the Backoff Builder does. When the Backoff Builder is
+/// planning to stop, it will be called with a duration of None, and we pass that on.
+fn adjust_backoff_for_retry_after_header(
+    error: &HttpRetryError,
+    duration: Option<Duration>,
+) -> Option<Duration> {
+    debug!(?error, ?duration, "adjust_backoff_for_retry_after_header");
+    if let Some(dur) = duration
+        && let Some(r_a) = error.retry_after
+        && r_a > dur
+    {
+        debug!(backoff_strategy_requested_duration=?dur,
+            response_retry_after=?r_a,
+            "Increasing the chosen backoff time to match the Retry-After.");
+        return error.retry_after;
+    }
+    duration
 }
 
 pub fn is_retryable_http_status(status: StatusCode) -> bool {
@@ -309,7 +376,6 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::ExponentialWithTotalDelayBuilder;
-    use backon::ConstantBuilder;
     use std::time::Duration;
 
     /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be
@@ -334,9 +400,9 @@ pub mod test_util {
         /// new should usually return self, but LimitedRetryer is a thin wrapper used only for
         /// tests.
         #[allow(clippy::new_ret_no_self)]
-        pub fn new(max_retries: usize) -> ConstantBuilder {
-            ConstantBuilder::new()
-                .with_delay(Duration::ZERO)
+        pub fn new(max_retries: usize) -> ExponentialWithTotalDelayBuilder {
+            ExponentialWithTotalDelayBuilder::new()
+                .with_min_delay(Duration::from_nanos(1))
                 .with_max_times(max_retries)
         }
     }
@@ -347,7 +413,8 @@ mod tests {
     use crate::{
         initialize_rustls,
         retries::{
-            ExponentialWithTotalDelayBuilder, retry_http_request, retry_http_request_notify,
+            ExponentialWithTotalDelayBuilder, HttpRetryError,
+            adjust_backoff_for_retry_after_header, retry_http_request, retry_http_request_notify,
             test_util::LimitedRetryer,
         },
         test_util::install_test_trace_subscriber,
@@ -384,6 +451,7 @@ mod tests {
             |_, _| {
                 notify_count += 1;
             },
+            true,
             || async { http_client.get(server.url()).send().await },
         )
         .await
@@ -421,6 +489,7 @@ mod tests {
             |_, _| {
                 notify_count += 1;
             },
+            true,
             || async { http_client.get(server.url()).send().await },
         )
         .await
@@ -455,6 +524,7 @@ mod tests {
             |_, _| {
                 notify_count += 1;
             },
+            true,
             || async { http_client.get(server.url()).send().await },
         )
         .await
@@ -493,6 +563,7 @@ mod tests {
             |_, _| {
                 notify_count += 1;
             },
+            true,
             || async { http_client.get(server.url()).send().await },
         )
         .await
@@ -651,6 +722,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_automatic_retry_after() {
+        install_test_trace_subscriber();
+        initialize_rustls();
+        let mut server = mockito::Server::new_async().await;
+
+        let mock_async_unavailable = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("Retry-After", "1")
+            .create_async()
+            .await;
+        let mock_success = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("Content-Type", "application/coffee")
+            .with_body("{\"caffeination\":\"insufficient\"}")
+            .create_async()
+            .await;
+
+        let http_client = reqwest::Client::builder().build().unwrap();
+
+        let response = retry_http_request_notify(
+            LimitedRetryer::new(1).build(),
+            |_, _| {},
+            true,
+            || async { http_client.get(server.url()).send().await },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.body(),
+            "{\"caffeination\":\"insufficient\"}".as_bytes()
+        );
+        mock_async_unavailable.assert_async().await;
+        mock_success.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn exponential_backoff_with_deadline() {
         let w_deadline_builder = ExponentialWithTotalDelayBuilder::new()
             .with_min_delay(Duration::from_millis(10))
@@ -690,5 +801,42 @@ mod tests {
         assert_eq!(no_deadline.next(), Some(Duration::from_nanos(30)));
         // Going to hit the max_times
         assert_eq!(no_deadline.next(), None);
+    }
+
+    #[tokio::test]
+    async fn test_adjusting_backoff_for_retry_after_header() {
+        assert_eq!(
+            None,
+            adjust_backoff_for_retry_after_header(
+                &HttpRetryError::retry_after(Some(Duration::from_secs(1))),
+                None
+            )
+        );
+
+        assert_eq!(
+            Some(Duration::from_secs(1)),
+            adjust_backoff_for_retry_after_header(
+                &HttpRetryError::retry_after(Some(Duration::from_secs(1))),
+                Some(Duration::from_millis(5))
+            )
+        );
+
+        assert_eq!(
+            Some(Duration::from_secs(5)),
+            adjust_backoff_for_retry_after_header(
+                &HttpRetryError::retry_after(Some(Duration::from_secs(1))),
+                Some(Duration::from_secs(5))
+            )
+        );
+
+        assert_eq!(
+            Some(Duration::from_millis(5)),
+            adjust_backoff_for_retry_after_header(
+                &HttpRetryError::retry_after(None),
+                Some(Duration::from_millis(5))
+            )
+        );
+
+        // TKTK use a trait to get the other tests
     }
 }
