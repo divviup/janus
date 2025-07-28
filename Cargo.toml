@@ -104,7 +104,7 @@ signal-hook-tokio = "0.3.1"
 sqlx = { version = "0.8.6", default-features = false }
 stopper = "0.2.8"
 tempfile = "3.20.0"
-testcontainers = { version = "0.24.0", default-features = false, features = ["aws-lc-rs"] }
+testcontainers = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"] }
 thiserror = "2.0"
 tracing = "0.1.41"
 tracing-chrome = "0.7.2"
