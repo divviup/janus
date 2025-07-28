@@ -197,7 +197,7 @@ enum Command {
         task: TaskId,
 
         /// List only this collection job
-        #[clap(long, required_unless_present = "task", value_name = "BASE64URL")]
+        #[clap(long, value_name = "BASE64URL")]
         job: Option<CollectionJobId>,
     },
 

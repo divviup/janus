@@ -1,3 +1,5 @@
+//! Database accessors for leased jobs.
+
 use crate::datastore::{
     models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
     task, Error, RowExt, Transaction,
