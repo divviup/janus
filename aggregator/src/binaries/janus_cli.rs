@@ -8,10 +8,11 @@ use anyhow::{anyhow, Context, Result};
 use aws_lc_rs::aead::AES_128_GCM;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
+use itertools::Itertools;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::{
-    datastore::{self, models::HpkeKeyState, Datastore},
-    task::{AggregatorTask, SerializedAggregatorTask},
+    datastore::{self, models::HpkeKeyState, Datastore, Transaction},
+    task::{AggregatorTask, QueryType, SerializedAggregatorTask},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
 use janus_core::{
@@ -19,18 +20,23 @@ use janus_core::{
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
     hpke::HpkeKeypair,
     time::{Clock, RealClock},
+    vdaf_dispatch,
 };
 use janus_messages::{
-    codec::Encode as _, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+    codec::Encode as _,
+    query_type::{FixedSize, TimeInterval},
+    AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+    HpkeKemId, Role, TaskId,
 };
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
-use prio::codec::Decode as _;
+use prio::{codec::Decode as _, vdaf::Aggregator};
 use rand::{distributions::Standard, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    fmt::Debug,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
@@ -180,6 +186,34 @@ enum Command {
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
     },
+
+    /// List collection jobs in the datastore
+    ListCollectionJobs {
+        #[clap(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
+        /// List collection jobs for this task
+        #[clap(long, value_name = "BASE64URL")]
+        task: TaskId,
+
+        /// List only this collection job
+        #[clap(long, value_name = "BASE64URL")]
+        job: Option<CollectionJobId>,
+    },
+
+    /// List aggregation jobs in the datastore
+    ListAggregationJobs {
+        #[clap(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
+        /// List aggregation jobs for this task
+        #[clap(long, value_name = "BASE64URL")]
+        task: TaskId,
+
+        /// List only this aggregation job
+        #[clap(long, value_name = "BASE64URL")]
+        job: Option<AggregationJobId>,
+    },
 }
 
 impl Command {
@@ -328,8 +362,239 @@ impl Command {
                 )
                 .await
             }
+
+            Command::ListCollectionJobs {
+                task,
+                job,
+                kubernetes_secret_options,
+            } => {
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    &kube_client,
+                )
+                .await?;
+
+                datastore
+                    .run_tx("janus-cli-list-collection-jobs", |tx| {
+                        let task_id = *task;
+                        let job_id = *job;
+                        Box::pin(async move {
+                            dispatch_list_collection_jobs(tx, &task_id, job_id)
+                                .await
+                                .map_err(|e| {
+                                    janus_aggregator_core::datastore::Error::User(e.into())
+                                })
+                        })
+                    })
+                    .await
+                    .context("couldn't list collection jobs")
+            }
+
+            Command::ListAggregationJobs {
+                task,
+                job,
+                kubernetes_secret_options,
+            } => {
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    &kube_client,
+                )
+                .await?;
+
+                datastore
+                    .run_tx("janus-cli-list-aggregation-jobs", |tx| {
+                        let task_id = *task;
+                        let job_id = *job;
+                        Box::pin(async move {
+                            dispatch_list_aggregation_jobs(tx, &task_id, job_id)
+                                .await
+                                .map_err(|e| {
+                                    janus_aggregator_core::datastore::Error::User(e.into())
+                                })
+                        })
+                    })
+                    .await
+                    .context("couldn't list aggregation jobs")
+            }
         }
     }
+}
+
+fn pretty_print_jobs_and_leases<
+    Job: Debug,
+    Lease: Debug,
+    JobIter: Iterator<Item = Job>,
+    LeaseIter: Iterator<Item = Lease>,
+>(
+    jobs: JobIter,
+    leases: LeaseIter,
+) {
+    // There should always be the same number of items in both iterators, because they were
+    // constructed from the same database rows.
+    for (job, lease) in jobs.zip(leases) {
+        println!("{job:#?}\n{lease:#?}\n");
+    }
+}
+
+async fn dispatch_list_collection_jobs(
+    tx: &Transaction<'_, RealClock>,
+    task_id: &TaskId,
+    collection_job_id: Option<CollectionJobId>,
+) -> Result<(), crate::aggregator::Error> {
+    // vdaf_dispatch! expands into (among other things) a method call that returns
+    // `prio::vdaf::VdafError` and has ? applied to it. This function's own logic deals with methods
+    // that return `janus_aggregator_core::datastore::Error`. Because this function is declared to
+    // return `janus_aggregator::aggregator::Error`, ? can resolve both those errors into a single
+    // type, and then we can wrap that into `datastore::Error::User` in the calling context.
+    let task = tx
+        .get_aggregator_task(task_id)
+        .await?
+        .ok_or_else(|| anyhow!("found no task with provided ID"))
+        .unwrap();
+    vdaf_dispatch!(task.vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+        match task.query_type() {
+            QueryType::TimeInterval => {
+                list_collection_jobs_generic::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    VdafType,
+                >(tx, &vdaf, task.id(), collection_job_id).await?;
+            }
+            QueryType::FixedSize { .. } => {
+                list_collection_jobs_generic::<
+                    VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    VdafType,
+                >(tx, &vdaf, task.id(), collection_job_id).await?;
+            }
+        };
+    });
+
+    Ok(())
+}
+
+async fn list_collection_jobs_generic<
+    const SEED_SIZE: usize,
+    Q: janus_messages::query_type::QueryType,
+    A: Aggregator<SEED_SIZE, 16>,
+>(
+    tx: &Transaction<'_, RealClock>,
+    vdaf: &A,
+    task_id: &TaskId,
+    collection_job_id: Option<CollectionJobId>,
+) -> Result<(), crate::aggregator::Error> {
+    let (jobs, leases) = if let Some(job_id) = collection_job_id {
+        let job = tx
+            .get_collection_job::<SEED_SIZE, Q, A>(vdaf, task_id, &job_id)
+            .await?;
+
+        let lease = tx
+            .get_collection_job_lease::<SEED_SIZE, Q, A>(task_id, &job_id)
+            .await?;
+
+        (Vec::from(job.as_slice()), Vec::from(lease.as_slice()))
+    } else {
+        let jobs = tx
+            .get_collection_jobs_for_task::<SEED_SIZE, Q, A>(vdaf, task_id)
+            .await?;
+
+        let leases = tx
+            .get_collection_job_leases_by_task::<SEED_SIZE, Q, A>(task_id)
+            .await?;
+
+        (jobs, leases)
+    };
+
+    pretty_print_jobs_and_leases(
+        jobs.into_iter().sorted_by_key(|job| *job.id()),
+        leases
+            .into_iter()
+            .sorted_by_key(|lease| *lease.leased().collection_job_id()),
+    );
+
+    Ok(())
+}
+
+async fn dispatch_list_aggregation_jobs(
+    tx: &Transaction<'_, RealClock>,
+    task_id: &TaskId,
+    aggregation_job_id: Option<AggregationJobId>,
+) -> Result<(), crate::aggregator::Error> {
+    // We need this function so that its return type can provide error type hints to ?. See comment
+    // in dispatch_list_collection_jobs for details.
+    let task = tx
+        .get_aggregator_task(task_id)
+        .await?
+        .ok_or_else(|| anyhow!("found no task with provided ID"))
+        .unwrap();
+    vdaf_dispatch!(task.vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+        // We don't need the vdaf value here, but need to provide this type hint to the compiler
+        // so it can figure out what `prio::vdaf::Vdaf` to instantiate inside of `vdaf_dispatch!`.
+        let _vdaf: VdafType = vdaf;
+        match task.query_type() {
+            QueryType::TimeInterval => {
+                list_aggregation_jobs_generic::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    VdafType,
+                >(tx,task.id(), aggregation_job_id).await?;
+            }
+            QueryType::FixedSize { .. } => {
+                list_aggregation_jobs_generic::<
+                    VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    VdafType,
+                >(tx, task.id(), aggregation_job_id).await?;
+            }
+        };
+    });
+
+    Ok(())
+}
+
+async fn list_aggregation_jobs_generic<
+    const SEED_SIZE: usize,
+    Q: janus_messages::query_type::QueryType,
+    A: Aggregator<SEED_SIZE, 16>,
+>(
+    tx: &Transaction<'_, RealClock>,
+    task_id: &TaskId,
+    aggregation_job_id: Option<AggregationJobId>,
+) -> Result<(), crate::aggregator::Error> {
+    let (jobs, leases) = if let Some(job_id) = aggregation_job_id {
+        let job = tx
+            .get_aggregation_job::<SEED_SIZE, Q, A>(task_id, &job_id)
+            .await?;
+
+        let lease = tx
+            .get_aggregation_job_lease::<SEED_SIZE, Q, A>(task_id, &job_id)
+            .await?;
+
+        (Vec::from(job.as_slice()), Vec::from(lease.as_slice()))
+    } else {
+        let jobs = tx
+            .get_aggregation_jobs_for_task::<SEED_SIZE, Q, A>(task_id)
+            .await?;
+
+        let leases = tx
+            .get_aggregation_job_leases_by_task::<SEED_SIZE, Q, A>(task_id)
+            .await?;
+
+        (jobs, leases)
+    };
+
+    pretty_print_jobs_and_leases(
+        jobs.into_iter().sorted_by_key(|job| *job.id()),
+        leases
+            .into_iter()
+            .sorted_by_key(|lease| *lease.leased().aggregation_job_id()),
+    );
+
+    Ok(())
 }
 
 async fn install_tracing_and_metrics_handlers(
