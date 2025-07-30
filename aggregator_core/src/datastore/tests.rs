@@ -37,6 +37,7 @@ use janus_messages::{
     HpkeConfigId, Interval, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
+use postgres_types::Timestamp;
 use prio::{
     codec::{Decode, Encode},
     dp::{
@@ -1794,95 +1795,189 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .collect();
     aggregation_job_ids.sort();
 
-    ds.run_unnamed_tx(|tx| {
-        let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
-        Box::pin(async move {
-            // Write a few aggregation jobs we expect to be able to retrieve with
-            // acquire_incomplete_aggregation_jobs().
-            tx.put_aggregator_task(&task).await.unwrap();
-            try_join_all(aggregation_job_ids.into_iter().map(|aggregation_job_id| {
-                let task_id = *task.id();
-                async move {
-                    tx.put_aggregation_job(&AggregationJob::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                    >::new(
-                        task_id,
-                        aggregation_job_id,
-                        (),
-                        (),
-                        Interval::new(
-                            OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
-                                .unwrap()
-                                .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
-                                .unwrap(),
-                            Duration::from_seconds(1),
-                        )
-                        .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                }
-            }))
-            .await
-            .unwrap();
+    let (finished_aggregation_job_id, expired_aggregation_job_id) = ds
+        .run_unnamed_tx(|tx| {
+            let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
+            Box::pin(async move {
+                // Write a few aggregation jobs we expect to be able to retrieve with
+                // acquire_incomplete_aggregation_jobs().
+                tx.put_aggregator_task(&task).await.unwrap();
+                try_join_all(aggregation_job_ids.into_iter().map(|aggregation_job_id| {
+                    let task_id = *task.id();
+                    async move {
+                        tx.put_aggregation_job(&AggregationJob::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                        >::new(
+                            task_id,
+                            aggregation_job_id,
+                            (),
+                            (),
+                            Interval::new(
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap()
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap(),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
+                            AggregationJobState::InProgress,
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                    }
+                }))
+                .await
+                .unwrap();
 
-            // Write an aggregation job that is finished. We don't want to retrieve this one.
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an aggregation job that is finished. We don't want to retrieve this one.
+                let finished_aggregation_job_id = random();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *task.id(),
-                    random(),
+                    finished_aggregation_job_id,
                     (),
                     (),
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
-                ),
-            )
-            .await
-            .unwrap();
+                ))
+                .await
+                .unwrap();
 
-            // Write an expired aggregation job. We don't want to retrieve this one, either.
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an expired aggregation job. We don't want to retrieve this one, either.
+                let expired_aggregation_job_id = random();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *task.id(),
-                    random(),
+                    expired_aggregation_job_id,
                     (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
-                ),
-            )
-            .await
-            .unwrap();
+                ))
+                .await
+                .unwrap();
 
-            // Write an aggregation job for a task that we are taking on the helper role for.
-            // We don't want to retrieve this one, either.
-            let helper_task =
-                TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
-                    .build()
-                    .helper_view()
-                    .unwrap();
-            tx.put_aggregator_task(&helper_task).await.unwrap();
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an aggregation job for a task that we are taking on the helper role for.
+                // We don't want to retrieve this one, either.
+                let helper_task =
+                    TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+                        .build()
+                        .helper_view()
+                        .unwrap();
+                tx.put_aggregator_task(&helper_task).await.unwrap();
+                let helper_aggregation_job_id = random();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *helper_task.id(),
-                    random(),
+                    helper_aggregation_job_id,
                     (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
-                ),
-            )
-            .await
+                ))
+                .await
+                .unwrap();
+
+                Ok((finished_aggregation_job_id, expired_aggregation_job_id))
+            })
+        })
+        .await
+        .unwrap();
+
+    // Getting aggregation job leases should not not acquire leases and should not affect acquiring
+    // them later.
+    ds.run_unnamed_tx(|tx| {
+        let (task, mut maybe_leased_aggregation_job_ids) = (
+            task.clone(),
+            Vec::from([
+                aggregation_job_ids.clone(),
+                // When we get leases, we expect to see the finished and expired jobs (because we
+                // haven't advanced time yet).
+                Vec::from([finished_aggregation_job_id, expired_aggregation_job_id]),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+        );
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                )
+                .await
+                .unwrap();
+
+            let mut seen_aggregation_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                assert_eq!(maybe_lease.lease_token, None);
+                assert_eq!(maybe_lease.lease_attempts, 0);
+
+                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+            }
+
+            maybe_leased_aggregation_job_ids.sort();
+            seen_aggregation_job_ids.sort();
+            assert_eq!(maybe_leased_aggregation_job_ids, seen_aggregation_job_ids);
+
+            let no_such_task = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_task.is_empty());
+
+            let maybe_lease = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &maybe_leased_aggregation_job_ids[0],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_eq!(maybe_lease.lease_token, None);
+            assert_eq!(maybe_lease.lease_attempts, 0);
+
+            let no_such_aggregation_job = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_aggregation_job.is_none());
+
+            let no_such_task = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    &random(),
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_task.is_none());
+
+            Ok(())
         })
     })
     .await
@@ -1980,6 +2075,68 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     got_aggregation_jobs.sort();
 
     assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
+
+    // The leases having been acquired should be reflected when we get MaybeLeases.
+    ds.run_unnamed_tx(|tx| {
+        let (task, mut maybe_leased_aggregation_job_ids, leased_aggregation_job_ids) = (
+            task.clone(),
+            Vec::from([
+                aggregation_job_ids.clone(),
+                // At this point, the expired aggregation job should not be visible anymore.
+                Vec::from([finished_aggregation_job_id]),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+            aggregation_job_ids.clone(),
+        );
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                )
+                .await
+                .unwrap();
+
+            let mut seen_aggregation_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                if leased_aggregation_job_ids.contains(maybe_lease.leased().aggregation_job_id()) {
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+                    assert!(maybe_lease.lease_token.is_some());
+                    assert_eq!(maybe_lease.lease_attempts, 1);
+                } else {
+                    assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_eq!(maybe_lease.lease_token, None);
+                    assert_eq!(maybe_lease.lease_attempts, 0);
+                }
+
+                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+            }
+
+            maybe_leased_aggregation_job_ids.sort();
+            seen_aggregation_job_ids.sort();
+            assert_eq!(maybe_leased_aggregation_job_ids, seen_aggregation_job_ids);
+
+            let maybe_lease = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &leased_aggregation_job_ids[0],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+            assert!(maybe_lease.lease_token.is_some());
+            assert_eq!(maybe_lease.lease_attempts, 1);
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 
     // Run: release a few jobs, then attempt to acquire jobs again.
     const RELEASE_COUNT: usize = 2;
