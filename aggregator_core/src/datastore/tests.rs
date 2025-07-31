@@ -1878,14 +1878,13 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                         .helper_view()
                         .unwrap();
                 tx.put_aggregator_task(&helper_task).await.unwrap();
-                let helper_aggregation_job_id = random();
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Count,
                 >::new(
                     *helper_task.id(),
-                    helper_aggregation_job_id,
+                    random(),
                     (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
