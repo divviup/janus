@@ -7,7 +7,7 @@ use self::models::{
     HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskAggregationCounter,
-    TaskUploadCounter,
+    TaskUploadCounter, UnaggregatedReport,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -32,7 +32,7 @@ use janus_messages::{
     ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
-use models::UnaggregatedReport;
+use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -63,6 +63,7 @@ use tokio_postgres::{IsolationLevel, Row, Statement, ToStatement, error::SqlStat
 use tracing::{Level, error};
 use url::Url;
 
+pub mod leases;
 pub mod models;
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -1839,7 +1840,6 @@ WHERE aggregation_jobs.task_id = $1
     }
 
     /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
-    #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregation_jobs_for_task<const SEED_SIZE: usize, B, A>(
@@ -1977,16 +1977,11 @@ RETURNING tasks.task_id, tasks.batch_mode, tasks.vdaf,
         .await?
         .into_iter()
         .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let aggregation_job_id =
-                row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
-            let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
 
             Ok(Lease::new(
-                AcquiredAggregationJob::new(task_id, aggregation_job_id, batch_mode, vdaf),
+                acquired_aggregation_job_from_row(&row)?,
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -3247,7 +3242,7 @@ WHERE task_id = $1
         .collect()
     }
 
-    #[cfg(feature = "test-util")]
+    /// Retrieve all collection jobs for the specified task.
     pub async fn get_collection_jobs_for_task<
         const SEED_SIZE: usize,
         B: BatchMode,
@@ -3511,30 +3506,11 @@ RETURNING
         .await?
         .into_iter()
         .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-            let time_precision =
-                Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
-            let encoded_batch_identifier = row.get("batch_identifier");
-            let encoded_aggregation_param = row.get("aggregation_param");
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-            let step_attempts = row.get_bigint_and_convert("step_attempts")?;
 
             Ok(Lease::new(
-                AcquiredCollectionJob::new(
-                    task_id,
-                    collection_job_id,
-                    batch_mode,
-                    vdaf,
-                    time_precision,
-                    encoded_batch_identifier,
-                    encoded_aggregation_param,
-                    step_attempts,
-                ),
+                acquired_collection_job_from_row(&row)?,
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -5886,6 +5862,12 @@ trait RowExt {
         for<'a> T: TryFrom<&'a [u8]>,
         for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug;
 
+    /// Like [Self::get_bytea_and_convert`] but handles nullable columns.
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    where
+        for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug;
+
     /// Get a PostgreSQL `BYTEA` from the row and attempt to decode a `T` value from it.
     fn get_bytea_and_decode<T, P>(
         &self,
@@ -5924,6 +5906,21 @@ impl RowExt for Row {
         let encoded: Vec<u8> = self.get(idx);
         T::try_from(&encoded)
             .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
+    }
+
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    where
+        for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        let encoded: Option<Vec<u8>> = self.get(idx);
+        encoded
+            .map(|encoded| {
+                T::try_from(&encoded).map_err(|err| {
+                    Error::DbState(format!("{idx} stored in database is invalid: {err:?}"))
+                })
+            })
+            .transpose()
     }
 
     fn get_bytea_and_decode<T, P>(
