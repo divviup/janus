@@ -37,6 +37,7 @@ use janus_messages::{
     HpkeConfigId, Interval, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
+use postgres_types::Timestamp;
 use prio::{
     codec::{Decode, Encode},
     dp::{
@@ -1794,84 +1795,94 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .collect();
     aggregation_job_ids.sort();
 
-    ds.run_unnamed_tx(|tx| {
-        let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
-        Box::pin(async move {
-            // Write a few aggregation jobs we expect to be able to retrieve with
-            // acquire_incomplete_aggregation_jobs().
-            tx.put_aggregator_task(&task).await.unwrap();
-            try_join_all(aggregation_job_ids.into_iter().map(|aggregation_job_id| {
-                let task_id = *task.id();
-                async move {
-                    tx.put_aggregation_job(&AggregationJob::<
-                        VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                    >::new(
-                        task_id,
-                        aggregation_job_id,
-                        (),
-                        (),
-                        Interval::new(
-                            OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
-                                .unwrap()
-                                .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
-                                .unwrap(),
-                            Duration::from_seconds(1),
-                        )
-                        .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await
-                }
-            }))
-            .await
-            .unwrap();
+    let (finished_aggregation_job_id, expired_aggregation_job_id) = ds
+        .run_unnamed_tx(|tx| {
+            let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
+            Box::pin(async move {
+                // Write a few aggregation jobs we expect to be able to retrieve with
+                // acquire_incomplete_aggregation_jobs().
+                tx.put_aggregator_task(&task).await.unwrap();
+                try_join_all(aggregation_job_ids.into_iter().map(|aggregation_job_id| {
+                    let task_id = *task.id();
+                    async move {
+                        tx.put_aggregation_job(&AggregationJob::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                        >::new(
+                            task_id,
+                            aggregation_job_id,
+                            (),
+                            (),
+                            Interval::new(
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap()
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap(),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
+                            AggregationJobState::InProgress,
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                    }
+                }))
+                .await
+                .unwrap();
 
-            // Write an aggregation job that is finished. We don't want to retrieve this one.
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an aggregation job that is finished. We don't want to retrieve this one.
+                let finished_aggregation_job_id = random();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *task.id(),
-                    random(),
+                    finished_aggregation_job_id,
                     (),
                     (),
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
-                ),
-            )
-            .await
-            .unwrap();
+                ))
+                .await
+                .unwrap();
 
-            // Write an expired aggregation job. We don't want to retrieve this one, either.
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an expired aggregation job. We don't want to retrieve this one, either.
+                let expired_aggregation_job_id = random();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *task.id(),
-                    random(),
+                    expired_aggregation_job_id,
                     (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
-                ),
-            )
-            .await
-            .unwrap();
+                ))
+                .await
+                .unwrap();
 
-            // Write an aggregation job for a task that we are taking on the helper role for.
-            // We don't want to retrieve this one, either.
-            let helper_task =
-                TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
-                    .build()
-                    .helper_view()
-                    .unwrap();
-            tx.put_aggregator_task(&helper_task).await.unwrap();
-            tx.put_aggregation_job(
-                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                // Write an aggregation job for a task that we are taking on the helper role for.
+                // We don't want to retrieve this one, either.
+                let helper_task =
+                    TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+                        .build()
+                        .helper_view()
+                        .unwrap();
+                tx.put_aggregator_task(&helper_task).await.unwrap();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
                     *helper_task.id(),
                     random(),
                     (),
@@ -1880,9 +1891,92 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
-                ),
-            )
-            .await
+                ))
+                .await
+                .unwrap();
+
+                Ok((finished_aggregation_job_id, expired_aggregation_job_id))
+            })
+        })
+        .await
+        .unwrap();
+
+    // Getting aggregation job leases should not not acquire leases and should not affect acquiring
+    // them later.
+    ds.run_unnamed_tx(|tx| {
+        let (task, mut maybe_leased_aggregation_job_ids) = (
+            task.clone(),
+            Vec::from([
+                aggregation_job_ids.clone(),
+                // When we get leases, we expect to see the finished and expired jobs (because we
+                // haven't advanced time yet).
+                Vec::from([finished_aggregation_job_id, expired_aggregation_job_id]),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+        );
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                )
+                .await
+                .unwrap();
+
+            let mut seen_aggregation_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                assert_eq!(maybe_lease.lease_token, None);
+                assert_eq!(maybe_lease.lease_attempts, 0);
+
+                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+            }
+
+            maybe_leased_aggregation_job_ids.sort();
+            seen_aggregation_job_ids.sort();
+            assert_eq!(maybe_leased_aggregation_job_ids, seen_aggregation_job_ids);
+
+            let no_such_task = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_task.is_empty());
+
+            let maybe_lease = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &maybe_leased_aggregation_job_ids[0],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_eq!(maybe_lease.lease_token, None);
+            assert_eq!(maybe_lease.lease_attempts, 0);
+
+            let no_such_aggregation_job = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_aggregation_job.is_none());
+
+            let no_such_task = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    &random(),
+                    &random(),
+                )
+                .await
+                .unwrap();
+            assert!(no_such_task.is_none());
+
+            Ok(())
         })
     })
     .await
@@ -1980,6 +2074,68 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     got_aggregation_jobs.sort();
 
     assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
+
+    // The leases having been acquired should be reflected when we get MaybeLeases.
+    ds.run_unnamed_tx(|tx| {
+        let (task, mut maybe_leased_aggregation_job_ids, leased_aggregation_job_ids) = (
+            task.clone(),
+            Vec::from([
+                aggregation_job_ids.clone(),
+                // At this point, the expired aggregation job should not be visible anymore.
+                Vec::from([finished_aggregation_job_id]),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+            aggregation_job_ids.clone(),
+        );
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_aggregation_job_leases_by_task::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                )
+                .await
+                .unwrap();
+
+            let mut seen_aggregation_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                if leased_aggregation_job_ids.contains(maybe_lease.leased().aggregation_job_id()) {
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+                    assert!(maybe_lease.lease_token.is_some());
+                    assert_eq!(maybe_lease.lease_attempts, 1);
+                } else {
+                    assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_eq!(maybe_lease.lease_token, None);
+                    assert_eq!(maybe_lease.lease_attempts, 0);
+                }
+
+                seen_aggregation_job_ids.push(*maybe_lease.leased().aggregation_job_id());
+            }
+
+            maybe_leased_aggregation_job_ids.sort();
+            seen_aggregation_job_ids.sort();
+            assert_eq!(maybe_leased_aggregation_job_ids, seen_aggregation_job_ids);
+
+            let maybe_lease = tx
+                .get_aggregation_job_lease::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    task.id(),
+                    &leased_aggregation_job_ids[0],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+            assert!(maybe_lease.lease_token.is_some());
+            assert_eq!(maybe_lease.lease_attempts, 1);
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 
     // Run: release a few jobs, then attempt to acquire jobs again.
     const RELEASE_COUNT: usize = 2;
@@ -3488,6 +3644,416 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     })
     .await
     .unwrap()
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::new(Time::from_seconds_since_epoch(0));
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let task_id = random();
+    let other_task_id = random();
+    let tasks: Vec<_> = [task_id, other_task_id]
+        .iter()
+        .map(|task_id| {
+            TaskBuilder::new(
+                task::QueryType::TimeInterval,
+                VdafInstance::Fake { rounds: 1 },
+            )
+            .with_id(*task_id)
+            .with_report_expiry_age(Some(Duration::from_seconds(100)))
+            .build()
+        })
+        .collect();
+    let reports = Vec::from([
+        // First collection job
+        LeaderStoredReport::new_dummy(task_id, Time::from_seconds_since_epoch(0)),
+        // Second collection job
+        LeaderStoredReport::new_dummy(task_id, Time::from_seconds_since_epoch(300)),
+        // Other task collection job
+        LeaderStoredReport::new_dummy(other_task_id, Time::from_seconds_since_epoch(0)),
+    ]);
+    let batch_interval = Interval::new(
+        Time::from_seconds_since_epoch(0),
+        Duration::from_seconds(100),
+    )
+    .unwrap();
+    let second_batch_interval = Interval::new(
+        Time::from_seconds_since_epoch(300),
+        Duration::from_seconds(100),
+    )
+    .unwrap();
+    let aggregation_jobs = Vec::from([
+        // First collection job
+        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            random(),
+            dummy::AggregationParam(0),
+            (),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::Finished,
+            AggregationJobStep::from(1),
+        ),
+        // Second collection job
+        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            random(),
+            dummy::AggregationParam(0),
+            (),
+            Interval::new(
+                Time::from_seconds_since_epoch(300),
+                Duration::from_seconds(1),
+            )
+            .unwrap(),
+            AggregationJobState::Finished,
+            AggregationJobStep::from(1),
+        ),
+        // Other task collection job
+        AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+            other_task_id,
+            random(),
+            dummy::AggregationParam(0),
+            (),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::Finished,
+            AggregationJobStep::from(1),
+        ),
+    ]);
+    let report_aggregations = Vec::from([
+        // First collection job
+        ReportAggregation::<0, dummy::Vdaf>::new(
+            task_id,
+            *aggregation_jobs[0].id(),
+            *reports[0].metadata().id(),
+            *reports[0].metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Finished, // Doesn't matter what state the report aggregation is in
+        ),
+        // Second collection job
+        ReportAggregation::<0, dummy::Vdaf>::new(
+            task_id,
+            *aggregation_jobs[1].id(),
+            *reports[1].metadata().id(),
+            *reports[1].metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Finished,
+        ),
+        // Other task collection job
+        ReportAggregation::<0, dummy::Vdaf>::new(
+            other_task_id,
+            *aggregation_jobs[2].id(),
+            *reports[2].metadata().id(),
+            *reports[2].metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Finished,
+        ),
+    ]);
+    let batch_aggregations = Vec::from([
+        // First collection job
+        BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            batch_interval,
+            dummy::AggregationParam(0),
+            0,
+            Interval::EMPTY,
+            BatchAggregationState::Scrubbed,
+        ),
+        // Second collection job
+        BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            second_batch_interval,
+            dummy::AggregationParam(0),
+            0,
+            Interval::EMPTY,
+            BatchAggregationState::Scrubbed,
+        ),
+        // Other task collection job
+        BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+            other_task_id,
+            batch_interval,
+            dummy::AggregationParam(0),
+            0,
+            Interval::EMPTY,
+            BatchAggregationState::Scrubbed,
+        ),
+    ]);
+    let collection_jobs = Vec::from([
+        // Job is in start state, so it can be acquired. With clock at time 0, the job is not
+        // expired. The job is expired once the clock is advanced by 200.
+        CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            random(),
+            TimeInterval::query_for_batch_identifier(&batch_interval),
+            dummy::AggregationParam(0),
+            batch_interval,
+            CollectionJobState::Start,
+        ),
+        // Job is in finished state, so it cannot be acquired, but its MaybeLease should be gotten.
+        // With clock at time 0, the job is not expired. The job is also not expired once the clock
+        // is advanced by 200.
+        CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+            task_id,
+            random(),
+            TimeInterval::query_for_batch_identifier(&second_batch_interval),
+            dummy::AggregationParam(0),
+            second_batch_interval,
+            CollectionJobState::Finished {
+                report_count: 1,
+                client_timestamp_interval: Interval::EMPTY,
+                encrypted_helper_aggregate_share: HpkeCiphertext::new(
+                    HpkeConfigId::from(0),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                leader_aggregate_share: dummy::AggregateShare(0),
+            },
+        ),
+        // Job for another task, so it should not be visible when querying for the first task.
+        CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+            other_task_id,
+            random(),
+            TimeInterval::query_for_batch_identifier(&batch_interval),
+            dummy::AggregationParam(0),
+            batch_interval,
+            CollectionJobState::Start,
+        ),
+    ]);
+
+    ds.run_unnamed_tx(|tx| {
+        let (
+            tasks,
+            reports,
+            report_aggregations,
+            aggregation_jobs,
+            batch_aggregations,
+            collection_jobs,
+        ) = (
+            tasks.clone(),
+            reports.clone(),
+            report_aggregations.clone(),
+            aggregation_jobs.clone(),
+            batch_aggregations.clone(),
+            collection_jobs.clone(),
+        );
+        Box::pin(async move {
+            for task in &tasks {
+                tx.put_aggregator_task(&task.leader_view().unwrap())
+                    .await
+                    .unwrap();
+            }
+
+            for report in &reports {
+                tx.put_client_report(report).await.unwrap();
+            }
+            for aggregation_job in &aggregation_jobs {
+                tx.put_aggregation_job(aggregation_job).await.unwrap();
+            }
+
+            for report_aggregation in &report_aggregations {
+                tx.put_report_aggregation(report_aggregation).await.unwrap();
+            }
+
+            for batch_aggregation in batch_aggregations {
+                tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+            }
+
+            for collection_job in collection_jobs {
+                tx.put_collection_job(&collection_job).await.unwrap();
+            }
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Getting collection job leases should not acquire them and should not affect acquiring them
+    // later.
+    ds.run_unnamed_tx(|tx| {
+        let (task_id, mut maybe_leased_collection_job_ids) = (
+            task_id,
+            Vec::from([*collection_jobs[0].id(), *collection_jobs[1].id()]),
+        );
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_collection_job_leases_by_task::<0, TimeInterval, dummy::Vdaf>(&task_id)
+                .await
+                .unwrap();
+
+            let mut seen_collection_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                assert_eq!(maybe_lease.lease_token, None);
+                assert_eq!(maybe_lease.lease_attempts, 0);
+
+                seen_collection_job_ids.push(*maybe_lease.leased().collection_job_id());
+            }
+
+            seen_collection_job_ids.sort();
+            maybe_leased_collection_job_ids.sort();
+            assert_eq!(seen_collection_job_ids, maybe_leased_collection_job_ids);
+
+            let no_such_task = tx
+                .get_collection_job_leases_by_task::<0, TimeInterval, dummy::Vdaf>(&random())
+                .await
+                .unwrap();
+            assert!(no_such_task.is_empty());
+
+            let maybe_lease = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                    &task_id,
+                    &maybe_leased_collection_job_ids[0],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_eq!(maybe_lease.lease_token, None);
+            assert_eq!(maybe_lease.lease_attempts, 0);
+
+            let no_such_task = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                    &random(),
+                    &maybe_leased_collection_job_ids[0],
+                )
+                .await
+                .unwrap();
+            assert!(no_such_task.is_none());
+
+            let no_such_collection_job = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(&task_id, &random())
+                .await
+                .unwrap();
+            assert!(no_such_collection_job.is_none());
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Acquire incomplete collection jobs.
+    ds.run_unnamed_tx(|tx| {
+        let mut expected_collection_job_ids =
+            Vec::from([*collection_jobs[0].id(), *collection_jobs[2].id()]);
+        Box::pin(async move {
+            let acquired = tx
+                .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
+                .await
+                .unwrap();
+
+            let mut acquired_ids: Vec<_> = acquired
+                .iter()
+                .map(|j| *j.leased().collection_job_id())
+                .collect();
+
+            expected_collection_job_ids.sort();
+            acquired_ids.sort();
+            assert_eq!(expected_collection_job_ids, acquired_ids);
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Getting collection job leases should reflect that some of the jobs were acquired.
+    ds.run_unnamed_tx(|tx| {
+        let (task_id, acquired_job_id, non_acquired_job_id) =
+            (task_id, *collection_jobs[0].id(), *collection_jobs[1].id());
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_collection_job_leases_by_task::<0, TimeInterval, dummy::Vdaf>(&task_id)
+                .await
+                .unwrap();
+
+            let mut seen_collection_job_ids = Vec::new();
+            for maybe_lease in maybe_leases {
+                if maybe_lease.leased().collection_job_id() == &acquired_job_id {
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+                    assert!(maybe_lease.lease_token.is_some());
+                    assert_eq!(maybe_lease.lease_attempts, 1);
+                } else {
+                    assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+                    assert_eq!(maybe_lease.lease_token, None);
+                    assert_eq!(maybe_lease.lease_attempts, 0);
+                }
+
+                seen_collection_job_ids.push(*maybe_lease.leased().collection_job_id());
+            }
+
+            seen_collection_job_ids.sort();
+            let mut expected_collection_job_ids = Vec::from([acquired_job_id, non_acquired_job_id]);
+            expected_collection_job_ids.sort();
+            assert_eq!(expected_collection_job_ids, seen_collection_job_ids);
+
+            let maybe_lease = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                    &task_id,
+                    &acquired_job_id,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_ne!(maybe_lease.lease_expiry_time, Timestamp::PosInfinity);
+            assert!(maybe_lease.lease_token.is_some());
+            assert_eq!(maybe_lease.lease_attempts, 1);
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Advance time by the task expiry. We should no longer get the first maybe lease.
+    clock.advance(&Duration::from_seconds(200));
+    ds.run_unnamed_tx(|tx| {
+        let (task_id, acquired_job_id, non_acquired_job_id) =
+            (task_id, *collection_jobs[0].id(), *collection_jobs[1].id());
+        Box::pin(async move {
+            let maybe_leases = tx
+                .get_collection_job_leases_by_task::<0, TimeInterval, dummy::Vdaf>(&task_id)
+                .await
+                .unwrap();
+            assert_eq!(maybe_leases.len(), 1);
+
+            assert_eq!(maybe_leases[0].lease_expiry_time, Timestamp::NegInfinity);
+            assert_eq!(maybe_leases[0].lease_token, None);
+            assert_eq!(maybe_leases[0].lease_attempts, 0);
+
+            let maybe_lease = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                    &task_id,
+                    &acquired_job_id,
+                )
+                .await
+                .unwrap();
+            assert!(maybe_lease.is_none());
+
+            let maybe_lease = tx
+                .get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                    &task_id,
+                    &non_acquired_job_id,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(maybe_lease.lease_expiry_time, Timestamp::NegInfinity);
+            assert_eq!(maybe_lease.lease_token, None);
+            assert_eq!(maybe_lease.lease_attempts, 0);
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
