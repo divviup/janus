@@ -23,6 +23,7 @@ use backon::BackoffBuilder;
 use bytes::Bytes;
 use educe::Educe;
 use futures::future::BoxFuture;
+use http::{HeaderValue, header::RETRY_AFTER};
 use janus_aggregator_core::{
     AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{
@@ -35,7 +36,7 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask},
 };
 use janus_core::{
-    http::{check_content_type, parse_retry_after, retry_after_to_duration},
+    http::check_content_type,
     retries::{is_retryable_http_client_error, is_retryable_http_status},
     time::Clock,
     vdaf::vdaf_application_context,
@@ -58,7 +59,13 @@ use prio::{
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
 use reqwest::Method;
 use retry_after::RetryAfter;
-use std::{borrow::Cow, collections::HashSet, panic, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    panic,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
 use tokio::{
     join,
     sync::{Mutex, mpsc},
@@ -627,12 +634,14 @@ where
                     Error::InvalidConfiguration("no aggregator auth token in task")
                 })?,
                 &self.http_request_duration_histogram,
-                false,
             )
             .await?;
 
-            let retry_after = parse_retry_after(http_response.headers())
-                .map_err(|e| Error::BadRequest(e.into()))?;
+            let retry_after = http_response
+                .headers()
+                .get(RETRY_AFTER)
+                .map(parse_retry_after)
+                .transpose()?;
             let body = http_response.body();
             let resp = if !body.is_empty() {
                 check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
@@ -839,12 +848,14 @@ where
             task.aggregator_auth_token()
                 .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.http_request_duration_histogram,
-            false,
         )
         .await?;
 
-        let retry_after =
-            parse_retry_after(http_response.headers()).map_err(|e| Error::BadRequest(e.into()))?;
+        let retry_after = http_response
+            .headers()
+            .get(RETRY_AFTER)
+            .map(parse_retry_after)
+            .transpose()?;
         let body = http_response.body();
         let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
@@ -938,12 +949,14 @@ where
             task.aggregator_auth_token()
                 .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.http_request_duration_histogram,
-            false,
         )
         .await?;
 
-        let retry_after =
-            parse_retry_after(http_response.headers()).map_err(|e| Error::BadRequest(e.into()))?;
+        let retry_after = http_response
+            .headers()
+            .get(RETRY_AFTER)
+            .map(parse_retry_after)
+            .transpose()?;
         let body = http_response.body();
         let resp = if !body.is_empty() {
             check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
@@ -1091,8 +1104,7 @@ where
 
         let retry_after = retry_after
             .map(|ra| retry_after_to_duration(datastore.clock(), ra))
-            .transpose()
-            .map_err(|e| Error::Internal(e.into()))?
+            .transpose()?
             .unwrap_or(self.default_async_poll_interval);
         let counters = datastore
             .run_tx("process_response_from_helper_processing", |tx| {
@@ -1764,7 +1776,6 @@ where
             &aggregator_auth_token
                 .ok_or_else(|| Error::InvalidConfiguration("task has no aggregator auth token"))?,
             &self.http_request_duration_histogram,
-            false,
         )
         .await;
         Ok(())
@@ -1930,4 +1941,29 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> SteppedAggregation<S
 enum Either<PS, OS> {
     PrepareState(PS),
     OutputShare(OS),
+}
+
+fn parse_retry_after(header_value: &HeaderValue) -> Result<RetryAfter, Error> {
+    RetryAfter::try_from(header_value)
+        .context("couldn't parse retry-after header")
+        .map_err(|err| Error::BadRequest(err.into()))
+}
+
+fn retry_after_to_duration<C: Clock>(
+    clock: &C,
+    retry_after: &RetryAfter,
+) -> Result<Duration, Error> {
+    match retry_after {
+        RetryAfter::Delay(duration) => Ok(*duration),
+        RetryAfter::DateTime(next_retry_time) => {
+            let now = UNIX_EPOCH + Duration::from_secs(clock.now().as_seconds_since_epoch());
+            if &now > next_retry_time {
+                return Ok(Duration::ZERO);
+            }
+            next_retry_time
+                .duration_since(now)
+                .context("computing retry-after duration")
+                .map_err(|err| Error::Internal(err.into()))
+        }
+    }
 }

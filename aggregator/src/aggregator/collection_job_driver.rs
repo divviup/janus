@@ -385,7 +385,6 @@ impl CollectionJobDriver {
             task.aggregator_auth_token()
                 .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.metrics.http_request_duration_histogram,
-            false, // TKTK
         )
         .await?;
 
@@ -1918,7 +1917,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn helper_aggregate_share_asynchronous_retry_after_lease() {
+    async fn helper_aggregate_share_asynchronous_retry_after_lease_expiration() {
         install_test_trace_subscriber();
         initialize_rustls();
         let mut server = mockito::Server::new_async().await;
@@ -2055,8 +2054,8 @@ mod tests {
         // Move forward so we can check that it's still incomplete
         clock.advance(&Duration::from_seconds(1));
 
-        let task_id = task.id().clone();
-        let collection_job_id = collection_job.id().clone();
+        let task_id = *task.id();
+        let collection_job_id = *collection_job.id();
         let incomplete_lease = ds
             .run_unnamed_tx(|tx| {
                 Box::pin(async move {

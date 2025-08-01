@@ -680,7 +680,7 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
-    ) -> Result<Option<AggregateShare>, Error> {
+    ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -1135,7 +1135,7 @@ impl<C: Clock> TaskAggregator<C> {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
-    ) -> Result<Option<AggregateShare>, Error> {
+    ) -> Result<AggregateShare, Error> {
         self.vdaf_ops
             .handle_aggregate_share(
                 datastore,
@@ -3137,7 +3137,7 @@ impl VdafOps {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
-    ) -> Result<Option<AggregateShare>, Error> {
+    ) -> Result<AggregateShare, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategyType) => {
@@ -3200,7 +3200,7 @@ impl VdafOps {
         max_future_concurrency: usize,
         collector_hpke_config: &HpkeConfig,
         dp_strategy: Arc<S>,
-    ) -> Result<Option<AggregateShare>, Error> {
+    ) -> Result<AggregateShare, Error> {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
         let aggregate_share_req =
@@ -3390,7 +3390,7 @@ impl VdafOps {
             .map_err(Error::MessageEncode)?,
         )?;
 
-        Ok(Some(AggregateShare::new(encrypted_aggregate_share)))
+        Ok(AggregateShare::new(encrypted_aggregate_share))
     }
 }
 
@@ -3511,7 +3511,6 @@ async fn send_request_to_helper(
     request_body: Option<RequestBody>,
     auth_token: &AuthenticationToken,
     http_request_duration_histogram: &Histogram<f64>,
-    respect_retry_after: bool,
 ) -> Result<HttpResponse, Error> {
     let (auth_header, auth_value) = auth_token.request_authentication();
     let domain = Arc::from(url.domain().unwrap_or_default());
@@ -3526,7 +3525,6 @@ async fn send_request_to_helper(
     let result = retry_http_request_notify(
         backoff.build(),
         |_, _| timer.finish_attempt("error"),
-        respect_retry_after,
         || async {
             timer.start_attempt();
             let mut request = http_client
