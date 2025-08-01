@@ -883,6 +883,7 @@ mod tests {
         HpkeCiphertext, HpkeConfigId, Interval, MediaType, Query, ReportIdChecksum,
         batch_mode::TimeInterval, problem_type::DapProblemType,
     };
+    use postgres_types::Timestamp;
     use prio::{
         codec::{Decode, Encode},
         vdaf::dummy,
@@ -1924,7 +1925,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let (task, lease, _) =
+        let (task, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), true).await;
 
         // Set up the collection job driver
@@ -1952,7 +1953,7 @@ mod tests {
         // the share isn't yet ready, and it won't be until after the leader's lease ends.
         let remaining_time =
             Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
-        let beyond_remaining_time = remaining_time + StdDuration::from_secs(1);
+        let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
 
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_async_aggregate_share_unavailable = server
@@ -1964,21 +1965,57 @@ mod tests {
             )
             .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
-            .with_header("Retry-After", &beyond_remaining_time.as_secs().to_string())
+            .with_header("Retry-After", &retry_after_header_value.to_string())
             .expect(1)
             .create_async()
             .await;
 
-        // This should fail, because of a retry timeout.
+        // This should complete, and increment the step counter.
         collection_job_driver
             .step_collection_job(Arc::clone(&ds), clock.clone(), Arc::new(lease.unwrap()))
             .await
             .unwrap();
 
-        // Both mocks should have gotten used.
         mocked_async_aggregate_share_unavailable
             .assert_async()
             .await;
+
+        let task_id = *task.id();
+        let collection_job_id = *collection_job.id();
+        let maybe_lease = ds
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move {
+                    let lease = Arc::new(
+                        tx.get_collection_job_lease::<0, TimeInterval, dummy::Vdaf>(
+                            &task_id,
+                            &collection_job_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    );
+
+                    assert_eq!(&task_id, lease.leased().task_id());
+                    Ok(lease)
+                })
+            })
+            .await
+            .unwrap();
+
+        // There should be no active lease, and the reacquisition time be equal to now
+        // plus the retry_after_header_value.
+        assert_eq!(maybe_lease.lease_token, None);
+        assert_eq!(maybe_lease.lease_attempts, 0);
+        assert_eq!(maybe_lease.leased().step_attempts(), 1);
+        match maybe_lease.lease_expiry_time {
+            Timestamp::Value(time) => {
+                assert_eq!(
+                    time.and_utc().timestamp() as u64,
+                    clock.now().as_seconds_since_epoch() + retry_after_header_value
+                )
+            }
+            _ => panic!(),
+        }
     }
 
     #[tokio::test]
