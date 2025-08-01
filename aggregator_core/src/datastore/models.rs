@@ -33,6 +33,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     hash::Hash,
     ops::RangeInclusive,
+    time::Duration as StdDuration,
 };
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
@@ -612,6 +613,18 @@ impl<T> Lease<T> {
     /// Returns the number of lease acquiries since the last successful release.
     pub fn lease_attempts(&self) -> usize {
         self.lease_attempts
+    }
+
+    /// Returns how long remains until the expiry time, with an optional clock skew allowance.
+    /// The math saturates, because  we want to timeout immediately if any of these
+    /// subtractions would underflow.
+    pub fn remaining_lease_duration(&self, current_time: &Time, skew_seconds: u64) -> StdDuration {
+        StdDuration::from_secs(
+            u64::try_from(self.lease_expiry_time.and_utc().timestamp())
+                .unwrap_or_default()
+                .saturating_sub(current_time.as_seconds_since_epoch())
+                .saturating_sub(skew_seconds),
+        )
     }
 }
 

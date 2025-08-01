@@ -1,11 +1,13 @@
 use crate::auth_tokens::AuthenticationToken;
 use anyhow::anyhow;
-use http::StatusCode;
+use http::{StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::problem_type::DapProblemType;
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
+use retry_after::RetryAfter;
 use std::fmt::{self, Display, Formatter};
+use std::time::Duration;
 use tracing::warn;
 use trillium::{Conn, HeaderValue};
 
@@ -159,6 +161,27 @@ pub fn check_content_type(
         ));
     };
     Ok(())
+}
+
+/// Parse the HTTP Headers for a RetryAfter duration, if any. This does not handle DateTime
+/// Retry-After headers, but also does not require knowledge of the current clock.
+pub fn parse_retry_after_to_duration(
+    headers: &http::HeaderMap,
+) -> Result<Option<Duration>, anyhow::Error> {
+    match parse_retry_after(headers)? {
+        Some(RetryAfter::Delay(duration)) => Ok(Some(duration)),
+        Some(RetryAfter::DateTime(_)) => Ok(None), // Treat as if missing. See #3943
+        None => Ok(None),
+    }
+}
+
+/// Parse the HTTP Headers for a RetryAfter, if any
+pub fn parse_retry_after(headers: &http::HeaderMap) -> Result<Option<RetryAfter>, anyhow::Error> {
+    headers
+        .get(RETRY_AFTER)
+        .map(RetryAfter::try_from)
+        .transpose()
+        .map_err(|e| anyhow!("Unable to parse Retry-After: {}", e))
 }
 
 #[cfg(test)]
