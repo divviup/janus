@@ -616,7 +616,7 @@ impl<T> Lease<T> {
     }
 
     /// Returns how long remains until the expiry time, with an optional clock skew allowance.
-    /// The math saturates, because  we want to timeout immediately if any of these
+    /// The math saturates, because we want to timeout immediately if any of these
     /// subtractions would underflow.
     pub fn remaining_lease_duration(&self, current_time: &Time, skew_seconds: u64) -> StdDuration {
         StdDuration::from_secs(

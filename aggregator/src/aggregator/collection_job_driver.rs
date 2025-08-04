@@ -1949,7 +1949,7 @@ mod tests {
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
 
-        // Simulate leader indicating asynchronous operation; e.g., for the first request,
+        // Simulate helper indicating asynchronous operation; e.g., for the first request,
         // the share isn't yet ready, and it won't be until after the leader's lease ends.
         let remaining_time =
             Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
@@ -2050,7 +2050,7 @@ mod tests {
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
 
-        // Simulate leader indicating asynchronous operation; e.g., for the first request,
+        // Simulate helper indicating asynchronous operation; e.g., for the first request,
         // the share isn't yet ready, then it is.
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
