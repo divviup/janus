@@ -24,7 +24,7 @@ use crate::{
 };
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
@@ -8703,4 +8703,31 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
         })
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn test_remaining_lease_duration() {
+    let totally_legit_object: i16 = 0x2A;
+    for (expiry_time, current_time, skew, expected) in [
+        (100, 100, 0, 0),
+        (100, 100, 10, 0),
+        (100, 100, 100, 0),
+        (100, 101, 25, 0),
+        (100, 10, 100, 0),
+        (100, 10, 50, 40),
+        (100, 10, 0, 90),
+        (0, 0, 0, 0),
+        (0, 0, 100, 0),
+    ] {
+        assert_eq!(
+            StdDuration::from_secs(expected),
+            Lease::new_dummy(
+                totally_legit_object,
+                DateTime::<Utc>::from_timestamp(expiry_time, 0)
+                    .unwrap()
+                    .naive_utc(),
+            )
+            .remaining_lease_duration(&Time::from_seconds_since_epoch(current_time), skew)
+        );
+    }
 }

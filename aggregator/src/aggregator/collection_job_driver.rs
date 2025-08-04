@@ -395,7 +395,6 @@ impl CollectionJobDriver {
                 Ok(Some(retry_delay)) => retry_delay,
                 _ => self
                     .collection_retry_strategy
-                    .clone()
                     .compute_retry_delay(lease.leased().step_attempts()),
             };
             info!(
@@ -849,7 +848,7 @@ mod tests {
         aggregator::{
             Error,
             collection_job_driver::{CollectionJobDriver, RetryStrategy},
-            test_util::BATCH_AGGREGATION_SHARD_COUNT,
+            test_util::{BATCH_AGGREGATION_SHARD_COUNT, fake_aggregate_share},
         },
         binary_utils::job_driver::JobDriver,
     };
@@ -879,9 +878,8 @@ mod tests {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, MediaType, Query, ReportIdChecksum,
-        batch_mode::TimeInterval, problem_type::DapProblemType,
+        AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration, Interval,
+        MediaType, Query, ReportIdChecksum, batch_mode::TimeInterval, problem_type::DapProblemType,
     };
     use postgres_types::Timestamp;
     use prio::{
@@ -1371,12 +1369,7 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShare::new(HpkeCiphertext::new(
-            HpkeConfigId::from(100),
-            Vec::new(),
-            Vec::new(),
-        ));
-
+        let helper_response = fake_aggregate_share();
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_share = server
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
@@ -1808,12 +1801,7 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShare::new(HpkeCiphertext::new(
-            HpkeConfigId::from(100),
-            Vec::new(),
-            Vec::new(),
-        ));
-
+        let helper_response = fake_aggregate_share();
         let mocked_aggregate_share = server
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(200)
@@ -1920,7 +1908,6 @@ mod tests {
     #[tokio::test]
     async fn helper_aggregate_share_asynchronous_retry_after_lease_expiration() {
         install_test_trace_subscriber();
-        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -2021,7 +2008,6 @@ mod tests {
     #[tokio::test]
     async fn helper_aggregate_share_is_asynchronous() {
         install_test_trace_subscriber();
-        initialize_rustls();
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -2054,11 +2040,7 @@ mod tests {
         // the share isn't yet ready, then it is.
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShare::new(HpkeCiphertext::new(
-            HpkeConfigId::from(100),
-            Vec::new(),
-            Vec::new(),
-        ));
+        let helper_response = fake_aggregate_share();
         let helper_encrypted_aggregate_share = helper_response.encrypted_aggregate_share().clone();
 
         let (header, value) = agg_auth_token.request_authentication();

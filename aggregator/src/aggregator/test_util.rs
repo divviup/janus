@@ -10,8 +10,8 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_application_context},
 };
 use janus_messages::{
-    Extension, HpkeConfig, InputShareAad, PlaintextInputShare, Report, ReportId, ReportMetadata,
-    ReportShare, Role, TaskId, Time,
+    AggregateShare, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId, InputShareAad,
+    PlaintextInputShare, Report, ReportId, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     codec::Encode,
@@ -199,4 +199,12 @@ pub async fn assert_task_aggregation_counter(
         }
         sleep(Duration::from_millis(100)).await;
     }
+}
+
+pub fn fake_aggregate_share() -> AggregateShare {
+    AggregateShare::new(HpkeCiphertext::new(
+        HpkeConfigId::from(100),
+        Vec::new(),
+        Vec::new(),
+    ))
 }
