@@ -2372,20 +2372,61 @@ impl TaskUploadCounter {
 }
 
 /// Per-task counts of aggregated reports.
+///
+/// The intended scope of this structure is a single operation, e.g., a single step of a single
+/// aggregation job. What that means is:
+///   - The counter values in this structure will not represent the current totals for the task, but
+///     rather just the contribution that the particular operation is making to the task total;
+///   - Callers must flush the counter values to the datastore by calling
+///     `Transaction::increment_task_aggregation_counter`. Callers must avoid double counting: any
+///     operation's counters should only be flushed to datastore once.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAggregationCounter {
     /// The number of successfully-aggregated reports.
-    pub(crate) success: u64,
+    pub success: u64,
+
+    /// The number of reports rejected by the helper due to the batch being collected.
+    pub helper_batch_collected: u64,
+    /// The number of reports rejected by the helper due to the report replay.
+    pub helper_report_replayed: u64,
+    /// The number of reports rejected by the helper due to the leader dropping the report.
+    pub helper_report_dropped: u64,
+    /// The number of reports rejected by the helper due to unknown HPKE config ID.
+    pub helper_hpke_unknown_config_id: u64,
+    /// The number of reports rejected by the helper due to HPKE decryption failure.
+    pub helper_hpke_decrypt_failure: u64,
+    /// The number of reports rejected by the helper due to VDAF preparation error.
+    pub helper_vdaf_prep_error: u64,
+    /// The number of reports rejected by the helper due to task expiration.
+    pub helper_task_expired: u64,
+    /// The number of reports rejected by the helper due to an invalid message.
+    pub helper_invalid_message: u64,
+    /// The number of reports rejected by the helper due to a report arriving too early.
+    pub helper_report_too_early: u64,
 }
 
 impl TaskAggregationCounter {
-    #[cfg(feature = "test-util")]
-    pub fn new_with_values(success: u64) -> Self {
-        Self { success }
-    }
-
     /// Increments the counter of successfully-aggregated reports.
     pub fn increment_success(&mut self) {
         self.success += 1
+    }
+
+    /// Increments the appropriate counter based on the helper prepare failure
+    pub fn increment_with_helper_prepare_error(&mut self, helper_error: PrepareError) {
+        match helper_error {
+            PrepareError::BatchCollected => self.helper_batch_collected += 1,
+            PrepareError::ReportReplayed => self.helper_report_replayed += 1,
+            PrepareError::ReportDropped => self.helper_report_dropped += 1,
+            PrepareError::HpkeUnknownConfigId => self.helper_hpke_unknown_config_id += 1,
+            PrepareError::HpkeDecryptError => self.helper_hpke_decrypt_failure += 1,
+            PrepareError::VdafPrepError => self.helper_vdaf_prep_error += 1,
+            PrepareError::TaskExpired => self.helper_task_expired += 1,
+            PrepareError::InvalidMessage => self.helper_invalid_message += 1,
+            PrepareError::ReportTooEarly => self.helper_report_too_early += 1,
+            // PrepareError::BatchSaturated corresponds to draft-ietf-ppm-dap-09's batch_saturated,
+            // but it's not used anywhere and is dropped from later DAP drafts, so we don't bother
+            // representing it in counters.
+            _ => tracing::debug!(?helper_error, "unexpected prepare error from helper"),
+        }
     }
 }

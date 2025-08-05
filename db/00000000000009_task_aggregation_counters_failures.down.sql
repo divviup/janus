@@ -1,0 +1,10 @@
+ALTER TABLE task_aggregation_counters
+    DROP COLUMN helper_batch_collected,
+    DROP COLUMN helper_report_replayed,
+    DROP COLUMN helper_report_dropped,
+    DROP COLUMN helper_hpke_unknown_config_id,
+    DROP COLUMN helper_hpke_decrypt_failure,
+    DROP COLUMN helper_vdaf_prep_error,
+    DROP COLUMN helper_task_expired,
+    DROP COLUMN helper_invalid_message,
+    DROP COLUMN helper_report_too_early;

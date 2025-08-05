@@ -78,7 +78,7 @@ async fn get_config() {
             r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace"],"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedFixedSize","PureDpDiscreteLaplace","AggregationJobMetrics"],"#,
             r#""software_name":"Janus","software_version":""#,
         )
     );
@@ -924,7 +924,11 @@ async fn get_task_aggregation_metrics() {
             tx.increment_task_aggregation_counter(
                 &task_id,
                 5,
-                &TaskAggregationCounter::new_with_values(15),
+                &TaskAggregationCounter {
+                    success: 15,
+                    helper_hpke_decrypt_failure: 100,
+                    ..Default::default()
+                },
             )
             .await
         })
@@ -938,9 +942,11 @@ async fn get_task_aggregation_metrics() {
             .run_async(&handler)
             .await,
         Status::Ok,
-        serde_json::to_string(&GetTaskAggregationMetricsResp(
-            TaskAggregationCounter::new_with_values(15)
-        ))
+        serde_json::to_string(&GetTaskAggregationMetricsResp(TaskAggregationCounter {
+            success: 15,
+            helper_hpke_decrypt_failure: 100,
+            ..Default::default()
+        },))
         .unwrap(),
     );
 
