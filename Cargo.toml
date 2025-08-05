@@ -87,7 +87,7 @@ retry-after = "0.4.0"
 rstest = "0.22.0"
 rstest_reuse = "0.7.0"
 rustc_version = "0.4.1"
-rustls = "0.23.30"
+rustls = "0.23.31"
 rustls-pemfile = "2.2.0"
 sec1 = "0.7"
 serde = { version = "1.0.219", features = ["derive"] }
