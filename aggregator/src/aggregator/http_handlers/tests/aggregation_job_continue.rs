@@ -379,7 +379,10 @@ async fn aggregate_continue() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(1),
+        TaskAggregationCounter {
+            success: 1,
+            ..Default::default()
+        },
     )
     .await;
 }
@@ -773,7 +776,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(2),
+        TaskAggregationCounter {
+            success: 2,
+            ..Default::default()
+        },
     )
     .await;
 
@@ -1073,7 +1079,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(3),
+        TaskAggregationCounter {
+            success: 3,
+            ..Default::default()
+        },
     )
     .await;
 }
@@ -1193,12 +1202,8 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         )
     );
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1374,12 +1379,8 @@ async fn aggregate_continue_prep_step_fails() {
         )
     );
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1497,12 +1498,8 @@ async fn aggregate_continue_unexpected_transition() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1679,12 +1676,8 @@ async fn aggregate_continue_out_of_order_transition() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1777,10 +1770,6 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }

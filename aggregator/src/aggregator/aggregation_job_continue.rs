@@ -27,7 +27,10 @@ use prio::{
     vdaf,
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use std::{panic, sync::Arc};
+use std::{
+    panic,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc;
 use tracing::{info_span, trace_span, Span};
 
@@ -44,7 +47,8 @@ impl VdafOps {
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
         metrics: &AggregatorMetrics,
-    ) -> Result<(AggregationJobResp, TaskAggregationCounter), datastore::Error>
+        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+    ) -> Result<AggregationJobResp, datastore::Error>
     where
         C: Clock,
         Q: AccumulableQueryType,
@@ -281,16 +285,14 @@ impl VdafOps {
                 task,
                 batch_aggregation_shard_count,
                 Some(metrics.for_aggregation_job_writer()),
+                task_aggregation_counters,
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
-        let (mut prep_resps_by_agg_job, counters) = aggregation_job_writer.write(tx, vdaf).await?;
-        Ok((
-            AggregationJobResp::new(
-                prep_resps_by_agg_job
-                    .remove(&aggregation_job_id)
-                    .unwrap_or_default(),
-            ),
-            counters,
+        let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
+        Ok(AggregationJobResp::new(
+            prep_resps_by_agg_job
+                .remove(&aggregation_job_id)
+                .unwrap_or_default(),
         ))
     }
 }
