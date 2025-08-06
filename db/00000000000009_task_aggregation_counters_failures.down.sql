@@ -1,5 +1,7 @@
 ALTER TABLE task_aggregation_counters
     DROP COLUMN batch_collected,
+    DROP COLUMN duplicate_extension,
+    DROP COLUMN public_share_encode_failure,
     DROP COLUMN report_replayed,
     DROP COLUMN report_dropped,
     DROP COLUMN hpke_unknown_config_id,
