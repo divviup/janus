@@ -2385,6 +2385,29 @@ pub struct TaskAggregationCounter {
     /// The number of successfully-aggregated reports.
     pub success: u64,
 
+    /// The number of reports rejected due to duplicate extensions.
+    pub duplicate_extension: u64,
+    /// The number of reports rejected due to failure to encode the public share.
+    pub public_share_encode_failure: u64,
+    /// The number of reports rejected due to the batch being collected.
+    pub batch_collected: u64,
+    /// The number of reports rejected due to the report replay.
+    pub report_replayed: u64,
+    /// The number of reports rejected due to the leader dropping the report.
+    pub report_dropped: u64,
+    /// The number of reports rejected due to unknown HPKE config ID.
+    pub hpke_unknown_config_id: u64,
+    /// The number of reports rejected due to HPKE decryption failure.
+    pub hpke_decrypt_failure: u64,
+    /// The number of reports rejected due to VDAF preparation error.
+    pub vdaf_prep_error: u64,
+    /// The number of reports rejected due to task expiration.
+    pub task_expired: u64,
+    /// The number of reports rejected due to an invalid message.
+    pub invalid_message: u64,
+    /// The number of reports rejected due to a report arriving too early.
+    pub report_too_early: u64,
+
     /// The number of reports rejected by the helper due to the batch being collected.
     pub helper_batch_collected: u64,
     /// The number of reports rejected by the helper due to the report replay.

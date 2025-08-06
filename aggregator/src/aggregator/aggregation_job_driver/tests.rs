@@ -494,6 +494,17 @@ async fn aggregation_job_driver() {
             helper_task_expired: 1,
             helper_invalid_message: 1,
             helper_report_too_early: 1,
+            duplicate_extension: 0,
+            public_share_encode_failure: 0,
+            batch_collected: 0,
+            report_replayed: 0,
+            report_dropped: 0,
+            hpke_unknown_config_id: 0,
+            hpke_decrypt_failure: 0,
+            vdaf_prep_error: 0,
+            task_expired: 0,
+            invalid_message: 0,
+            report_too_early: 0,
         },
     )
     .await;
