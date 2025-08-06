@@ -105,7 +105,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(9, 8);
+supported_schema_versions!(9);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -5488,7 +5488,27 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
             .prepare_cached(
                 "-- get_task_aggregation_counter()
 SELECT
-    COALESCE(SUM(success)::BIGINT, 0) AS success
+    COALESCE(SUM(success)::BIGINT, 0) AS success,
+    COALESCE(SUM(duplicate_extension)::BIGINT, 0) as duplicate_extension,
+    COALESCE(SUM(public_share_encode_failure)::BIGINT, 0) as public_share_encode_failure,
+    COALESCE(SUM(batch_collected)::BIGINT, 0) AS batch_collected,
+    COALESCE(SUM(report_replayed)::BIGINT, 0) AS report_replayed,
+    COALESCE(SUM(report_dropped)::BIGINT, 0) AS report_dropped,
+    COALESCE(SUM(hpke_unknown_config_id)::BIGINT, 0) AS hpke_unknown_config_id,
+    COALESCE(SUM(hpke_decrypt_failure)::BIGINT, 0) AS hpke_decrypt_failure,
+    COALESCE(SUM(vdaf_prep_error)::BIGINT, 0) AS vdaf_prep_error,
+    COALESCE(SUM(task_expired)::BIGINT, 0) AS task_expired,
+    COALESCE(SUM(invalid_message)::BIGINT, 0) AS invalid_message,
+    COALESCE(SUM(report_too_early)::BIGINT, 0) AS report_too_early,
+    COALESCE(SUM(helper_batch_collected)::BIGINT, 0) AS helper_batch_collected,
+    COALESCE(SUM(helper_report_replayed)::BIGINT, 0) AS helper_report_replayed,
+    COALESCE(SUM(helper_report_dropped)::BIGINT, 0) AS helper_report_dropped,
+    COALESCE(SUM(helper_hpke_unknown_config_id)::BIGINT, 0) AS helper_hpke_unknown_config_id,
+    COALESCE(SUM(helper_hpke_decrypt_failure)::BIGINT, 0) AS helper_hpke_decrypt_failure,
+    COALESCE(SUM(helper_vdaf_prep_error)::BIGINT, 0) AS helper_vdaf_prep_error,
+    COALESCE(SUM(helper_task_expired)::BIGINT, 0) AS helper_task_expired,
+    COALESCE(SUM(helper_invalid_message)::BIGINT, 0) AS helper_invalid_message,
+    COALESCE(SUM(helper_report_too_early)::BIGINT, 0) AS helper_report_too_early
 FROM task_aggregation_counters
 WHERE task_id = $1",
             )
@@ -5499,6 +5519,30 @@ WHERE task_id = $1",
             .map(|row| {
                 Ok(TaskAggregationCounter {
                     success: row.get_bigint_and_convert("success")?,
+                    duplicate_extension: row.get_bigint_and_convert("duplicate_extension")?,
+                    public_share_encode_failure: row
+                        .get_bigint_and_convert("public_share_encode_failure")?,
+                    batch_collected: row.get_bigint_and_convert("batch_collected")?,
+                    report_replayed: row.get_bigint_and_convert("report_replayed")?,
+                    report_dropped: row.get_bigint_and_convert("report_dropped")?,
+                    hpke_unknown_config_id: row.get_bigint_and_convert("hpke_unknown_config_id")?,
+                    hpke_decrypt_failure: row.get_bigint_and_convert("hpke_decrypt_failure")?,
+                    vdaf_prep_error: row.get_bigint_and_convert("vdaf_prep_error")?,
+                    task_expired: row.get_bigint_and_convert("task_expired")?,
+                    invalid_message: row.get_bigint_and_convert("invalid_message")?,
+                    report_too_early: row.get_bigint_and_convert("report_too_early")?,
+                    helper_batch_collected: row.get_bigint_and_convert("helper_batch_collected")?,
+                    helper_report_replayed: row.get_bigint_and_convert("helper_report_replayed")?,
+                    helper_report_dropped: row.get_bigint_and_convert("helper_report_dropped")?,
+                    helper_hpke_unknown_config_id: row
+                        .get_bigint_and_convert("helper_hpke_unknown_config_id")?,
+                    helper_hpke_decrypt_failure: row
+                        .get_bigint_and_convert("helper_hpke_decrypt_failure")?,
+                    helper_vdaf_prep_error: row.get_bigint_and_convert("helper_vdaf_prep_error")?,
+                    helper_task_expired: row.get_bigint_and_convert("helper_task_expired")?,
+                    helper_invalid_message: row.get_bigint_and_convert("helper_invalid_message")?,
+                    helper_report_too_early: row
+                        .get_bigint_and_convert("helper_report_too_early")?,
                 })
             })
             .transpose()
@@ -5521,10 +5565,36 @@ WHERE task_id = $1",
         let stmt = self
             .prepare_cached(
                 "-- increment_task_aggregation_counter()
-INSERT INTO task_aggregation_counters (task_id, ord, success)
-VALUES ($1, $2, $3)
+INSERT INTO task_aggregation_counters (task_id, ord, success, duplicate_extension,
+public_share_encode_failure, batch_collected, report_replayed, report_dropped,
+hpke_unknown_config_id, hpke_decrypt_failure, vdaf_prep_error, task_expired, invalid_message,
+report_too_early, helper_batch_collected, helper_report_replayed, helper_report_dropped,
+helper_hpke_unknown_config_id, helper_hpke_decrypt_failure, helper_vdaf_prep_error,
+helper_task_expired, helper_invalid_message, helper_report_too_early)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+    $21, $22, $23)
 ON CONFLICT (task_id, ord) DO UPDATE SET
-    success = task_aggregation_counters.success + $3",
+    success = task_aggregation_counters.success + $3,
+    duplicate_extension = task_aggregation_counters.duplicate_extension + $4,
+    public_share_encode_failure = task_aggregation_counters.public_share_encode_failure + $5,
+    batch_collected = task_aggregation_counters.batch_collected + $6,
+    report_replayed = task_aggregation_counters.report_replayed + $7,
+    report_dropped = task_aggregation_counters.report_dropped + $8,
+    hpke_unknown_config_id = task_aggregation_counters.hpke_unknown_config_id + $9,
+    hpke_decrypt_failure = task_aggregation_counters.hpke_decrypt_failure + $10,
+    vdaf_prep_error = task_aggregation_counters.vdaf_prep_error + $11,
+    task_expired = task_aggregation_counters.task_expired + $12,
+    invalid_message = task_aggregation_counters.invalid_message + $13,
+    report_too_early = task_aggregation_counters.report_too_early + $14,
+    helper_batch_collected = task_aggregation_counters.helper_batch_collected + $15,
+    helper_report_replayed = task_aggregation_counters.helper_report_replayed + $16,
+    helper_report_dropped = task_aggregation_counters.helper_report_dropped + $17,
+    helper_hpke_unknown_config_id = task_aggregation_counters.helper_hpke_unknown_config_id + $18,
+    helper_hpke_decrypt_failure = task_aggregation_counters.helper_hpke_decrypt_failure + $19,
+    helper_vdaf_prep_error = task_aggregation_counters.helper_vdaf_prep_error + $20,
+    helper_task_expired = task_aggregation_counters.helper_task_expired + $21,
+    helper_invalid_message = task_aggregation_counters.helper_invalid_message + $22,
+    helper_report_too_early = task_aggregation_counters.helper_report_too_early + $23",
             )
             .await?;
 
@@ -5535,6 +5605,36 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     /* task_id */ &task_info.pkey,
                     /* ord */ &i64::try_from(ord)?,
                     /* success */ &i64::try_from(counter.success)?,
+                    /* duplicate_extension */ &i64::try_from(counter.duplicate_extension)?,
+                    /* public_share_encode_failure */
+                    &i64::try_from(counter.public_share_encode_failure)?,
+                    /* batch_collected */ &i64::try_from(counter.batch_collected)?,
+                    /* report_replayed */ &i64::try_from(counter.report_replayed)?,
+                    /* report_dropped */ &i64::try_from(counter.report_dropped)?,
+                    /* hpke_unknown_config_id */
+                    &i64::try_from(counter.hpke_unknown_config_id)?,
+                    /* hpke_decrypt_failure */ &i64::try_from(counter.hpke_decrypt_failure)?,
+                    /* vdaf_prep_error */ &i64::try_from(counter.vdaf_prep_error)?,
+                    /* task_expired */ &i64::try_from(counter.task_expired)?,
+                    /* invalid_message */ &i64::try_from(counter.invalid_message)?,
+                    /* report_too_early */ &i64::try_from(counter.report_too_early)?,
+                    /* helper_batch_collected */
+                    &i64::try_from(counter.helper_batch_collected)?,
+                    /* helper_report_replayed */
+                    &i64::try_from(counter.helper_report_replayed)?,
+                    /* helper_report_dropped */
+                    &i64::try_from(counter.helper_report_dropped)?,
+                    /* helper_hpke_unknown_config_id */
+                    &i64::try_from(counter.helper_hpke_unknown_config_id)?,
+                    /* helper_hpke_decrypt_failure */
+                    &i64::try_from(counter.helper_hpke_decrypt_failure)?,
+                    /* helper_vdaf_prep_error */
+                    &i64::try_from(counter.helper_vdaf_prep_error)?,
+                    /* helper_task_expired */ &i64::try_from(counter.helper_task_expired)?,
+                    /* helper_invalid_message */
+                    &i64::try_from(counter.helper_invalid_message)?,
+                    /* helper_report_too_early */
+                    &i64::try_from(counter.helper_report_too_early)?,
                 ],
             )
             .await?,

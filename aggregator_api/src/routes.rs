@@ -60,6 +60,7 @@ pub(super) async fn get_config(
             "UploadMetrics",
             "TimeBucketedFixedSize",
             "PureDpDiscreteLaplace",
+            "AggregationJobMetrics",
         ],
         software_name: "Janus",
         software_version,

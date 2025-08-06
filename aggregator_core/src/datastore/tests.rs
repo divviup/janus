@@ -8190,7 +8190,11 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 tx.increment_task_aggregation_counter(
                     task.id(),
                     ord,
-                    &TaskAggregationCounter { success: 4 },
+                    &TaskAggregationCounter {
+                        success: 4,
+                        helper_hpke_decrypt_failure: 102,
+                        ..Default::default()
+                    },
                 )
                 .await
                 .unwrap();
@@ -8199,7 +8203,12 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 tx.increment_task_aggregation_counter(
                     task.id(),
                     ord,
-                    &TaskAggregationCounter { success: 6 },
+                    &TaskAggregationCounter {
+                        success: 6,
+                        helper_hpke_decrypt_failure: 98,
+                        helper_task_expired: 1,
+                        ..Default::default()
+                    },
                 )
                 .await
                 .unwrap();
@@ -8214,7 +8223,15 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 .unwrap();
 
                 let counter = tx.get_task_aggregation_counter(task.id()).await.unwrap();
-                assert_eq!(counter, Some(TaskAggregationCounter { success: 10 }));
+                assert_eq!(
+                    counter,
+                    Some(TaskAggregationCounter {
+                        success: 10,
+                        helper_hpke_decrypt_failure: 200,
+                        helper_task_expired: 1,
+                        ..Default::default()
+                    })
+                );
 
                 Ok(())
             })
