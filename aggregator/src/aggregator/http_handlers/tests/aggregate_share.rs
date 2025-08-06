@@ -19,8 +19,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq, BatchSelector,
-    Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
+    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
+    AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
     batch_mode::{self, TimeInterval},
 };
 use prio::{
@@ -29,23 +29,27 @@ use prio::{
 };
 use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::post};
+use trillium_testing::{TestConn, assert_headers, prelude::put};
 
-pub(crate) async fn post_aggregate_share_request<B: batch_mode::BatchMode>(
+pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,
     request: &AggregateShareReq<B>,
+    aggregate_share_id: &AggregateShareId,
     handler: &impl Handler,
 ) -> TestConn {
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    post(task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(header, value)
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<B>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(handler)
-        .await
+    put(task
+        .aggregate_shares_uri(aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(header, value)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregateShareReq::<B>::MEDIA_TYPE,
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(handler)
+    .await
 }
 
 #[tokio::test]
@@ -76,7 +80,13 @@ async fn aggregate_share_request_to_leader() {
         ReportIdChecksum::default(),
     );
 
-    let mut test_conn = post_aggregate_share_request(&task, &request, &handler).await;
+    let mut test_conn = put_aggregate_share_request(
+        &task,
+        &request,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
@@ -128,7 +138,13 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
     // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
     // small.)
-    let mut test_conn = post_aggregate_share_request(&task, &request, &handler).await;
+    let mut test_conn = put_aggregate_share_request(
+        &task,
+        &request,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
@@ -142,7 +158,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     );
 
     // Test that a request for a too-old batch fails.
-    let test_conn = post_aggregate_share_request(
+    let test_conn = put_aggregate_share_request(
         &task,
         &AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -152,6 +168,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
             0,
             ReportIdChecksum::default(),
         ),
+        &AggregateShareId::from([0u8; 16]),
         &handler,
     )
     .await;
@@ -189,7 +206,13 @@ async fn aggregate_share_request() {
         ReportIdChecksum::default(),
     );
 
-    let mut test_conn = post_aggregate_share_request(&task, &request, &handler).await;
+    let mut test_conn = put_aggregate_share_request(
+        &task,
+        &request,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
@@ -323,7 +346,13 @@ async fn aggregate_share_request() {
         5,
         ReportIdChecksum::default(),
     );
-    let mut test_conn = post_aggregate_share_request(&task, &request, &handler).await;
+    let mut test_conn = put_aggregate_share_request(
+        &task,
+        &request,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
@@ -379,8 +408,13 @@ async fn aggregate_share_request() {
             expected_report_count: interval_3_report_count + interval_4_report_count,
         },
     ] {
-        let mut test_conn =
-            post_aggregate_share_request(&task, &misaligned_request.request, &handler).await;
+        let mut test_conn = put_aggregate_share_request(
+            &task,
+            &misaligned_request.request,
+            &AggregateShareId::from([0u8; 16]),
+            &handler,
+        )
+        .await;
 
         assert_eq!(
             test_conn.status(),
@@ -450,7 +484,13 @@ async fn aggregate_share_request() {
         // Request the aggregate share multiple times. If the request parameters don't change,
         // then there is no query count violation and all requests should succeed.
         for iteration in 0..3 {
-            let mut test_conn = post_aggregate_share_request(&task, &request, &handler).await;
+            let mut test_conn = put_aggregate_share_request(
+                &task,
+                &request,
+                &AggregateShareId::from([0u8; 16]),
+                &handler,
+            )
+            .await;
 
             assert_eq!(
                 test_conn.status(),
@@ -548,7 +588,13 @@ async fn aggregate_share_request() {
         20,
         ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
     );
-    let mut test_conn = post_aggregate_share_request(&task, &all_batch_request, &handler).await;
+    let mut test_conn = put_aggregate_share_request(
+        &task,
+        &all_batch_request,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
         take_problem_details(&mut test_conn).await,
@@ -588,8 +634,13 @@ async fn aggregate_share_request() {
             ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
         ),
     ] {
-        let mut test_conn =
-            post_aggregate_share_request(&task, &query_count_violation_request, &handler).await;
+        let mut test_conn = put_aggregate_share_request(
+            &task,
+            &query_count_violation_request,
+            &AggregateShareId::from([0u8; 16]),
+            &handler,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
             take_problem_details(&mut test_conn).await,

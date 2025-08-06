@@ -517,6 +517,123 @@ impl Distribution<ReportIdChecksum> for StandardUniform {
     }
 }
 
+/// DAP protocol message representing an ID uniquely identifying an aggregate share.
+#[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub struct AggregateShareId([u8; Self::LEN]);
+
+impl AggregateShareId {
+    /// LEN is the length of a report ID checksum in bytes.
+    pub const LEN: usize = 16;
+}
+
+impl From<[u8; Self::LEN]> for AggregateShareId {
+    fn from(checksum: [u8; Self::LEN]) -> Self {
+        Self(checksum)
+    }
+}
+
+impl TryFrom<&[u8]> for AggregateShareId {
+    type Error = Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            Error::InvalidParameter("byte slice has incorrect length for AggregateShareId")
+        })?))
+    }
+}
+
+impl AsRef<[u8; Self::LEN]> for AggregateShareId {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
+        &self.0
+    }
+}
+
+impl Display for AggregateShareId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", URL_SAFE_NO_PAD.encode(self.0))
+    }
+}
+
+impl FromStr for AggregateShareId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
+    }
+}
+
+impl Encode for AggregateShareId {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        bytes.extend_from_slice(&self.0);
+        Ok(())
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
+    }
+}
+
+impl Decode for AggregateShareId {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let mut checksum = Self::default();
+        bytes.read_exact(&mut checksum.0)?;
+
+        Ok(checksum)
+    }
+}
+
+impl Distribution<AggregateShareId> for StandardUniform {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AggregateShareId {
+        AggregateShareId(rng.random())
+    }
+}
+
+/// This customized implementation serializes a [`TaskId`] as a base64url-encoded string, instead
+/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
+/// other uses of base64url encoding in DAP.
+impl Serialize for AggregateShareId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct AggregateShareIdVisitor;
+
+impl Visitor<'_> for AggregateShareIdVisitor {
+    type Value = AggregateShareId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string that decodes to 16 bytes")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<AggregateShareId, E>
+    where
+        E: de::Error,
+    {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(value)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+
+        AggregateShareId::try_from(decoded.as_slice()).map_err(|e| E::custom(e))
+    }
+}
+
+/// This customized implementation deserializes a [`AggregateShareId`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns
+/// with other uses of base64url encoding in DAP.
+impl<'de> Deserialize<'de> for AggregateShareId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(AggregateShareIdVisitor)
+    }
+}
+
 /// DAP protocol message representing the different roles that participants can adopt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]

@@ -13,9 +13,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp, Query,
-    ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
+    Extension, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
+    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_protocol::types::{
@@ -1759,6 +1759,8 @@ pub struct CollectionJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregato
     task_id: TaskId,
     /// The unique identifier for the collection job.
     collection_job_id: CollectionJobId,
+    /// The Aggregate Share ID to be used when communicating with the Helper.
+    collector_aggregate_share_id: AggregateShareId,
     /// The Query that was sent to create this collection job.
     query: Query<B>,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
@@ -1777,6 +1779,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
+        collector_aggregate_share_id: AggregateShareId,
         query: Query<B>,
         aggregation_parameter: A::AggregationParam,
         batch_identifier: B::BatchIdentifier,
@@ -1785,6 +1788,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         Self {
             task_id,
             collection_job_id,
+            collector_aggregate_share_id,
             query,
             aggregation_parameter,
             batch_identifier,
@@ -1805,6 +1809,11 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     /// Returns the query that was sent to create this collection job.
     pub fn query(&self) -> &Query<B> {
         &self.query
+    }
+
+    /// Return the aggregate share's ID in use for this collection job.
+    pub fn aggregate_share_id(&self) -> &AggregateShareId {
+        &self.collector_aggregate_share_id
     }
 
     /// Returns the aggregation parameter associated with this collection job.
@@ -1966,6 +1975,10 @@ pub struct AggregateShareJob<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggre
     /// The aggregate share over the input shares in the interval.
     #[educe(Debug(ignore))]
     helper_aggregate_share: A::AggregateShare,
+    /// This ID is used by the leader to correlate aggregate share requests with responses,
+    /// and the helper needs to ensure all subsequent requests for this job match the original
+    /// ID.
+    collector_aggregate_share_id: AggregateShareId,
     /// The number of reports included in the aggregate share.
     report_count: u64,
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
@@ -1982,6 +1995,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
         batch_identifier: B::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         helper_aggregate_share: A::AggregateShare,
+        collector_aggregate_share_id: AggregateShareId,
         report_count: u64,
         checksum: ReportIdChecksum,
     ) -> Self {
@@ -1990,6 +2004,7 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
             batch_identifier,
             aggregation_parameter,
             helper_aggregate_share,
+            collector_aggregate_share_id,
             report_count,
             checksum,
         }
@@ -2018,6 +2033,11 @@ impl<const SEED_SIZE: usize, B: BatchMode, A: AsyncAggregator<SEED_SIZE>>
     /// Gets the helper aggregate share associated with this aggregate share job.
     pub fn helper_aggregate_share(&self) -> &A::AggregateShare {
         &self.helper_aggregate_share
+    }
+
+    /// Gets the aggregate share ID associated with this share job.
+    pub fn collector_aggregate_share_id(&self) -> &AggregateShareId {
+        &self.collector_aggregate_share_id
     }
 
     /// Gets the report count associated with this aggregate share job.

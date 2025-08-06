@@ -21,10 +21,11 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-    AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report, TaskId,
-    batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
+    AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
+    CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
+    TaskId, batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType,
+    taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{
@@ -359,7 +360,8 @@ impl Handler for StatusCounter {
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
 pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
-pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
+pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
+    "tasks/:task_id/aggregate_shares/:aggregate_share_id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -478,7 +480,7 @@ where
                 COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_delete::<C>)),
             )
-            .post(
+            .put(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares::<C>)),
             );
@@ -804,7 +806,7 @@ async fn collection_jobs_delete<C: Clock>(
     Ok(Status::NoContent)
 }
 
-/// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
+/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" PUT endpoint.
 async fn aggregate_shares<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
@@ -814,9 +816,11 @@ async fn aggregate_shares<C: Clock>(
     let task_id = parse_task_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+    let aggregate_share_id = parse_aggregate_share_id(conn)?;
     let share = conn
         .cancel_on_disconnect(aggregator.handle_aggregate_share(
             &task_id,
+            &aggregate_share_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
@@ -881,6 +885,16 @@ fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
     encoded
         .parse()
         .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))
+}
+
+/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path parameters.
+fn parse_aggregate_share_id(conn: &Conn) -> Result<AggregateShareId, Error> {
+    let encoded = conn.param("aggregate_share_id").ok_or_else(|| {
+        Error::Internal("aggregate_share_id parameter is missing from captures".into())
+    })?;
+    encoded
+        .parse()
+        .map_err(|e| Error::BadRequest(format!("invalid aggregate share ID in path: {e}").into()))
 }
 
 /// Get an [`AuthenticationToken`] from the request.

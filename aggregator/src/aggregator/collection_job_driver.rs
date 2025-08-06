@@ -359,10 +359,11 @@ impl CollectionJobDriver {
             &self.http_client,
             self.backoff
                 .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
-            Method::POST,
-            task.aggregate_shares_uri()?.ok_or_else(|| {
-                Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
-            })?,
+            Method::PUT,
+            task.aggregate_shares_uri(collection_job.aggregate_share_id())?
+                .ok_or_else(|| {
+                    Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
+                })?,
             AGGREGATE_SHARES_ROUTE,
             Some(RequestBody {
                 content_type: AggregateShareReq::<B>::MEDIA_TYPE,
@@ -918,6 +919,7 @@ mod tests {
         let collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
             *task.id(),
             random(),
+            random(),
             Query::new_time_interval(batch_interval),
             aggregation_param,
             batch_interval,
@@ -1066,7 +1068,7 @@ mod tests {
             .unwrap();
         let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
-        let (collection_job_id, lease) = ds
+        let (collection_job_id, expected_aggregate_share_id, lease) = ds
             .run_unnamed_tx(|tx| {
                 let task = leader_task.clone();
                 let clock = clock.clone();
@@ -1076,9 +1078,11 @@ mod tests {
                     tx.put_aggregator_task(&task).await.unwrap();
 
                     let collection_job_id = random();
+                    let aggregate_share_id = random();
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         collection_job_id,
+                        aggregate_share_id,
                         Query::new_time_interval(batch_interval),
                         aggregation_param,
                         batch_interval,
@@ -1169,7 +1173,7 @@ mod tests {
 
                     assert_eq!(task.id(), lease.leased().task_id());
                     assert_eq!(&collection_job_id, lease.leased().collection_job_id());
-                    Ok((collection_job_id, lease))
+                    Ok((collection_job_id, aggregate_share_id, lease))
                 })
             })
             .await
@@ -1195,7 +1199,7 @@ mod tests {
         // in Aggregating state. Update the batch aggregations to indicate that all aggregation jobs
         // are complete, and mark the report aggregated. We must reacquire the lease because the
         // last stepping attempt will have released it.
-        let lease = ds
+        let (lease, aggregate_share_id) = ds
             .run_unnamed_tx(|tx| {
                 let task = task.clone();
                 let clock = clock.clone();
@@ -1288,11 +1292,13 @@ mod tests {
                     assert_eq!(task.id(), lease.leased().task_id());
                     assert_eq!(&collection_job_id, lease.leased().collection_job_id());
 
-                    Ok(lease)
+                    Ok((lease, *collection_job.aggregate_share_id()))
                 })
             })
             .await
             .unwrap();
+
+        assert_eq!(expected_aggregate_share_id, aggregate_share_id);
 
         let leader_request = AggregateShareReq::new(
             BatchSelector::new_time_interval(batch_interval),
@@ -1304,7 +1310,12 @@ mod tests {
         // Simulate helper failing to service the aggregate share request.
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_failed_aggregate_share = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
             .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -1372,7 +1383,12 @@ mod tests {
         let helper_response = fake_aggregate_share();
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_share = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
             .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -1447,6 +1463,7 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         task_id,
                         collection_job_id,
+                        random(), // Ensure the helper will not coopoerate
                         Query::new_time_interval(batch_interval),
                         aggregation_param,
                         batch_interval,
@@ -1616,7 +1633,12 @@ mod tests {
 
         // Set up an error response from the server that returns a non-retryable error.
         let failure_mock = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .with_status(404)
             .expect(1)
             .create_async()
@@ -1625,7 +1647,12 @@ mod tests {
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
         let no_more_requests_mock = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .with_status(502)
             .expect(1)
             .create_async()
@@ -1716,7 +1743,12 @@ mod tests {
         // leader, because the response body is empty and cannot be decoded. The error status
         // indicates that the error is retryable.
         let failure_mock = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .with_status(502)
             .expect(3)
             .create_async()
@@ -1725,7 +1757,12 @@ mod tests {
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
         let no_more_requests_mock = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .with_status(500)
             .expect(1)
             .create_async()
@@ -1803,7 +1840,12 @@ mod tests {
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
         let helper_response = fake_aggregate_share();
         let mocked_aggregate_share = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded().unwrap())
@@ -1944,7 +1986,12 @@ mod tests {
 
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_async_aggregate_share_unavailable = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -2045,7 +2092,12 @@ mod tests {
 
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_async_aggregate_share_unavailable = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -2094,7 +2146,12 @@ mod tests {
 
         // Now let's try to complete it
         let mocked_async_aggregate_share_ready = server
-            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .mock(
+                "PUT",
+                task.aggregate_shares_uri(collection_job.aggregate_share_id())
+                    .unwrap()
+                    .path(),
+            )
             .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),

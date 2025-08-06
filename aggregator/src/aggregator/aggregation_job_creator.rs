@@ -3223,6 +3223,7 @@ mod tests {
                     tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
                         *task.id(),
                         random(),
+                        random(),
                         Query::new_time_interval(
                             Interval::new(report_time, *task.time_precision()).unwrap(),
                         ),
@@ -3234,6 +3235,7 @@ mod tests {
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
                     tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
                         *task.id(),
+                        random(),
                         random(),
                         Query::new_time_interval(
                             Interval::new(
