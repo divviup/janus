@@ -12,7 +12,10 @@ use aws_lc_rs::digest::{SHA256, digest};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator_core::{
     SecretBytes,
-    datastore::{self, Datastore},
+    datastore::{
+        self, Datastore,
+        task_counters::{TaskAggregationCounter, TaskUploadCounter},
+    },
     task::{AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
 };
@@ -58,6 +61,7 @@ pub(super) async fn get_config(
             "UploadMetrics",
             "TimeBucketedLeaderSelected",
             "PureDpDiscreteLaplace",
+            "AggregationJobMetrics",
         ],
         software_name: "Janus",
         software_version: &VERSION,
@@ -301,7 +305,7 @@ pub(super) async fn get_task_upload_metrics<C: Clock>(
     let task_id = conn.task_id_param()?;
     Ok(Json(GetTaskUploadMetricsResp(
         ds.run_tx("get_task_upload_metrics", |tx| {
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await?
         .ok_or(Error::NotFound)?,
@@ -315,7 +319,7 @@ pub(super) async fn get_task_aggregation_metrics<C: Clock>(
     let task_id = conn.task_id_param()?;
     Ok(Json(GetTaskAggregationMetricsResp(
         ds.run_tx("get_task_aggregation_metrics", |tx| {
-            Box::pin(async move { tx.get_task_aggregation_counter(&task_id).await })
+            Box::pin(async move { TaskAggregationCounter::load(tx, &task_id).await })
         })
         .await?
         .ok_or(Error::NotFound)?,

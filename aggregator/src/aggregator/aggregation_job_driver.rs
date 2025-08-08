@@ -32,6 +32,7 @@ use janus_aggregator_core::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, Lease, ReportAggregation,
             ReportAggregationState,
         },
+        task_counters::TaskAggregationCounter,
     },
     task::{self, AggregatorTask},
 };
@@ -63,7 +64,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     panic,
-    sync::Arc,
+    sync::{Arc, Mutex as SyncMutex},
     time::{Duration, UNIX_EPOCH},
 };
 use tokio::{
@@ -312,7 +313,6 @@ where
                 ReportAggregationState::LeaderContinue { .. } => saw_continue = true,
                 ReportAggregationState::LeaderPollInit { .. }
                 | ReportAggregationState::LeaderPollContinue { .. } => saw_poll = true,
-
                 ReportAggregationState::HelperInitProcessing { .. } => {
                     return Err(Error::Internal(
                         "Leader encountered unexpected ReportAggregationState::HelperInitProcessing"
@@ -1045,6 +1045,7 @@ where
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error> {
+        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
         // The leader sent either an init or continue request to the helper, and it indicated that
         // it would defer processing. Any non-failed report aggregations are transitioned to a
         // polling state, allowing them to be polled when the aggregation job is next picked up.
@@ -1098,6 +1099,7 @@ where
                         .aggregated_report_share_dimension_histogram
                         .clone(),
                 }),
+                Arc::clone(&task_aggregation_counters),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
@@ -1106,23 +1108,28 @@ where
             .map(|ra| retry_after_to_duration(datastore.clock(), ra))
             .transpose()?
             .unwrap_or(self.default_async_poll_interval);
-        let counters = datastore
+        datastore
             .run_tx("process_response_from_helper_processing", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
-                    let ((_, counters), _) = try_join!(
+                    try_join!(
                         aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
                         tx.release_aggregation_job(&lease, Some(&retry_after)),
                     )?;
-                    Ok(counters)
+                    Ok(())
                 })
             })
             .await?;
 
-        write_task_aggregation_counter(datastore, self.task_counter_shard_count, task_id, counters);
+        write_task_aggregation_counter(
+            datastore,
+            self.task_counter_shard_count,
+            task_id,
+            &task_aggregation_counters.lock().unwrap(),
+        );
 
         Ok(())
     }
@@ -1144,6 +1151,7 @@ where
         prepare_resps: Vec<PrepareResp>,
     ) -> Result<(), Error> {
         // Handle response, computing the new report aggregations to be stored.
+        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
         if stepped_aggregations.len() != prepare_resps.len() {
@@ -1174,6 +1182,7 @@ where
             let task_id = *task.id();
             let aggregation_job = Arc::clone(&aggregation_job);
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
+            let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
 
             move || {
                 let span = info_span!(
@@ -1215,13 +1224,19 @@ where
                                     .and_then(|c| Ok((c.clone(), c.evaluate(&ctx, &vdaf)?)))
                                     .map_err(
                                         |ping_pong_error| {
-                                            handle_ping_pong_error(
+                                            let report_error = handle_ping_pong_error(
                                                 &task_id,
                                                 Role::Leader,
                                                 stepped_aggregation.report_aggregation.report_id(),
                                                 ping_pong_error,
                                                 &aggregate_step_failure_counter,
-                                            )
+                                            );
+
+                                            task_aggregation_counters
+                                                .lock()
+                                                .unwrap()
+                                                .increment_with_report_error(report_error);
+                                            report_error
                                         },
                                     )
                                 });
@@ -1260,6 +1275,10 @@ where
                                 );
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "continue_mismatch")]);
+                                task_aggregation_counters
+                                    .lock()
+                                    .unwrap()
+                                    .increment_with_report_error(ReportError::VdafPrepError);
                                 (
                                     ReportAggregationState::Failed {
                                         report_error: ReportError::VdafPrepError,
@@ -1283,6 +1302,10 @@ where
                                 );
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "finish_mismatch")]);
+                                task_aggregation_counters
+                                    .lock()
+                                    .unwrap()
+                                    .increment_with_report_error(ReportError::VdafPrepError);
                                 (
                                     ReportAggregationState::Failed {
                                         report_error: ReportError::VdafPrepError,
@@ -1303,6 +1326,10 @@ where
                                 );
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "helper_step_failure")]);
+                                task_aggregation_counters
+                                    .lock()
+                                    .unwrap()
+                                    .increment_with_helper_report_error(*err);
                                 (ReportAggregationState::Failed { report_error: *err }, None)
                             }
                         };
@@ -1349,6 +1376,7 @@ where
                         .aggregated_report_share_dimension_histogram
                         .clone(),
                 }),
+                Arc::clone(&task_aggregation_counters),
             );
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.put(
@@ -1357,23 +1385,28 @@ where
         )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
-        let counters = datastore
+        datastore
             .run_tx("process_response_from_helper_finished", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
-                    let ((_, counters), _) = try_join!(
+                    try_join!(
                         aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
                         tx.release_aggregation_job(&lease, None),
                     )?;
-                    Ok(counters)
+                    Ok(())
                 })
             })
             .await?;
 
-        write_task_aggregation_counter(datastore, self.task_counter_shard_count, task_id, counters);
+        write_task_aggregation_counter(
+            datastore,
+            self.task_counter_shard_count,
+            task_id,
+            &task_aggregation_counters.lock().unwrap(),
+        );
 
         Ok(())
     }
@@ -1480,6 +1513,8 @@ where
             })
             .collect();
 
+        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+
         // Compute the next aggregation step.
         let task = Arc::new(task);
         let aggregation_job =
@@ -1510,12 +1545,13 @@ where
                 .clone(),
         };
 
-        let counters = datastore
+        datastore
             .run_tx("aggregate_init_driver_write", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let task = Arc::clone(&task);
                 let metrics = metrics.clone();
+                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
@@ -1530,14 +1566,15 @@ where
                             task,
                             batch_aggregation_shard_count,
                             Some(metrics),
+                            task_aggregation_counters,
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let ((_, counters), _) = try_join!(
+                    try_join!(
                         aggregation_job_writer.write(tx, vdaf),
                         tx.release_aggregation_job(&lease, None),
                     )?;
-                    Ok(counters)
+                    Ok(())
                 })
             })
             .await?;
@@ -1546,7 +1583,7 @@ where
             datastore,
             self.task_counter_shard_count,
             *task.id(),
-            counters,
+            &task_aggregation_counters.lock().unwrap(),
         );
 
         Ok(())
@@ -1577,6 +1614,8 @@ where
             })
             .collect();
 
+        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+
         // Compute the next aggregation step.
         let task = Arc::new(task);
         let aggregation_job =
@@ -1584,7 +1623,10 @@ where
         let report_aggregations = Arc::new(
             compute_helper_aggregate_continue(
                 Arc::clone(&vdaf),
-                AggregateContinueMetrics::new(self.aggregate_step_failure_counter.clone()),
+                AggregateContinueMetrics::new(
+                    self.aggregate_step_failure_counter.clone(),
+                    &task_aggregation_counters,
+                ),
                 Arc::clone(&task),
                 Arc::clone(&aggregation_job),
                 report_aggregations,
@@ -1601,7 +1643,7 @@ where
                 .clone(),
         };
 
-        let counters = datastore
+        datastore
             .run_tx("aggregate_continue_driver_write", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
@@ -1609,7 +1651,7 @@ where
                 let metrics = metrics.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
-
+                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
@@ -1620,15 +1662,16 @@ where
                             task,
                             batch_aggregation_shard_count,
                             Some(metrics),
+                            task_aggregation_counters,
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
 
-                    let ((_, counters), _) = try_join!(
+                    try_join!(
                         aggregation_job_writer.write(tx, vdaf),
                         tx.release_aggregation_job(&lease, None),
                     )?;
-                    Ok(counters)
+                    Ok(())
                 })
             })
             .await?;
@@ -1637,7 +1680,7 @@ where
             datastore,
             self.task_counter_shard_count,
             *task.id(),
-            counters,
+            &task_aggregation_counters.lock().unwrap(),
         );
 
         Ok(())
@@ -1743,6 +1786,7 @@ where
                             Arc::new(task),
                             batch_aggregation_shard_count,
                             None,
+                            Arc::new(SyncMutex::new(TaskAggregationCounter::default())),
                         );
                     aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 
