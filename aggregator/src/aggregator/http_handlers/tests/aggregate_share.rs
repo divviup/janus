@@ -654,3 +654,83 @@ async fn aggregate_share_request() {
         );
     }
 }
+
+#[tokio::test]
+async fn aggregate_share_request_duplicate_with_different_id() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    // Set up batch aggregations that will be used for the duplicate requests
+    let batch_interval =
+        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
+
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    // Put batch aggregations in the database
+    datastore
+        .run_unnamed_tx(|tx| {
+            let helper_task = helper_task.clone();
+
+            Box::pin(async move {
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    *helper_task.id(),
+                    batch_interval,
+                    aggregation_param,
+                    0,
+                    batch_interval,
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(dummy::AggregateShare(16)),
+                        report_count,
+                        checksum,
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
+                    },
+                ))
+                .await
+                .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let request = AggregateShareReq::new(
+        BatchSelector::new_time_interval(batch_interval),
+        aggregation_param.get_encoded().unwrap(),
+        report_count,
+        checksum,
+    );
+
+    let aggregate_share_id_1 = AggregateShareId::from([1u8; 16]);
+    let aggregate_share_id_2 = AggregateShareId::from([2u8; 16]);
+
+    // First request with aggregate_share_id_1 should succeed
+    let test_conn =
+        put_aggregate_share_request(&task, &request, &aggregate_share_id_1, &handler).await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+
+    // Second request with same parameters but different aggregate share ID should fail
+    let test_conn =
+        put_aggregate_share_request(&task, &request, &aggregate_share_id_2, &handler).await;
+
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+}

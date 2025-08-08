@@ -3276,9 +3276,14 @@ impl VdafOps {
                             // Mismatch here indicates a duplicate request with a different
                             // aggregate share ID. This violates the DAP protocol requirement that
                             // duplicate requests must be identical.
-                            return Err(datastore::Error::InvalidParameter(
-                                "aggregate share request is a duplicate but uses a different
-                                aggregate share ID",
+                            return Err(datastore::Error::User(
+                                Error::AggregateShareRequestRejected(
+                                    *task.id(),
+                                    "aggregate share request is a duplicate but uses a different 
+                                    aggregate share ID"
+                                        .to_string(),
+                                )
+                                .into(),
                             ));
                         }
 
