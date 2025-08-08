@@ -522,7 +522,7 @@ impl Distribution<ReportIdChecksum> for StandardUniform {
 pub struct AggregateShareId([u8; Self::LEN]);
 
 impl AggregateShareId {
-    /// LEN is the length of a report ID checksum in bytes.
+    /// LEN is the length of an aggregate share ID in bytes.
     pub const LEN: usize = 16;
 }
 

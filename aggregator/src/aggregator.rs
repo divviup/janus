@@ -3279,8 +3279,7 @@ impl VdafOps {
                             return Err(datastore::Error::User(
                                 Error::AggregateShareRequestRejected(
                                     *task.id(),
-                                    "aggregate share request is a duplicate but uses a different 
-                                    aggregate share ID"
+                                    "aggregate share request is a duplicate but uses a different aggregate share ID"
                                         .to_string(),
                                 )
                                 .into(),
