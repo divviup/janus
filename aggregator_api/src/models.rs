@@ -1,7 +1,10 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_aggregator_core::{
-    datastore::models::{HpkeKeyState, HpkeKeypair, TaskAggregationCounter, TaskUploadCounter},
+    datastore::{
+        models::{HpkeKeyState, HpkeKeypair},
+        task_counters::{TaskAggregationCounter, TaskUploadCounter},
+    },
     task::{AggregationMode, AggregatorTask, BatchMode},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };

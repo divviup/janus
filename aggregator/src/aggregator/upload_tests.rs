@@ -8,7 +8,8 @@ use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
         Datastore,
-        models::{CollectionJob, CollectionJobState, TaskUploadCounter},
+        models::{CollectionJob, CollectionJobState},
+        task_counters::TaskUploadCounter,
         test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
@@ -169,7 +170,7 @@ async fn upload() {
                     tx.get_client_report(&vdaf, &task_id, &report_id)
                         .await
                         .unwrap(),
-                    tx.get_task_upload_counter(&task_id).await.unwrap(),
+                    TaskUploadCounter::load(tx, &task_id).await.unwrap(),
                 ))
             })
         })
@@ -245,7 +246,7 @@ async fn upload_batch() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -318,7 +319,7 @@ async fn upload_wrong_hpke_config_id() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -372,7 +373,7 @@ async fn upload_report_in_the_future_boundary_condition() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -430,7 +431,7 @@ async fn upload_report_in_the_future_past_clock_skew() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -519,7 +520,7 @@ async fn upload_report_for_collected_batch() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -591,7 +592,7 @@ async fn upload_report_task_not_started() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -664,7 +665,7 @@ async fn upload_report_task_ended() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -781,7 +782,7 @@ async fn upload_report_report_expired() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -843,7 +844,7 @@ async fn upload_report_faulty_encryption() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -906,7 +907,7 @@ async fn upload_report_public_share_decode_failure() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();
@@ -983,7 +984,7 @@ async fn upload_report_leader_input_share_decode_failure() {
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
-            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
         })
         .await
         .unwrap();

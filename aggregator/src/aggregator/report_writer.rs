@@ -8,8 +8,7 @@ use futures::future::{join_all, try_join_all};
 use janus_aggregator_core::{
     AsyncAggregator,
     datastore::{
-        self, Datastore, Transaction,
-        models::{LeaderStoredReport, TaskUploadCounter},
+        self, Datastore, Transaction, models::LeaderStoredReport, task_counters::TaskUploadCounter,
     },
 };
 use janus_core::{Runtime, time::Clock};
@@ -359,10 +358,10 @@ impl TaskUploadCounters {
         // transaction. This doesn't fully prevent deadlocks since we execute the statements
         // concurrently--it's not guaranteed that order is preserved when the futures are being
         // advanced.
-        try_join_all(map.into_iter().map(|(task_id, counter)| async move {
-            tx.increment_task_upload_counter(&task_id, ord, &counter)
-                .await
-        }))
+        try_join_all(
+            map.into_iter()
+                .map(|(task_id, counter)| async move { counter.flush(&task_id, tx, ord).await }),
+        )
         .await?;
         Ok(())
     }

@@ -185,6 +185,32 @@ CREATE TABLE task_aggregation_counters(
 
     success  BIGINT NOT NULL DEFAULT 0,  -- reports successfully aggregated
 
+    -- errors encountered by this aggregator
+    duplicate_extension BIGINT NOT NULL DEFAULT 0,
+    public_share_encode_failure BIGINT NOT NULL DEFAULT 0,
+    batch_collected BIGINT NOT NULL DEFAULT 0,
+    report_replayed BIGINT NOT NULL DEFAULT 0,
+    report_dropped BIGINT NOT NULL DEFAULT 0,
+    hpke_unknown_config_id BIGINT NOT NULL DEFAULT 0,
+    hpke_decrypt_failure BIGINT NOT NULL DEFAULT 0,
+    vdaf_prep_error BIGINT NOT NULL DEFAULT 0,
+    task_not_started BIGINT NOT NULL DEFAULT 0,
+    task_expired BIGINT NOT NULL DEFAULT 0,
+    invalid_message BIGINT NOT NULL DEFAULT 0,
+    report_too_early BIGINT NOT NULL DEFAULT 0,
+
+    -- errors reported by a peer helper aggregator
+    helper_batch_collected BIGINT NOT NULL DEFAULT 0,
+    helper_report_replayed BIGINT NOT NULL DEFAULT 0,
+    helper_report_dropped BIGINT NOT NULL DEFAULT 0,
+    helper_hpke_unknown_config_id BIGINT NOT NULL DEFAULT 0,
+    helper_hpke_decrypt_failure BIGINT NOT NULL DEFAULT 0,
+    helper_vdaf_prep_error BIGINT NOT NULL DEFAULT 0,
+    helper_task_not_started BIGINT NOT NULL DEFAULT 0,
+    helper_task_expired BIGINT NOT NULL DEFAULT 0,
+    helper_invalid_message BIGINT NOT NULL DEFAULT 0,
+    helper_report_too_early BIGINT NOT NULL DEFAULT 0,
+
     CONSTRAINT task_aggregation_counters_unique_id UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 ) WITH (fillfactor = 50);

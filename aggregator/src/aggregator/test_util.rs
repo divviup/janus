@@ -1,7 +1,7 @@
 use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
 use aws_lc_rs::signature::EcdsaKeyPair;
 use janus_aggregator_core::{
-    datastore::{Datastore, models::TaskAggregationCounter},
+    datastore::{Datastore, task_counters::TaskAggregationCounter},
     task::AggregatorTask,
 };
 use janus_core::{
@@ -179,8 +179,7 @@ pub async fn assert_task_aggregation_counter(
         let counters = datastore
             .run_unnamed_tx(|tx| {
                 Box::pin(async move {
-                    Ok(tx
-                        .get_task_aggregation_counter(&task_id)
+                    Ok(TaskAggregationCounter::load(tx, &task_id)
                         .await
                         .unwrap()
                         .unwrap())

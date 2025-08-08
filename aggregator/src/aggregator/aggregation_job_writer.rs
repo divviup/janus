@@ -12,8 +12,9 @@ use janus_aggregator_core::{
         models::{
             AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
             ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-            ReportAggregationState, TaskAggregationCounter,
+            ReportAggregationState,
         },
+        task_counters::TaskAggregationCounter,
     },
     task::AggregatorTask,
 };
@@ -29,7 +30,12 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
 };
 use rand::{Rng as _, rng};
-use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 use tokio::try_join;
 use tracing::{Level, warn};
 
@@ -45,6 +51,7 @@ where
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, B, A, RA>>,
     by_batch_identifier_index: HashMap<B::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
+    task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
 
     _phantom_wt: PhantomData<WT>,
 }
@@ -70,6 +77,7 @@ where
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         metrics: Option<AggregationJobWriterMetrics>,
+        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
     ) -> Self {
         Self {
             task,
@@ -78,6 +86,7 @@ where
             aggregation_jobs: HashMap::new(),
             by_batch_identifier_index: HashMap::new(),
             metrics,
+            task_aggregation_counters,
 
             _phantom_wt: PhantomData,
         }
@@ -182,13 +191,7 @@ where
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
-    ) -> Result<
-        (
-            HashMap<AggregationJobId, Vec<PrepareResp>>,
-            TaskAggregationCounter,
-        ),
-        Error,
-    > {
+    ) -> Result<HashMap<AggregationJobId, Vec<PrepareResp>>, Error> {
         // Read & update state based on the aggregation jobs to be written. We will read batch
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
@@ -238,25 +241,22 @@ where
             }));
         try_join!(write_agg_jobs_future, write_batch_aggs_future)?;
 
-        Ok((
-            state
-                .by_aggregation_job
-                .into_iter()
-                .map(|(agg_job_id, agg_job_info)| {
-                    (
-                        agg_job_id,
-                        agg_job_info
-                            .report_aggregations
-                            .iter()
-                            .map(AsRef::as_ref)
-                            .filter_map(RA::Borrowed::last_prep_resp)
-                            .cloned()
-                            .collect(),
-                    )
-                })
-                .collect(),
-            state.counters,
-        ))
+        Ok(state
+            .by_aggregation_job
+            .into_iter()
+            .map(|(agg_job_id, agg_job_info)| {
+                (
+                    agg_job_id,
+                    agg_job_info
+                        .report_aggregations
+                        .iter()
+                        .map(AsRef::as_ref)
+                        .filter_map(RA::Borrowed::last_prep_resp)
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect())
     }
 
     fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
@@ -430,7 +430,6 @@ where
     batch_aggregation_ord: u64,
     by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, B, A, RA>>,
     batch_aggregations: HashMap<B::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, B, A>)>,
-    counters: TaskAggregationCounter,
 }
 
 /// An aggregation job and its accompanying report aggregations.
@@ -477,7 +476,6 @@ where
                     batch_aggregation_ord: 0,
                     by_aggregation_job: HashMap::default(),
                     batch_aggregations: HashMap::default(),
-                    counters: TaskAggregationCounter::default(),
                 });
             }
         };
@@ -537,7 +535,6 @@ where
             batch_aggregation_ord,
             by_aggregation_job,
             batch_aggregations,
-            counters: TaskAggregationCounter::default(),
         })
     }
 
@@ -682,7 +679,11 @@ where
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
                             if is_finished {
-                                self.counters.increment_success();
+                                self.writer
+                                    .task_aggregation_counters
+                                    .lock()
+                                    .unwrap()
+                                    .increment_success();
                                 self.writer.update_metrics(|metrics| {
                                     metrics.report_aggregation_success_counter.add(1, &[]);
 
@@ -807,6 +808,11 @@ where
                                     .aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "accumulate_failure")])
                             });
+                            self.writer
+                                .task_aggregation_counters
+                                .lock()
+                                .unwrap()
+                                .increment_with_report_error(ReportError::VdafPrepError);
                             *report_aggregation.to_mut() = report_aggregation
                                 .as_ref()
                                 .clone()
