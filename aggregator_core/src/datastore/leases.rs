@@ -237,9 +237,9 @@ WHERE aggregation_jobs.task_id = $1
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaybeLease<T> {
     leased: T,
-    pub(crate) lease_expiry_time: Timestamp<NaiveDateTime>,
-    pub(crate) lease_token: Option<LeaseToken>,
-    pub(crate) lease_attempts: usize,
+    pub lease_expiry_time: Timestamp<NaiveDateTime>,
+    pub lease_token: Option<LeaseToken>,
+    pub lease_attempts: usize,
 }
 
 impl<T> MaybeLease<T> {

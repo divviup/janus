@@ -2,8 +2,8 @@ use assert_matches::assert_matches;
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
-    AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp, BatchSelector,
-    PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
+    AggregateShareId, AggregateShareReq, AggregationJobInitializeReq, AggregationJobResp,
+    BatchSelector, PartialBatchSelector, PrepareStepResult, ReportError, ReportIdChecksum,
     batch_mode::LeaderSelected,
 };
 use prio::{
@@ -18,7 +18,7 @@ use crate::aggregator::{
     aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
     http_handlers::{
         test_util::{HttpHandlerTest, take_response_body},
-        tests::aggregate_share::post_aggregate_share_request,
+        tests::aggregate_share::put_aggregate_share_request,
     },
 };
 
@@ -133,9 +133,21 @@ async fn helper_aggregation_report_share_replay() {
 
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum
     // match those in the requests.
-    let test_conn = post_aggregate_share_request(&task, &agg_share_req_1, &handler).await;
+    let test_conn = put_aggregate_share_request(
+        &task,
+        &agg_share_req_1,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
     assert_status!(test_conn, 200);
 
-    let test_conn = post_aggregate_share_request(&task, &agg_share_req_2, &handler).await;
+    let test_conn = put_aggregate_share_request(
+        &task,
+        &agg_share_req_2,
+        &AggregateShareId::from([0u8; 16]),
+        &handler,
+    )
+    .await;
     assert_status!(test_conn, 200);
 }

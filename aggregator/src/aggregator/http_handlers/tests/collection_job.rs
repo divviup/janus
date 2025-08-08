@@ -320,15 +320,6 @@ async fn collection_job_success_time_interval() {
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
-        *test_case.task.id(),
-        collection_job_id,
-        Query::new_time_interval(batch_interval),
-        aggregation_param,
-        batch_interval,
-        CollectionJobState::Start,
-    );
-
     let got_collection_job = test_case
         .datastore
         .run_unnamed_tx(|tx| {
@@ -344,6 +335,16 @@ async fn collection_job_success_time_interval() {
         })
         .await
         .unwrap();
+
+    let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+        *test_case.task.id(),
+        collection_job_id,
+        *got_collection_job.aggregate_share_id(), // This is chosen by the leader, we have to copy it
+        Query::new_time_interval(batch_interval),
+        aggregation_param,
+        batch_interval,
+        CollectionJobState::Start,
+    );
 
     assert_eq!(want_collection_job, got_collection_job);
     assert_eq!(test_conn.status(), Some(Status::Created));

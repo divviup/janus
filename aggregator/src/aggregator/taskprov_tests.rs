@@ -34,11 +34,11 @@ use janus_core::{
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
-    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval, MediaType,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
+    AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+    AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
+    Interval, MediaType, PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
     batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
     taskprov::{TaskConfig, VdafConfig},
@@ -842,6 +842,7 @@ async fn taskprov_aggregate_continue() {
 
     let aggregation_job_id = random();
     let batch_id = random();
+    let aggregate_share_id = random();
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     test.datastore
@@ -893,6 +894,7 @@ async fn taskprov_aggregate_continue() {
                         batch_id,
                         aggregation_param,
                         transcript.helper_aggregate_share,
+                        aggregate_share_id,
                         0,
                         ReportIdChecksum::default(),
                     ),
@@ -984,6 +986,7 @@ async fn taskprov_aggregate_share() {
 
     let (transcript, _, aggregation_param) = test.next_report_share();
     let batch_id = random();
+    let aggregate_share_id = AggregateShareId::from([1u8; 16]);
     test.datastore
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
@@ -1031,36 +1034,44 @@ async fn taskprov_aggregate_share() {
         .request_authentication();
 
     // Attempt using the wrong credentials, should reject.
-    let status = post(test.task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth.0, "Bearer invalid_token")
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(&test.handler)
-        .await
-        .status()
-        .unwrap();
+    let status = put(test
+        .task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, "Bearer invalid_token")
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await
+    .status()
+    .unwrap();
     assert_eq!(status, Status::Forbidden);
 
-    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth.0, auth.1)
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .run_async(&test.handler)
-        .await;
+    let mut test_conn = put(test
+        .task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, auth.1)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .run_async(&test.handler)
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(
@@ -1096,6 +1107,7 @@ async fn end_to_end() {
 
     let batch_id = random();
     let aggregation_job_id = random();
+    let aggregate_share_id = random();
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
@@ -1199,19 +1211,23 @@ async fn end_to_end() {
         checksum,
     );
 
-    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth_header_name, auth_header_value.clone())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .with_request_body(aggregate_share_request.get_encoded().unwrap())
-        .run_async(&test.handler)
-        .await;
+    let mut test_conn = put(test
+        .task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(aggregate_share_request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
@@ -1256,6 +1272,7 @@ async fn end_to_end_sumvec_hmac() {
         .request_authentication();
     let batch_id = random();
     let aggregation_job_id = random();
+    let aggregate_share_id = random();
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded().unwrap(),
@@ -1312,19 +1329,23 @@ async fn end_to_end_sumvec_hmac() {
         checksum,
     );
 
-    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth_header_name, auth_header_value.clone())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .with_request_body(aggregate_share_request.get_encoded().unwrap())
-        .run_async(&test.handler)
-        .await;
+    let mut test_conn = put(test
+        .task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(aggregate_share_request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
