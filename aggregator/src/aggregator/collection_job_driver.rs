@@ -355,6 +355,9 @@ impl CollectionJobDriver {
         .map_err(Error::DifferentialPrivacy)?;
 
         // Send an aggregate share request to the helper.
+        // TODO: This routine must track state, and send GET requests
+        // instead of PUTs when dealing with asynchronous processing. See
+        // https://github.com/divviup/janus/issues/3963
         let http_response = send_request_to_helper(
             &self.http_client,
             self.backoff
