@@ -163,7 +163,7 @@ async fn aggregation_job_driver() {
             leader_task.clone(),
             accepted_report.clone(),
             rejected_reports.clone(),
-            aggregation_param.clone(),
+            aggregation_param,
         );
 
         Box::pin(async move {
