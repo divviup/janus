@@ -6,7 +6,7 @@ use self::models::{
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
     HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, UnaggregatedReport,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
