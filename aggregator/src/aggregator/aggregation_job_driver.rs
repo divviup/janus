@@ -64,7 +64,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     panic,
-    sync::{Arc, Mutex as SyncMutex},
+    sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 use tokio::{
@@ -1045,7 +1045,7 @@ where
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         retry_after: Option<&RetryAfter>,
     ) -> Result<(), Error> {
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
         // The leader sent either an init or continue request to the helper, and it indicated that
         // it would defer processing. Any non-failed report aggregations are transitioned to a
         // polling state, allowing them to be polled when the aggregation job is next picked up.
@@ -1099,7 +1099,7 @@ where
                         .aggregated_report_share_dimension_histogram
                         .clone(),
                 }),
-                Arc::clone(&task_aggregation_counters),
+                task_aggregation_counters.clone(),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
@@ -1128,7 +1128,7 @@ where
             datastore,
             self.task_counter_shard_count,
             task_id,
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(())
@@ -1151,7 +1151,7 @@ where
         prepare_resps: Vec<PrepareResp>,
     ) -> Result<(), Error> {
         // Handle response, computing the new report aggregations to be stored.
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
         let expected_report_aggregation_count =
             report_aggregations_to_write.len() + stepped_aggregations.len();
         if stepped_aggregations.len() != prepare_resps.len() {
@@ -1182,7 +1182,7 @@ where
             let task_id = *task.id();
             let aggregation_job = Arc::clone(&aggregation_job);
             let aggregate_step_failure_counter = self.aggregate_step_failure_counter.clone();
-            let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
+            let task_aggregation_counters = task_aggregation_counters.clone();
 
             move || {
                 let span = info_span!(
@@ -1233,8 +1233,6 @@ where
                                             );
 
                                             task_aggregation_counters
-                                                .lock()
-                                                .unwrap()
                                                 .increment_with_report_error(report_error);
                                             report_error
                                         },
@@ -1276,8 +1274,6 @@ where
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "continue_mismatch")]);
                                 task_aggregation_counters
-                                    .lock()
-                                    .unwrap()
                                     .increment_with_report_error(ReportError::VdafPrepError);
                                 (
                                     ReportAggregationState::Failed {
@@ -1303,8 +1299,6 @@ where
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "finish_mismatch")]);
                                 task_aggregation_counters
-                                    .lock()
-                                    .unwrap()
                                     .increment_with_report_error(ReportError::VdafPrepError);
                                 (
                                     ReportAggregationState::Failed {
@@ -1326,10 +1320,7 @@ where
                                 );
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "helper_step_failure")]);
-                                task_aggregation_counters
-                                    .lock()
-                                    .unwrap()
-                                    .increment_with_helper_report_error(*err);
+                                task_aggregation_counters.increment_with_helper_report_error(*err);
                                 (ReportAggregationState::Failed { report_error: *err }, None)
                             }
                         };
@@ -1376,7 +1367,7 @@ where
                         .aggregated_report_share_dimension_histogram
                         .clone(),
                 }),
-                Arc::clone(&task_aggregation_counters),
+                task_aggregation_counters.clone(),
             );
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.put(
@@ -1405,7 +1396,7 @@ where
             datastore,
             self.task_counter_shard_count,
             task_id,
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(())
@@ -1513,7 +1504,7 @@ where
             })
             .collect();
 
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
@@ -1551,7 +1542,7 @@ where
                 let lease = Arc::clone(&lease);
                 let task = Arc::clone(&task);
                 let metrics = metrics.clone();
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
+                let task_aggregation_counters = task_aggregation_counters.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
@@ -1583,7 +1574,7 @@ where
             datastore,
             self.task_counter_shard_count,
             *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(())
@@ -1614,7 +1605,7 @@ where
             })
             .collect();
 
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
@@ -1651,7 +1642,7 @@ where
                 let metrics = metrics.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
+                let task_aggregation_counters = task_aggregation_counters.clone();
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
                 Box::pin(async move {
@@ -1680,7 +1671,7 @@ where
             datastore,
             self.task_counter_shard_count,
             *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(())
@@ -1786,7 +1777,7 @@ where
                             Arc::new(task),
                             batch_aggregation_shard_count,
                             None,
-                            Arc::new(SyncMutex::new(TaskAggregationCounter::default())),
+                            TaskAggregationCounter::default(),
                         );
                     aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 

@@ -2,30 +2,60 @@ use crate::datastore::{Error, RowExt, Transaction, check_single_row_mutation};
 use janus_core::time::Clock;
 use janus_messages::{ReportError, TaskId};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 use tracing::Level;
 
 /// Per-task counts of uploaded reports and upload attempts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "TaskUploadCounterInner", into = "TaskUploadCounterInner")]
 pub struct TaskUploadCounter {
-    /// Reports that fell into a time interval that had already been collected.
-    pub(crate) interval_collected: u64,
-    /// Reports that could not be decoded.
-    pub(crate) report_decode_failure: u64,
-    /// Reports that could not be decrypted.
-    pub(crate) report_decrypt_failure: u64,
-    /// Reports that contained a timestamp too far in the past.
-    pub(crate) report_expired: u64,
-    /// Reports that were encrypted with an old or unknown HPKE key.
-    pub(crate) report_outdated_key: u64,
-    /// Reports that were successfully uploaded.
-    pub(crate) report_success: u64,
-    /// Reports that contain a timestamp too far in the future.
-    pub(crate) report_too_early: u64,
-    /// Reports that were submitted to the task before the task's start time.
-    pub(crate) task_not_started: u64,
-    /// Reports that were submitted to the task after the task's end time.
-    pub(crate) task_ended: u64,
+    inner: Arc<Mutex<TaskUploadCounterInner>>,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename = "TaskUploadCounter")]
+struct TaskUploadCounterInner {
+    /// Reports that fell into a time interval that had already been collected.
+    interval_collected: u64,
+    /// Reports that could not be decoded.
+    report_decode_failure: u64,
+    /// Reports that could not be decrypted.
+    report_decrypt_failure: u64,
+    /// Reports that contained a timestamp too far in the past.
+    report_expired: u64,
+    /// Reports that were encrypted with an old or unknown HPKE key.
+    report_outdated_key: u64,
+    /// Reports that were successfully uploaded.
+    report_success: u64,
+    /// Reports that contain a timestamp too far in the future.
+    report_too_early: u64,
+    /// Reports that were submitted to the task before the task's start time.
+    task_not_started: u64,
+    /// Reports that were submitted to the task after the task's end time.
+    task_ended: u64,
+}
+
+impl From<TaskUploadCounterInner> for TaskUploadCounter {
+    fn from(value: TaskUploadCounterInner) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(value)),
+        }
+    }
+}
+
+impl From<TaskUploadCounter> for TaskUploadCounterInner {
+    fn from(value: TaskUploadCounter) -> Self {
+        *value.inner.lock().unwrap()
+    }
+}
+
+impl PartialEq for TaskUploadCounter {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.lock().unwrap().eq(&other.inner.lock().unwrap())
+    }
+}
+
+impl Eq for TaskUploadCounter {}
 
 impl TaskUploadCounter {
     #[allow(clippy::too_many_arguments)]
@@ -42,15 +72,17 @@ impl TaskUploadCounter {
         task_ended: u64,
     ) -> Self {
         Self {
-            interval_collected,
-            report_decode_failure,
-            report_decrypt_failure,
-            report_expired,
-            report_outdated_key,
-            report_success,
-            report_too_early,
-            task_not_started,
-            task_ended,
+            inner: Arc::new(Mutex::new(TaskUploadCounterInner {
+                interval_collected,
+                report_decode_failure,
+                report_decrypt_failure,
+                report_expired,
+                report_outdated_key,
+                report_success,
+                report_too_early,
+                task_not_started,
+                task_ended,
+            })),
         }
     }
 
@@ -86,17 +118,17 @@ GROUP BY tasks.id",
         tx.query_opt(&stmt, &[task_id.as_ref()])
             .await?
             .map(|row| {
-                Ok(Self {
-                    interval_collected: row.get_bigint_and_convert("interval_collected")?,
-                    report_decode_failure: row.get_bigint_and_convert("report_decode_failure")?,
-                    report_decrypt_failure: row.get_bigint_and_convert("report_decrypt_failure")?,
-                    report_expired: row.get_bigint_and_convert("report_expired")?,
-                    report_outdated_key: row.get_bigint_and_convert("report_outdated_key")?,
-                    report_success: row.get_bigint_and_convert("report_success")?,
-                    report_too_early: row.get_bigint_and_convert("report_too_early")?,
-                    task_not_started: row.get_bigint_and_convert("task_not_started")?,
-                    task_ended: row.get_bigint_and_convert("task_ended")?,
-                })
+                Ok(Self::new_with_values(
+                    row.get_bigint_and_convert("interval_collected")?,
+                    row.get_bigint_and_convert("report_decode_failure")?,
+                    row.get_bigint_and_convert("report_decrypt_failure")?,
+                    row.get_bigint_and_convert("report_expired")?,
+                    row.get_bigint_and_convert("report_outdated_key")?,
+                    row.get_bigint_and_convert("report_success")?,
+                    row.get_bigint_and_convert("report_too_early")?,
+                    row.get_bigint_and_convert("task_not_started")?,
+                    row.get_bigint_and_convert("task_ended")?,
+                ))
             })
             .transpose()
     }
@@ -111,6 +143,9 @@ GROUP BY tasks.id",
         tx: &Transaction<'a, C>,
         ord: u64,
     ) -> Result<(), Error> {
+        // Copy the inner counter values so we don't have to hold a sync Mutex across await points
+        let inner = *self.inner.lock().unwrap();
+
         let stmt = "-- increment_task_upload_counter()
 INSERT INTO task_upload_counters (
     task_id, ord, interval_collected, report_decode_failure,
@@ -136,91 +171,91 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                 &[
                     task_id.as_ref(),
                     &i64::try_from(ord)?,
-                    &i64::try_from(self.interval_collected)?,
-                    &i64::try_from(self.report_decode_failure)?,
-                    &i64::try_from(self.report_decrypt_failure)?,
-                    &i64::try_from(self.report_expired)?,
-                    &i64::try_from(self.report_outdated_key)?,
-                    &i64::try_from(self.report_success)?,
-                    &i64::try_from(self.report_too_early)?,
-                    &i64::try_from(self.task_not_started)?,
-                    &i64::try_from(self.task_ended)?,
+                    &i64::try_from(inner.interval_collected)?,
+                    &i64::try_from(inner.report_decode_failure)?,
+                    &i64::try_from(inner.report_decrypt_failure)?,
+                    &i64::try_from(inner.report_expired)?,
+                    &i64::try_from(inner.report_outdated_key)?,
+                    &i64::try_from(inner.report_success)?,
+                    &i64::try_from(inner.report_too_early)?,
+                    &i64::try_from(inner.task_not_started)?,
+                    &i64::try_from(inner.task_ended)?,
                 ],
             )
             .await?,
         )
     }
 
-    pub fn increment_interval_collected(&mut self) {
-        self.interval_collected += 1
+    pub fn increment_interval_collected(&self) {
+        self.inner.lock().unwrap().interval_collected += 1
     }
 
-    pub fn increment_report_decode_failure(&mut self) {
-        self.report_decode_failure += 1
+    pub fn increment_report_decode_failure(&self) {
+        self.inner.lock().unwrap().report_decode_failure += 1
     }
 
-    pub fn increment_report_decrypt_failure(&mut self) {
-        self.report_decrypt_failure += 1
+    pub fn increment_report_decrypt_failure(&self) {
+        self.inner.lock().unwrap().report_decrypt_failure += 1
     }
 
-    pub fn increment_report_expired(&mut self) {
-        self.report_expired += 1
+    pub fn increment_report_expired(&self) {
+        self.inner.lock().unwrap().report_expired += 1
     }
 
-    pub fn increment_report_outdated_key(&mut self) {
-        self.report_outdated_key += 1
+    pub fn increment_report_outdated_key(&self) {
+        self.inner.lock().unwrap().report_outdated_key += 1
     }
 
-    pub fn increment_report_success(&mut self) {
-        self.report_success += 1
+    pub fn increment_report_success(&self) {
+        self.inner.lock().unwrap().report_success += 1
     }
 
-    pub fn increment_report_too_early(&mut self) {
-        self.report_too_early += 1
+    pub fn increment_report_too_early(&self) {
+        self.inner.lock().unwrap().report_too_early += 1
     }
 
-    pub fn increment_task_not_started(&mut self) {
-        self.task_not_started += 1
+    pub fn increment_task_not_started(&self) {
+        self.inner.lock().unwrap().task_not_started += 1
     }
 
-    pub fn increment_task_ended(&mut self) {
-        self.task_ended += 1
+    pub fn increment_task_ended(&self) {
+        self.inner.lock().unwrap().task_ended += 1
     }
 
     pub fn interval_collected(&self) -> u64 {
-        self.interval_collected
+        self.inner.lock().unwrap().interval_collected
     }
 
     pub fn report_decode_failure(&self) -> u64 {
-        self.report_decode_failure
+        self.inner.lock().unwrap().report_decode_failure
     }
 
     pub fn report_decrypt_failure(&self) -> u64 {
-        self.report_decrypt_failure
+        self.inner.lock().unwrap().report_decrypt_failure
     }
 
     pub fn report_expired(&self) -> u64 {
-        self.report_expired
+        self.inner.lock().unwrap().report_expired
     }
 
     pub fn report_outdated_key(&self) -> u64 {
-        self.report_outdated_key
+        self.inner.lock().unwrap().report_outdated_key
     }
 
     pub fn report_success(&self) -> u64 {
-        self.report_success
+        self.inner.lock().unwrap().report_success
     }
 
     pub fn report_too_early(&self) -> u64 {
-        self.report_too_early
+        self.inner.lock().unwrap().report_too_early
     }
 
     pub fn task_not_started(&self) -> u64 {
-        self.task_not_started
+        self.inner.lock().unwrap().task_not_started
     }
 
     pub fn task_ended(&self) -> u64 {
-        self.task_ended
+        self.inner.lock().unwrap().task_ended
     }
 }
 
@@ -233,59 +268,167 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
 ///   - Callers must flush the counter values to the datastore by calling
 ///     `Transaction::increment_task_aggregation_counter`. Callers must avoid double counting: any
 ///     operation's counters should only be flushed to datastore once.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(
+    from = "TaskAggregationCounterInner",
+    into = "TaskAggregationCounterInner"
+)]
 pub struct TaskAggregationCounter {
-    /// The number of successfully-aggregated reports.
-    pub success: u64,
-
-    /// The number of reports rejected due to duplicate extensions.
-    pub duplicate_extension: u64,
-    /// The number of reports rejected due to failure to encode the public share.
-    pub public_share_encode_failure: u64,
-    /// The number of reports rejected due to the batch being collected.
-    pub batch_collected: u64,
-    /// The number of reports rejected due to the report replay.
-    pub report_replayed: u64,
-    /// The number of reports rejected due to the leader dropping the report.
-    pub report_dropped: u64,
-    /// The number of reports rejected due to unknown HPKE config ID.
-    pub hpke_unknown_config_id: u64,
-    /// The number of reports rejected due to HPKE decryption failure.
-    pub hpke_decrypt_failure: u64,
-    /// The number of reports rejected due to VDAF preparation error.
-    pub vdaf_prep_error: u64,
-    /// The number of reports rejected due to the task not having started yet.
-    pub task_not_started: u64,
-    /// The number of reports rejected due to task expiration.
-    pub task_expired: u64,
-    /// The number of reports rejected due to an invalid message.
-    pub invalid_message: u64,
-    /// The number of reports rejected due to a report arriving too early.
-    pub report_too_early: u64,
-
-    /// The number of reports rejected by the helper due to the batch being collected.
-    pub helper_batch_collected: u64,
-    /// The number of reports rejected by the helper due to the report replay.
-    pub helper_report_replayed: u64,
-    /// The number of reports rejected by the helper due to the leader dropping the report.
-    pub helper_report_dropped: u64,
-    /// The number of reports rejected by the helper due to unknown HPKE config ID.
-    pub helper_hpke_unknown_config_id: u64,
-    /// The number of reports rejected by the helper due to HPKE decryption failure.
-    pub helper_hpke_decrypt_failure: u64,
-    /// The number of reports rejected by the helper due to VDAF preparation error.
-    pub helper_vdaf_prep_error: u64,
-    /// The number of reports rejected by the helper due to the task not having started yet.
-    pub helper_task_not_started: u64,
-    /// The number of reports rejected by the helper due to task expiration.
-    pub helper_task_expired: u64,
-    /// The number of reports rejected by the helper due to an invalid message.
-    pub helper_invalid_message: u64,
-    /// The number of reports rejected by the helper due to a report arriving too early.
-    pub helper_report_too_early: u64,
+    inner: Arc<Mutex<TaskAggregationCounterInner>>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename = "TaskAggregationCounter")]
+pub struct TaskAggregationCounterInner {
+    /// The number of successfully-aggregated reports.
+    success: u64,
+
+    /// The number of reports rejected due to duplicate extensions.
+    duplicate_extension: u64,
+    /// The number of reports rejected due to failure to encode the public share.
+    public_share_encode_failure: u64,
+    /// The number of reports rejected due to the batch being collected.
+    batch_collected: u64,
+    /// The number of reports rejected due to the report replay.
+    report_replayed: u64,
+    /// The number of reports rejected due to the leader dropping the report.
+    report_dropped: u64,
+    /// The number of reports rejected due to unknown HPKE config ID.
+    hpke_unknown_config_id: u64,
+    /// The number of reports rejected due to HPKE decryption failure.
+    hpke_decrypt_failure: u64,
+    /// The number of reports rejected due to VDAF preparation error.
+    vdaf_prep_error: u64,
+    /// The number of reports rejected due to the task not having started yet.
+    task_not_started: u64,
+    /// The number of reports rejected due to task expiration.
+    task_expired: u64,
+    /// The number of reports rejected due to an invalid message.
+    invalid_message: u64,
+    /// The number of reports rejected due to a report arriving too early.
+    report_too_early: u64,
+
+    /// The number of reports rejected by the helper due to the batch being collected.
+    helper_batch_collected: u64,
+    /// The number of reports rejected by the helper due to the report replay.
+    helper_report_replayed: u64,
+    /// The number of reports rejected by the helper due to the leader dropping the report.
+    helper_report_dropped: u64,
+    /// The number of reports rejected by the helper due to unknown HPKE config ID.
+    helper_hpke_unknown_config_id: u64,
+    /// The number of reports rejected by the helper due to HPKE decryption failure.
+    helper_hpke_decrypt_failure: u64,
+    /// The number of reports rejected by the helper due to VDAF preparation error.
+    helper_vdaf_prep_error: u64,
+    /// The number of reports rejected by the helper due to the task not having started yet.
+    helper_task_not_started: u64,
+    /// The number of reports rejected by the helper due to task expiration.
+    helper_task_expired: u64,
+    /// The number of reports rejected by the helper due to an invalid message.
+    helper_invalid_message: u64,
+    /// The number of reports rejected by the helper due to a report arriving too early.
+    helper_report_too_early: u64,
+}
+
+impl From<TaskAggregationCounterInner> for TaskAggregationCounter {
+    fn from(value: TaskAggregationCounterInner) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(value)),
+        }
+    }
+}
+
+impl From<TaskAggregationCounter> for TaskAggregationCounterInner {
+    fn from(value: TaskAggregationCounter) -> Self {
+        *value.inner.lock().unwrap()
+    }
+}
+
+impl PartialEq for TaskAggregationCounter {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.lock().unwrap().eq(&other.inner.lock().unwrap())
+    }
+}
+
+impl Eq for TaskAggregationCounter {}
+
 impl TaskAggregationCounter {
+    pub fn with_success(self, value: u64) -> Self {
+        self.inner.lock().unwrap().success = value;
+        self
+    }
+
+    pub fn with_helper_hpke_decrypt_failure(self, value: u64) -> Self {
+        self.inner.lock().unwrap().helper_hpke_decrypt_failure = value;
+        self
+    }
+
+    pub fn with_helper_task_expired(self, value: u64) -> Self {
+        self.inner.lock().unwrap().helper_task_expired = value;
+        self
+    }
+
+    pub fn with_vdaf_prep_error(self, value: u64) -> Self {
+        self.inner.lock().unwrap().vdaf_prep_error = value;
+        self
+    }
+
+    /// Construct a new `TaskAggregationCounter`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_values(
+        success: u64,
+        duplicate_extension: u64,
+        public_share_encode_failure: u64,
+        batch_collected: u64,
+        report_replayed: u64,
+        report_dropped: u64,
+        hpke_unknown_config_id: u64,
+        hpke_decrypt_failure: u64,
+        vdaf_prep_error: u64,
+        task_not_started: u64,
+        task_expired: u64,
+        invalid_message: u64,
+        report_too_early: u64,
+        helper_batch_collected: u64,
+        helper_report_replayed: u64,
+        helper_report_dropped: u64,
+        helper_hpke_unknown_config_id: u64,
+        helper_hpke_decrypt_failure: u64,
+        helper_vdaf_prep_error: u64,
+        helper_task_not_started: u64,
+        helper_task_expired: u64,
+        helper_invalid_message: u64,
+        helper_report_too_early: u64,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TaskAggregationCounterInner {
+                success,
+                duplicate_extension,
+                public_share_encode_failure,
+                batch_collected,
+                report_replayed,
+                report_dropped,
+                hpke_unknown_config_id,
+                hpke_decrypt_failure,
+                vdaf_prep_error,
+                task_not_started,
+                task_expired,
+                invalid_message,
+                report_too_early,
+                helper_batch_collected,
+                helper_report_replayed,
+                helper_report_dropped,
+                helper_hpke_unknown_config_id,
+                helper_hpke_decrypt_failure,
+                helper_vdaf_prep_error,
+                helper_task_not_started,
+                helper_task_expired,
+                helper_invalid_message,
+                helper_report_too_early,
+            })),
+        }
+    }
+
     /// Load counters for the specified task from the datastore and construct a
     /// [`TaskAggregationCounter`]. This is aggregated across all shards. Returns `None` if the task
     /// doesn't exist.
@@ -334,36 +477,31 @@ WHERE task_id = $1",
         tx.query_opt(&stmt, &[/* task_id */ &task_info.pkey])
             .await?
             .map(|row| {
-                Ok(Self {
-                    success: row.get_bigint_and_convert("success")?,
-                    duplicate_extension: row.get_bigint_and_convert("duplicate_extension")?,
-                    public_share_encode_failure: row
-                        .get_bigint_and_convert("public_share_encode_failure")?,
-                    batch_collected: row.get_bigint_and_convert("batch_collected")?,
-                    report_replayed: row.get_bigint_and_convert("report_replayed")?,
-                    report_dropped: row.get_bigint_and_convert("report_dropped")?,
-                    hpke_unknown_config_id: row.get_bigint_and_convert("hpke_unknown_config_id")?,
-                    hpke_decrypt_failure: row.get_bigint_and_convert("hpke_decrypt_failure")?,
-                    vdaf_prep_error: row.get_bigint_and_convert("vdaf_prep_error")?,
-                    task_not_started: row.get_bigint_and_convert("task_not_started")?,
-                    task_expired: row.get_bigint_and_convert("task_expired")?,
-                    invalid_message: row.get_bigint_and_convert("invalid_message")?,
-                    report_too_early: row.get_bigint_and_convert("report_too_early")?,
-                    helper_batch_collected: row.get_bigint_and_convert("helper_batch_collected")?,
-                    helper_report_replayed: row.get_bigint_and_convert("helper_report_replayed")?,
-                    helper_report_dropped: row.get_bigint_and_convert("helper_report_dropped")?,
-                    helper_hpke_unknown_config_id: row
-                        .get_bigint_and_convert("helper_hpke_unknown_config_id")?,
-                    helper_hpke_decrypt_failure: row
-                        .get_bigint_and_convert("helper_hpke_decrypt_failure")?,
-                    helper_vdaf_prep_error: row.get_bigint_and_convert("helper_vdaf_prep_error")?,
-                    helper_task_not_started: row
-                        .get_bigint_and_convert("helper_task_not_started")?,
-                    helper_task_expired: row.get_bigint_and_convert("helper_task_expired")?,
-                    helper_invalid_message: row.get_bigint_and_convert("helper_invalid_message")?,
-                    helper_report_too_early: row
-                        .get_bigint_and_convert("helper_report_too_early")?,
-                })
+                Ok(Self::new_with_values(
+                    row.get_bigint_and_convert("success")?,
+                    row.get_bigint_and_convert("duplicate_extension")?,
+                    row.get_bigint_and_convert("public_share_encode_failure")?,
+                    row.get_bigint_and_convert("batch_collected")?,
+                    row.get_bigint_and_convert("report_replayed")?,
+                    row.get_bigint_and_convert("report_dropped")?,
+                    row.get_bigint_and_convert("hpke_unknown_config_id")?,
+                    row.get_bigint_and_convert("hpke_decrypt_failure")?,
+                    row.get_bigint_and_convert("vdaf_prep_error")?,
+                    row.get_bigint_and_convert("task_not_started")?,
+                    row.get_bigint_and_convert("task_expired")?,
+                    row.get_bigint_and_convert("invalid_message")?,
+                    row.get_bigint_and_convert("report_too_early")?,
+                    row.get_bigint_and_convert("helper_batch_collected")?,
+                    row.get_bigint_and_convert("helper_report_replayed")?,
+                    row.get_bigint_and_convert("helper_report_dropped")?,
+                    row.get_bigint_and_convert("helper_hpke_unknown_config_id")?,
+                    row.get_bigint_and_convert("helper_hpke_decrypt_failure")?,
+                    row.get_bigint_and_convert("helper_vdaf_prep_error")?,
+                    row.get_bigint_and_convert("helper_task_not_started")?,
+                    row.get_bigint_and_convert("helper_task_expired")?,
+                    row.get_bigint_and_convert("helper_invalid_message")?,
+                    row.get_bigint_and_convert("helper_report_too_early")?,
+                ))
             })
             .transpose()
     }
@@ -382,6 +520,9 @@ WHERE task_id = $1",
             Some(task_info) => task_info,
             None => return Err(Error::MutationTargetNotFound),
         };
+
+        // Copy the inner counter values so we don't have to hold a sync Mutex across await points
+        let inner = *self.inner.lock().unwrap();
 
         let stmt = tx
             .prepare_cached(
@@ -428,40 +569,40 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                 &[
                     /* task_id */ &task_info.pkey,
                     /* ord */ &i64::try_from(ord)?,
-                    /* success */ &i64::try_from(self.success)?,
-                    /* duplicate_extension */ &i64::try_from(self.duplicate_extension)?,
+                    /* success */ &i64::try_from(inner.success)?,
+                    /* duplicate_extension */ &i64::try_from(inner.duplicate_extension)?,
                     /* public_share_encode_failure */
-                    &i64::try_from(self.public_share_encode_failure)?,
-                    /* batch_collected */ &i64::try_from(self.batch_collected)?,
-                    /* report_replayed */ &i64::try_from(self.report_replayed)?,
-                    /* report_dropped */ &i64::try_from(self.report_dropped)?,
+                    &i64::try_from(inner.public_share_encode_failure)?,
+                    /* batch_collected */ &i64::try_from(inner.batch_collected)?,
+                    /* report_replayed */ &i64::try_from(inner.report_replayed)?,
+                    /* report_dropped */ &i64::try_from(inner.report_dropped)?,
                     /* hpke_unknown_config_id */
-                    &i64::try_from(self.hpke_unknown_config_id)?,
-                    /* hpke_decrypt_failure */ &i64::try_from(self.hpke_decrypt_failure)?,
-                    /* vdaf_prep_error */ &i64::try_from(self.vdaf_prep_error)?,
-                    /* task_not_started */ &i64::try_from(self.task_not_started)?,
-                    /* task_expired */ &i64::try_from(self.task_expired)?,
-                    /* invalid_message */ &i64::try_from(self.invalid_message)?,
-                    /* report_too_early */ &i64::try_from(self.report_too_early)?,
+                    &i64::try_from(inner.hpke_unknown_config_id)?,
+                    /* hpke_decrypt_failure */ &i64::try_from(inner.hpke_decrypt_failure)?,
+                    /* vdaf_prep_error */ &i64::try_from(inner.vdaf_prep_error)?,
+                    /* task_not_started */ &i64::try_from(inner.task_not_started)?,
+                    /* task_expired */ &i64::try_from(inner.task_expired)?,
+                    /* invalid_message */ &i64::try_from(inner.invalid_message)?,
+                    /* report_too_early */ &i64::try_from(inner.report_too_early)?,
                     /* helper_batch_collected */
-                    &i64::try_from(self.helper_batch_collected)?,
+                    &i64::try_from(inner.helper_batch_collected)?,
                     /* helper_report_replayed */
-                    &i64::try_from(self.helper_report_replayed)?,
+                    &i64::try_from(inner.helper_report_replayed)?,
                     /* helper_report_dropped */
-                    &i64::try_from(self.helper_report_dropped)?,
+                    &i64::try_from(inner.helper_report_dropped)?,
                     /* helper_hpke_unknown_config_id */
-                    &i64::try_from(self.helper_hpke_unknown_config_id)?,
+                    &i64::try_from(inner.helper_hpke_unknown_config_id)?,
                     /* helper_hpke_decrypt_failure */
-                    &i64::try_from(self.helper_hpke_decrypt_failure)?,
+                    &i64::try_from(inner.helper_hpke_decrypt_failure)?,
                     /* helper_vdaf_prep_error */
-                    &i64::try_from(self.helper_vdaf_prep_error)?,
+                    &i64::try_from(inner.helper_vdaf_prep_error)?,
                     /* helper_task_not_started */
-                    &i64::try_from(self.helper_task_not_started)?,
-                    /* helper_task_expired */ &i64::try_from(self.helper_task_expired)?,
+                    &i64::try_from(inner.helper_task_not_started)?,
+                    /* helper_task_expired */ &i64::try_from(inner.helper_task_expired)?,
                     /* helper_invalid_message */
-                    &i64::try_from(self.helper_invalid_message)?,
+                    &i64::try_from(inner.helper_invalid_message)?,
                     /* helper_report_too_early */
-                    &i64::try_from(self.helper_report_too_early)?,
+                    &i64::try_from(inner.helper_report_too_early)?,
                 ],
             )
             .await?,
@@ -475,40 +616,46 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     }
 
     /// Increments the counter of successfully-aggregated reports.
-    pub fn increment_success(&mut self) {
-        self.success += 1
+    pub fn increment_success(&self) {
+        self.inner.lock().unwrap().success += 1
     }
 
     /// Increments the appropriate counter based on the prepare failure.
-    pub fn increment_with_report_error(&mut self, error: ReportError) {
+    pub fn increment_with_report_error(&self, error: ReportError) {
         match error {
-            ReportError::BatchCollected => self.batch_collected += 1,
-            ReportError::ReportReplayed => self.report_replayed += 1,
-            ReportError::ReportDropped => self.report_dropped += 1,
-            ReportError::HpkeUnknownConfigId => self.hpke_unknown_config_id += 1,
-            ReportError::HpkeDecryptError => self.hpke_decrypt_failure += 1,
-            ReportError::VdafPrepError => self.vdaf_prep_error += 1,
-            ReportError::TaskNotStarted => self.task_not_started += 1,
-            ReportError::TaskExpired => self.task_expired += 1,
-            ReportError::InvalidMessage => self.invalid_message += 1,
-            ReportError::ReportTooEarly => self.report_too_early += 1,
+            ReportError::BatchCollected => self.inner.lock().unwrap().batch_collected += 1,
+            ReportError::ReportReplayed => self.inner.lock().unwrap().report_replayed += 1,
+            ReportError::ReportDropped => self.inner.lock().unwrap().report_dropped += 1,
+            ReportError::HpkeUnknownConfigId => {
+                self.inner.lock().unwrap().hpke_unknown_config_id += 1
+            }
+            ReportError::HpkeDecryptError => self.inner.lock().unwrap().hpke_decrypt_failure += 1,
+            ReportError::VdafPrepError => self.inner.lock().unwrap().vdaf_prep_error += 1,
+            ReportError::TaskNotStarted => self.inner.lock().unwrap().task_not_started += 1,
+            ReportError::TaskExpired => self.inner.lock().unwrap().task_expired += 1,
+            ReportError::InvalidMessage => self.inner.lock().unwrap().invalid_message += 1,
+            ReportError::ReportTooEarly => self.inner.lock().unwrap().report_too_early += 1,
             _ => tracing::debug!(?error, "unexpected prepare error"),
         }
     }
 
     /// Increments the appropriate counter based on the helper prepare failure.
-    pub fn increment_with_helper_report_error(&mut self, helper_error: ReportError) {
+    pub fn increment_with_helper_report_error(&self, helper_error: ReportError) {
         match helper_error {
-            ReportError::BatchCollected => self.helper_batch_collected += 1,
-            ReportError::ReportReplayed => self.helper_report_replayed += 1,
-            ReportError::ReportDropped => self.helper_report_dropped += 1,
-            ReportError::HpkeUnknownConfigId => self.helper_hpke_unknown_config_id += 1,
-            ReportError::HpkeDecryptError => self.helper_hpke_decrypt_failure += 1,
-            ReportError::VdafPrepError => self.helper_vdaf_prep_error += 1,
-            ReportError::TaskNotStarted => self.helper_task_not_started += 1,
-            ReportError::TaskExpired => self.helper_task_expired += 1,
-            ReportError::InvalidMessage => self.helper_invalid_message += 1,
-            ReportError::ReportTooEarly => self.helper_report_too_early += 1,
+            ReportError::BatchCollected => self.inner.lock().unwrap().helper_batch_collected += 1,
+            ReportError::ReportReplayed => self.inner.lock().unwrap().helper_report_replayed += 1,
+            ReportError::ReportDropped => self.inner.lock().unwrap().helper_report_dropped += 1,
+            ReportError::HpkeUnknownConfigId => {
+                self.inner.lock().unwrap().helper_hpke_unknown_config_id += 1
+            }
+            ReportError::HpkeDecryptError => {
+                self.inner.lock().unwrap().helper_hpke_decrypt_failure += 1
+            }
+            ReportError::VdafPrepError => self.inner.lock().unwrap().helper_vdaf_prep_error += 1,
+            ReportError::TaskNotStarted => self.inner.lock().unwrap().helper_task_not_started += 1,
+            ReportError::TaskExpired => self.inner.lock().unwrap().helper_task_expired += 1,
+            ReportError::InvalidMessage => self.inner.lock().unwrap().helper_invalid_message += 1,
+            ReportError::ReportTooEarly => self.inner.lock().unwrap().helper_report_too_early += 1,
             _ => tracing::debug!(?helper_error, "unexpected prepare error from helper"),
         }
     }

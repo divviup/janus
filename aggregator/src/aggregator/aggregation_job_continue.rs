@@ -18,10 +18,7 @@ use janus_messages::{PrepareResp, PrepareStepResult, Role};
 use opentelemetry::metrics::Counter;
 use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use std::{
-    panic,
-    sync::{Arc, Mutex},
-};
+use std::{panic, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{Span, info_span, trace_span};
 
@@ -31,17 +28,17 @@ pub struct AggregateContinueMetrics {
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
     /// Per-task counters tracking report aggregation outcomes.
-    task_aggregation_counter: Arc<Mutex<TaskAggregationCounter>>,
+    task_aggregation_counter: TaskAggregationCounter,
 }
 
 impl AggregateContinueMetrics {
     pub fn new(
         aggregate_step_failure_counter: Counter<u64>,
-        task_aggregation_counter: &Arc<Mutex<TaskAggregationCounter>>,
+        task_aggregation_counter: &TaskAggregationCounter,
     ) -> Self {
         Self {
             aggregate_step_failure_counter,
-            task_aggregation_counter: Arc::clone(task_aggregation_counter),
+            task_aggregation_counter: task_aggregation_counter.clone(),
         }
     }
 }
@@ -162,8 +159,6 @@ where
                             .unwrap_or_else(|report_error| {
                                 metrics
                                     .task_aggregation_counter
-                                    .lock()
-                                    .unwrap()
                                     .increment_with_report_error(report_error);
                                 (
                                     ReportAggregationState::Failed { report_error },

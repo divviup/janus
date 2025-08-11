@@ -2188,7 +2188,7 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     {
-        let task_aggregation_counters = Arc::new(Mutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
         let prepare_resps = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
                 let vdaf = Arc::clone(&vdaf);
@@ -2197,7 +2197,7 @@ impl VdafOps {
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
                 let log_forbidden_mutations = log_forbidden_mutations.clone();
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
+                let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
@@ -2269,7 +2269,7 @@ impl VdafOps {
             datastore,
             task_counter_shard_count,
             *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(prepare_resps)
@@ -2297,7 +2297,7 @@ impl VdafOps {
                 "aggregation job cannot be advanced to step 0",
             ));
         }
-        let task_aggregation_counters = Arc::new(Mutex::new(TaskAggregationCounter::default()));
+        let task_aggregation_counters = TaskAggregationCounter::default();
 
         let req = Arc::new(req);
         let response = datastore
@@ -2307,7 +2307,7 @@ impl VdafOps {
                 let task = Arc::clone(&task);
                 let aggregation_job_id = *aggregation_job_id;
                 let req = Arc::clone(&req);
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
+                let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Read existing state.
@@ -2521,7 +2521,7 @@ impl VdafOps {
             datastore,
             task_counter_shard_count,
             *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
+            task_aggregation_counters,
         );
 
         Ok(response)
@@ -2539,7 +2539,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
-        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+        task_aggregation_counters: TaskAggregationCounter,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -2590,7 +2590,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
-        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+        task_aggregation_counters: TaskAggregationCounter,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -2628,7 +2628,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
-        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+        task_aggregation_counters: TaskAggregationCounter,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
     ) -> Result<Vec<PrepareResp>, Error> {
@@ -3416,7 +3416,7 @@ fn write_task_aggregation_counter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     shard_count: u64,
     task_id: TaskId,
-    counters: &TaskAggregationCounter,
+    counters: TaskAggregationCounter,
 ) {
     if counters.is_zero() {
         // Don't spawn a task or interact with the datastore if doing so won't change the state of
@@ -3424,7 +3424,6 @@ fn write_task_aggregation_counter<C: Clock>(
         return;
     }
 
-    let counters = *counters;
     // We write task aggregation counters back in a separate tokio task & datastore transaction,
     // so that any slowness induced by writing the counters (e.g. due to transaction retry) does
     // not slow the main processing. The lack of transactionality between writing the updated
@@ -3434,6 +3433,7 @@ fn write_task_aggregation_counter<C: Clock>(
     tokio::task::spawn(async move {
         let rslt = datastore
             .run_tx("update_task_aggregation_counters", |tx| {
+                let counters = counters.clone();
                 Box::pin(async move { counters.flush(&task_id, tx, ord).await })
             })
             .await;

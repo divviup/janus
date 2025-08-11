@@ -993,13 +993,11 @@ async fn get_task_aggregation_metrics() {
     // Verify: requesting metrics on a task returns the correct result.
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
-            TaskAggregationCounter {
-                success: 15,
-                helper_hpke_decrypt_failure: 100,
-                ..Default::default()
-            }
-            .flush(&task_id, tx, 5)
-            .await
+            TaskAggregationCounter::default()
+                .with_success(15)
+                .with_helper_hpke_decrypt_failure(100)
+                .flush(&task_id, tx, 5)
+                .await
         })
     })
     .await
@@ -1011,11 +1009,11 @@ async fn get_task_aggregation_metrics() {
             .run_async(&handler)
             .await,
         Status::Ok,
-        serde_json::to_string(&GetTaskAggregationMetricsResp(TaskAggregationCounter {
-            success: 15,
-            helper_hpke_decrypt_failure: 100,
-            ..Default::default()
-        },))
+        serde_json::to_string(&GetTaskAggregationMetricsResp(
+            TaskAggregationCounter::default()
+                .with_success(15)
+                .with_helper_hpke_decrypt_failure(100)
+        ))
         .unwrap(),
     );
 

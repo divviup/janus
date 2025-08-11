@@ -67,17 +67,9 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 let counter = TaskUploadCounter::load(tx, &task_id).await.unwrap();
                 assert_eq!(
                     counter,
-                    Some(TaskUploadCounter {
-                        interval_collected: 3,
-                        report_decode_failure: 5,
-                        report_decrypt_failure: 7,
-                        report_expired: 9,
-                        report_outdated_key: 11,
-                        report_success: 101,
-                        report_too_early: 26,
-                        task_not_started: 23,
-                        task_ended: 21,
-                    })
+                    Some(TaskUploadCounter::new_with_values(
+                        3, 5, 7, 9, 11, 101, 26, 23, 21,
+                    ))
                 );
 
                 Ok(())
@@ -120,40 +112,16 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 assert_eq!(counter, Some(TaskAggregationCounter::default()));
 
                 let ord = rng().random_range(0..32);
-                TaskAggregationCounter {
-                    success: 4,
-                    helper_hpke_decrypt_failure: 102,
-                    ..Default::default()
-                }
-                .flush(task.id(), tx, ord)
-                .await
-                .unwrap();
+                TaskAggregationCounter::default()
+                    .with_success(4)
+                    .with_helper_hpke_decrypt_failure(102)
+                    .flush(task.id(), tx, ord)
+                    .await
+                    .unwrap();
 
-                TaskAggregationCounter {
-                    success: 1,
-                    helper_hpke_decrypt_failure: 1,
-                    duplicate_extension: 1,
-                    public_share_encode_failure: 1,
-                    batch_collected: 1,
-                    report_replayed: 1,
-                    report_dropped: 1,
-                    hpke_unknown_config_id: 1,
-                    hpke_decrypt_failure: 1,
-                    vdaf_prep_error: 1,
-                    task_not_started: 1,
-                    task_expired: 1,
-                    invalid_message: 1,
-                    report_too_early: 1,
-                    helper_batch_collected: 1,
-                    helper_report_replayed: 1,
-                    helper_report_dropped: 1,
-                    helper_hpke_unknown_config_id: 1,
-                    helper_vdaf_prep_error: 1,
-                    helper_task_not_started: 1,
-                    helper_task_expired: 1,
-                    helper_invalid_message: 1,
-                    helper_report_too_early: 1,
-                }
+                TaskAggregationCounter::new_with_values(
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                )
                 // force conflict on (task_id, ord) to exercise the query's
                 // ON CONFLICT (task_id, ord) DO UPDATE SET clause
                 .flush(task.id(), tx, ord)
@@ -161,15 +129,13 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 .unwrap();
 
                 let ord = rng().random_range(0..32);
-                TaskAggregationCounter {
-                    success: 6,
-                    helper_hpke_decrypt_failure: 98,
-                    helper_task_expired: 1,
-                    ..Default::default()
-                }
-                .flush(task.id(), tx, ord)
-                .await
-                .unwrap();
+                TaskAggregationCounter::default()
+                    .with_success(6)
+                    .with_helper_hpke_decrypt_failure(98)
+                    .with_helper_task_expired(1)
+                    .flush(task.id(), tx, ord)
+                    .await
+                    .unwrap();
 
                 let ord = rng().random_range(0..32);
                 TaskAggregationCounter::default()
@@ -180,31 +146,9 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 let counter = TaskAggregationCounter::load(tx, task.id()).await.unwrap();
                 assert_eq!(
                     counter,
-                    Some(TaskAggregationCounter {
-                        success: 11,
-                        helper_hpke_decrypt_failure: 201,
-                        helper_task_expired: 2,
-                        duplicate_extension: 1,
-                        public_share_encode_failure: 1,
-                        batch_collected: 1,
-                        report_replayed: 1,
-                        report_dropped: 1,
-                        hpke_unknown_config_id: 1,
-                        hpke_decrypt_failure: 1,
-                        vdaf_prep_error: 1,
-                        task_not_started: 1,
-                        task_expired: 1,
-                        invalid_message: 1,
-                        report_too_early: 1,
-                        helper_batch_collected: 1,
-                        helper_report_replayed: 1,
-                        helper_report_dropped: 1,
-                        helper_hpke_unknown_config_id: 1,
-                        helper_vdaf_prep_error: 1,
-                        helper_task_not_started: 1,
-                        helper_invalid_message: 1,
-                        helper_report_too_early: 1
-                    })
+                    Some(TaskAggregationCounter::new_with_values(
+                        11, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 201, 1, 1, 2, 1, 1
+                    ))
                 );
 
                 Ok(())

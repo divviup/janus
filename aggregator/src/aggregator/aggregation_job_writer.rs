@@ -30,12 +30,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
 };
 use rand::{Rng as _, rng};
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
 use tracing::{Level, warn};
 
@@ -51,7 +46,7 @@ where
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, B, A, RA>>,
     by_batch_identifier_index: HashMap<B::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
     metrics: Option<AggregationJobWriterMetrics>,
-    task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+    task_aggregation_counters: TaskAggregationCounter,
 
     _phantom_wt: PhantomData<WT>,
 }
@@ -77,7 +72,7 @@ where
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         metrics: Option<AggregationJobWriterMetrics>,
-        task_aggregation_counters: Arc<Mutex<TaskAggregationCounter>>,
+        task_aggregation_counters: TaskAggregationCounter,
     ) -> Self {
         Self {
             task,
@@ -679,11 +674,7 @@ where
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
                             if is_finished {
-                                self.writer
-                                    .task_aggregation_counters
-                                    .lock()
-                                    .unwrap()
-                                    .increment_success();
+                                self.writer.task_aggregation_counters.increment_success();
                                 self.writer.update_metrics(|metrics| {
                                     metrics.report_aggregation_success_counter.add(1, &[]);
 
@@ -810,8 +801,6 @@ where
                             });
                             self.writer
                                 .task_aggregation_counters
-                                .lock()
-                                .unwrap()
                                 .increment_with_report_error(ReportError::VdafPrepError);
                             *report_aggregation.to_mut() = report_aggregation
                                 .as_ref()

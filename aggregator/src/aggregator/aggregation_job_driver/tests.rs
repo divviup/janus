@@ -493,31 +493,9 @@ async fn aggregation_job_driver() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            helper_hpke_decrypt_failure: 1,
-            helper_batch_collected: 1,
-            helper_report_replayed: 1,
-            helper_report_dropped: 1,
-            helper_hpke_unknown_config_id: 1,
-            helper_vdaf_prep_error: 1,
-            helper_task_not_started: 1,
-            helper_task_expired: 1,
-            helper_invalid_message: 1,
-            helper_report_too_early: 1,
-            duplicate_extension: 0,
-            public_share_encode_failure: 0,
-            batch_collected: 0,
-            report_replayed: 0,
-            report_dropped: 0,
-            hpke_unknown_config_id: 0,
-            hpke_decrypt_failure: 0,
-            vdaf_prep_error: 0,
-            task_not_started: 0,
-            task_expired: 0,
-            invalid_message: 0,
-            report_too_early: 0,
-        },
+        TaskAggregationCounter::new_with_values(
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        ),
     )
     .await;
 }
@@ -968,10 +946,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -1246,10 +1221,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 0,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(0),
     )
     .await;
 }
@@ -1653,10 +1625,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 2,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(2),
     )
     .await;
 }
@@ -1976,10 +1945,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -2256,15 +2222,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(
-        &ds,
-        *task.id(),
-        TaskAggregationCounter {
-            success: 0,
-            ..Default::default()
-        },
-    )
-    .await;
+    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::default()).await;
 }
 
 #[tokio::test]
@@ -2614,10 +2572,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -2924,10 +2879,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -4458,10 +4410,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -5241,10 +5190,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -5488,10 +5434,7 @@ async fn helper_async_init_processing_to_finished() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -5972,10 +5915,7 @@ async fn helper_async_continue_processing_to_finished() {
     assert_task_aggregation_counter(
         &ds,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }

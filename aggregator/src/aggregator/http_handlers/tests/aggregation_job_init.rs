@@ -686,10 +686,7 @@ async fn aggregate_init_sync() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }

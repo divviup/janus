@@ -389,10 +389,7 @@ async fn aggregate_continue_sync() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -1040,10 +1037,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 2,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(2),
     )
     .await;
 
@@ -1345,10 +1339,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 3,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_success(3),
     )
     .await;
 }
@@ -1462,10 +1453,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            vdaf_prep_error: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_vdaf_prep_error(1),
     )
     .await;
 }
@@ -1647,10 +1635,7 @@ async fn aggregate_continue_prep_step_fails() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            vdaf_prep_error: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::default().with_vdaf_prep_error(1),
     )
     .await;
 }
