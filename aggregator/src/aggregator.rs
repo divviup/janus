@@ -94,8 +94,7 @@ use prio::{
     flp::gadgets::{Mul, ParallelSum},
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
-use rand::random;
-use rand::{Rng, rng};
+use rand::{Rng, random, rng};
 use reqwest::Client;
 use std::{
     borrow::Cow,

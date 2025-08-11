@@ -558,7 +558,13 @@ impl FromStr for AggregateShareId {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
+        if s.len() != 22 {
+            Err(Error::InvalidParameter(
+                "incorrect length for AggregateShareId",
+            ))
+        } else {
+            Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
+        }
     }
 }
 
