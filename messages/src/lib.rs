@@ -588,52 +588,6 @@ impl Distribution<AggregateShareId> for StandardUniform {
     }
 }
 
-/// This customized implementation serializes a [`TaskId`] as a base64url-encoded string, instead
-/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
-/// other uses of base64url encoding in DAP.
-impl Serialize for AggregateShareId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
-        serializer.serialize_str(&encoded)
-    }
-}
-
-struct AggregateShareIdVisitor;
-
-impl Visitor<'_> for AggregateShareIdVisitor {
-    type Value = AggregateShareId;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a base64url-encoded string that decodes to 16 bytes")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<AggregateShareId, E>
-    where
-        E: de::Error,
-    {
-        let decoded = URL_SAFE_NO_PAD
-            .decode(value)
-            .map_err(|_| E::custom("invalid base64url value"))?;
-
-        AggregateShareId::try_from(decoded.as_slice()).map_err(|e| E::custom(e))
-    }
-}
-
-/// This customized implementation deserializes a [`AggregateShareId`] as a base64url-encoded string,
-/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns
-/// with other uses of base64url encoding in DAP.
-impl<'de> Deserialize<'de> for AggregateShareId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_str(AggregateShareIdVisitor)
-    }
-}
-
 /// DAP protocol message representing the different roles that participants can adopt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
