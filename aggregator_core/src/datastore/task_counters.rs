@@ -415,7 +415,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     helper_hpke_unknown_config_id = task_aggregation_counters.helper_hpke_unknown_config_id + $19,
     helper_hpke_decrypt_failure = task_aggregation_counters.helper_hpke_decrypt_failure + $20,
     helper_vdaf_prep_error = task_aggregation_counters.helper_vdaf_prep_error + $21,
-    helper_task_not_started = task_aggregation_counters.helper_task_not_started + 22,
+    helper_task_not_started = task_aggregation_counters.helper_task_not_started + $22,
     helper_task_expired = task_aggregation_counters.helper_task_expired + $23,
     helper_invalid_message = task_aggregation_counters.helper_invalid_message + $24,
     helper_report_too_early = task_aggregation_counters.helper_report_too_early + $25",

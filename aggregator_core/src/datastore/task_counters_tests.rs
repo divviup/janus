@@ -51,6 +51,13 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                     .await
                     .unwrap();
 
+                TaskUploadCounter::new_with_values(1, 1, 1, 1, 1, 1, 1, 1, 1)
+                    // force conflict on (task_id, ord) to exercise the query's
+                    // ON CONFLICT (task_id, ord) DO UPDATE SET clause
+                    .flush(&task_id, tx, ord)
+                    .await
+                    .unwrap();
+
                 let ord = rng().random_range(0..32);
                 TaskUploadCounter::default()
                     .flush(&task_id, tx, ord)
@@ -61,15 +68,15 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(
                     counter,
                     Some(TaskUploadCounter {
-                        interval_collected: 2,
-                        report_decode_failure: 4,
-                        report_decrypt_failure: 6,
-                        report_expired: 8,
-                        report_outdated_key: 10,
-                        report_success: 100,
-                        report_too_early: 25,
-                        task_not_started: 22,
-                        task_ended: 20,
+                        interval_collected: 3,
+                        report_decode_failure: 5,
+                        report_decrypt_failure: 7,
+                        report_expired: 9,
+                        report_outdated_key: 11,
+                        report_success: 101,
+                        report_too_early: 26,
+                        task_not_started: 23,
+                        task_ended: 21,
                     })
                 );
 
@@ -122,6 +129,37 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 .await
                 .unwrap();
 
+                TaskAggregationCounter {
+                    success: 1,
+                    helper_hpke_decrypt_failure: 1,
+                    duplicate_extension: 1,
+                    public_share_encode_failure: 1,
+                    batch_collected: 1,
+                    report_replayed: 1,
+                    report_dropped: 1,
+                    hpke_unknown_config_id: 1,
+                    hpke_decrypt_failure: 1,
+                    vdaf_prep_error: 1,
+                    task_not_started: 1,
+                    task_expired: 1,
+                    invalid_message: 1,
+                    report_too_early: 1,
+                    helper_batch_collected: 1,
+                    helper_report_replayed: 1,
+                    helper_report_dropped: 1,
+                    helper_hpke_unknown_config_id: 1,
+                    helper_vdaf_prep_error: 1,
+                    helper_task_not_started: 1,
+                    helper_task_expired: 1,
+                    helper_invalid_message: 1,
+                    helper_report_too_early: 1,
+                }
+                // force conflict on (task_id, ord) to exercise the query's
+                // ON CONFLICT (task_id, ord) DO UPDATE SET clause
+                .flush(task.id(), tx, ord)
+                .await
+                .unwrap();
+
                 let ord = rng().random_range(0..32);
                 TaskAggregationCounter {
                     success: 6,
@@ -143,29 +181,29 @@ async fn roundtrip_task_aggregation_counter(ephemeral_datastore: EphemeralDatast
                 assert_eq!(
                     counter,
                     Some(TaskAggregationCounter {
-                        success: 10,
-                        helper_hpke_decrypt_failure: 200,
-                        helper_task_expired: 1,
-                        duplicate_extension: 0,
-                        public_share_encode_failure: 0,
-                        batch_collected: 0,
-                        report_replayed: 0,
-                        report_dropped: 0,
-                        hpke_unknown_config_id: 0,
-                        hpke_decrypt_failure: 0,
-                        vdaf_prep_error: 0,
-                        task_not_started: 0,
-                        task_expired: 0,
-                        invalid_message: 0,
-                        report_too_early: 0,
-                        helper_batch_collected: 0,
-                        helper_report_replayed: 0,
-                        helper_report_dropped: 0,
-                        helper_hpke_unknown_config_id: 0,
-                        helper_vdaf_prep_error: 0,
-                        helper_task_not_started: 0,
-                        helper_invalid_message: 0,
-                        helper_report_too_early: 0
+                        success: 11,
+                        helper_hpke_decrypt_failure: 201,
+                        helper_task_expired: 2,
+                        duplicate_extension: 1,
+                        public_share_encode_failure: 1,
+                        batch_collected: 1,
+                        report_replayed: 1,
+                        report_dropped: 1,
+                        hpke_unknown_config_id: 1,
+                        hpke_decrypt_failure: 1,
+                        vdaf_prep_error: 1,
+                        task_not_started: 1,
+                        task_expired: 1,
+                        invalid_message: 1,
+                        report_too_early: 1,
+                        helper_batch_collected: 1,
+                        helper_report_replayed: 1,
+                        helper_report_dropped: 1,
+                        helper_hpke_unknown_config_id: 1,
+                        helper_vdaf_prep_error: 1,
+                        helper_task_not_started: 1,
+                        helper_invalid_message: 1,
+                        helper_report_too_early: 1
                     })
                 );
 
