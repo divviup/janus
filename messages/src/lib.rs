@@ -527,8 +527,8 @@ impl AggregateShareId {
 }
 
 impl From<[u8; Self::LEN]> for AggregateShareId {
-    fn from(checksum: [u8; Self::LEN]) -> Self {
-        Self(checksum)
+    fn from(data: [u8; Self::LEN]) -> Self {
+        Self(data)
     }
 }
 
@@ -575,10 +575,10 @@ impl Encode for AggregateShareId {
 
 impl Decode for AggregateShareId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut checksum = Self::default();
-        bytes.read_exact(&mut checksum.0)?;
+        let mut data = Self::default();
+        bytes.read_exact(&mut data.0)?;
 
-        Ok(checksum)
+        Ok(data)
     }
 }
 
