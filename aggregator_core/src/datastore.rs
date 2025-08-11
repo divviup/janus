@@ -2974,7 +2974,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
 SELECT
     query, aggregation_param, batch_identifier, state, report_count,
     client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
-    collector_aggregate_share_id
+    aggregate_share_id
 FROM collection_jobs
 WHERE collection_jobs.task_id = $1
   AND collection_jobs.collection_job_id = $2
@@ -3035,7 +3035,7 @@ WHERE collection_jobs.task_id = $1
 SELECT
     collection_job_id, query, aggregation_param, state, report_count,
     client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
-    collector_aggregate_share_id
+    aggregate_share_id
 FROM collection_jobs
 WHERE collection_jobs.task_id = $1
   AND collection_jobs.batch_identifier = $2
@@ -3101,7 +3101,7 @@ LIMIT 1",
 SELECT
     collection_job_id, query, aggregation_param, batch_identifier, state,
     report_count, client_timestamp_interval, helper_aggregate_share,
-    leader_aggregate_share, collector_aggregate_share_id
+    leader_aggregate_share, aggregate_share_id
 FROM collection_jobs
 WHERE task_id = $1
   AND batch_interval @> $2::TIMESTAMP
@@ -3156,7 +3156,7 @@ WHERE task_id = $1
 SELECT
     collection_job_id, query, aggregation_param, batch_identifier, state,
     report_count, client_timestamp_interval, helper_aggregate_share,
-    leader_aggregate_share, collector_aggregate_share_id
+    leader_aggregate_share, aggregate_share_id
 FROM collection_jobs
 WHERE task_id = $1
   AND batch_interval && $2
@@ -3213,7 +3213,7 @@ WHERE task_id = $1
 SELECT
     collection_job_id, query, aggregation_param, state, report_count,
     client_timestamp_interval, helper_aggregate_share, leader_aggregate_share,
-    collector_aggregate_share_id
+    aggregate_share_id
 FROM collection_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -3266,7 +3266,7 @@ WHERE task_id = $1
 SELECT
     collection_job_id, query, aggregation_param, batch_identifier, state,
     report_count, client_timestamp_interval, helper_aggregate_share,
-    leader_aggregate_share, collector_aggregate_share_id
+    leader_aggregate_share, aggregate_share_id
 FROM collection_jobs
 WHERE task_id = $1
   AND COALESCE(
@@ -3316,8 +3316,7 @@ WHERE task_id = $1
         let client_timestamp_interval: Option<SqlInterval> = row.get("client_timestamp_interval");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
-        let collector_aggregate_share_id =
-            AggregateShareId::get_decoded(row.get("collector_aggregate_share_id"))?;
+        let aggregate_share_id = AggregateShareId::get_decoded(row.get("aggregate_share_id"))?;
 
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
@@ -3366,7 +3365,7 @@ WHERE task_id = $1
         Ok(CollectionJob::new(
             task_id,
             collection_job_id,
-            collector_aggregate_share_id,
+            aggregate_share_id,
             query,
             aggregation_param,
             batch_identifier,
@@ -3397,7 +3396,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- put_collection_job()
 INSERT INTO collection_jobs
-    (task_id, collection_job_id, collector_aggregate_share_id, query, aggregation_param,
+    (task_id, collection_job_id, aggregate_share_id, query, aggregation_param,
     batch_identifier, batch_interval, state, created_at, updated_at, updated_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT(task_id, collection_job_id) DO UPDATE
@@ -3426,7 +3425,7 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                 &[
                     /* task_id */ &task_info.pkey,
                     /* collection_job_id */ collection_job.id().as_ref(),
-                    /* collector_aggregate_share_id */
+                    /* aggregate_share_id */
                     &collection_job.aggregate_share_id().get_encoded()?,
                     /* query */ &collection_job.query().get_encoded()?,
                     /* aggregation_param */
@@ -4263,7 +4262,7 @@ WHERE task_id = $10
         let stmt = self
             .prepare_cached(
                 "-- get_aggregate_share_job()
-SELECT helper_aggregate_share, report_count, checksum, collector_aggregate_share_id
+SELECT helper_aggregate_share, report_count, checksum, aggregate_share_id
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -4327,7 +4326,7 @@ WHERE task_id = $1
                 "-- get_aggregate_share_jobs_intersecting_interval()
 SELECT
     batch_identifier, aggregation_param, helper_aggregate_share, report_count,
-    checksum, collector_aggregate_share_id
+    checksum, aggregate_share_id
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_interval && $2
@@ -4381,7 +4380,7 @@ WHERE task_id = $1
             .prepare_cached(
                 "-- get_aggregate_share_jobs_by_batch_id()
 SELECT
-    aggregation_param, helper_aggregate_share, report_count, checksum, collector_aggregate_share_id
+    aggregation_param, helper_aggregate_share, report_count, checksum, aggregate_share_id
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND batch_identifier = $2
@@ -4432,7 +4431,7 @@ WHERE task_id = $1
                 "-- get_aggregate_share_jobs_for_task()
 SELECT
     batch_identifier, aggregation_param, helper_aggregate_share, report_count,
-    checksum, collector_aggregate_share_id
+    checksum, aggregate_share_id
 FROM aggregate_share_jobs
 WHERE task_id = $1
   AND COALESCE(
@@ -4482,14 +4481,13 @@ WHERE task_id = $1
     ) -> Result<AggregateShareJob<SEED_SIZE, B, A>, Error> {
         let helper_aggregate_share =
             row.get_bytea_and_decode("helper_aggregate_share", &(vdaf, &aggregation_param))?;
-        let collector_aggregate_share_id =
-            AggregateShareId::get_decoded(row.get("collector_aggregate_share_id"))?;
+        let aggregate_share_id = AggregateShareId::get_decoded(row.get("aggregate_share_id"))?;
         Ok(AggregateShareJob::new(
             *task_id,
             batch_identifier,
             aggregation_param,
             helper_aggregate_share,
-            collector_aggregate_share_id,
+            aggregate_share_id,
             row.get_bigint_and_convert("report_count")?,
             ReportIdChecksum::get_decoded(row.get("checksum"))?,
         ))
@@ -4518,16 +4516,16 @@ WHERE task_id = $1
                 "-- put_aggregate_share_job()
 INSERT INTO aggregate_share_jobs (
     task_id, batch_identifier, batch_interval, aggregation_param,
-    helper_aggregate_share, collector_aggregate_share_id, report_count, checksum,
+    helper_aggregate_share, aggregate_share_id, report_count, checksum,
     created_at, updated_by
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
     SET (
-        helper_aggregate_share, collector_aggregate_share_id, report_count, checksum, 
+        helper_aggregate_share, aggregate_share_id, report_count, checksum, 
         created_at, updated_by
     ) = (
-        excluded.helper_aggregate_share, excluded.collector_aggregate_share_id, 
+        excluded.helper_aggregate_share, excluded.aggregate_share_id, 
         excluded.report_count, excluded.checksum, excluded.created_at, excluded.updated_by
     )
     WHERE COALESCE(
@@ -4552,10 +4550,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     &aggregate_share_job.aggregation_parameter().get_encoded()?,
                     /* helper_aggregate_share */
                     &aggregate_share_job.helper_aggregate_share().get_encoded()?,
-                    /* collector_aggregate_share_id */
-                    &aggregate_share_job
-                        .collector_aggregate_share_id()
-                        .get_encoded()?,
+                    /* aggregate_share_id */
+                    &aggregate_share_job.aggregate_share_id().get_encoded()?,
                     /* report_count */ &i64::try_from(aggregate_share_job.report_count())?,
                     /* checksum */ &aggregate_share_job.checksum().get_encoded()?,
                     /* created_at */ &now,

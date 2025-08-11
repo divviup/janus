@@ -3271,7 +3271,7 @@ impl VdafOps {
                         .await?
                     {
                         // Duplicate aggregate share job found - verify the aggregate share ID matches
-                        if aggregate_share_job.collector_aggregate_share_id() != &aggregate_share_id
+                        if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
                         {
                             // Mismatch here indicates a duplicate request with a different
                             // aggregate share ID. This violates the DAP protocol requirement that

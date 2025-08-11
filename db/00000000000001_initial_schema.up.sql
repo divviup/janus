@@ -376,7 +376,7 @@ CREATE TABLE collection_jobs(
     client_timestamp_interval     TSRANGE,                        -- the minimal interval containing the reports included in this collection job, aligned to the task's time precision (only if in state FINISHED)
     helper_aggregate_share        BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share        BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
-    collector_aggregate_share_id  BYTEA,                          -- the 16-byte AggregateShareID as defined by DAP
+    aggregate_share_id            BYTEA NOT NULL,                 -- the 16-byte AggregateShareID as defined by DAP
 
     step_attempts  BIGINT NOT NULL DEFAULT 0,  -- the number of attempts to step the collection job without making progress, regardless of whether the lease was successfully released or not
 
@@ -407,7 +407,7 @@ CREATE TABLE aggregate_share_jobs(
     helper_aggregate_share          BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
     report_count                    BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                        BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
-    collector_aggregate_share_id    BYTEA,              -- the 16-byte AggregateShareID as defined by DAP
+    aggregate_share_id              BYTEA NOT NULL,     -- the 16-byte AggregateShareID as defined by DAP
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
