@@ -205,6 +205,7 @@ pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use assert_matches::assert_matches;
     use janus_aggregator_core::task::test_util::Task;
+    use janus_core::auth_tokens::test_util::WithAuthenticationToken;
     use janus_messages::{
         AggregationJobContinueReq, AggregationJobId, AggregationJobResp, MediaType,
     };
@@ -219,13 +220,12 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> TestConn {
-        let (header, value) = task.aggregator_auth_token().request_authentication();
         post(
             task.aggregation_job_uri(aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
-        .with_request_header(header, value)
+        .with_authentication_token(task.aggregator_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobContinueReq::MEDIA_TYPE,
@@ -354,6 +354,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        auth_tokens::test_util::WithAuthenticationToken,
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::MockClock,
         vdaf::VdafInstance,
@@ -601,13 +602,12 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
 
-        let (header, value) = task.aggregator_auth_token().request_authentication();
         let mut test_conn = delete(
             task.aggregation_job_uri(&aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
-        .with_request_header(header, value)
+        .with_authentication_token(task.aggregator_auth_token())
         .run_async(&handler)
         .await;
 
@@ -858,10 +858,6 @@ mod tests {
         let test_case = setup_aggregation_job_continue_test().await;
 
         // Delete the aggregation job. This should be idempotent.
-        let (header, value) = test_case
-            .task
-            .aggregator_auth_token()
-            .request_authentication();
         for _ in 0..2 {
             let test_conn = delete(
                 test_case
@@ -870,7 +866,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .with_request_header(header, value.clone())
+            .with_authentication_token(test_case.task.aggregator_auth_token())
             .run_async(&test_case.handler)
             .await;
 

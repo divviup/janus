@@ -71,7 +71,7 @@ use educe::Educe;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
-    http::HttpErrorResponse,
+    http::{HttpErrorResponse, ReqwestAuthenticationToken},
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
@@ -474,12 +474,11 @@ impl<V: vdaf::Collector> Collector<V> {
 
         let response_res =
             retry_http_request(self.http_request_retry_parameters.build(), || async {
-                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .put(collection_job_url.clone())
                     .header(CONTENT_TYPE, CollectionJobReq::<TimeInterval>::MEDIA_TYPE)
                     .body(collect_request.clone())
-                    .header(auth_header, auth_value)
+                    .authentication_token(&self.authentication)
                     .send()
                     .await
             })
@@ -518,13 +517,12 @@ impl<V: vdaf::Collector> Collector<V> {
         let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
         let response_res =
             retry_http_request(self.http_request_retry_parameters.build(), || async {
-                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .get(collection_job_url.clone())
                     // reqwest does not send Content-Length for requests with empty bodies. Some
                     // HTTP servers require this anyway, so explicitly set it.
                     .header(CONTENT_LENGTH, 0)
-                    .header(auth_header, auth_value)
+                    .authentication_token(&self.authentication)
                     .send()
                     .await
             })
@@ -719,10 +717,9 @@ impl<V: vdaf::Collector> Collector<V> {
         let collection_job_url = self.collection_job_uri(collection_job.collection_job_id)?;
         let response_res =
             retry_http_request(self.http_request_retry_parameters.build(), || async {
-                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .delete(collection_job_url.clone())
-                    .header(auth_header, auth_value)
+                    .authentication_token(&self.authentication)
                     .send()
                     .await
             })
@@ -756,7 +753,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use fixed::types::I1F31;
     use janus_core::{
-        auth_tokens::AuthenticationToken,
+        auth_tokens::{AuthenticationToken, test_util::MatchAuthenticationToken},
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
         initialize_rustls,
         retries::test_util::test_http_request_exponential_backoff,
@@ -918,7 +915,6 @@ mod tests {
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
-        let (auth_header, auth_value) = collector.authentication.request_authentication();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -945,7 +941,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_header(auth_header, auth_value.as_str())
+            .match_authentication_token(&collector.authentication)
             .with_status(201)
             .expect(1)
             .create_async()
@@ -979,7 +975,7 @@ mod tests {
             .await;
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
-            .match_header(auth_header, auth_value.as_str())
+            .match_authentication_token(&collector.authentication)
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1993,7 +1989,6 @@ mod tests {
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
-        let (auth_header, auth_value) = collector.authentication.request_authentication();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -2029,7 +2024,7 @@ mod tests {
         let mocked_collect_complete = server
             .mock("GET", collection_job_path.as_str())
             .with_status(200)
-            .match_header(auth_header, auth_value.as_str())
+            .match_authentication_token(&collector.authentication)
             .match_header(CONTENT_LENGTH.as_str(), "0")
             .with_header(
                 CONTENT_TYPE.as_str(),

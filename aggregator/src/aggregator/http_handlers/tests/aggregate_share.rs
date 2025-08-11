@@ -13,6 +13,7 @@ use janus_aggregator_core::{
     },
 };
 use janus_core::{
+    auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     report_id::ReportIdChecksumExt,
     time::Clock,
@@ -40,12 +41,11 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     aggregate_share_id: &AggregateShareId,
     handler: &impl Handler,
 ) -> TestConn {
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     put(task
         .aggregate_shares_uri(aggregate_share_id)
         .unwrap()
         .path())
-    .with_request_header(header, value)
+    .with_authentication_token(task.aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateShareReq::<B>::MEDIA_TYPE,

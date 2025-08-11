@@ -63,6 +63,7 @@ use janus_core::{
     Runtime,
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
+    http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{
@@ -3724,7 +3725,6 @@ async fn send_request_to_helper(
     auth_token: &AuthenticationToken,
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<HttpResponse, Error> {
-    let (auth_header, auth_value) = auth_token.request_authentication();
     let domain = Arc::from(url.domain().unwrap_or_default());
     let method_str = Arc::from(method.as_str());
     let timer = RequestTimer::new(
@@ -3741,7 +3741,7 @@ async fn send_request_to_helper(
             timer.start_attempt();
             let mut request = http_client
                 .request(method.clone(), url.clone())
-                .header(auth_header, auth_value.as_str());
+                .authentication_token(auth_token);
             if let Some(request_body) = request_body.clone() {
                 request = request
                     .header(CONTENT_TYPE, request_body.content_type)

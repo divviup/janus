@@ -893,7 +893,9 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        Runtime, initialize_rustls,
+        Runtime,
+        auth_tokens::test_util::MatchAuthenticationToken,
+        initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::{Clock, MockClock, TimeExt},
@@ -1329,7 +1331,6 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
-        let (header, value) = agg_auth_token.request_authentication();
         let mocked_failed_aggregate_share = server
             .mock(
                 "PUT",
@@ -1337,7 +1338,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_authentication_token(agg_auth_token)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -1402,7 +1403,6 @@ mod tests {
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
         let helper_response = fake_aggregate_share();
-        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_share = server
             .mock(
                 "PUT",
@@ -1410,7 +1410,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_authentication_token(agg_auth_token)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,

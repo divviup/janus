@@ -428,6 +428,39 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
     }
 }
 
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use crate::auth_tokens::AuthenticationToken;
+
+    /// Extension trait to fluently add an auth token to a [`trillium_testing::TestConn`].
+    pub trait WithAuthenticationToken {
+        /// Add the header and value obtained from [`AuthenticationToken::request_authentication`] to
+        /// the request.
+        fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
+    }
+
+    impl WithAuthenticationToken for trillium_testing::TestConn {
+        fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+            let (header, value) = auth_token.request_authentication();
+            self.with_request_header(header, value)
+        }
+    }
+
+    /// Extension trait to fluently match on authentication tokens with a [`mockito::Mock`].
+    pub trait MatchAuthenticationToken {
+        /// Matches on requests which include a header and value matching
+        /// [`AuthenticationToken::request_authentication`].
+        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
+    }
+
+    impl MatchAuthenticationToken for mockito::Mock {
+        fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+            let (header, value) = auth_token.request_authentication();
+            self.match_header(header, value.as_str())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};

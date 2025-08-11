@@ -32,6 +32,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     Runtime,
+    auth_tokens::test_util::MatchAuthenticationToken,
     hpke::HpkeKeypair,
     initialize_rustls,
     report_id::ReportIdChecksumExt,
@@ -285,7 +286,6 @@ async fn aggregation_job_driver() {
     ]);
     let mocked_aggregates = join_all(helper_responses.iter().map(
         |(req_method, req_content_type, resp_content_type, resp_body)| {
-            let (header, value) = agg_auth_token.request_authentication();
             server
                 .mock(
                     req_method,
@@ -293,7 +293,7 @@ async fn aggregation_job_driver() {
                         .unwrap()
                         .path(),
                 )
-                .match_header(header, value.as_str())
+                .match_authentication_token(&agg_auth_token)
                 .match_header(CONTENT_TYPE.as_str(), *req_content_type)
                 .with_status(200)
                 .with_header(CONTENT_TYPE.as_str(), resp_content_type)
@@ -716,7 +716,6 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
         .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
         .create_async()
         .await;
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "PUT",
@@ -724,7 +723,7 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1091,7 +1090,6 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
             },
         )]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "PUT",
@@ -1099,7 +1097,7 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1477,7 +1475,6 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
             ),
         ]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_init = server
         .mock(
             "PUT",
@@ -1485,7 +1482,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1792,7 +1789,6 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
         .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\"}")
         .create_async()
         .await;
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "PUT",
@@ -1800,7 +1796,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -2095,7 +2091,6 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
             },
         )]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "PUT",
@@ -2103,7 +2098,7 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -2411,7 +2406,6 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
         .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
         .create_async()
         .await;
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "POST",
@@ -2419,7 +2413,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
@@ -2744,7 +2738,6 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
         .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
         .create_async()
         .await;
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "POST",
@@ -2752,7 +2745,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
@@ -3011,7 +3004,6 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .clone(),
         )]),
     );
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
             "PUT",
@@ -3019,7 +3011,7 @@ async fn leader_async_aggregation_job_init_to_pending() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -3268,7 +3260,6 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .clone(),
         )]),
     );
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
             "PUT",
@@ -3276,7 +3267,7 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -3531,7 +3522,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .clone(),
         )]),
     );
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_request = server
         .mock(
             "POST",
@@ -3539,7 +3529,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
         .match_body(leader_request.get_encoded().unwrap())
         .with_status(202)
@@ -3780,8 +3770,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let (header, value) = agg_auth_token.request_authentication();
-
     let mocked_aggregate_request = server
         .mock(
             "GET",
@@ -3790,7 +3778,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                 .path(),
         )
         .match_query("step=0")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .create_async()
         .await;
@@ -4026,8 +4014,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP response.
-    let (header, value) = agg_auth_token.request_authentication();
-
     let mocked_aggregate_request = server
         .mock(
             "GET",
@@ -4036,7 +4022,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                 .path(),
         )
         .match_query("step=0")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .create_async()
         .await;
@@ -4283,7 +4269,6 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
             },
         )]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
         .mock(
@@ -4293,7 +4278,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                 .path(),
         )
         .match_query("step=0")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .with_body(helper_response.get_encoded().unwrap())
@@ -4545,7 +4530,6 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
             },
         )]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
 
     let mocked_aggregate_request = server
         .mock(
@@ -4555,7 +4539,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                 .path(),
         )
         .match_query("step=0")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .with_body(helper_response.get_encoded().unwrap())
@@ -4804,7 +4788,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Setup: prepare mocked HTTP responses.
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "GET",
@@ -4813,7 +4796,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
                 .path(),
         )
         .match_query("step=1")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .create_async()
         .await;
@@ -5065,7 +5048,6 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
             PrepareStepResult::Finished,
         )]),
     };
-    let (header, value) = agg_auth_token.request_authentication();
     let mocked_aggregate_success = server
         .mock(
             "GET",
@@ -5074,7 +5056,7 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
                 .path(),
         )
         .match_query("step=1")
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .with_status(200)
         .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
         .with_body(helper_response.get_encoded().unwrap())
@@ -6350,7 +6332,6 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
 
     // Set up three error responses from our mock helper. These will cause errors in the
     // leader, because the response body is empty and cannot be decoded.
-    let (header, value) = agg_auth_token.request_authentication();
     let failure_mock = server
         .mock(
             "PUT",
@@ -6358,7 +6339,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6377,7 +6358,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6602,7 +6583,6 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
 
     // Set up one fatal error response from our mock helper. These will cause errors in the
     // leader, because the response body is empty and cannot be decoded.
-    let (header, value) = agg_auth_token.request_authentication();
     let failure_mock = server
         .mock(
             "PUT",
@@ -6610,7 +6590,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6629,7 +6609,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
                 .unwrap()
                 .path(),
         )
-        .match_header(header, value.as_str())
+        .match_authentication_token(agg_auth_token)
         .match_header(
             CONTENT_TYPE.as_str(),
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
