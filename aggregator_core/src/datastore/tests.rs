@@ -3931,6 +3931,9 @@ async fn setup_collection_job_acquire_test_case<B: TestBatchModeExt>(
                     test_case.batch_identifier.clone(),
                     match test_case.state {
                         CollectionJobStateCode::Start => CollectionJobState::Start,
+                        CollectionJobStateCode::AwaitingHelper => {
+                            CollectionJobState::AwaitingHelper
+                        }
                         CollectionJobStateCode::Finished => CollectionJobState::Finished {
                             report_count: 1,
                             client_timestamp_interval: test_case.client_timestamp_interval,

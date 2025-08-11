@@ -672,9 +672,47 @@ impl<C: Clock> Aggregator<C> {
         Ok(())
     }
 
+    /// Ensure an incoming Aggregate Share request is valid and authorized. Returns
+    /// a tuple of a [`TaskAggregator`] and a [`Option<&TaskConfig>`].
+    async fn validate_and_authorize_aggregate_share_request(
+        &self,
+        task: &AggregatorTask,
+        auth_token: Option<AuthenticationToken>,
+        taskprov_task_config: Option<&TaskConfig>,
+    ) -> Result<HpkeConfig, Error> {
+        if task.role() != &Role::Helper {
+            return Err(Error::UnrecognizedTask(*task.id()));
+        }
+        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
+        // have to use the peer aggregator's collector config rather than the main task.
+        let collector_hpke_config = if self.cfg.taskprov_config.enabled
+            && taskprov_task_config.is_some()
+        {
+            let (peer_aggregator, _, _) = self
+                .taskprov_authorize_request(
+                    &Role::Leader,
+                    task.id(),
+                    taskprov_task_config.unwrap(),
+                    auth_token.as_ref(),
+                )
+                .await?;
+
+            peer_aggregator.collector_hpke_config()
+        } else {
+            if !task.check_aggregator_auth_token(auth_token.as_ref()) {
+                return Err(Error::UnauthorizedRequest(*task.id()));
+            }
+
+            task.collector_hpke_config()
+                .ok_or_else(|| Error::Internal("task is missing collector_hpke_config".into()))?
+        };
+
+        Ok(collector_hpke_config.clone())
+    }
+
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded
     /// [`AggregateShareReq`]. Returns an [`AggregateShare`].
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share_put(
         &self,
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
@@ -687,38 +725,14 @@ impl<C: Clock> Aggregator<C> {
             .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
-        if task_aggregator.task.role() != &Role::Helper {
-            return Err(Error::UnrecognizedTask(*task_id));
-        }
 
-        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
-        // have to use the peer aggregator's collector config rather than the main task.
-        let collector_hpke_config = if self.cfg.taskprov_config.enabled
-            && taskprov_task_config.is_some()
-        {
-            let (peer_aggregator, _, _) = self
-                .taskprov_authorize_request(
-                    &Role::Leader,
-                    task_id,
-                    taskprov_task_config.unwrap(),
-                    auth_token.as_ref(),
-                )
-                .await?;
-
-            peer_aggregator.collector_hpke_config()
-        } else {
-            if !task_aggregator
-                .task
-                .check_aggregator_auth_token(auth_token.as_ref())
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
-
-            task_aggregator
-                .task
-                .collector_hpke_config()
-                .ok_or_else(|| Error::Internal("task is missing collector_hpke_config".into()))?
-        };
+        let collector_hpke_config = self
+            .validate_and_authorize_aggregate_share_request(
+                &task_aggregator.task,
+                auth_token,
+                taskprov_task_config,
+            )
+            .await?;
 
         task_aggregator
             .handle_aggregate_share(
@@ -727,9 +741,34 @@ impl<C: Clock> Aggregator<C> {
                 self.cfg.batch_aggregation_shard_count,
                 self.cfg.max_future_concurrency,
                 req_bytes,
-                collector_hpke_config,
+                &collector_hpke_config,
                 aggregate_share_id,
             )
+            .await
+    }
+
+    /// Handle an aggregate share request. Only supported by the helper. Returns an [`AggregateShare`].
+    async fn handle_aggregate_share_get(
+        &self,
+        task_id: &TaskId,
+        aggregate_share_id: &AggregateShareId,
+        auth_token: Option<AuthenticationToken>,
+        taskprov_task_config: Option<&TaskConfig>,
+    ) -> Result<AggregateShare, Error> {
+        let task_aggregator = self
+            .task_aggregators
+            .get(task_id)
+            .await?
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
+        let collector_hpke_config = self
+            .validate_and_authorize_aggregate_share_request(
+                &task_aggregator.task,
+                auth_token,
+                taskprov_task_config,
+            )
+            .await?;
+        task_aggregator
+            .handle_get_aggregate_share(&self.datastore, &collector_hpke_config, aggregate_share_id)
             .await
     }
 
@@ -1147,6 +1186,22 @@ impl<C: Clock> TaskAggregator<C> {
                 batch_aggregation_shard_count,
                 max_future_concurrency,
                 req_bytes,
+                collector_hpke_config,
+                aggregate_share_id,
+            )
+            .await
+    }
+
+    async fn handle_get_aggregate_share(
+        &self,
+        datastore: &Datastore<C>,
+        collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<AggregateShare, Error> {
+        self.vdaf_ops
+            .handle_get_aggregate_share(
+                datastore,
+                Arc::clone(&self.task),
                 collector_hpke_config,
                 aggregate_share_id,
             )
@@ -2982,6 +3037,11 @@ impl VdafOps {
                 Ok(vec![0; 0])
             }
 
+            CollectionJobState::AwaitingHelper => {
+                debug!(%collection_job_id, task_id = %task.id(), "collection job has not completed yet");
+                Ok(vec![0; 0])
+            }
+
             CollectionJobState::Finished {
                 report_count,
                 client_timestamp_interval,
@@ -3126,10 +3186,119 @@ impl VdafOps {
             .await?;
         Ok(())
     }
-
-    /// Implements the `tasks/{task-id}/aggregate_shares` endpoint for the helper.
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` GET endpoint for the helper.
     #[tracing::instrument(
-        skip(self, datastore, clock, task, req_bytes),
+        skip(self, datastore, task, aggregate_share_id),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_get_aggregate_share<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<AggregateShare, Error> {
+        match task.batch_mode() {
+            task::BatchMode::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, _dp_strategy, DpStrategyType) => {
+                    Self::handle_get_aggregate_share_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        DpStrategyType,
+                        VdafType,
+                        _,
+                    >(
+                        datastore,
+                        task,
+                        Arc::clone(vdaf),
+                        collector_hpke_config,
+                        aggregate_share_id
+                    ).await
+                })
+            }
+            task::BatchMode::LeaderSelected { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH, _dp_strategy, DpStrategyType) => {
+                    Self::handle_get_aggregate_share_generic::<
+                        VERIFY_KEY_LENGTH,
+                        LeaderSelected,
+                        DpStrategyType,
+                        VdafType,
+                        _,
+                    >(
+                        datastore,
+                        task,
+                        Arc::clone(vdaf),
+                        collector_hpke_config,
+                        aggregate_share_id,
+                    ).await
+                })
+            }
+        }
+    }
+
+    async fn handle_get_aggregate_share_generic<
+        const SEED_SIZE: usize,
+        B: CollectableBatchMode,
+        S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
+        A: AsyncAggregatorWithNoise<SEED_SIZE, S>,
+        C: Clock,
+    >(
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+        collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<AggregateShare, Error> {
+        let aggregate_share_job = datastore
+            .run_tx("aggregate_share", |tx| {
+                let (task, vdaf, aggregate_share_id) =
+                    (Arc::clone(&task), Arc::clone(&vdaf), *aggregate_share_id);
+                Box::pin(async move {
+                    let aggregate_share_job = tx
+                        .get_aggregate_share_job_by_id::<SEED_SIZE, B, A>(
+                            vdaf.as_ref(),
+                            task.id(),
+                            aggregate_share_id,
+                        )
+                        .await?;
+                    Ok(aggregate_share_job)
+                })
+            })
+            .await?
+            .ok_or(Error::UnrecognizedAggregateShareId(
+                *task.id(),
+                *aggregate_share_id,
+            ))?;
+
+        // NOTE: We have no means by which we can fulfil §4.4.4.3's "Verify total report count" here
+        // as we do on the PUT, which is OK, because it should have happened already on the PUT
+        // and we have to trust it.
+        let encrypted_aggregate_share = hpke::seal(
+            collector_hpke_config,
+            &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+            &aggregate_share_job
+                .helper_aggregate_share()
+                .get_encoded()
+                .map_err(Error::MessageEncode)?,
+            &AggregateShareAad::new(
+                *task.id(),
+                aggregate_share_job
+                    .aggregation_parameter()
+                    .get_encoded()
+                    .map_err(Error::MessageEncode)?,
+                BatchSelector::<B>::new(aggregate_share_job.batch_identifier().clone()),
+            )
+            .get_encoded()
+            .map_err(Error::MessageEncode)?,
+        )?;
+
+        Ok(AggregateShare::new(encrypted_aggregate_share))
+    }
+
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` PUT endpoint for the helper.
+    #[tracing::instrument(
+        skip(self, datastore, clock, task, req_bytes, aggregate_share_id),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
