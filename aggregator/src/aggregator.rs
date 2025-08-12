@@ -673,7 +673,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Ensure an incoming Aggregate Share request is valid and authorized. Returns
-    /// a tuple of a [`TaskAggregator`] and a [`Option<&TaskConfig>`].
+    /// a  [`HpkeConfig`].
     async fn validate_and_authorize_aggregate_share_request(
         &self,
         task: &AggregatorTask,
