@@ -3,7 +3,9 @@ use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
 use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
 use janus_aggregator_core::{
-    datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
+    datastore::{
+        models::HpkeKeyState, task_counters::TaskUploadCounter, test_util::ephemeral_datastore,
+    },
     task::{
         AggregationMode,
         test_util::{Task, TaskBuilder},
@@ -450,7 +452,7 @@ async fn bad_client_report_validity() {
 
     let task_id = *task.id();
     let counters = datastore
-        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_task_upload_counter(&task_id).await }))
+        .run_unnamed_tx(|tx| Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await }))
         .await
         .unwrap()
         .unwrap();

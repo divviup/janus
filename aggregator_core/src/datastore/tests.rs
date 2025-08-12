@@ -10,7 +10,7 @@ use crate::{
             CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval, TaskAggregationCounter, TaskUploadCounter,
+            SqlInterval,
         },
         schema_versions_template,
         test_util::{

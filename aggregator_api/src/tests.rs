@@ -13,7 +13,8 @@ use janus_aggregator_core::{
     SecretBytes,
     datastore::{
         Datastore,
-        models::{HpkeKeyState, TaskAggregationCounter, TaskUploadCounter},
+        models::HpkeKeyState,
+        task_counters::{TaskAggregationCounter, TaskUploadCounter},
         test_util::{EphemeralDatastore, ephemeral_datastore},
     },
     task::{
@@ -78,7 +79,7 @@ async fn get_config() {
             r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""batch_modes":["TimeInterval","LeaderSelected"],"#,
-            r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","PureDpDiscreteLaplace"],"#,
+            r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","PureDpDiscreteLaplace","AggregationJobMetrics"],"#,
             r#""software_name":"Janus","software_version":""#,
         )
     );
@@ -910,12 +911,9 @@ async fn get_task_upload_metrics() {
     // Verify: requesting metrics on a task returns the correct result.
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
-            tx.increment_task_upload_counter(
-                &task_id,
-                1,
-                &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12),
-            )
-            .await
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12)
+                .flush(&task_id, tx, 1)
+                .await
         })
     })
     .await
@@ -995,12 +993,11 @@ async fn get_task_aggregation_metrics() {
     // Verify: requesting metrics on a task returns the correct result.
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
-            tx.increment_task_aggregation_counter(
-                &task_id,
-                5,
-                &TaskAggregationCounter::new_with_values(15),
-            )
-            .await
+            TaskAggregationCounter::default()
+                .with_success(15)
+                .with_helper_hpke_decrypt_failure(100)
+                .flush(&task_id, tx, 5)
+                .await
         })
     })
     .await
@@ -1013,7 +1010,9 @@ async fn get_task_aggregation_metrics() {
             .await,
         Status::Ok,
         serde_json::to_string(&GetTaskAggregationMetricsResp(
-            TaskAggregationCounter::new_with_values(15)
+            TaskAggregationCounter::default()
+                .with_success(15)
+                .with_helper_hpke_decrypt_failure(100)
         ))
         .unwrap(),
     );
