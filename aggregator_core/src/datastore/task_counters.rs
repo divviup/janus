@@ -352,21 +352,25 @@ impl PartialEq for TaskAggregationCounter {
 impl Eq for TaskAggregationCounter {}
 
 impl TaskAggregationCounter {
+    #[cfg(feature = "test-util")]
     pub fn with_success(self, value: u64) -> Self {
         self.inner.lock().unwrap().success = value;
         self
     }
 
+    #[cfg(feature = "test-util")]
     pub fn with_helper_hpke_decrypt_failure(self, value: u64) -> Self {
         self.inner.lock().unwrap().helper_hpke_decrypt_failure = value;
         self
     }
 
+    #[cfg(feature = "test-util")]
     pub fn with_helper_task_expired(self, value: u64) -> Self {
         self.inner.lock().unwrap().helper_task_expired = value;
         self
     }
 
+    #[cfg(feature = "test-util")]
     pub fn with_vdaf_prep_error(self, value: u64) -> Self {
         self.inner.lock().unwrap().vdaf_prep_error = value;
         self
