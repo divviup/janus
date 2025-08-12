@@ -828,7 +828,7 @@ async fn aggregate_shares_put<C: Clock>(
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let aggregate_share_id = parse_aggregate_share_id(conn)?;
     let share = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_share_put(
+        .cancel_on_disconnect(aggregator.handle_put_aggregate_share(
             &task_id,
             &aggregate_share_id,
             &body,
@@ -851,7 +851,7 @@ async fn aggregate_shares_get<C: Clock>(
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let aggregate_share_id = parse_aggregate_share_id(conn)?;
     let share = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_share_get(
+        .cancel_on_disconnect(aggregator.handle_get_aggregate_share(
             &task_id,
             &aggregate_share_id,
             auth_token,

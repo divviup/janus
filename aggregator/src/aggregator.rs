@@ -712,7 +712,7 @@ impl<C: Clock> Aggregator<C> {
 
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded
     /// [`AggregateShareReq`]. Returns an [`AggregateShare`].
-    async fn handle_aggregate_share_put(
+    async fn handle_put_aggregate_share(
         &self,
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
@@ -748,7 +748,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Handle an aggregate share request. Only supported by the helper. Returns an [`AggregateShare`].
-    async fn handle_aggregate_share_get(
+    async fn handle_get_aggregate_share(
         &self,
         task_id: &TaskId,
         aggregate_share_id: &AggregateShareId,
