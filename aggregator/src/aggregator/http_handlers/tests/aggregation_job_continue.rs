@@ -13,10 +13,12 @@ use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
-    datastore::models::{
-        AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-        ReportAggregation, ReportAggregationState, TaskAggregationCounter,
-        merge_batch_aggregations_by_batch,
+    datastore::{
+        models::{
+            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+            ReportAggregation, ReportAggregationState, merge_batch_aggregations_by_batch,
+        },
+        task_counters::TaskAggregationCounter,
     },
     task::{AggregationMode, BatchMode, VerifyKey, test_util::TaskBuilder},
 };
@@ -387,7 +389,7 @@ async fn aggregate_continue_sync() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(1),
+        TaskAggregationCounter::default().with_success(1),
     )
     .await;
 }
@@ -638,12 +640,8 @@ async fn aggregate_continue_async() {
         ])
     );
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1039,7 +1037,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(2),
+        TaskAggregationCounter::default().with_success(2),
     )
     .await;
 
@@ -1341,7 +1339,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(3),
+        TaskAggregationCounter::default().with_success(3),
     )
     .await;
 }
@@ -1455,7 +1453,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(0),
+        TaskAggregationCounter::default().with_vdaf_prep_error(1),
     )
     .await;
 }
@@ -1637,7 +1635,7 @@ async fn aggregate_continue_prep_step_fails() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter::new_with_values(0),
+        TaskAggregationCounter::default().with_vdaf_prep_error(1),
     )
     .await;
 }
@@ -1746,12 +1744,8 @@ async fn aggregate_continue_unexpected_transition() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -1907,12 +1901,8 @@ async fn aggregate_continue_out_of_order_transition() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
 
 #[tokio::test]
@@ -2008,10 +1998,6 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     )
     .await;
 
-    assert_task_aggregation_counter(
-        &datastore,
-        *task.id(),
-        TaskAggregationCounter::new_with_values(0),
-    )
-    .await;
+    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
+        .await;
 }
