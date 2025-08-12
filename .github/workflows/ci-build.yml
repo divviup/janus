@@ -40,7 +40,7 @@ jobs:
     - name: Get OS version
       id: os-version
       run: echo "release=$(lsb_release --release --short)" >> $GITHUB_OUTPUT
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Setup Go toolchain
       uses: actions/setup-go@v5
     - name: Install Kind
@@ -123,7 +123,7 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
       RUSTFLAGS: "-D warnings"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:
@@ -147,7 +147,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: 1
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -174,7 +174,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: 1
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
@@ -191,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: cargo-deny
       uses: EmbarkStudios/cargo-deny-action@v2.0.12
       with:
