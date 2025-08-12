@@ -59,7 +59,6 @@ impl Eq for TaskUploadCounter {}
 
 impl TaskUploadCounter {
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "test-util")]
     pub fn new_with_values(
         interval_collected: u64,
         report_decode_failure: u64,
