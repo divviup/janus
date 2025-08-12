@@ -96,12 +96,16 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
                     .with_task_id(task_id),
             ),
-        Error::UnrecognizedAggregateShareId(task_id, _aggregate_share_id) => conn
+        Error::UnrecognizedAggregateShareId(task_id, aggregate_share_id) => conn
             .with_problem_document(
-                // TODO: Should this have a new DAP problem type?
-                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                    .with_task_id(task_id),
-            ),
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
+                "The aggregate share ID is not recognized.",
+                Status::NotFound,
+            )
+            .with_task_id(task_id)
+            .with_aggregate_share_id(aggregate_share_id),
+        ),
         Error::AbandonedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",

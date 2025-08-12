@@ -1,4 +1,6 @@
-use janus_messages::{AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType};
+use janus_messages::{
+    AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
+};
 use serde::Serialize;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
@@ -23,6 +25,8 @@ pub struct ProblemDocument<'a> {
     aggregation_job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collection_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aggregate_share_id: Option<String>,
 }
 
 impl<'a> ProblemDocument<'a> {
@@ -41,6 +45,7 @@ impl<'a> ProblemDocument<'a> {
             detail: None,
             aggregation_job_id: None,
             collection_job_id: None,
+            aggregate_share_id: None,
         }
     }
 
@@ -82,6 +87,13 @@ impl<'a> ProblemDocument<'a> {
     pub fn with_collection_job_id(self, collection_job_id: &CollectionJobId) -> Self {
         Self {
             collection_job_id: Some(collection_job_id.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_aggregate_share_id(self, aggregate_share_id: &AggregateShareId) -> Self {
+        Self {
+            aggregate_share_id: Some(aggregate_share_id.to_string()),
             ..self
         }
     }

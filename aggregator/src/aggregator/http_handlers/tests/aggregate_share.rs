@@ -886,16 +886,17 @@ async fn aggregate_share_request_get_unrecognized_id() {
     .run_async(&handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(test_conn.status(), Some(Status::NotFound));
 
     // Verify it returns the correct problem document
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-            "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob",
-            "title": "An endpoint received a message with an unknown aggregation job ID.",
+            "status": Status::NotFound as u16,
+            "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
+            "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),
+            "aggregate_share_id": format!("{}", nonexistent_aggregate_share_id),
         })
     );
 }
