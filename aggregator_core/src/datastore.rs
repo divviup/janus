@@ -3323,6 +3323,8 @@ WHERE task_id = $1
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
 
+            CollectionJobStateCode::Poll => CollectionJobState::Poll,
+
             CollectionJobStateCode::Finished => {
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
                     Error::DbState(
@@ -3469,7 +3471,7 @@ WITH incomplete_jobs AS (
     FROM collection_jobs
     JOIN tasks ON tasks.id = collection_jobs.task_id
     WHERE tasks.aggregator_role = 'LEADER'
-      AND collection_jobs.state = 'START'
+      AND collection_jobs.state IN ('START', 'POLL')
       AND collection_jobs.lease_expiry <= $4
       AND COALESCE(
               LOWER(batch_interval),
@@ -3643,7 +3645,9 @@ WHERE task_id = $4
                 )
             }
 
-            CollectionJobState::Abandoned | CollectionJobState::Deleted => (None, None, None, None),
+            CollectionJobState::Poll
+            | CollectionJobState::Abandoned
+            | CollectionJobState::Deleted => (None, None, None, None),
         };
 
         let stmt = self
@@ -4296,6 +4300,67 @@ WHERE task_id = $1
                 task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
+                &row,
+            )
+        })
+        .transpose()
+    }
+
+    /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given [`AggregateShareId`], or
+    /// `None` if no such job exists.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn get_aggregate_share_job_by_id<
+        const SEED_SIZE: usize,
+        B: BatchMode,
+        A: AsyncAggregator<SEED_SIZE>,
+    >(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+        aggregate_share_id: AggregateShareId,
+    ) -> Result<Option<AggregateShareJob<SEED_SIZE, B, A>>, Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(None),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- get_aggregate_share_job_by_id()
+SELECT 
+    helper_aggregate_share, batch_identifier, aggregation_param, report_count, 
+    checksum, aggregate_share_id
+FROM aggregate_share_jobs
+WHERE task_id = $1
+  AND aggregate_share_id = $2
+  AND COALESCE(
+          LOWER(batch_interval),
+          (SELECT MAX(UPPER(client_timestamp_interval))
+           FROM batch_aggregations ba
+           WHERE ba.task_id = aggregate_share_jobs.task_id
+             AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
+             AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
+          '-infinity'::TIMESTAMP) >= $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_info.pkey,
+                /* aggregate_share_id */ &aggregate_share_id.get_encoded()?,
+                /* threshold */
+                &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+            ],
+        )
+        .await?
+        .map(|row| {
+            let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+            Self::aggregate_share_job_from_row(
+                vdaf,
+                task_id,
+                batch_identifier,
+                aggregation_param,
                 &row,
             )
         })

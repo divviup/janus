@@ -346,44 +346,54 @@ impl CollectionJobDriver {
             None => return Ok(()),
         };
 
-        vdaf.add_noise_to_agg_share(
-            &dp_strategy,
-            collection_job.aggregation_parameter(),
-            &mut leader_aggregate_share.aggregate_share,
-            leader_aggregate_share.report_count.try_into()?,
-        )
-        .map_err(Error::DifferentialPrivacy)?;
+        // Build the aggregate share based on our state. If we're starting,
+        // provide the Aggregate Share Request.
+        let (method, request_body) = match collection_job.state() {
+            CollectionJobState::Start => {
+                vdaf.add_noise_to_agg_share(
+                    &dp_strategy,
+                    collection_job.aggregation_parameter(),
+                    &mut leader_aggregate_share.aggregate_share,
+                    leader_aggregate_share.report_count.try_into()?,
+                )
+                .map_err(Error::DifferentialPrivacy)?;
+                let request_body = RequestBody {
+                    content_type: AggregateShareReq::<B>::MEDIA_TYPE,
+                    body: Bytes::from(
+                        AggregateShareReq::<B>::new(
+                            BatchSelector::new(collection_job.batch_identifier().clone()),
+                            collection_job
+                                .aggregation_parameter()
+                                .get_encoded()
+                                .map_err(Error::MessageEncode)?,
+                            leader_aggregate_share.report_count,
+                            leader_aggregate_share.checksum,
+                        )
+                        .get_encoded()
+                        .map_err(Error::MessageEncode)?,
+                    ),
+                };
+                Ok((Method::PUT, Some(request_body)))
+            }
+            CollectionJobState::Poll => Ok((Method::GET, None)),
+            // TODO: This needs to send DELETE, not GET, but our Helper isn't able to do this
+            // yet. See Issue #3962
+            CollectionJobState::Deleted => Ok((Method::GET, None)),
+            _ => Err(Error::Internal("unexpected state".into())),
+        }?;
 
         // Send an aggregate share request to the helper.
-        // TODO: This routine must track state, and send GET requests
-        // instead of PUTs when dealing with asynchronous processing. See
-        // https://github.com/divviup/janus/issues/3963
         let http_response = send_request_to_helper(
             &self.http_client,
             self.backoff
                 .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
-            Method::PUT,
+            method,
             task.aggregate_shares_uri(collection_job.aggregate_share_id())?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
             AGGREGATE_SHARES_ROUTE,
-            Some(RequestBody {
-                content_type: AggregateShareReq::<B>::MEDIA_TYPE,
-                body: Bytes::from(
-                    AggregateShareReq::<B>::new(
-                        BatchSelector::new(collection_job.batch_identifier().clone()),
-                        collection_job
-                            .aggregation_parameter()
-                            .get_encoded()
-                            .map_err(Error::MessageEncode)?,
-                        leader_aggregate_share.report_count,
-                        leader_aggregate_share.checksum,
-                    )
-                    .get_encoded()
-                    .map_err(Error::MessageEncode)?,
-                ),
-            }),
+            request_body,
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
             task.aggregator_auth_token()
@@ -409,9 +419,17 @@ impl CollectionJobDriver {
             datastore
                 .run_tx("step_collection_job_helper_retry", |tx| {
                     let lease = Arc::clone(&lease);
+                    let collection_job = match collection_job.state() {
+                        CollectionJobState::Start => {
+                            collection_job.clone().with_state(CollectionJobState::Poll)
+                        }
+                        _ => collection_job.clone(),
+                    };
                     Box::pin(async move {
-                        tx.release_collection_job(&lease, Some(&retry_delay))
-                            .await?;
+                        try_join!(
+                            tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job),
+                            tx.release_collection_job(&lease, Some(&retry_delay))
+                        )?;
                         Ok(())
                     })
                 })
@@ -468,7 +486,7 @@ impl CollectionJobDriver {
                         })?;
 
                     match maybe_updated_collection_job.state() {
-                        CollectionJobState::Start => {
+                        CollectionJobState::Start | CollectionJobState::Poll => {
                             tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job).await?;
 
                             let batch_aggregations_iter = BatchAggregationsIterator::new(
@@ -1844,7 +1862,7 @@ mod tests {
         let helper_response = fake_aggregate_share();
         let mocked_aggregate_share = server
             .mock(
-                "PUT",
+                "GET",
                 task.aggregate_shares_uri(collection_job.aggregate_share_id())
                     .unwrap()
                     .path(),
@@ -2147,20 +2165,16 @@ mod tests {
             .await
             .unwrap();
 
-        // Now let's try to complete it
+        // Now let's try to complete it - this should be a GET request since the job
+        // is now in Poll state
         let mocked_async_aggregate_share_ready = server
             .mock(
-                "PUT",
+                "GET",
                 task.aggregate_shares_uri(collection_job.aggregate_share_id())
                     .unwrap()
                     .path(),
             )
             .match_header(header, value.as_str())
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded().unwrap())

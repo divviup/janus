@@ -29,7 +29,10 @@ use prio::{
 };
 use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::put};
+use trillium_testing::{
+    TestConn, assert_headers,
+    prelude::{get, put},
+};
 
 pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,
@@ -733,4 +736,167 @@ async fn aggregate_share_request_duplicate_with_different_id() {
         put_aggregate_share_request(&task, &request, &aggregate_share_id_2, &handler).await;
 
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
+}
+
+#[tokio::test]
+async fn aggregate_share_request_get_poll_after_put() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    // Set up batch aggregations that will be used for the duplicate requests
+    let batch_interval =
+        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
+
+    let aggregation_param = dummy::AggregationParam(0);
+    let report_count = 5;
+    let checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
+
+    // Put batch aggregations in the database
+    datastore
+        .run_unnamed_tx(|tx| {
+            let helper_task = helper_task.clone();
+
+            Box::pin(async move {
+                tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                    *helper_task.id(),
+                    batch_interval,
+                    aggregation_param,
+                    0,
+                    batch_interval,
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(dummy::AggregateShare(16)),
+                        report_count,
+                        checksum,
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
+                    },
+                ))
+                .await
+                .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let request = AggregateShareReq::new(
+        BatchSelector::new_time_interval(batch_interval),
+        aggregation_param.get_encoded().unwrap(),
+        report_count,
+        checksum,
+    );
+
+    let aggregate_share_id = AggregateShareId::from([42u8; 16]);
+
+    // Send the request. We'll ignore the details of the response and check that polling still works.
+    let test_conn =
+        put_aggregate_share_request(&task, &request, &aggregate_share_id, &handler).await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+
+    // Try to GET the first ID again. It should be OK.
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+    let test_conn = get(task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(header, value)
+    .run_async(&handler)
+    .await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+
+    // Ensure it's idempotent.
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+    let mut test_conn = get(task
+        .aggregate_shares_uri(&aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(header, value)
+    .run_async(&handler)
+    .await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+
+    assert_headers!(
+        &test_conn,
+        "content-type" => (AggregateShareMessage::MEDIA_TYPE)
+    );
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+
+    hpke::open(
+        task.collector_hpke_keypair(),
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        aggregate_share_resp.encrypted_aggregate_share(),
+        &AggregateShareAad::new(
+            *task.id(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
+            request.batch_selector().clone(),
+        )
+        .get_encoded()
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn aggregate_share_request_get_unrecognized_id() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    // Try to GET an aggregate share that doesn't exist
+    let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
+
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+    let mut test_conn = get(task
+        .aggregate_shares_uri(&nonexistent_aggregate_share_id)
+        .unwrap()
+        .path())
+    .with_request_header(header, value)
+    .run_async(&handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::NotFound));
+
+    // Verify it returns the correct problem document
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": Status::NotFound as u16,
+            "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
+            "title": "The aggregate share ID is not recognized.",
+            "taskid": format!("{}", task.id()),
+            "aggregate_share_id": format!("{}", nonexistent_aggregate_share_id),
+        })
+    );
 }

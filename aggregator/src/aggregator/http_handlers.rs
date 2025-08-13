@@ -96,6 +96,16 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
                     .with_task_id(task_id),
             ),
+        Error::UnrecognizedAggregateShareId(task_id, aggregate_share_id) => conn
+            .with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
+                "The aggregate share ID is not recognized.",
+                Status::NotFound,
+            )
+            .with_task_id(task_id)
+            .with_aggregate_share_id(aggregate_share_id),
+        ),
         Error::AbandonedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",
@@ -482,7 +492,11 @@ where
             )
             .put(
                 AGGREGATE_SHARES_ROUTE,
-                instrumented(api(aggregate_shares::<C>)),
+                instrumented(api(aggregate_shares_put::<C>)),
+            )
+            .get(
+                AGGREGATE_SHARES_ROUTE,
+                instrumented(api(aggregate_shares_get::<C>)),
             );
 
         let metrics = Metrics::new(self.meter.clone())
@@ -807,7 +821,7 @@ async fn collection_jobs_delete<C: Clock>(
 }
 
 /// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" PUT endpoint.
-async fn aggregate_shares<C: Clock>(
+async fn aggregate_shares_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<EncodedBody<AggregateShare>, Error> {
@@ -818,10 +832,32 @@ async fn aggregate_shares<C: Clock>(
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let aggregate_share_id = parse_aggregate_share_id(conn)?;
     let share = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_share(
+        .cancel_on_disconnect(aggregator.handle_put_aggregate_share(
             &task_id,
             &aggregate_share_id,
             &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
+
+    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+}
+
+/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" GET endpoint.
+async fn aggregate_shares_get<C: Clock>(
+    conn: &mut Conn,
+    State(aggregator): State<Arc<Aggregator<C>>>,
+) -> Result<EncodedBody<AggregateShare>, Error> {
+    let task_id = parse_task_id(conn)?;
+    let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+    let aggregate_share_id = parse_aggregate_share_id(conn)?;
+    let share = conn
+        .cancel_on_disconnect(aggregator.handle_get_aggregate_share(
+            &task_id,
+            &aggregate_share_id,
             auth_token,
             taskprov_task_config.as_ref(),
         ))
