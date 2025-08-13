@@ -2067,8 +2067,6 @@ impl VdafOps {
                 .map_err(Error::MessageDecode)?,
         );
 
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
-
         // Check if this is a repeated request, and if it is the same as before, send
         // the same response as last time.
         if let Some(response) = datastore
@@ -2521,7 +2519,7 @@ impl VdafOps {
             .with_last_request_hash(request_hash),
         );
 
-        let response = datastore
+        let (response, counters) = datastore
             .run_tx("aggregate_init", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2530,7 +2528,6 @@ impl VdafOps {
                 let report_share_data = Arc::clone(&report_share_data);
                 let req = Arc::clone(&req);
                 let log_forbidden_mutations = log_forbidden_mutations.clone();
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
@@ -2547,7 +2544,7 @@ impl VdafOps {
                     )
                     .await?
                     {
-                        return Ok(response);
+                        return Ok((response, TaskAggregationCounter::default()));
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
@@ -2578,26 +2575,24 @@ impl VdafOps {
                             task,
                             batch_aggregation_shard_count,
                             Some(aggregation_job_writer_metrics),
-                            task_aggregation_counters,
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
-                    Ok(AggregationJobResp::new(
-                        prep_resps_by_agg_job
-                            .remove(aggregation_job.id())
-                            .unwrap_or_default(),
+                    let (mut prep_resps_by_agg_job, counters) =
+                        aggregation_job_writer.write(tx, vdaf).await?;
+                    Ok((
+                        AggregationJobResp::new(
+                            prep_resps_by_agg_job
+                                .remove(aggregation_job.id())
+                                .unwrap_or_default(),
+                        ),
+                        counters,
                     ))
                 })
             })
             .await?;
 
-        write_task_aggregation_counter(
-            datastore,
-            task_counter_shard_count,
-            *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
-        );
+        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
 
         Ok(response)
     }
@@ -2635,18 +2630,16 @@ impl VdafOps {
                 "aggregation job cannot be advanced to step 0",
             ));
         }
-        let task_aggregation_counters = Arc::new(SyncMutex::new(TaskAggregationCounter::default()));
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
-        let response = datastore
+        let (response, counters) = datastore
             .run_tx("aggregate_continue", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let metrics = metrics.clone();
                 let task = Arc::clone(&task);
                 let aggregation_job_id = *aggregation_job_id;
                 let req = Arc::clone(&req);
-                let task_aggregation_counters = Arc::clone(&task_aggregation_counters);
 
                 Box::pin(async move {
                     // Read existing state.
@@ -2702,12 +2695,15 @@ impl VdafOps {
                                 }
                             }
                         }
-                        return Ok(AggregationJobResp::new(
-                            report_aggregations
-                                .iter()
-                                .filter_map(ReportAggregation::last_prep_resp)
-                                .cloned()
-                                .collect(),
+                        return Ok((
+                            AggregationJobResp::new(
+                                report_aggregations
+                                    .iter()
+                                    .filter_map(ReportAggregation::last_prep_resp)
+                                    .cloned()
+                                    .collect(),
+                            ),
+                            TaskAggregationCounter::default(),
                         ));
                     } else if aggregation_job.step().increment() != req.step() {
                         // If this is not a replay, the leader should be advancing our state to the next
@@ -2735,19 +2731,13 @@ impl VdafOps {
                         req,
                         request_hash,
                         &metrics,
-                        task_aggregation_counters,
                     )
                     .await
                 })
             })
             .await?;
 
-        write_task_aggregation_counter(
-            datastore,
-            task_counter_shard_count,
-            *task.id(),
-            &task_aggregation_counters.lock().unwrap(),
-        );
+        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
 
         Ok(response)
     }
@@ -3443,9 +3433,8 @@ fn write_task_aggregation_counter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     shard_count: u64,
     task_id: TaskId,
-    counters: &TaskAggregationCounter,
+    counters: TaskAggregationCounter,
 ) {
-    let counters = *counters;
     // We write task aggregation counters back in a separate tokio task & datastore transaction,
     // so that any slowness induced by writing the counters (e.g. due to transaction retry) does
     // not slow the main processing. The lack of transactionality between writing the updated
