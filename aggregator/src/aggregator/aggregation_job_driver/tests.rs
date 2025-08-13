@@ -84,48 +84,94 @@ async fn aggregation_job_driver() {
         .to_batch_interval_start(task.time_precision())
         .unwrap();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
-    let report_metadata = ReportMetadata::new(random(), time);
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
     let measurement = IdpfInput::from_bools(&[true]);
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
             .unwrap();
+    let agg_auth_token = task.aggregator_auth_token().clone();
+    let helper_hpke_keypair = HpkeKeypair::test();
 
-    let transcript = run_vdaf(
+    let accepted_report_metadata = ReportMetadata::new(random(), time);
+    let accepted_transcript = run_vdaf(
         vdaf.as_ref(),
         verify_key.as_bytes(),
         &aggregation_param,
-        report_metadata.id(),
+        accepted_report_metadata.id(),
         &measurement,
     );
-
-    let agg_auth_token = task.aggregator_auth_token().clone();
-    let helper_hpke_keypair = HpkeKeypair::test();
-    let report = LeaderStoredReport::generate(
+    let accepted_report = LeaderStoredReport::generate(
         *task.id(),
-        report_metadata,
+        accepted_report_metadata,
         helper_hpke_keypair.config(),
         Vec::new(),
-        &transcript,
+        &accepted_transcript,
     );
+
+    let prepare_errors = [
+        PrepareError::BatchCollected,
+        PrepareError::ReportReplayed,
+        PrepareError::ReportDropped,
+        PrepareError::HpkeUnknownConfigId,
+        PrepareError::HpkeDecryptError,
+        PrepareError::VdafPrepError,
+        PrepareError::BatchSaturated,
+        PrepareError::TaskExpired,
+        PrepareError::InvalidMessage,
+        PrepareError::ReportTooEarly,
+    ];
+    let mut rejected_reports: Vec<_> = prepare_errors
+        .into_iter()
+        .map(|prepare_error| {
+            let rejected_report_metadata = ReportMetadata::new(random(), time);
+            let rejected_transcript = run_vdaf(
+                vdaf.as_ref(),
+                verify_key.as_bytes(),
+                &aggregation_param,
+                rejected_report_metadata.id(),
+                &measurement,
+            );
+            let rejected_report = LeaderStoredReport::generate(
+                *task.id(),
+                rejected_report_metadata,
+                helper_hpke_keypair.config(),
+                Vec::new(),
+                &rejected_transcript,
+            );
+
+            (rejected_report, prepare_error)
+        })
+        .collect();
+    rejected_reports.sort_by_key(|(report, _)| *report.metadata().id());
 
     let aggregation_job_id = random();
 
     ds.run_unnamed_tx(|tx| {
-        let (task, report, aggregation_param) = (
+        let (task, accepted_report, rejected_reports, aggregation_param) = (
             leader_task.clone(),
-            report.clone(),
+            accepted_report.clone(),
+            rejected_reports.clone(),
             aggregation_param.clone(),
         );
         Box::pin(async move {
             tx.put_aggregator_task(&task).await.unwrap();
-            tx.put_client_report(&report).await.unwrap();
-            tx.scrub_client_report(report.task_id(), report.metadata().id())
+            tx.put_client_report(&accepted_report).await.unwrap();
+            tx.scrub_client_report(accepted_report.task_id(), accepted_report.metadata().id())
                 .await
                 .unwrap();
-            tx.mark_report_aggregated(task.id(), report.metadata().id())
+            tx.mark_report_aggregated(task.id(), accepted_report.metadata().id())
                 .await
                 .unwrap();
+
+            for (rejected_report, _) in &rejected_reports {
+                tx.put_client_report(rejected_report).await.unwrap();
+                tx.scrub_client_report(rejected_report.task_id(), rejected_report.metadata().id())
+                    .await
+                    .unwrap();
+                tx.mark_report_aggregated(task.id(), rejected_report.metadata().id())
+                    .await
+                    .unwrap();
+            }
 
             tx.put_aggregation_job(&AggregationJob::<
                 VERIFY_KEY_LENGTH,
@@ -144,10 +190,19 @@ async fn aggregation_job_driver() {
             .await
             .unwrap();
             tx.put_report_aggregation(
-                &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                &accepted_report.as_start_leader_report_aggregation(aggregation_job_id, 0),
             )
             .await
             .unwrap();
+
+            for (ord, (rejected_report, _)) in rejected_reports.iter().enumerate() {
+                tx.put_report_aggregation(
+                    &rejected_report
+                        .as_start_leader_report_aggregation(aggregation_job_id, ord as u64 + 1),
+                )
+                .await
+                .unwrap();
+            }
 
             tx.put_batch_aggregation(&BatchAggregation::<
                 VERIFY_KEY_LENGTH,
@@ -182,12 +237,29 @@ async fn aggregation_job_driver() {
             "PUT",
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
-            AggregationJobResp::new(Vec::from([PrepareResp::new(
-                *report.metadata().id(),
-                PrepareStepResult::Continue {
-                    message: transcript.helper_prepare_transitions[0].message.clone(),
-                },
-            )]))
+            AggregationJobResp::new(
+                Vec::from([PrepareResp::new(
+                    *accepted_report.metadata().id(),
+                    PrepareStepResult::Continue {
+                        message: accepted_transcript.helper_prepare_transitions[0]
+                            .message
+                            .clone(),
+                    },
+                )])
+                .into_iter()
+                .chain(
+                    // Simulate helper rejecting the remaining reports due to various PrepareErrors
+                    rejected_reports
+                        .iter()
+                        .map(|(rejected_report, prepare_error)| {
+                            PrepareResp::new(
+                                *rejected_report.metadata().id(),
+                                PrepareStepResult::Reject(*prepare_error),
+                            )
+                        }),
+                )
+                .collect(),
+            )
             .get_encoded()
             .unwrap(),
         ),
@@ -196,7 +268,7 @@ async fn aggregation_job_driver() {
             AggregationJobContinueReq::MEDIA_TYPE,
             AggregationJobResp::MEDIA_TYPE,
             AggregationJobResp::new(Vec::from([PrepareResp::new(
-                *report.metadata().id(),
+                *accepted_report.metadata().id(),
                 PrepareStepResult::Finished,
             )]))
             .get_encoded()
@@ -282,12 +354,12 @@ async fn aggregation_job_driver() {
             AggregationJobState::Finished,
             AggregationJobStep::from(2),
         );
-    let want_report_aggregation =
+    let want_accepted_report_aggregation =
         ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
             aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
+            *accepted_report.metadata().id(),
+            *accepted_report.metadata().time(),
             0,
             None,
             ReportAggregationState::Finished,
@@ -303,19 +375,20 @@ async fn aggregation_job_driver() {
         0,
         Interval::from_time(&time).unwrap(),
         BatchAggregationState::Aggregating {
-            aggregate_share: Some(transcript.leader_output_share.clone()),
+            aggregate_share: Some(accepted_transcript.leader_output_share.clone()),
             report_count: 1,
-            checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+            checksum: ReportIdChecksum::for_report_id(accepted_report.metadata().id()),
             aggregation_jobs_created: 1,
             aggregation_jobs_terminated: 1,
         },
     )]);
 
-    let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
+    let (got_aggregation_job, got_accepted_report_aggregation, got_rejected_report_aggregations, got_batch_aggregations) = ds
         .run_unnamed_tx(|tx| {
             let vdaf = Arc::clone(&vdaf);
             let task = task.clone();
-            let report_id = *report.metadata().id();
+            let accepted_report_id = *accepted_report.metadata().id();
+            let rejected_reports = rejected_reports.clone();
 
             Box::pin(async move {
                 let aggregation_job = tx
@@ -325,33 +398,116 @@ async fn aggregation_job_driver() {
                     )
                     .await.unwrap()
                     .unwrap();
-                let report_aggregation = tx
+                let accepted_report_aggregation = tx
                     .get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &Role::Leader,
                         task.id(),
                         &aggregation_job_id,
-                        &report_id,
+                        &accepted_report_id,
                     )
-                    .await.unwrap()
+                    .await
+                    .unwrap()
                     .unwrap();
+
+                let mut rejected_report_aggregations = Vec::new();
+                for (rejected_report, _) in rejected_reports {
+                    let rejected_report_aggregation = tx
+                        .get_report_aggregation_by_report_id(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            task.id(),
+                            &aggregation_job_id,
+                            rejected_report.metadata().id(),
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    rejected_report_aggregations.push(rejected_report_aggregation);
+                }
+
+                rejected_report_aggregations.sort_by_key(|ra| *ra.report_id());
+
                 let batch_aggregations = merge_batch_aggregations_by_batch(
-                    tx.get_batch_aggregations_for_task::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(&vdaf, task.id())
+                    tx.get_batch_aggregations_for_task::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Poplar1<XofTurboShake128, 16>,
+                    >(&vdaf, task.id())
                         .await
                         .unwrap(),
                 );
-                Ok((aggregation_job, report_aggregation, batch_aggregations))
+                Ok((
+                    aggregation_job,
+                    accepted_report_aggregation,
+                    rejected_report_aggregations,
+                    batch_aggregations,
+                ))
             })
         })
         .await
         .unwrap();
 
     assert_eq!(want_aggregation_job, got_aggregation_job);
-    assert_eq!(want_report_aggregation, got_report_aggregation);
+    assert_eq!(
+        want_accepted_report_aggregation,
+        got_accepted_report_aggregation
+    );
+
+    for (ord, ((rejected_report, prepare_error), got_rejected_report_aggregation)) in
+        rejected_reports
+            .iter()
+            .zip(got_rejected_report_aggregations)
+            .enumerate()
+    {
+        let want_rejected_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                *rejected_report.metadata().id(),
+                *rejected_report.metadata().time(),
+                1 + ord as u64,
+                None,
+                ReportAggregationState::Failed {
+                    prepare_error: *prepare_error,
+                },
+            );
+        assert_eq!(
+            want_rejected_report_aggregation,
+            got_rejected_report_aggregation
+        );
+    }
+
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 1,
+            helper_hpke_decrypt_failure: 1,
+            helper_batch_collected: 1,
+            helper_report_replayed: 1,
+            helper_report_dropped: 1,
+            helper_hpke_unknown_config_id: 1,
+            helper_vdaf_prep_error: 1,
+            helper_task_expired: 1,
+            helper_invalid_message: 1,
+            helper_report_too_early: 1,
+            duplicate_extension: 0,
+            public_share_encode_failure: 0,
+            batch_collected: 0,
+            report_replayed: 0,
+            report_dropped: 0,
+            hpke_unknown_config_id: 0,
+            hpke_decrypt_failure: 0,
+            vdaf_prep_error: 0,
+            task_expired: 0,
+            invalid_message: 0,
+            report_too_early: 0,
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -679,8 +835,15 @@ async fn step_time_interval_aggregation_job_init_single_step() {
     );
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 1,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -939,8 +1102,15 @@ async fn step_time_interval_aggregation_job_init_two_steps() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(0))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 0,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1305,8 +1475,15 @@ async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
     assert_eq!(want_report_aggregations, got_report_aggregations);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(2))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 2,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1588,8 +1765,15 @@ async fn step_fixed_size_aggregation_job_init_single_step() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 1,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1856,8 +2040,15 @@ async fn step_fixed_size_aggregation_job_init_two_steps() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(0))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 0,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -2196,8 +2387,15 @@ async fn step_time_interval_aggregation_job_continue() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 1,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -2495,8 +2693,15 @@ async fn step_fixed_size_aggregation_job_continue() {
     assert_eq!(want_report_aggregation, got_report_aggregation);
     assert_eq!(want_batch_aggregations, got_batch_aggregations);
 
-    assert_task_aggregation_counter(&ds, *task.id(), TaskAggregationCounter::new_with_values(1))
-        .await;
+    assert_task_aggregation_counter(
+        &ds,
+        *task.id(),
+        TaskAggregationCounter {
+            success: 1,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 struct CancelAggregationJobTestCase {
