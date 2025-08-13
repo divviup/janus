@@ -1,13 +1,16 @@
 //! Implements portions of aggregation job continuation for the Helper.
 
 use crate::aggregator::{
-    AggregatorMetrics, aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error,
+    aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error,
 };
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     AsyncAggregator,
     batch_mode::AccumulableBatchMode,
-    datastore::models::{AggregationJob, ReportAggregation, ReportAggregationState},
+    datastore::{
+        models::{AggregationJob, ReportAggregation, ReportAggregationState},
+        task_counters::TaskAggregationCounter,
+    },
     task::AggregatorTask,
 };
 use janus_core::vdaf::vdaf_application_context;
@@ -24,20 +27,18 @@ pub struct AggregateContinueMetrics {
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
+    /// Per-task counters tracking report aggregation outcomes.
+    task_aggregation_counter: TaskAggregationCounter,
 }
 
 impl AggregateContinueMetrics {
-    pub fn new(aggregate_step_failure_counter: Counter<u64>) -> Self {
+    pub fn new(
+        aggregate_step_failure_counter: Counter<u64>,
+        task_aggregation_counter: &TaskAggregationCounter,
+    ) -> Self {
         Self {
             aggregate_step_failure_counter,
-        }
-    }
-}
-
-impl From<AggregatorMetrics> for AggregateContinueMetrics {
-    fn from(metrics: AggregatorMetrics) -> Self {
-        Self {
-            aggregate_step_failure_counter: metrics.aggregate_step_failure_counter.clone(),
+            task_aggregation_counter: task_aggregation_counter.clone(),
         }
     }
 }
@@ -156,6 +157,9 @@ where
                                 )
                             })
                             .unwrap_or_else(|report_error| {
+                                metrics
+                                    .task_aggregation_counter
+                                    .increment_with_report_error(report_error);
                                 (
                                     ReportAggregationState::Failed { report_error },
                                     PrepareStepResult::Reject(report_error),

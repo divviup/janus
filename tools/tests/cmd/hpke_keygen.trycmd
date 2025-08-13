@@ -11,32 +11,32 @@ Arguments:
 Options:
       --kem <KEM>
           HPKE Key Encapsulation Mechanism algorithm
-          
-          [default: x25519]
 
           Possible values:
           - p-256:  DHKEM(P-256, HKDF-SHA256)
           - x25519: DHKEM(X25519, HKDF-SHA256)
+          
+          [default: x25519]
 
       --kdf <KDF>
           HPKE Key Derivation Function algorithm
-          
-          [default: hkdf-sha256]
 
           Possible values:
           - hkdf-sha256: HKDF-SHA256
           - hkdf-sha384: HKDF-SHA384
           - hkdf-sha512: HKDF-SHA512
+          
+          [default: hkdf-sha256]
 
       --aead <AEAD>
           HPKE Authenticated Encryption with Associated Data algorithm
-          
-          [default: aes-128-gcm]
 
           Possible values:
           - aes-128-gcm:      AES-128-GCM
           - aes-256-gcm:      AES-256-GCM
           - chacha20poly1305: ChaCha20Poly1305
+          
+          [default: aes-128-gcm]
 
   -h, --help
           Print help (see a summary with '-h')

@@ -27,7 +27,7 @@ anyhow = "1"
 assert_matches = "1"
 async-trait = "0.1"
 aws-lc-rs = "1.13.3"
-backon = { version = "1.5.1", features = ["tokio-sleep"] }
+backon = { version = "1.5.2", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.5.4"
 bytes = "1"
@@ -36,7 +36,7 @@ cfg-if = "1.0.1"
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4.41", default-features = false }
-clap = { version = "4.5.41", features = ["cargo", "derive", "env"] }
+clap = { version = "4.5.44", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.4.1"
 constcat = "0.5"
 deadpool = "0.12.2"
@@ -88,11 +88,11 @@ retry-after = "0.4.0"
 rstest = "0.22.0"
 rstest_reuse = "0.7.0"
 rustc_version = "0.4.1"
-rustls = "0.23.30"
+rustls = "0.23.31"
 rustls-pemfile = "2.2.0"
 sec1 = "0.7"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.141"
+serde_json = "1.0.142"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
 serde_yaml = "0.9.34"
@@ -130,7 +130,7 @@ trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
 trycmd = "0.15.10"
 url = { version = "2.5.4", features = ["serde"] }
-uuid = { version = "1.17.0", features = ["v4"] }
+uuid = { version = "1.18.0", features = ["v4"] }
 wait-timeout = "0.2.1"
 
 [profile.ci]

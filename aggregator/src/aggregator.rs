@@ -28,7 +28,7 @@ use crate::{
         report_aggregation_success_counter,
     },
 };
-use aggregation_job_continue::compute_helper_aggregate_continue;
+use aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue};
 use aws_lc_rs::{
     digest::{SHA256, digest},
     rand::SystemRandom,
@@ -51,8 +51,8 @@ use janus_aggregator_core::{
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
             CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
-            TaskAggregationCounter,
         },
+        task_counters::TaskAggregationCounter,
     },
     task::{self, AggregationMode, AggregatorTask, BatchMode},
     taskprov::PeerAggregator,
@@ -102,7 +102,7 @@ use std::{
     fmt::Debug,
     panic,
     path::PathBuf,
-    sync::{Arc, Mutex as SyncMutex},
+    sync::{Arc, Mutex},
     time::{Duration as StdDuration, Instant},
 };
 use tokio::try_join;
@@ -2247,7 +2247,8 @@ impl VdafOps {
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
     {
-        let (prepare_resps, counters) = datastore
+        let task_aggregation_counters = TaskAggregationCounter::default();
+        let prepare_resps = datastore
             .run_tx("aggregate_init_aggregator_write", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
@@ -2255,6 +2256,7 @@ impl VdafOps {
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let report_aggregations = Arc::clone(&report_aggregations);
                 let log_forbidden_mutations = log_forbidden_mutations.clone();
+                let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Check if this is a repeated request, and if it is the same as before, send
@@ -2272,7 +2274,7 @@ impl VdafOps {
                     )
                     .await?
                     {
-                        return Ok((prepare_resps, TaskAggregationCounter::default()));
+                        return Ok(prepare_resps);
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
@@ -2310,22 +2312,24 @@ impl VdafOps {
                             task,
                             batch_aggregation_shard_count,
                             Some(aggregation_job_writer_metrics),
+                            task_aggregation_counters,
                         );
                     aggregation_job_writer
                         .put(aggregation_job.as_ref().clone(), report_aggregations)?;
-                    let (mut prep_resps_by_agg_job, counters) =
-                        aggregation_job_writer.write(tx, vdaf).await?;
-                    Ok((
-                        prep_resps_by_agg_job
-                            .remove(aggregation_job.id())
-                            .unwrap_or_default(),
-                        counters,
-                    ))
+                    let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
+                    Ok(prep_resps_by_agg_job
+                        .remove(aggregation_job.id())
+                        .unwrap_or_default())
                 })
             })
             .await?;
 
-        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
+        write_task_aggregation_counter(
+            datastore,
+            task_counter_shard_count,
+            *task.id(),
+            task_aggregation_counters,
+        );
 
         Ok(prepare_resps)
     }
@@ -2352,15 +2356,17 @@ impl VdafOps {
                 "aggregation job cannot be advanced to step 0",
             ));
         }
+        let task_aggregation_counters = TaskAggregationCounter::default();
 
         let req = Arc::new(req);
-        let (response, counters) = datastore
+        let response = datastore
             .run_tx("aggregate_continue", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let metrics = metrics.clone();
                 let task = Arc::clone(&task);
                 let aggregation_job_id = *aggregation_job_id;
                 let req = Arc::clone(&req);
+                let task_aggregation_counters = task_aggregation_counters.clone();
 
                 Box::pin(async move {
                     // Read existing state.
@@ -2440,7 +2446,7 @@ impl VdafOps {
                             }
                         };
 
-                        return Ok((resp, TaskAggregationCounter::default()));
+                        return Ok(resp);
                     }
 
                     if aggregation_job.step().increment() != req.step() {
@@ -2546,6 +2552,7 @@ impl VdafOps {
                             vdaf,
                             batch_aggregation_shard_count,
                             &metrics,
+                            task_aggregation_counters,
                             report_aggregations_to_write,
                             aggregation_job,
                             report_aggregations,
@@ -2557,6 +2564,7 @@ impl VdafOps {
                             vdaf,
                             batch_aggregation_shard_count,
                             &metrics,
+                            task_aggregation_counters,
                             report_aggregations_to_write,
                             aggregation_job,
                             report_aggregations,
@@ -2568,7 +2576,12 @@ impl VdafOps {
             })
             .await?;
 
-        write_task_aggregation_counter(datastore, task_counter_shard_count, *task.id(), counters);
+        write_task_aggregation_counter(
+            datastore,
+            task_counter_shard_count,
+            *task.id(),
+            task_aggregation_counters,
+        );
 
         Ok(response)
     }
@@ -2585,17 +2598,21 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
+        task_aggregation_counters: TaskAggregationCounter,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(AggregationJobContinueResult, TaskAggregationCounter), Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         // Compute the next aggregation step.
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         let aggregation_job = Arc::new(aggregation_job);
         report_aggregations_to_write.extend(
             compute_helper_aggregate_continue(
                 Arc::clone(&vdaf),
-                metrics.clone().into(),
+                AggregateContinueMetrics::new(
+                    metrics.aggregate_step_failure_counter.clone(),
+                    &task_aggregation_counters,
+                ),
                 Arc::clone(&task),
                 Arc::clone(&aggregation_job),
                 report_aggregations,
@@ -2604,20 +2621,20 @@ impl VdafOps {
         );
 
         // Store data to datastore.
-        let (prepare_resps, counters) = Self::handle_aggregate_continue_generic_write(
+        let prepare_resps = Self::handle_aggregate_continue_generic_write(
             tx,
             task,
             vdaf,
             batch_aggregation_shard_count,
             metrics,
+            task_aggregation_counters,
             Arc::unwrap_or_clone(aggregation_job),
             report_aggregations_to_write,
         )
         .await?;
-        Ok((
-            AggregationJobContinueResult::Sync(AggregationJobResp { prepare_resps }),
-            counters,
-        ))
+        Ok(AggregationJobContinueResult::Sync(AggregationJobResp {
+            prepare_resps,
+        }))
     }
 
     // All report aggregations must be in the HelperContinueProcessing state.
@@ -2632,10 +2649,11 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
+        task_aggregation_counters: TaskAggregationCounter,
         mut report_aggregations_to_write: Vec<WritableReportAggregation<SEED_SIZE, A>>,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(AggregationJobContinueResult, TaskAggregationCounter), Error> {
+    ) -> Result<AggregationJobContinueResult, Error> {
         report_aggregations_to_write.extend(
             report_aggregations
                 .into_iter()
@@ -2643,18 +2661,19 @@ impl VdafOps {
         );
 
         let step = aggregation_job.step();
-        let (_, counters) = Self::handle_aggregate_continue_generic_write(
+        Self::handle_aggregate_continue_generic_write(
             tx,
             task,
             vdaf,
             batch_aggregation_shard_count,
             metrics,
+            task_aggregation_counters,
             aggregation_job.with_state(AggregationJobState::Active),
             report_aggregations_to_write,
         )
         .await?;
 
-        Ok((AggregationJobContinueResult::Async(step), counters))
+        Ok(AggregationJobContinueResult::Async(step))
     }
 
     async fn handle_aggregate_continue_generic_write<
@@ -2668,9 +2687,10 @@ impl VdafOps {
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         metrics: &AggregatorMetrics,
+        task_aggregation_counters: TaskAggregationCounter,
         aggregation_job: AggregationJob<SEED_SIZE, B, A>,
         report_aggregations: Vec<WritableReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(Vec<PrepareResp>, TaskAggregationCounter), Error> {
+    ) -> Result<Vec<PrepareResp>, Error> {
         // Sanity-check that we have the correct number of report aggregations.
         assert_eq!(report_aggregations.len(), report_aggregations.capacity());
 
@@ -2682,15 +2702,13 @@ impl VdafOps {
                 task,
                 batch_aggregation_shard_count,
                 Some(metrics.for_aggregation_job_writer()),
+                task_aggregation_counters,
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations)?;
-        let (mut prep_resps_by_agg_job, counters) = aggregation_job_writer.write(tx, vdaf).await?;
-        Ok((
-            prep_resps_by_agg_job
-                .remove(&aggregation_job_id)
-                .unwrap_or_default(),
-            counters,
-        ))
+        let mut prep_resps_by_agg_job = aggregation_job_writer.write(tx, vdaf).await?;
+        Ok(prep_resps_by_agg_job
+            .remove(&aggregation_job_id)
+            .unwrap_or_default())
     }
 
     /// Handle requests to the helper to get an aggregation job.
@@ -3611,10 +3629,8 @@ fn write_task_aggregation_counter<C: Clock>(
     tokio::task::spawn(async move {
         let rslt = datastore
             .run_tx("update_task_aggregation_counters", |tx| {
-                Box::pin(async move {
-                    tx.increment_task_aggregation_counter(&task_id, ord, &counters)
-                        .await
-                })
+                let counters = counters.clone();
+                Box::pin(async move { counters.flush(&task_id, tx, ord).await })
             })
             .await;
 
@@ -3636,7 +3652,7 @@ struct RequestBody {
 
 struct RequestTimer<'a> {
     // Mutable state.
-    start: SyncMutex<Option<Instant>>,
+    start: Mutex<Option<Instant>>,
 
     // Immutable state.
     http_request_duration_histogram: &'a Histogram<f64>,
@@ -3653,7 +3669,7 @@ impl<'a> RequestTimer<'a> {
         method: Arc<str>,
     ) -> Self {
         Self {
-            start: SyncMutex::new(None),
+            start: Mutex::new(None),
             http_request_duration_histogram,
             domain,
             endpoint,
