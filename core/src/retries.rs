@@ -309,7 +309,6 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::ExponentialWithTotalDelayBuilder;
-    use backon::ConstantBuilder;
     use std::time::Duration;
 
     /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be
@@ -334,9 +333,9 @@ pub mod test_util {
         /// new should usually return self, but LimitedRetryer is a thin wrapper used only for
         /// tests.
         #[allow(clippy::new_ret_no_self)]
-        pub fn new(max_retries: usize) -> ConstantBuilder {
-            ConstantBuilder::new()
-                .with_delay(Duration::ZERO)
+        pub fn new(max_retries: usize) -> ExponentialWithTotalDelayBuilder {
+            ExponentialWithTotalDelayBuilder::new()
+                .with_min_delay(Duration::from_nanos(1))
                 .with_max_times(max_retries)
         }
     }

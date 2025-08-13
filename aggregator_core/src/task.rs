@@ -10,7 +10,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId, Time, batch_mode,
+    AggregateShareId, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId,
+    Time, batch_mode,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{Rng, distr::StandardUniform, random, rng};
@@ -410,14 +411,18 @@ impl AggregatorTask {
     }
 
     /// Returns the URI at which the helper aggregate shares resource can be accessed.
-    pub fn aggregate_shares_uri(&self) -> Result<Option<Url>, Error> {
+    pub fn aggregate_shares_uri(
+        &self,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<Option<Url>, Error> {
         if matches!(
             self.aggregator_parameters,
             AggregatorTaskParameters::Leader { .. }
         ) {
             Ok(Some(self.peer_aggregator_endpoint().join(&format!(
-                "{}/aggregate_shares",
-                self.tasks_path()
+                "{}/aggregate_shares/{}",
+                self.tasks_path(),
+                aggregate_share_id,
             ))?))
         } else {
             Ok(None)
@@ -655,6 +660,7 @@ impl SerializedAggregatorTask {
     /// - VDAF verify key
     /// - Aggregator authentication token (only if the task's role is helper)
     /// - The aggregator's HPKE keypair (only one keypair is generated)
+    /// - The aggregate share ID (only if the task's role is leader)
     pub fn generate_missing_fields(&mut self) {
         if self.task_id.is_none() {
             let task_id: TaskId = random();
@@ -793,8 +799,8 @@ pub mod test_util {
         vdaf::VdafInstance,
     };
     use janus_messages::{
-        AggregationJobId, AggregationJobStep, CollectionJobId, Duration, HpkeConfigId, Role,
-        TaskId, Time,
+        AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
+        HpkeConfigId, Role, TaskId, Time,
     };
     use rand::{Rng, distr::StandardUniform, random, rng};
     use std::collections::HashMap;
@@ -1015,10 +1021,15 @@ pub mod test_util {
         }
 
         /// Returns the URI at which the helper aggregate shares resource can be accessed.
-        pub fn aggregate_shares_uri(&self) -> Result<Url, Error> {
-            Ok(self
-                .helper_aggregator_endpoint()
-                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
+        pub fn aggregate_shares_uri(
+            &self,
+            aggregate_share_id: &AggregateShareId,
+        ) -> Result<Url, Error> {
+            Ok(self.helper_aggregator_endpoint().join(&format!(
+                "{}/aggregate_shares/{}",
+                self.tasks_path(),
+                aggregate_share_id
+            ))?)
         }
 
         /// Returns the URI at which the leader resource for the specified collection job ID can be
@@ -1466,7 +1477,7 @@ mod tests {
                 task.report_upload_uri().unwrap(),
                 task.aggregation_job_uri(&random(), None).unwrap(),
                 task.collection_job_uri(&random()).unwrap(),
-                task.aggregate_shares_uri().unwrap(),
+                task.aggregate_shares_uri(&random()).unwrap(),
             ] {
                 // Check that path starts with / so it is suitable for use with mockito and that any
                 // path components in the aggregator endpoint are still present.

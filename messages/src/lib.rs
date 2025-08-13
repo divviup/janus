@@ -517,6 +517,83 @@ impl Distribution<ReportIdChecksum> for StandardUniform {
     }
 }
 
+/// DAP protocol message representing an ID uniquely identifying an aggregate share.
+#[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub struct AggregateShareId([u8; Self::LEN]);
+
+impl AggregateShareId {
+    /// LEN is the length of an aggregate share ID in bytes.
+    pub const LEN: usize = 16;
+}
+
+impl From<[u8; Self::LEN]> for AggregateShareId {
+    fn from(data: [u8; Self::LEN]) -> Self {
+        Self(data)
+    }
+}
+
+impl TryFrom<&[u8]> for AggregateShareId {
+    type Error = Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            Error::InvalidParameter("byte slice has incorrect length for AggregateShareId")
+        })?))
+    }
+}
+
+impl AsRef<[u8; Self::LEN]> for AggregateShareId {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
+        &self.0
+    }
+}
+
+impl Display for AggregateShareId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", URL_SAFE_NO_PAD.encode(self.0))
+    }
+}
+
+impl FromStr for AggregateShareId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != 22 {
+            Err(Error::InvalidParameter(
+                "incorrect length for AggregateShareId",
+            ))
+        } else {
+            Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
+        }
+    }
+}
+
+impl Encode for AggregateShareId {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        bytes.extend_from_slice(&self.0);
+        Ok(())
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
+    }
+}
+
+impl Decode for AggregateShareId {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let mut data = Self::default();
+        bytes.read_exact(&mut data.0)?;
+
+        Ok(data)
+    }
+}
+
+impl Distribution<AggregateShareId> for StandardUniform {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AggregateShareId {
+        AggregateShareId(rng.random())
+    }
+}
+
 /// DAP protocol message representing the different roles that participants can adopt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]

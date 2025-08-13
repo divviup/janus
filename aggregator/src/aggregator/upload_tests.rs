@@ -486,6 +486,7 @@ async fn upload_report_for_collected_batch() {
                 >::new(
                     *task.id(),
                     random(),
+                    random(),
                     Query::new_time_interval(batch_interval),
                     (),
                     batch_interval,

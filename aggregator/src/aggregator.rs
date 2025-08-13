@@ -71,11 +71,11 @@ use janus_core::{
     },
 };
 use janus_messages::{
-    AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
-    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp, Duration, HpkeConfig,
-    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareResp, Report, ReportError, Role, TaskId,
+    AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
+    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
+    AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
+    Duration, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
+    PlaintextInputShare, PrepareResp, Report, ReportError, Role, TaskId,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -94,7 +94,7 @@ use prio::{
     flp::gadgets::{Mul, ParallelSum},
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
-use rand::{Rng, rng};
+use rand::{Rng, random, rng};
 use reqwest::Client;
 use std::{
     borrow::Cow,
@@ -677,6 +677,7 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_aggregate_share(
         &self,
         task_id: &TaskId,
+        aggregate_share_id: &AggregateShareId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
         taskprov_task_config: Option<&TaskConfig>,
@@ -727,6 +728,7 @@ impl<C: Clock> Aggregator<C> {
                 self.cfg.max_future_concurrency,
                 req_bytes,
                 collector_hpke_config,
+                aggregate_share_id,
             )
             .await
     }
@@ -1135,6 +1137,7 @@ impl<C: Clock> TaskAggregator<C> {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
     ) -> Result<AggregateShare, Error> {
         self.vdaf_ops
             .handle_aggregate_share(
@@ -1145,6 +1148,7 @@ impl<C: Clock> TaskAggregator<C> {
                 max_future_concurrency,
                 req_bytes,
                 collector_hpke_config,
+                aggregate_share_id,
             )
             .await
     }
@@ -2909,6 +2913,7 @@ impl VdafOps {
                     tx.put_collection_job(&CollectionJob::<SEED_SIZE, B, A>::new(
                         *task.id(),
                         collection_job_id,
+                        random(),
                         req.query().clone(),
                         aggregation_param.as_ref().clone(),
                         collection_identifier,
@@ -3155,6 +3160,7 @@ impl VdafOps {
         max_future_concurrency: usize,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
     ) -> Result<AggregateShare, Error> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
@@ -3174,6 +3180,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         max_future_concurrency,
                         collector_hpke_config,
+                        aggregate_share_id,
                         Arc::clone(dp_strategy)
                     ).await
                 })
@@ -3195,6 +3202,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         max_future_concurrency,
                         collector_hpke_config,
+                        aggregate_share_id,
                         Arc::clone(dp_strategy)
                     ).await
                 })
@@ -3217,6 +3225,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         max_future_concurrency: usize,
         collector_hpke_config: &HpkeConfig,
+        aggregate_share_id: &AggregateShareId,
         dp_strategy: Arc<S>,
     ) -> Result<AggregateShare, Error> {
         // Decode request, and verify that it is for the current task. We use an assert to check
@@ -3254,6 +3263,7 @@ impl VdafOps {
             }
         }
 
+        let aggregate_share_id = *aggregate_share_id;
         let aggregate_share_job = datastore
             .run_tx("aggregate_share", |tx| {
                 let (task, vdaf, aggregate_share_req, dp_strategy) = (
@@ -3277,6 +3287,22 @@ impl VdafOps {
                         )
                         .await?
                     {
+                        // Duplicate aggregate share job found - verify the aggregate share ID matches
+                        if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
+                        {
+                            // Mismatch here indicates a duplicate request with a different
+                            // aggregate share ID. This violates the DAP protocol requirement that
+                            // duplicate requests must be identical.
+                            return Err(datastore::Error::User(
+                                Error::AggregateShareRequestRejected(
+                                    *task.id(),
+                                    "aggregate share request is a duplicate but uses a different aggregate share ID"
+                                        .to_string(),
+                                )
+                                .into(),
+                            ));
+                        }
+
                         debug!(
                             ?aggregate_share_req,
                             "Serving cached aggregate share job result"
@@ -3360,6 +3386,7 @@ impl VdafOps {
                             .clone(),
                         aggregation_param.clone(),
                         aggregate_share.aggregate_share,
+                        aggregate_share_id,
                         aggregate_share.report_count,
                         aggregate_share.checksum,
                     );

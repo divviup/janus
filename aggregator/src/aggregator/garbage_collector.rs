@@ -279,6 +279,7 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         random(),
+                        random(),
                         Query::new_time_interval(batch_identifier),
                         dummy::AggregationParam(0),
                         batch_identifier,
@@ -470,6 +471,7 @@ mod tests {
                             batch_identifier,
                             dummy::AggregationParam(0),
                             dummy::AggregateShare(11),
+                            random(),
                             0,
                             ReportIdChecksum::default(),
                         ),
@@ -640,6 +642,7 @@ mod tests {
 
                     tx.put_collection_job(&CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
+                        random(),
                         random(),
                         Query::new_leader_selected(),
                         dummy::AggregationParam(0),
@@ -844,6 +847,7 @@ mod tests {
                             batch_id,
                             dummy::AggregationParam(0),
                             dummy::AggregateShare(11),
+                            random(),
                             0,
                             ReportIdChecksum::default(),
                         ),
