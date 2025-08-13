@@ -1869,7 +1869,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 #[educe(Debug)]
 pub enum CollectionJobState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     Start,
-    AwaitingHelper,
+    Poll,
     Finished {
         /// The number of reports included in this collection job.
         report_count: u64,
@@ -1890,7 +1890,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> CollectionJobState<S
     pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
         match self {
             Self::Start => CollectionJobStateCode::Start,
-            Self::AwaitingHelper => CollectionJobStateCode::AwaitingHelper,
+            Self::Poll => CollectionJobStateCode::Poll,
             Self::Finished { .. } => CollectionJobStateCode::Finished,
             Self::Abandoned => CollectionJobStateCode::Abandoned,
             Self::Deleted => CollectionJobStateCode::Deleted,
@@ -1907,7 +1907,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> Display
             "{}",
             match self {
                 Self::Start => "start",
-                Self::AwaitingHelper => "awaiting_helper",
+                Self::Poll => "poll",
                 Self::Finished { .. } => "finished",
                 Self::Abandoned => "abandoned",
                 Self::Deleted => "deleted",
@@ -1955,8 +1955,8 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> Eq
 pub enum CollectionJobStateCode {
     #[postgres(name = "START")]
     Start,
-    #[postgres(name = "AWAITING_HELPER")]
-    AwaitingHelper,
+    #[postgres(name = "POLL")]
+    Poll,
     #[postgres(name = "FINISHED")]
     Finished,
     #[postgres(name = "ABANDONED")]

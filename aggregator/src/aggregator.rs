@@ -3055,7 +3055,7 @@ impl VdafOps {
                 Ok(vec![0; 0])
             }
 
-            CollectionJobState::AwaitingHelper => {
+            CollectionJobState::Poll => {
                 debug!(%collection_job_id, task_id = %task.id(), "collection job has not completed yet");
                 Ok(vec![0; 0])
             }

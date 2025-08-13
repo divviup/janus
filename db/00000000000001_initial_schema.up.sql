@@ -383,7 +383,7 @@ CREATE INDEX batch_aggregations_gc_time ON batch_aggregations(task_id, UPPER(COA
 -- Specifies the possible state of a collection job.
 CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
     'START',           -- this collection job is waiting for reports to be aggregated
-    'AWAITING_HELPER', -- this collection job is waiting for the helper to complete preparing its aggregate share
+    'POLL', -- this collection job is waiting for the helper to complete preparing its aggregate share
     'FINISHED',        -- this collection job has run successfully and is ready to be retrieved by the collector
     'ABANDONED',       -- this collection job has been abandoned & will never be run again
     'DELETED'          -- this collection job has been deleted

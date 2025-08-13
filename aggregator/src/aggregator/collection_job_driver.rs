@@ -375,7 +375,7 @@ impl CollectionJobDriver {
                 };
                 Ok((Method::PUT, Some(request_body)))
             }
-            CollectionJobState::AwaitingHelper => Ok((Method::GET, None)),
+            CollectionJobState::Poll => Ok((Method::GET, None)),
             // TODO: This needs to send DELETE, not GET, but our Helper isn't able to do this
             // yet. See Issue #3962
             CollectionJobState::Deleted => Ok((Method::GET, None)),
@@ -420,9 +420,9 @@ impl CollectionJobDriver {
                 .run_tx("step_collection_job_helper_retry", |tx| {
                     let lease = Arc::clone(&lease);
                     let collection_job = match collection_job.state() {
-                        CollectionJobState::Start => collection_job
-                            .clone()
-                            .with_state(CollectionJobState::AwaitingHelper),
+                        CollectionJobState::Start => {
+                            collection_job.clone().with_state(CollectionJobState::Poll)
+                        }
                         _ => collection_job.clone(),
                     };
                     Box::pin(async move {
@@ -486,7 +486,7 @@ impl CollectionJobDriver {
                         })?;
 
                     match maybe_updated_collection_job.state() {
-                        CollectionJobState::Start | CollectionJobState::AwaitingHelper => {
+                        CollectionJobState::Start | CollectionJobState::Poll => {
                             tx.update_collection_job::<SEED_SIZE, B, A>(&collection_job).await?;
 
                             let batch_aggregations_iter = BatchAggregationsIterator::new(
@@ -2166,7 +2166,7 @@ mod tests {
             .unwrap();
 
         // Now let's try to complete it - this should be a GET request since the job
-        // is now in AwaitingHelper state
+        // is now in Poll state
         let mocked_async_aggregate_share_ready = server
             .mock(
                 "GET",

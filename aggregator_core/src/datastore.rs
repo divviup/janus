@@ -3323,7 +3323,7 @@ WHERE task_id = $1
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
 
-            CollectionJobStateCode::AwaitingHelper => CollectionJobState::AwaitingHelper,
+            CollectionJobStateCode::Poll => CollectionJobState::Poll,
 
             CollectionJobStateCode::Finished => {
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
@@ -3471,7 +3471,7 @@ WITH incomplete_jobs AS (
     FROM collection_jobs
     JOIN tasks ON tasks.id = collection_jobs.task_id
     WHERE tasks.aggregator_role = 'LEADER'
-      AND collection_jobs.state IN ('START', 'AWAITING_HELPER')
+      AND collection_jobs.state IN ('START', 'POLL')
       AND collection_jobs.lease_expiry <= $4
       AND COALESCE(
               LOWER(batch_interval),
@@ -3645,7 +3645,7 @@ WHERE task_id = $4
                 )
             }
 
-            CollectionJobState::AwaitingHelper
+            CollectionJobState::Poll
             | CollectionJobState::Abandoned
             | CollectionJobState::Deleted => (None, None, None, None),
         };
