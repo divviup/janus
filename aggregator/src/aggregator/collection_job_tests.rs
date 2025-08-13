@@ -21,7 +21,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    auth_tokens::AuthenticationToken,
+    auth_tokens::{AuthenticationToken, test_util::WithAuthenticationToken},
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, IntervalExt, MockClock},
@@ -68,8 +68,7 @@ impl CollectionJobTestCase {
             .unwrap()
             .path());
         if let Some(auth) = auth_token {
-            let (header, value) = auth.request_authentication();
-            test_conn = test_conn.with_request_header(header, value);
+            test_conn = test_conn.with_authentication_token(auth);
         }
 
         test_conn
@@ -106,8 +105,7 @@ impl CollectionJobTestCase {
             .unwrap()
             .path());
         if let Some(auth) = auth_token {
-            let (header, value) = auth.request_authentication();
-            test_conn = test_conn.with_request_header(header, value);
+            test_conn = test_conn.with_authentication_token(auth);
         }
         test_conn.run_async(&self.handler).await
     }

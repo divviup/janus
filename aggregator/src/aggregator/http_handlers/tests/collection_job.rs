@@ -9,6 +9,7 @@ use janus_aggregator_core::{
     task::{AggregationMode, BatchMode, test_util::TaskBuilder},
 };
 use janus_core::{
+    auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     vdaf::VdafInstance,
 };
@@ -168,9 +169,8 @@ async fn collection_job_put_request_invalid_batch_size() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let (header, value) = task.collector_auth_token().request_authentication();
     let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
-        .with_request_header(header, value)
+        .with_authentication_token(task.collector_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
@@ -478,15 +478,11 @@ async fn collection_job_get_request_no_such_collection_job() {
 
     let no_such_collection_job_id: CollectionJobId = random();
 
-    let (header, value) = test_case
-        .task
-        .collector_auth_token()
-        .request_authentication();
     let test_conn = get(format!(
         "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
         test_case.task.id()
     ))
-    .with_request_header(header, value)
+    .with_authentication_token(test_case.task.collector_auth_token())
     .run_async(&test_case.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::NotFound));
@@ -584,11 +580,6 @@ async fn delete_collection_job() {
 
     let collection_job_id: CollectionJobId = random();
 
-    let (header, value) = test_case
-        .task
-        .collector_auth_token()
-        .request_authentication();
-
     // Try to delete a collection job that doesn't exist
     let test_conn = delete(
         test_case
@@ -597,7 +588,7 @@ async fn delete_collection_job() {
             .unwrap()
             .path(),
     )
-    .with_request_header(header, value.clone())
+    .with_authentication_token(test_case.task.collector_auth_token())
     .run_async(&test_case.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::NotFound));
@@ -622,7 +613,7 @@ async fn delete_collection_job() {
             .unwrap()
             .path(),
     )
-    .with_request_header(header, value)
+    .with_authentication_token(test_case.task.collector_auth_token())
     .run_async(&test_case.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::NoContent));

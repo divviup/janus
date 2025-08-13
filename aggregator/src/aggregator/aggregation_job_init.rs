@@ -452,6 +452,7 @@ pub mod test_util {
         task::{AggregatorTask, test_util::Task},
     };
     use janus_core::{
+        auth_tokens::test_util::WithAuthenticationToken,
         test_util::{VdafTranscript, run_vdaf},
         time::{Clock, MockClock, TimeExt as _},
     };
@@ -591,13 +592,11 @@ pub mod test_util {
         aggregation_job: &AggregationJobInitializeReq<B>,
         handler: &impl Handler,
     ) -> TestConn {
-        let (header, value) = task.aggregator_auth_token().request_authentication();
-
         put(task
             .aggregation_job_uri(aggregation_job_id, None)
             .unwrap()
             .path())
-        .with_request_header(header, value)
+        .with_authentication_token(task.aggregator_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<B>::MEDIA_TYPE,
@@ -630,7 +629,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
+        auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER, test_util::WithAuthenticationToken},
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::{Clock, MockClock, TimeExt as _},
         vdaf::VdafInstance,
@@ -815,17 +814,12 @@ mod tests {
         )
         .await;
 
-        let (auth_header, auth_value) = test_case
-            .task
-            .aggregator_auth_token()
-            .request_authentication();
-
         let response = put(test_case
             .task
             .aggregation_job_uri(&test_case.aggregation_job_id, None)
             .unwrap()
             .path())
-        .with_request_header(auth_header, auth_value)
+        .with_authentication_token(test_case.task.aggregator_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1138,17 +1132,12 @@ mod tests {
             test_case.aggregation_job_init_req.prepare_inits().to_vec(),
         );
 
-        let (header, value) = test_case
-            .task
-            .aggregator_auth_token()
-            .request_authentication();
-
         let mut response = put(test_case
             .task
             .aggregation_job_uri(&random(), None)
             .unwrap()
             .path())
-        .with_request_header(header, value)
+        .with_authentication_token(test_case.task.aggregator_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,

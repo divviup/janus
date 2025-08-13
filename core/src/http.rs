@@ -184,6 +184,18 @@ pub fn parse_retry_after(headers: &http::HeaderMap) -> Result<Option<RetryAfter>
         .map_err(|e| anyhow!("Unable to parse Retry-After: {}", e))
 }
 
+/// Extension trait on [`reqwest::RequestBuilder`] to fluently add request authentication.
+pub trait ReqwestAuthenticationToken {
+    fn authentication_token(self, auth_token: &AuthenticationToken) -> Self;
+}
+
+impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
+    fn authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+        let (header, value) = auth_token.request_authentication();
+        self.header(header, value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;

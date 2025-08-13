@@ -21,7 +21,7 @@ use janus_aggregator_core::{
     task::{AggregationMode, BatchMode, VerifyKey, test_util::TaskBuilder},
 };
 use janus_core::{
-    auth_tokens::AuthenticationToken,
+    auth_tokens::{AuthenticationToken, test_util::WithAuthenticationToken},
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     test_util::run_vdaf,
@@ -925,12 +925,11 @@ async fn aggregate_init_batch_already_collected() {
         .unwrap();
 
     let aggregation_job_id: AggregationJobId = random();
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let mut test_conn = put(task
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(header, value)
+    .with_authentication_token(task.aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,

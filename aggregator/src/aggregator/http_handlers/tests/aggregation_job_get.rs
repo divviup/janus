@@ -12,6 +12,7 @@ use janus_aggregator_core::{
     },
 };
 use janus_core::{
+    auth_tokens::test_util::WithAuthenticationToken,
     test_util::run_vdaf,
     time::{Clock as _, TimeExt as _},
     vdaf::VdafInstance,
@@ -595,9 +596,8 @@ async fn get_aggregation_job(
         None => uri.path().to_string(),
     };
 
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     get(uri)
-        .with_request_header(header, value)
+        .with_authentication_token(task.aggregator_auth_token())
         .run_async(handler)
         .await
 }

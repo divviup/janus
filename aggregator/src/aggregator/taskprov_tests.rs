@@ -26,6 +26,7 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
+    auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
@@ -278,17 +279,12 @@ async fn taskprov_aggregate_init() {
         ("request_1", request_1, aggregation_job_id_1, report_share_1),
         ("request_2", request_2, aggregation_job_id_2, report_share_2),
     ] {
-        let auth = test
-            .peer_aggregator
-            .primary_aggregator_auth_token()
-            .request_authentication();
-
         let status = put(test
             .task
             .aggregation_job_uri(&aggregation_job_id, None)
             .unwrap()
             .path())
-        .with_request_header(auth.0, "Bearer invalid_token")
+        .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -309,7 +305,7 @@ async fn taskprov_aggregate_init() {
             .aggregation_job_uri(&aggregation_job_id, None)
             .unwrap()
             .path())
-        .with_request_header(auth.0, auth.1)
+        .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -409,17 +405,12 @@ async fn taskprov_aggregate_init_missing_extension() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     let mut test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -499,17 +490,12 @@ async fn taskprov_aggregate_init_malformed_extension() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     let mut test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -590,11 +576,6 @@ async fn taskprov_opt_out_task_ended() {
 
     let aggregation_job_id: AggregationJobId = random();
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     // Advance clock past task end time.
     test.clock.advance(&Duration::from_hours(48).unwrap());
 
@@ -603,7 +584,7 @@ async fn taskprov_opt_out_task_ended() {
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -661,18 +642,13 @@ async fn taskprov_opt_out_mismatched_task_id() {
     )
     .unwrap();
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     let mut test_conn = put(test
         // Use the test case task's ID.
         .task
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -735,15 +711,10 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     let mut test_conn = put(format!(
         "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
     ))
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -804,15 +775,10 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     let mut test_conn = put(format!(
         "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
     ))
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -916,11 +882,6 @@ async fn taskprov_aggregate_continue() {
         )]),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     // Attempt using the wrong credentials, should reject.
     let status = post(
         test.task
@@ -928,7 +889,7 @@ async fn taskprov_aggregate_continue() {
             .unwrap()
             .path(),
     )
-    .with_request_header(auth.0, "Bearer invalid_token")
+    .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobContinueReq::MEDIA_TYPE,
@@ -950,7 +911,7 @@ async fn taskprov_aggregate_continue() {
             .unwrap()
             .path(),
     )
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobContinueReq::MEDIA_TYPE,
@@ -1028,18 +989,13 @@ async fn taskprov_aggregate_share() {
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
     // Attempt using the wrong credentials, should reject.
     let status = put(test
         .task
         .aggregate_shares_uri(&aggregate_share_id)
         .unwrap()
         .path())
-    .with_request_header(auth.0, "Bearer invalid_token")
+    .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
@@ -1060,7 +1016,7 @@ async fn taskprov_aggregate_share() {
         .aggregate_shares_uri(&aggregate_share_id)
         .unwrap()
         .path())
-    .with_request_header(auth.0, auth.1)
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
@@ -1100,10 +1056,6 @@ async fn taskprov_aggregate_share() {
 #[tokio::test]
 async fn end_to_end() {
     let test = TaskprovTestCase::new().await;
-    let (auth_header_name, auth_header_value) = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
 
     let batch_id = random();
     let aggregation_job_id = random();
@@ -1127,7 +1079,7 @@ async fn end_to_end() {
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -1177,7 +1129,7 @@ async fn end_to_end() {
             .unwrap()
             .path(),
     )
-    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobContinueReq::MEDIA_TYPE,
@@ -1216,7 +1168,7 @@ async fn end_to_end() {
         .aggregate_shares_uri(&aggregate_share_id)
         .unwrap()
         .path())
-    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
@@ -1266,10 +1218,6 @@ async fn end_to_end_sumvec_hmac() {
     };
     let measurement = Vec::from([255, 1, 10, 20, 30, 0, 99, 100, 0, 0, 0, 0]);
     let test = TaskprovTestCase::with_vdaf(vdaf_config, vdaf, measurement, ()).await;
-    let (auth_header_name, auth_header_value) = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
     let batch_id = random();
     let aggregation_job_id = random();
     let aggregate_share_id = random();
@@ -1291,7 +1239,7 @@ async fn end_to_end_sumvec_hmac() {
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
         .path())
-    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
@@ -1334,7 +1282,7 @@ async fn end_to_end_sumvec_hmac() {
         .aggregate_shares_uri(&aggregate_share_id)
         .unwrap()
         .path())
-    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
