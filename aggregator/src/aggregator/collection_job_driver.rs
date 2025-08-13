@@ -376,9 +376,7 @@ impl CollectionJobDriver {
                 Ok((Method::PUT, Some(request_body)))
             }
             CollectionJobState::Poll => Ok((Method::GET, None)),
-            // TODO: This needs to send DELETE, not GET, but our Helper isn't able to do this
-            // yet. See Issue #3962
-            CollectionJobState::Deleted => Ok((Method::GET, None)),
+            CollectionJobState::Deleted => Ok((Method::DELETE, None)),
             _ => Err(Error::Internal("unexpected state".into())),
         }?;
 
@@ -1858,18 +1856,15 @@ mod tests {
         .await
         .unwrap();
 
-        // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = fake_aggregate_share();
+        // The helper will be notified that the aggregate share request is being deleted
         let mocked_aggregate_share = server
             .mock(
-                "GET",
+                "DELETE",
                 task.aggregate_shares_uri(collection_job.aggregate_share_id())
                     .unwrap()
                     .path(),
             )
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -1882,8 +1877,8 @@ mod tests {
             10000,
         );
 
-        // Step the collection job. The driver should successfully run the job, but then discard the
-        // results when it notices the job has been deleted.
+        // Step the collection job. The driver should successfully run the job, but then notify
+        // the helper that the job has been deleted, and discard the result.
         collection_job_driver
             .step_collection_job(ds.clone(), clock.clone(), Arc::new(lease.unwrap()))
             .await

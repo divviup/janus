@@ -4630,6 +4630,38 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
         )
     }
 
+    /// Delete an `aggregate_share_job` row from the datastore.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn delete_aggregate_share_job(
+        &self,
+        task_id: &TaskId,
+        aggregate_share_id: AggregateShareId,
+    ) -> Result<(), Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Err(Error::MutationTargetNotFound),
+        };
+
+        let stmt = self
+            .prepare_cached(
+                "-- delete_aggregate_share_job()
+DELETE FROM aggregate_share_jobs
+WHERE task_id = $1
+  AND aggregate_share_id = $2",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* aggregate_share_id */ &aggregate_share_id.get_encoded()?,
+                ],
+            )
+            .await?,
+        )
+    }
+
     /// Writes an outstanding batch. (This method does not take an [`OutstandingBatch`] as several
     /// of the included values are read implicitly.)
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]

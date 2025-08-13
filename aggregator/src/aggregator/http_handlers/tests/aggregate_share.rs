@@ -31,7 +31,7 @@ use serde_json::json;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     TestConn, assert_headers,
-    prelude::{get, put},
+    prelude::{delete, get, put},
 };
 
 pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
@@ -851,6 +851,18 @@ async fn aggregate_share_request_get_poll_after_put() {
         .unwrap(),
     )
     .unwrap();
+
+    // We should be able to delete it
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+    let test_conn = delete(
+        task.aggregate_shares_uri(&aggregate_share_id)
+            .unwrap()
+            .path(),
+    )
+    .with_request_header(header, value)
+    .run_async(&handler)
+    .await;
+    assert_eq!(test_conn.status(), Some(Status::NoContent));
 }
 
 #[tokio::test]
@@ -882,6 +894,55 @@ async fn aggregate_share_request_get_unrecognized_id() {
         .aggregate_shares_uri(&nonexistent_aggregate_share_id)
         .unwrap()
         .path())
+    .with_request_header(header, value)
+    .run_async(&handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::NotFound));
+
+    // Verify it returns the correct problem document
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": Status::NotFound as u16,
+            "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
+            "title": "The aggregate share ID is not recognized.",
+            "taskid": format!("{}", task.id()),
+            "aggregate_share_id": format!("{}", nonexistent_aggregate_share_id),
+        })
+    );
+}
+
+#[tokio::test]
+async fn aggregate_share_delete_nonexistant() {
+    let HttpHandlerTest {
+        clock: _,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_helper_aggregator_endpoint("https://helper.example.com/".parse().unwrap())
+    .build();
+
+    let helper_task = task.helper_view().unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
+
+    // Try to DELETE an aggregate share that doesn't exist
+    let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
+
+    let (header, value) = task.aggregator_auth_token().request_authentication();
+    let mut test_conn = delete(
+        task.aggregate_shares_uri(&nonexistent_aggregate_share_id)
+            .unwrap()
+            .path(),
+    )
     .with_request_header(header, value)
     .run_async(&handler)
     .await;
