@@ -19,7 +19,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregationJob, AggregationJobState, ReportAggregationMetadata,
-            ReportAggregationMetadataState, TaskAggregationCounter,
+            ReportAggregationMetadataState,
         },
         Datastore,
     },
@@ -59,7 +59,7 @@ use rand::{random, thread_rng, Rng};
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -609,7 +609,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             Arc::clone(&task),
                             batch_aggregation_shard_count,
                             None,
-                            Arc::new(Mutex::new(TaskAggregationCounter::default())),
                         );
                     let mut report_ids_to_scrub = HashSet::new();
                     let mut outstanding_reports = Vec::new();
@@ -824,7 +823,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 Arc::clone(&task),
                                 batch_aggregation_shard_count,
                                 None,
-                                Arc::new(Mutex::new(TaskAggregationCounter::default())),
                             );
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
@@ -943,7 +941,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         Arc::clone(&task),
                         batch_aggregation_shard_count,
                         None,
-                        Arc::new(Mutex::new(TaskAggregationCounter::default())),
                     );
                     let mut batch_creator = BatchCreator::new(
                         this.min_aggregation_job_size,

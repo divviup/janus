@@ -606,10 +606,7 @@ async fn aggregate_init() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::new_with_values(1),
     )
     .await;
 }
@@ -719,8 +716,12 @@ async fn aggregate_init_batch_already_collected() {
         &PrepareStepResult::Reject(PrepareError::BatchCollected)
     );
 
-    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
-        .await;
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -807,10 +808,7 @@ async fn aggregate_init_with_reports_encrypted_by_task_specific_key() {
     assert_task_aggregation_counter(
         &datastore,
         *task.id(),
-        TaskAggregationCounter {
-            success: 1,
-            ..Default::default()
-        },
+        TaskAggregationCounter::new_with_values(1),
     )
     .await;
 }
@@ -868,8 +866,12 @@ async fn aggregate_init_prep_init_failed() {
         &PrepareStepResult::Reject(PrepareError::VdafPrepError)
     );
 
-    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
-        .await;
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -924,8 +926,12 @@ async fn aggregate_init_prep_step_failed() {
         &PrepareStepResult::Reject(PrepareError::VdafPrepError)
     );
 
-    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
-        .await;
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -975,6 +981,10 @@ async fn aggregate_init_duplicated_report_id() {
     );
     assert_eq!(want_status, test_conn.status().unwrap());
 
-    assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
-        .await;
+    assert_task_aggregation_counter(
+        &datastore,
+        *task.id(),
+        TaskAggregationCounter::new_with_values(0),
+    )
+    .await;
 }
