@@ -20,13 +20,14 @@ use janus_aggregator_core::{
 use janus_core::{
     http::{check_content_type, parse_retry_after_to_duration},
     retries::{
-        ExponentialWithTotalDelayBuilder, is_retryable_http_client_error, is_retryable_http_status,
+        ExponentialWithTotalDelayBuilder, HttpResponse, is_retryable_http_client_error,
+        is_retryable_http_status,
     },
     time::Clock,
     vdaf_dispatch,
 };
 use janus_messages::{
-    AggregateShare, AggregateShareReq, BatchSelector, MediaType,
+    AggregateShare, AggregateShareReq, BatchSelector, CollectionJobId, MediaType,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use opentelemetry::{
@@ -398,8 +399,17 @@ impl CollectionJobDriver {
                 .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.metrics.http_request_duration_histogram,
         )
-        .await?;
+        .await;
 
+        if *collection_job.state() == CollectionJobState::Deleted {
+            // If we're in the Deleted state, we shortcut to update metrics and log the
+            // results; no further database updates are needed. (Leases are for the living!)
+            return self
+                .step_deleted_collection_job(http_response, collection_job.id())
+                .await;
+        }
+
+        let http_response = http_response?;
         let response_headers = http_response.headers();
         let response_body = http_response.body();
         if response_body.is_empty() {
@@ -540,6 +550,27 @@ impl CollectionJobDriver {
                 })
             })
             .await?;
+        Ok(())
+    }
+
+    async fn step_deleted_collection_job(
+        &self,
+        http_response: Result<HttpResponse, Error>,
+        collection_job_id: &CollectionJobId,
+    ) -> Result<(), Error> {
+        self.metrics.deleted_jobs_encountered_counter.add(1, &[]);
+        info!(
+            %collection_job_id,
+            "Deleted collection job was stepped while lease was held. Discarding aggregate results.",
+        );
+        let _ = http_response.inspect_err(|e| {
+            warn!(
+                %collection_job_id,
+                ?e,
+                "Helper returned an error to the HTTP delete request for this deleted collection job."
+            )
+        });
+
         Ok(())
     }
 
@@ -1830,8 +1861,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn delete_collection_job() {
+    async fn delete_collection_job_helper(mock_delete_returned_status: usize) {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
         initialize_rustls();
@@ -1864,7 +1894,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .with_status(200)
+            .with_status(mock_delete_returned_status)
             .create_async()
             .await;
 
@@ -1914,6 +1944,16 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_collection_job_supported_by_helper() {
+        delete_collection_job_helper(200).await;
+    }
+
+    #[tokio::test]
+    async fn delete_collection_job_unsupported_by_helper() {
+        delete_collection_job_helper(501).await;
     }
 
     #[test]
