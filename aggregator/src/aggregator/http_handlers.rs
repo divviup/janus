@@ -497,6 +497,10 @@ where
             .get(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares_get::<C>)),
+            )
+            .delete(
+                AGGREGATE_SHARES_ROUTE,
+                instrumented(api(aggregate_shares_delete::<C>)),
             );
 
         let metrics = Metrics::new(self.meter.clone())
@@ -865,6 +869,28 @@ async fn aggregate_shares_get<C: Clock>(
         .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+}
+
+/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" DELETE endpoint.
+async fn aggregate_shares_delete<C: Clock>(
+    conn: &mut Conn,
+    State(aggregator): State<Arc<Aggregator<C>>>,
+) -> Result<(), Error> {
+    let task_id = parse_task_id(conn)?;
+    let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+    let aggregate_share_id = parse_aggregate_share_id(conn)?;
+    conn.cancel_on_disconnect(aggregator.handle_delete_aggregate_share(
+        &task_id,
+        &aggregate_share_id,
+        auth_token,
+        taskprov_task_config.as_ref(),
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
+
+    conn.set_status(Status::NoContent);
+    Ok(())
 }
 
 /// Check the request's Content-Type header, and return an error if it is missing or not equal to

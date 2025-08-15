@@ -773,6 +773,34 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
+    /// Handle an aggregate share deletion request. Only supported by the helper.
+    async fn handle_delete_aggregate_share(
+        &self,
+        task_id: &TaskId,
+        aggregate_share_id: &AggregateShareId,
+        auth_token: Option<AuthenticationToken>,
+        taskprov_task_config: Option<&TaskConfig>,
+    ) -> Result<(), Error> {
+        let task_aggregator = self
+            .task_aggregators
+            .get(task_id)
+            .await?
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
+        if task_aggregator.task.role() != &Role::Helper {
+            return Err(Error::UnrecognizedTask(*task_id));
+        }
+        let _ = self
+            .validate_and_authorize_aggregate_share_request(
+                &task_aggregator.task,
+                auth_token,
+                taskprov_task_config,
+            )
+            .await?;
+        task_aggregator
+            .handle_delete_aggregate_share(&self.datastore, aggregate_share_id)
+            .await
+    }
+
     /// Opts in or out of a taskprov task.
     #[tracing::instrument(skip(self, aggregator_auth_token), err(level = Level::DEBUG))]
     async fn taskprov_opt_in(
@@ -1206,6 +1234,16 @@ impl<C: Clock> TaskAggregator<C> {
                 collector_hpke_config,
                 aggregate_share_id,
             )
+            .await
+    }
+
+    async fn handle_delete_aggregate_share(
+        &self,
+        datastore: &Datastore<C>,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<(), Error> {
+        self.vdaf_ops
+            .handle_delete_aggregate_share(datastore, Arc::clone(&self.task), aggregate_share_id)
             .await
     }
 }
@@ -3606,6 +3644,36 @@ impl VdafOps {
         )?;
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
+    }
+
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` DELETE endpoint for the helper.
+    #[tracing::instrument(
+        skip(self, datastore, task, aggregate_share_id),
+        fields(task_id = ?task.id()),
+        err(level = Level::DEBUG)
+    )]
+    async fn handle_delete_aggregate_share<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        aggregate_share_id: &AggregateShareId,
+    ) -> Result<(), Error> {
+        datastore
+            .run_tx("delete_aggregate_share", |tx| {
+                let (task, aggregate_share_id) = (Arc::clone(&task), *aggregate_share_id);
+                Box::pin(async move {
+                    tx.delete_aggregate_share_job(task.id(), aggregate_share_id)
+                        .await
+                })
+            })
+            .await
+            .map_err(|e| match e {
+                datastore::Error::MutationTargetNotFound => {
+                    Error::UnrecognizedAggregateShareId(*task.id(), *aggregate_share_id)
+                }
+                _ => Error::Datastore(e),
+            })?;
+        Ok(())
     }
 }
 
