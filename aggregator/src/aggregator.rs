@@ -785,6 +785,9 @@ impl<C: Clock> Aggregator<C> {
             .get(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
+        if task_aggregator.task.role() != &Role::Helper {
+            return Err(Error::UnrecognizedTask(*task_id));
+        }
         let _ = self
             .validate_and_authorize_aggregate_share_request(
                 &task_aggregator.task,
