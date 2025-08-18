@@ -81,7 +81,7 @@ querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }
 quickcheck_macros = "1.1.0"
 rand = "0.9"
-rayon = "1.10.0"
+rayon = "1.11.0"
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
 regex = "1.11.1"
 retry-after = "0.4.0"
