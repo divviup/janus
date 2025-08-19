@@ -264,8 +264,6 @@ impl Display for ReportRejectionReason {
 pub enum OptOutReason {
     #[error("this aggregator is not peered with the given {0} aggregator")]
     NoSuchPeer(Role),
-    #[error("task has ended")]
-    TaskEnded,
     #[error("invalid task: {0}")]
     TaskParameters(#[from] task::Error),
     #[error("URL parse error: {0}")]

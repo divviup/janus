@@ -912,11 +912,6 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let task_end = task_config.task_start().add(task_config.task_duration())?;
-        if self.clock.now() > task_end {
-            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskEnded));
-        }
-
         debug!(
             ?task_id,
             ?task_config,

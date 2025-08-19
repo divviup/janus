@@ -555,15 +555,16 @@ async fn taskprov_aggregate_init_malformed_extension() {
     assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
 }
 
+/// The helper should not opt out of the task if the current time is past the task end time.
 #[tokio::test]
-async fn taskprov_opt_out_task_ended() {
+async fn taskprov_opt_out_task_ended_regression() {
     let test = TaskprovTestCase::new().await;
 
-    let (transcript, report_share, _) = test.next_report_share();
+    let (transcript, report_share, aggregation_param) = test.next_report_share();
 
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded().unwrap(),
+        aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_leader_selected(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -579,7 +580,7 @@ async fn taskprov_opt_out_task_ended() {
     // Advance clock past task end time.
     test.clock.advance(&Duration::from_hours(48).unwrap());
 
-    let mut test_conn = put(test
+    let test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id, None)
         .unwrap()
@@ -596,16 +597,7 @@ async fn taskprov_opt_out_task_ended() {
     .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:invalidTask",
-            "title": "Aggregator has opted out of the indicated task.",
-            "taskid": format!("{}", test.task_id),
-        })
-    );
+    assert_eq!(test_conn.status(), Some(Status::Created));
 }
 
 #[tokio::test]
