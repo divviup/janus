@@ -1,7 +1,7 @@
 FROM rust:1.89.0-alpine AS chef
 ENV CARGO_INCREMENTAL=0
 RUN apk add --no-cache libc-dev cmake make
-RUN cargo install cargo-chef --version 0.1.60 && \
+RUN cargo install cargo-chef --version 0.1.60 --locked && \
     rm -r $CARGO_HOME/registry
 WORKDIR /src
 
