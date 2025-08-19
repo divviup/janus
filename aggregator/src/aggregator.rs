@@ -897,10 +897,6 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        if self.clock.now() > *task_config.task_expiration() {
-            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskExpired));
-        }
-
         debug!(
             ?task_id,
             ?task_config,
