@@ -4,6 +4,7 @@ ARG SQLX_VERSION
 RUN apk add libc-dev
 RUN cargo install sqlx-cli \
     --version ${SQLX_VERSION} \
+    --locked \
     --no-default-features --features rustls,postgres
 
 FROM alpine:3.22.1

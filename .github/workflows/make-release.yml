@@ -40,6 +40,7 @@ jobs:
           cargo install \
             --root ${{ runner.tool_cache }}/cargo-edit \
             --version ${{ env.CARGO_EDIT_VERSION }} \
+            --locked \
             cargo-edit
       
       - run: cargo set-version --bump patch
