@@ -341,6 +341,21 @@ where
                             Ok(shares)
                         });
 
+                        // Reject reports before the task has started. (§4.6.2.4, item 4)
+                        let shares = shares.and_then(|shares| {
+                            if let Some(task_start) = task.task_start() {
+                                if prepare_init
+                                    .report_share()
+                                    .metadata()
+                                    .time()
+                                    .is_before(task_start)
+                                {
+                                    return Err(ReportError::TaskNotStarted);
+                                }
+                            }
+                            Ok(shares)
+                        });
+
                         // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
                         // associated with the task and computes the first state transition. [...] If either
                         // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
@@ -1117,6 +1132,115 @@ mod tests {
         assert_eq!(
             aggregation_job_resp,
             test_case.aggregation_job_init_resp.unwrap(),
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregation_job_task_not_started() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let task_start_time = clock
+            .now_aligned_to_precision(&Duration::from_seconds(100))
+            .sub(&Duration::from_seconds(1000))
+            .unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Fake { rounds: 1 },
+        )
+        .with_time_precision(Duration::from_seconds(100))
+        .with_tolerable_clock_skew(Duration::from_seconds(500))
+        .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
+        .with_task_start(Some(task_start_time))
+        .build();
+        let helper_task = task.helper_view().unwrap();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        datastore.put_aggregator_task(&helper_task).await.unwrap();
+        let keypair = datastore.put_hpke_key().await.unwrap();
+
+        let handler = AggregatorHandlerBuilder::new(
+            Arc::clone(&datastore),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            Config::default(),
+        )
+        .await
+        .unwrap()
+        .build()
+        .unwrap();
+
+        let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
+
+        let prepare_init_generator = PrepareInitGenerator::new(
+            clock.clone(),
+            helper_task.clone(),
+            keypair.config().clone(),
+            vdaf,
+            aggregation_param,
+        );
+
+        let aggregation_job_id = random();
+
+        let aggregation_job_init_req = AggregationJobInitializeReq::new(
+            aggregation_param.get_encoded().unwrap(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([
+                // Report with timestamp after task start should be accepted.
+                prepare_init_generator
+                    .next_with_metadata(
+                        ReportMetadata::new(
+                            random(),
+                            task_start_time.add(helper_task.time_precision()).unwrap(),
+                            Vec::new(),
+                        ),
+                        &0,
+                    )
+                    .0,
+                // Report with timestamp before task start should be rejected.
+                prepare_init_generator
+                    .next_with_metadata(
+                        ReportMetadata::new(
+                            random(),
+                            task_start_time.sub(helper_task.time_precision()).unwrap(),
+                            Vec::new(),
+                        ),
+                        &0,
+                    )
+                    .0,
+            ]),
+        );
+
+        let mut response = put_aggregation_job(
+            &task,
+            &aggregation_job_id,
+            &aggregation_job_init_req,
+            &handler,
+        )
+        .await;
+        assert_eq!(response.status(), Some(Status::Created));
+
+        let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
+        let prepare_resps = assert_matches!(
+            aggregation_job_resp,
+            AggregationJobResp { prepare_resps } => prepare_resps
+        );
+        assert_eq!(
+            prepare_resps.len(),
+            aggregation_job_init_req.prepare_inits().len(),
+        );
+        assert_matches!(
+            prepare_resps[0].result(),
+            &PrepareStepResult::Continue { .. }
+        );
+        assert_matches!(
+            prepare_resps[1].result(),
+            &PrepareStepResult::Reject(ReportError::TaskNotStarted)
         );
     }
 
