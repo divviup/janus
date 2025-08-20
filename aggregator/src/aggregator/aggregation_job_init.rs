@@ -364,7 +364,7 @@ where
                                     .report_share()
                                     .metadata()
                                     .time()
-                                    .is_after(task_end)
+                                    .ge(task_end)
                                 {
                                     return Err(ReportError::TaskExpired);
                                 }
@@ -1204,6 +1204,13 @@ mod tests {
                         &0,
                     )
                     .0,
+                // Report with timestamp exactly at task end should also be rejected.
+                prepare_init_generator
+                    .next_with_metadata(
+                        ReportMetadata::new(random(), task_end_time, Vec::new()),
+                        &0,
+                    )
+                    .0,
             ]),
         );
 
@@ -1231,6 +1238,10 @@ mod tests {
         );
         assert_matches!(
             prepare_resps[1].result(),
+            &PrepareStepResult::Reject(ReportError::TaskExpired)
+        );
+        assert_matches!(
+            prepare_resps[2].result(),
             &PrepareStepResult::Reject(ReportError::TaskExpired)
         );
     }
