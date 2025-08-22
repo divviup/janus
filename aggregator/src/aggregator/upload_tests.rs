@@ -621,15 +621,16 @@ async fn upload_report_task_ended() {
     )
     .await;
 
+    let precision = Duration::from_seconds(100);
+    let task_end_time = clock.now_aligned_to_precision(&precision);
+
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
-    .with_task_end(Some(
-        clock.now_aligned_to_precision(&Duration::from_seconds(100)),
-    ))
+    .with_time_precision(precision)
+    .with_task_end(Some(task_end_time))
     .build()
     .leader_view()
     .unwrap();
@@ -637,11 +638,8 @@ async fn upload_report_task_ended() {
 
     // Advance the clock to end the task.
     clock.advance(task.time_precision());
-    let report = create_report(
-        &task,
-        &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
-    );
+    // Create a report exactly at the end time
+    let report = create_report(&task, &hpke_keypair, task_end_time);
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator
