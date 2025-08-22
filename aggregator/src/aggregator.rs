@@ -1777,7 +1777,7 @@ impl VdafOps {
         // Reject reports after a task has ended.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
         if let Some(task_end) = task.task_end() {
-            if report.metadata().time().is_after(task_end) {
+            if report.metadata().time().ge(task_end) {
                 return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
             }
         }
