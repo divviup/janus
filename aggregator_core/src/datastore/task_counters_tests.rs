@@ -40,18 +40,18 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(counter, Some(TaskUploadCounter::default()));
 
                 let ord = rng().random_range(0..32);
-                TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 22, 12)
+                TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 22, 12, 42)
                     .flush(&task_id, tx, ord)
                     .await
                     .unwrap();
 
                 let ord = rng().random_range(0..32);
-                TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 0, 8)
+                TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 0, 8, 0)
                     .flush(&task_id, tx, ord)
                     .await
                     .unwrap();
 
-                TaskUploadCounter::new_with_values(1, 1, 1, 1, 1, 1, 1, 1, 1)
+                TaskUploadCounter::new_with_values(1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
                     // force conflict on (task_id, ord) to exercise the query's
                     // ON CONFLICT (task_id, ord) DO UPDATE SET clause
                     .flush(&task_id, tx, ord)
@@ -68,7 +68,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(
                     counter,
                     Some(TaskUploadCounter::new_with_values(
-                        3, 5, 7, 9, 11, 101, 26, 23, 21,
+                        3, 5, 7, 9, 11, 101, 26, 23, 21, 43,
                     ))
                 );
 

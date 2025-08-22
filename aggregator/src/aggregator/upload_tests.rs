@@ -30,8 +30,8 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval, PlaintextInputShare, Query,
-    Report, Role, batch_mode::TimeInterval,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
+    PlaintextInputShare, Query, Report, Role, batch_mode::TimeInterval,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
@@ -153,6 +153,9 @@ async fn upload() {
         clock.now_aligned_to_precision(task.time_precision()),
         *report.metadata().id(),
         &hpke_keypair,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
     aggregator
         .handle_upload(task.id(), &mutated_report.get_encoded().unwrap())
@@ -181,7 +184,7 @@ async fn upload() {
     assert_eq!(
         got_counter,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 1, 0, 0, 0
+            0, 0, 0, 0, 0, 1, 0, 0, 0, 0
         ))
     )
 }
@@ -253,7 +256,7 @@ async fn upload_batch() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 100, 0, 0, 0
+            0, 0, 0, 0, 0, 100, 0, 0, 0, 0
         ))
     );
 }
@@ -326,7 +329,7 @@ async fn upload_wrong_hpke_config_id() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 1, 0, 0, 0, 0
+            0, 0, 0, 0, 1, 0, 0, 0, 0, 0
         ))
     )
 }
@@ -380,7 +383,7 @@ async fn upload_report_in_the_future_boundary_condition() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 1, 0, 0, 0
+            0, 0, 0, 0, 0, 1, 0, 0, 0, 0
         ))
     )
 }
@@ -438,7 +441,7 @@ async fn upload_report_in_the_future_past_clock_skew() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 0, 1, 0, 0
+            0, 0, 0, 0, 0, 0, 1, 0, 0, 0
         ))
     )
 }
@@ -528,7 +531,7 @@ async fn upload_report_for_collected_batch() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            1, 0, 0, 0, 0, 0, 0, 0, 0
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0
         ))
     )
 }
@@ -600,7 +603,7 @@ async fn upload_report_task_not_started() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 0, 0, 1, 0
+            0, 0, 0, 0, 0, 0, 0, 1, 0, 0
         ))
     )
 }
@@ -673,7 +676,7 @@ async fn upload_report_task_ended() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 0, 0, 0, 0, 0, 1
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 0
         ))
     )
 }
@@ -790,7 +793,7 @@ async fn upload_report_report_expired() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 0, 1, 0, 0, 0, 0, 0
+            0, 0, 0, 1, 0, 0, 0, 0, 0, 0
         ))
     )
 }
@@ -820,6 +823,9 @@ async fn upload_report_faulty_encryption() {
         clock.now(),
         random(),
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
 
     // Try to upload the report, verify that we get the expected error.
@@ -852,7 +858,7 @@ async fn upload_report_faulty_encryption() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 0, 1, 0, 0, 0, 0, 0, 0
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 0
         ))
     )
 }
@@ -915,7 +921,7 @@ async fn upload_report_public_share_decode_failure() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 1, 0, 0, 0, 0, 0, 0, 0
+            0, 1, 0, 0, 0, 0, 0, 0, 0, 0
         ))
     )
 }
@@ -992,7 +998,81 @@ async fn upload_report_leader_input_share_decode_failure() {
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 1, 0, 0, 0, 0, 0, 0, 0
+            0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+        ))
+    )
+}
+
+#[tokio::test]
+async fn upload_report_duplicate_extensions() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(Duration::from_seconds(100))
+    .with_report_expiry_age(Some(Duration::from_seconds(60)))
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Duplicate extensions
+    let report = create_report_custom(
+        &task,
+        clock.now_aligned_to_precision(task.time_precision()),
+        random(),
+        &hpke_keypair,
+        /* public */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* helper */ Vec::new(),
+    );
+
+    // Try to upload the report, verify that we get the expected error.
+    let error = aggregator
+        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.as_ref(),
+        Error::ReportRejected(rejection) => {
+            assert_eq!(task.id(), rejection.task_id());
+            assert_eq!(report.metadata().id(), rejection.report_id());
+            assert_eq!(report.metadata().time(), rejection.time());
+            assert_matches!(rejection.reason(), ReportRejectionReason::DuplicateExtension);
+        }
+    );
+
+    // Wait for the report writer to have completed one write task.
+    runtime_manager
+        .wait_for_completed_tasks("aggregator", 1)
+        .await;
+
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 1
         ))
     )
 }

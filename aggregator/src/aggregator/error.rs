@@ -232,6 +232,7 @@ pub enum ReportRejectionReason {
     TooEarly,
     OutdatedHpkeConfig(HpkeConfigId),
     TaskNotStarted,
+    DuplicateExtension,
 }
 
 impl ReportRejectionReason {
@@ -249,6 +250,7 @@ impl ReportRejectionReason {
                 "Report is using an outdated HPKE configuration."
             }
             ReportRejectionReason::TaskNotStarted => "Task has not started.",
+            ReportRejectionReason::DuplicateExtension => "Report contains duplicate extensions.",
         }
     }
 }
@@ -284,6 +286,7 @@ impl Error {
             Error::ReportRejected(rejection) => match rejection.reason {
                 ReportRejectionReason::TooEarly => "report_too_early",
                 ReportRejectionReason::OutdatedHpkeConfig(_) => "outdated_hpke_config",
+                ReportRejectionReason::DuplicateExtension => "duplicate_extension",
                 _ => "report_rejected",
             },
             Error::InvalidMessage(_, _) => "unrecognized_message",

@@ -33,6 +33,8 @@ struct TaskUploadCounterInner {
     task_not_started: u64,
     /// Reports that were submitted to the task after the task's end time.
     task_ended: u64,
+    /// Reports that contained a duplicate extension.
+    duplicate_extension: u64,
 }
 
 impl From<TaskUploadCounterInner> for TaskUploadCounter {
@@ -69,6 +71,7 @@ impl TaskUploadCounter {
         report_too_early: u64,
         task_not_started: u64,
         task_ended: u64,
+        duplicate_extension: u64,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(TaskUploadCounterInner {
@@ -81,6 +84,7 @@ impl TaskUploadCounter {
                 report_too_early,
                 task_not_started,
                 task_ended,
+                duplicate_extension,
             })),
         }
     }
@@ -106,7 +110,8 @@ SELECT
     COALESCE(SUM(report_success)::BIGINT, 0) AS report_success,
     COALESCE(SUM(report_too_early)::BIGINT, 0) AS report_too_early,
     COALESCE(SUM(task_not_started)::BIGINT, 0) AS task_not_started,
-    COALESCE(SUM(task_ended)::BIGINT, 0) AS task_ended
+    COALESCE(SUM(task_ended)::BIGINT, 0) AS task_ended,
+    COALESCE(SUM(duplicate_extension)::BIGINT, 0) AS duplicate_extension
 FROM task_upload_counters
 RIGHT JOIN tasks on tasks.id = task_upload_counters.task_id
 WHERE tasks.task_id = $1
@@ -127,6 +132,7 @@ GROUP BY tasks.id",
                     row.get_bigint_and_convert("report_too_early")?,
                     row.get_bigint_and_convert("task_not_started")?,
                     row.get_bigint_and_convert("task_ended")?,
+                    row.get_bigint_and_convert("duplicate_extension")?,
                 ))
             })
             .transpose()
@@ -149,9 +155,9 @@ GROUP BY tasks.id",
 INSERT INTO task_upload_counters (
     task_id, ord, interval_collected, report_decode_failure,
     report_decrypt_failure, report_expired, report_outdated_key, report_success, report_too_early,
-    task_not_started, task_ended
+    task_not_started, task_ended, duplicate_extension
 )
-VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (task_id, ord) DO UPDATE SET
     interval_collected = task_upload_counters.interval_collected + $3,
     report_decode_failure = task_upload_counters.report_decode_failure + $4,
@@ -161,7 +167,8 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
     report_success = task_upload_counters.report_success + $8,
     report_too_early = task_upload_counters.report_too_early + $9,
     task_not_started = task_upload_counters.task_not_started + $10,
-    task_ended = task_upload_counters.task_ended + $11";
+    task_ended = task_upload_counters.task_ended + $11,
+    duplicate_extension = task_upload_counters.duplicate_extension + $12";
 
         let stmt = tx.prepare_cached(stmt).await?;
         check_single_row_mutation(
@@ -179,6 +186,7 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
                     &i64::try_from(inner.report_too_early)?,
                     &i64::try_from(inner.task_not_started)?,
                     &i64::try_from(inner.task_ended)?,
+                    &i64::try_from(inner.duplicate_extension)?,
                 ],
             )
             .await?,
@@ -221,6 +229,10 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
         self.inner.lock().unwrap().task_ended += 1
     }
 
+    pub fn increment_duplicate_extension(&self) {
+        self.inner.lock().unwrap().duplicate_extension += 1
+    }
+
     pub fn interval_collected(&self) -> u64 {
         self.inner.lock().unwrap().interval_collected
     }
@@ -255,6 +267,10 @@ ON CONFLICT (task_id, ord) DO UPDATE SET
 
     pub fn task_ended(&self) -> u64 {
         self.inner.lock().unwrap().task_ended
+    }
+
+    pub fn duplicate_extension(&self) -> u64 {
+        self.inner.lock().unwrap().duplicate_extension
     }
 }
 
