@@ -911,7 +911,7 @@ async fn get_task_upload_metrics() {
     // Verify: requesting metrics on a task returns the correct result.
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
-            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12)
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12, 0)
                 .flush(&task_id, tx, 1)
                 .await
         })
@@ -926,7 +926,7 @@ async fn get_task_upload_metrics() {
             .await,
         Status::Ok,
         serde_json::to_string(&GetTaskUploadMetricsResp(
-            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12)
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12, 0)
         ))
         .unwrap(),
     );
@@ -2146,7 +2146,7 @@ fn task_resp_serialization() {
 fn get_task_upload_metrics_serialization() {
     assert_ser_tokens(
         &GetTaskUploadMetricsResp(TaskUploadCounter::new_with_values(
-            0, 1, 2, 3, 4, 5, 6, 7, 8,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
         )),
         &[
             Token::NewtypeStruct {
@@ -2154,7 +2154,7 @@ fn get_task_upload_metrics_serialization() {
             },
             Token::Struct {
                 name: "TaskUploadCounter",
-                len: 9,
+                len: 10,
             },
             Token::Str("interval_collected"),
             Token::U64(0),
@@ -2174,6 +2174,8 @@ fn get_task_upload_metrics_serialization() {
             Token::U64(7),
             Token::Str("task_ended"),
             Token::U64(8),
+            Token::Str("duplicate_extension"),
+            Token::U64(9),
             Token::StructEnd,
         ],
     )

@@ -68,11 +68,14 @@ pub fn create_report_custom(
     report_timestamp: Time,
     id: ReportId,
     hpke_keypair: &HpkeKeypair,
+    public_extensions: Vec<Extension>,
+    leader_extensions: Vec<Extension>,
+    helper_extensions: Vec<Extension>,
 ) -> Report {
     assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
 
     let vdaf = Prio3Count::new_count(2).unwrap();
-    let report_metadata = ReportMetadata::new(id, report_timestamp, Vec::new());
+    let report_metadata = ReportMetadata::new(id, report_timestamp, public_extensions);
 
     let (public_share, measurements) = vdaf
         .shard(&vdaf_application_context(task.id()), &true, id.as_ref())
@@ -87,7 +90,7 @@ pub fn create_report_custom(
     let leader_ciphertext = hpke::seal(
         hpke_keypair.config(),
         &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-        &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded().unwrap())
+        &PlaintextInputShare::new(leader_extensions, measurements[0].get_encoded().unwrap())
             .get_encoded()
             .unwrap(),
         &associated_data.get_encoded().unwrap(),
@@ -96,7 +99,7 @@ pub fn create_report_custom(
     let helper_ciphertext = hpke::seal(
         hpke_keypair.config(),
         &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-        &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded().unwrap())
+        &PlaintextInputShare::new(helper_extensions, measurements[1].get_encoded().unwrap())
             .get_encoded()
             .unwrap(),
         &associated_data.get_encoded().unwrap(),
@@ -116,7 +119,15 @@ pub fn create_report(
     hpke_keypair: &HpkeKeypair,
     report_timestamp: Time,
 ) -> Report {
-    create_report_custom(task, report_timestamp, random(), hpke_keypair)
+    create_report_custom(
+        task,
+        report_timestamp,
+        random(),
+        hpke_keypair,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 pub fn generate_helper_report_share<V: vdaf::Client<16>>(

@@ -126,6 +126,9 @@ async fn upload_handler() {
         clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         &hpke_keypair,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -313,6 +316,9 @@ async fn upload_handler() {
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
