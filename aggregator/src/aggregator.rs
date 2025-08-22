@@ -1886,6 +1886,7 @@ impl VdafOps {
         // Check if any two extensions have the same extension type across public
         // and private extension fields. If so, the Aggregator MUST mark the input
         // share as invalid with error invalid_message. (§4.6.2.4 step 7)
+        //
         // Note at this point we can't provide Error::InvalidMessage here because
         // we're packaging this into a report rejection list.
         let mut extensions = HashMap::new();
