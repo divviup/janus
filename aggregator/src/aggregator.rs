@@ -315,6 +315,7 @@ impl<C: Clock> Aggregator<C> {
             .with_unit("{error}")
             .build();
         upload_decode_failure_counter.add(0, &[]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", "duplicate_extension")]);
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
