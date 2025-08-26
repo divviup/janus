@@ -169,6 +169,7 @@ CREATE TABLE task_upload_counters(
     report_too_early       BIGINT NOT NULL DEFAULT 0, -- reports whose timestamp is too far in the future.
     task_not_started       BIGINT NOT NULL DEFAULT 0, -- reports sent to the task before it started.
     task_ended             BIGINT NOT NULL DEFAULT 0, -- reports sent to the task after it ended.
+    duplicate_extension    BIGINT NOT NULL DEFAULT 0, -- reports with duplicate extensions
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT task_upload_counters_unique UNIQUE(task_id, ord)

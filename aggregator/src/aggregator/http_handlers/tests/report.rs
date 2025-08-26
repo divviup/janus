@@ -22,8 +22,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType, PlaintextInputShare, Report,
-    ReportMetadata, Role, TaskId,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
+    PlaintextInputShare, Report, ReportMetadata, Role, TaskId,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
@@ -126,6 +126,9 @@ async fn upload_handler() {
         clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         &hpke_keypair,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -313,6 +316,9 @@ async fn upload_handler() {
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -417,13 +423,39 @@ async fn upload_handler() {
     check_response(
         &mut test_conn,
         Status::BadRequest,
-        "invalid_message",
+        "invalidMessage",
         "Time unaligned.",
         leader_task.id(),
         Some(
             "time is unaligned (precision = 1000 seconds, \
             inner error = timestamp is not a multiple of the time precision)",
         ),
+    )
+    .await;
+
+    // Reports with duplicate extensions must be rejected
+    clock.advance(&Duration::from_seconds(1));
+    let dupe_ext_report = create_report_custom(
+        &leader_task,
+        clock.now_aligned_to_precision(task.time_precision()),
+        random(),
+        &hpke_keypair,
+        /* public */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* helper */ Vec::new(),
+    );
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+        .with_request_body(dupe_ext_report.get_encoded().unwrap())
+        .run_async(&handler)
+        .await;
+    check_response(
+        &mut test_conn,
+        Status::BadRequest,
+        "invalidMessage",
+        "The message type for a response was incorrect or the payload was malformed.",
+        leader_task.id(),
+        Some("Report contains duplicate extensions."),
     )
     .await;
 }

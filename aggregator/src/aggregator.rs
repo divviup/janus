@@ -99,7 +99,7 @@ use rand::{Rng, random, rng};
 use reqwest::Client;
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     panic,
     path::PathBuf,
@@ -315,6 +315,7 @@ impl<C: Clock> Aggregator<C> {
             .with_unit("{error}")
             .build();
         upload_decode_failure_counter.add(0, &[]);
+        upload_decode_failure_counter.add(0, &[KeyValue::new("type", "duplicate_extension")]);
 
         let report_aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
@@ -1882,6 +1883,33 @@ impl VdafOps {
                 return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
+
+        // Check if any two extensions have the same extension type across public
+        // and private extension fields. If so, the Aggregator MUST mark the input
+        // share as invalid with error invalid_message. (§4.6.2.4 step 7)
+        //
+        // Note at this point we can't provide Error::InvalidMessage here because
+        // we're packaging this into a report rejection list.
+        let mut extensions = HashMap::new();
+        if !leader_private_extensions
+            .iter()
+            .chain(report.metadata().public_extensions())
+            .all(|extension| {
+                extensions
+                    .insert(*extension.extension_type(), extension.extension_data())
+                    .is_none()
+            })
+        {
+            debug!(
+                task_id = %task.id(),
+                report_id = ?report.metadata().id(),
+                "Received report share with duplicate extensions",
+            );
+            metrics
+                .upload_decode_failure_counter
+                .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+            return Err(reject_report(ReportRejectionReason::DuplicateExtension).await?);
+        }
 
         let report = LeaderStoredReport::new(
             *task.id(),

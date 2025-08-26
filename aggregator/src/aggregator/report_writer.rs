@@ -337,6 +337,7 @@ impl TaskUploadCounters {
             ReportRejectionReason::TooEarly => entry.increment_report_too_early(),
             ReportRejectionReason::OutdatedHpkeConfig(_) => entry.increment_report_outdated_key(),
             ReportRejectionReason::TaskNotStarted => entry.increment_task_not_started(),
+            ReportRejectionReason::DuplicateExtension => entry.increment_duplicate_extension(),
         }
     }
 

@@ -69,6 +69,11 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
                     .with_task_id(rejection.task_id()),
             ),
+            ReportRejectionReason::DuplicateExtension => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::InvalidMessage)
+                    .with_task_id(rejection.task_id())
+                    .with_detail(rejection.reason().detail()),
+            ),
             _ => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::ReportRejected)
                     .with_task_id(rejection.task_id())
@@ -158,7 +163,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::Datastore(error @ datastoreError::TimeUnaligned { task_id, .. }) => conn
             .with_problem_document(
                 &ProblemDocument::new(
-                    "urn:ietf:params:ppm:dap:error:invalid_message",
+                    DapProblemType::InvalidMessage.type_uri(),
                     "Time unaligned.",
                     Status::BadRequest,
                 )
