@@ -44,7 +44,8 @@ branch.
 | `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of June 24, 2024 |
 | `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Unmaintained as of June 24, 2024 |
 | `release/0.7` | [`draft-ietf-ppm-dap-09`][dap-09] | Yes, [with errata](#draft-ietf-ppm-dap-09-errata) | Supported |
-| `main` | [`draft-ietf-ppm-dap-15`][dap-15] | Yes | Supported |
+| `release/0.8` | [`draft-ietf-ppm-dap-15`][dap-15] | Yes | Supported |
+| `main` | [`draft-ietf-ppm-dap`][dap-gh] | No | Supported |
 
 Note that not every DAP draft has been implemented.
 
