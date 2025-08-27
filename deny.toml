@@ -15,6 +15,10 @@ ignore = [
     # Janus never uses the protobuf format for exposing metrics, and in any case we would not be
     # handling untrusted input.
     "RUSTSEC-2024-0437",
+
+    # `async-std` is only in our tree as the `opentelemetry_sdk/rt-async-std` feature, which we do
+    # not enable.
+    "RUSTSEC-2025-0052",
 ]
 
 [bans]
