@@ -8,7 +8,10 @@ use std::{
 };
 
 use itertools::Itertools;
-use opentelemetry::metrics::{Histogram, Meter, MetricsError};
+use opentelemetry::{
+    metrics::{Histogram, Meter, MetricsError},
+    KeyValue,
+};
 use tokio::{
     select,
     sync::{
@@ -194,14 +197,23 @@ impl LIFORequestQueue {
             id: u64,
             sender: mpsc::UnboundedSender<DispatcherMessage>,
             armed: bool,
+            metrics: Metrics,
+            enqueue_time: Instant,
         }
 
         impl CancelDropGuard {
-            fn new(id: u64, sender: mpsc::UnboundedSender<DispatcherMessage>) -> Self {
+            fn new(
+                id: u64,
+                sender: mpsc::UnboundedSender<DispatcherMessage>,
+                metrics: Metrics,
+                enqueue_time: Instant,
+            ) -> Self {
                 Self {
                     id,
                     sender,
                     armed: true,
+                    metrics,
+                    enqueue_time,
                 }
             }
 
@@ -213,6 +225,10 @@ impl LIFORequestQueue {
         impl Drop for CancelDropGuard {
             fn drop(&mut self) {
                 if self.armed {
+                    self.metrics.wait_time_histogram.record(
+                        self.enqueue_time.elapsed().as_secs_f64(),
+                        &[KeyValue::new("status", "cancelled")],
+                    );
                     let _ = self
                         .sender
                         .send(DispatcherMessage::Cancel(self.id))
@@ -221,15 +237,19 @@ impl LIFORequestQueue {
             }
         }
 
-        let mut drop_guard = CancelDropGuard::new(id, self.dispatcher_tx.clone());
+        let mut drop_guard = CancelDropGuard::new(
+            id,
+            self.dispatcher_tx.clone(),
+            self.metrics.clone(),
+            enqueue_time,
+        );
         let permit = permit_rx.await;
         drop_guard.disarm();
 
-        let wait_time = enqueue_time.elapsed();
-
-        self.metrics
-            .wait_time_histogram
-            .record(wait_time.as_secs_f64(), &[]);
+        self.metrics.wait_time_histogram.record(
+            enqueue_time.elapsed().as_secs_f64(),
+            &[KeyValue::new("status", "dequeued")],
+        );
 
         // If the rx channel is prematurely dropped, we'll reach this error, indicating that
         // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
