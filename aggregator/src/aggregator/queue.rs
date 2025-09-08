@@ -176,7 +176,7 @@ impl LIFORequestQueue {
                         // This property isn't preserved when the ID generator overflows, but that
                         // is not a practical concern. See [`Self::id_counter`].
                         match stack.pop_last() {
-                            Some((_id, permit_tx)) => {
+                            Some((_, permit_tx)) => {
                                 permit_tx.send(Ok(permit));
                                 metrics.requests_dequeued.add(1, &[]);
                             }
@@ -194,14 +194,12 @@ impl LIFORequestQueue {
                     Ordering::Relaxed,
                 );
                 metrics
-                    .queued_requests
-                    .store(stack.len().try_into().unwrap(), Ordering::Relaxed);
+                    .stacked_requests
+                    .store(u64::try_from(stack.len()).unwrap(), Ordering::Relaxed);
             }
         })
     }
-}
 
-impl LIFORequestQueue {
     async fn acquire(&self) -> Result<OwnedSemaphorePermit, Error> {
         let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
         let (permit_tx, permit_rx) = oneshot::channel();
@@ -267,21 +265,23 @@ impl LIFORequestQueue {
         );
 
         let permit_future = async {
+            let permit = permit_rx.await;
+            drop_guard.disarm();
+
+            self.metrics.wait_time_histogram.record(
+                enqueue_time.elapsed().as_secs_f64(),
+                &[KeyValue::new("status", "dequeued")]
+            );
+
            // If the rx channel is prematurely dropped, we'll reach this error, indicating that
            // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
            // causes the rx channel to be dropped, we shouldn't reach this error because the overall
            // future would have been dropped.
-            let permit = permit_rx
-                .await
-                .map_err(|_| Error::Internal("rx channel dropped".to_string()))?;
-            drop_guard.disarm();
-            let wait_time = enqueue_time.elapsed();
-            self.metrics
-                .wait_time_histogram
-                .record(wait_time.as_secs_f64(), &[KeyValue::new("status", "dequeued")]);
-            permit
+            permit.map_err(|_| Error::Internal("rx channel dropped".to_string()))?
         };
 
+        // If a request timeout is provided, impose it. If not, use the original release/0.7
+        // logic.
         match self.request_timeout {
             Some(timeout) => tokio::time::timeout(timeout, permit_future)
                 .await
@@ -359,7 +359,7 @@ struct Metrics {
     outstanding_requests: Arc<AtomicU64>,
 
     /// Number of requests currently waiting in the queue.
-    queued_requests: Arc<AtomicU64>,
+    stacked_requests: Arc<AtomicU64>,
 
     /// Histogram measuring how long a queue item waited before being dequeued.
     wait_time_histogram: Histogram<f64>,
@@ -386,7 +386,7 @@ struct Metrics {
 impl Metrics {
     const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "outstanding_requests";
     const MAX_OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "max_outstanding_requests";
-    const QUEUED_REQUESTS_METRIC_NAME: &'static str = "queued_requests";
+    const STACKED_REQUESTS_METRIC_NAME: &'static str = "stacked_requests";
     const WAIT_TIME_METRIC_NAME: &'static str = "lifo_queue_wait_time";
     const REQUESTS_PROCESSED_IMMEDIATELY_METRIC_NAME: &'static str =
         "requests_processed_immediately";
@@ -406,7 +406,7 @@ impl Metrics {
         max_outstanding_requests: u64,
     ) -> Result<Self, MetricsError> {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
-        let queued_requests = Arc::new(AtomicU64::new(0));
+        let stacked_requests = Arc::new(AtomicU64::new(0));
 
         let outstanding_requests_gauge = meter
             .u64_observable_gauge(Self::metric_name(
@@ -451,18 +451,18 @@ impl Metrics {
             },
         )?;
 
-        let queued_requests_gauge = meter
-            .u64_observable_gauge(Self::metric_name(prefix, Self::QUEUED_REQUESTS_METRIC_NAME))
-            .with_description("Number of requests currently waiting in the queue.")
+        let stacked_requests_gauge = meter
+            .u64_observable_gauge(Self::metric_name(prefix, Self::STACKED_REQUESTS_METRIC_NAME))
+            .with_description("Number of requests currently waiting in the LIFO queue.")
             .with_unit("{request}")
             .init();
 
-        meter.register_callback(&[queued_requests_gauge.as_any()], {
-            let queued_requests = Arc::clone(&queued_requests);
+        meter.register_callback(&[stacked_requests_gauge.as_any()], {
+            let stacked_requests = Arc::clone(&stacked_requests);
             move |observer| {
                 observer.observe_u64(
-                    &queued_requests_gauge,
-                    queued_requests.load(Ordering::Relaxed),
+                    &stacked_requests_gauge,
+                    stacked_requests.load(Ordering::Relaxed),
                     &[],
                 );
             }
@@ -528,7 +528,7 @@ impl Metrics {
 
         Ok(Self {
             outstanding_requests,
-            queued_requests,
+            stacked_requests,
             wait_time_histogram,
             requests_processed_immediately,
             requests_queued,
