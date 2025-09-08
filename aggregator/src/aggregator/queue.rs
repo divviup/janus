@@ -270,13 +270,13 @@ impl LIFORequestQueue {
 
             self.metrics.wait_time_histogram.record(
                 enqueue_time.elapsed().as_secs_f64(),
-                &[KeyValue::new("status", "dequeued")]
+                &[KeyValue::new("status", "dequeued")],
             );
 
-           // If the rx channel is prematurely dropped, we'll reach this error, indicating that
-           // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
-           // causes the rx channel to be dropped, we shouldn't reach this error because the overall
-           // future would have been dropped.
+            // If the rx channel is prematurely dropped, we'll reach this error, indicating that
+            // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
+            // causes the rx channel to be dropped, we shouldn't reach this error because the overall
+            // future would have been dropped.
             permit.map_err(|_| Error::Internal("rx channel dropped".to_string()))?
         };
 
@@ -452,7 +452,10 @@ impl Metrics {
         )?;
 
         let stacked_requests_gauge = meter
-            .u64_observable_gauge(Self::metric_name(prefix, Self::STACKED_REQUESTS_METRIC_NAME))
+            .u64_observable_gauge(Self::metric_name(
+                prefix,
+                Self::STACKED_REQUESTS_METRIC_NAME,
+            ))
             .with_description("Number of requests currently waiting in the LIFO queue.")
             .with_unit("{request}")
             .init();
