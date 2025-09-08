@@ -4,10 +4,11 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Instant,
 };
 
 use itertools::Itertools;
-use opentelemetry::metrics::{Meter, MetricsError};
+use opentelemetry::metrics::{Histogram, Meter, MetricsError};
 use tokio::{
     select,
     sync::{
@@ -43,6 +44,8 @@ pub struct LIFORequestQueue {
     /// usage. For instance, it takes approximately 584,000 years at 1M QPS to overflow a 64-bit
     /// counter.
     id_counter: AtomicU64,
+
+    metrics: Metrics,
 }
 
 impl LIFORequestQueue {
@@ -70,11 +73,12 @@ impl LIFORequestQueue {
             u64::try_from(usize::try_from(concurrency).unwrap() + depth).unwrap();
         let metrics = Metrics::new(meter, meter_prefix, max_outstanding_requests)
             .map_err(|e| Error::Internal(e.to_string()))?;
-        Self::dispatcher(message_rx, concurrency, depth, metrics);
+        Self::dispatcher(message_rx, concurrency, depth, metrics.clone());
 
         Ok(Self {
             id_counter,
             dispatcher_tx: message_tx,
+            metrics,
         })
     }
 
@@ -177,6 +181,7 @@ impl LIFORequestQueue {
         let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
         let (permit_tx, permit_rx) = oneshot::channel();
 
+        let enqueue_time = Instant::now();
         self.dispatcher_tx
             .send(DispatcherMessage::Enqueue(id, PermitTx(permit_tx)))
             // We don't necessarily panic because the dispatcher task could be shutdown as part of
@@ -219,6 +224,12 @@ impl LIFORequestQueue {
         let mut drop_guard = CancelDropGuard::new(id, self.dispatcher_tx.clone());
         let permit = permit_rx.await;
         drop_guard.disarm();
+
+        let wait_time = enqueue_time.elapsed();
+
+        self.metrics
+            .wait_time_histogram
+            .record(wait_time.as_secs_f64(), &[]);
 
         // If the rx channel is prematurely dropped, we'll reach this error, indicating that
         // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
@@ -284,17 +295,26 @@ pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl
     LIFOQueueHandler::new(queue, handler)
 }
 
+#[derive(Clone, Debug)]
 struct Metrics {
     /// The approximate number of requests currently being serviced by the queue. It's approximate
     /// since the queue length may have changed before the measurement is taken. In practice, the
     /// error should only be +/- 1. It is also more or less suitable for synchronization during
     /// tests.
     outstanding_requests: Arc<AtomicU64>,
+
+    /// Histogram measuring how long a queue item waited before being dequeued.
+    wait_time_histogram: Histogram<f64>,
 }
 
 impl Metrics {
     const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "outstanding_requests";
     const MAX_OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "max_outstanding_requests";
+    const WAIT_TIME_METRIC_NAME: &'static str = "lifo_queue_wait_time";
+
+    fn metric_name(prefix: &str, name: &str) -> String {
+        [prefix, name].into_iter().join("_")
+    }
 
     fn new(
         meter: &Meter,
@@ -303,18 +323,20 @@ impl Metrics {
     ) -> Result<Self, MetricsError> {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
         let outstanding_requests_gauge = meter
-            .u64_observable_gauge(Self::get_outstanding_requests_name(prefix))
+            .u64_observable_gauge(Self::metric_name(
+                prefix,
+                Self::OUTSTANDING_REQUESTS_METRIC_NAME,
+            ))
             .with_description(
                 "The approximate number of requests currently being serviced by the aggregator.",
             )
             .with_unit("{request}")
             .init();
         let max_outstanding_requests_gauge = meter
-            .u64_observable_gauge(
-                [prefix, Self::MAX_OUTSTANDING_REQUESTS_METRIC_NAME]
-                    .into_iter()
-                    .join("_"),
-            )
+            .u64_observable_gauge(Self::metric_name(
+                prefix,
+                Self::MAX_OUTSTANDING_REQUESTS_METRIC_NAME,
+            ))
             .with_description(
                 "The maximum number of requests that the aggregator can service at a time.",
             )
@@ -343,15 +365,16 @@ impl Metrics {
             },
         )?;
 
+        let wait_time_histogram = meter
+            .f64_histogram(Self::metric_name(prefix, Self::WAIT_TIME_METRIC_NAME))
+            .with_description("Time spent waiting by items in LIFO queue before being dequeued")
+            .with_unit("s")
+            .init();
+
         Ok(Self {
             outstanding_requests,
+            wait_time_histogram,
         })
-    }
-
-    fn get_outstanding_requests_name(prefix: &str) -> String {
-        [prefix, Self::OUTSTANDING_REQUESTS_METRIC_NAME]
-            .into_iter()
-            .join("_")
     }
 }
 
@@ -401,7 +424,10 @@ mod tests {
                 .await
                 // The metric may not be immediately available when we need it, so return an Option
                 // instead of unwrapping.
-                .get(&Metrics::get_outstanding_requests_name(meter_prefix))?
+                .get(&Metrics::metric_name(
+                    meter_prefix,
+                    Metrics::OUTSTANDING_REQUESTS_METRIC_NAME,
+                ))?
                 .data
                 .as_any()
                 .downcast_ref::<Gauge<u64>>()
