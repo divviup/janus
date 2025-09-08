@@ -364,7 +364,7 @@ where
         let helper_queue = self
             .helper_aggregation_request_queue
             .map(|HelperAggregationRequestQueue { depth, concurrency }| {
-                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper", None, None)
+                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper", None)
             })
             .transpose()?
             .map(Arc::new);

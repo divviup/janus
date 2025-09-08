@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -18,7 +17,6 @@ use tokio::{
         OwnedSemaphorePermit, Semaphore,
     },
     task::JoinHandle,
-    time::interval,
 };
 use tracing::{debug, error, warn};
 use trillium::{Conn, Handler};
@@ -47,6 +45,9 @@ pub struct LIFORequestQueue {
     /// counter.
     id_counter: AtomicU64,
 
+    /// Maximum time a request can wait in the queue.
+    request_timeout: Option<Duration>,
+
     /// Metrics for monitoring queue behavior.
     metrics: Metrics,
 }
@@ -60,14 +61,12 @@ impl LIFORequestQueue {
     /// using the same meter. All metric names will be prefixed with this string.
     ///
     /// `request_timeout` specifies the maximum time a request can wait in the queue.
-    /// `service_timeout` specifies the maximum time a request can spend being processed.
     pub fn new(
         concurrency: u32,
         depth: usize,
         meter: &Meter,
         meter_prefix: &str,
         request_timeout: Option<Duration>,
-        service_timeout: Option<Duration>,
     ) -> Result<Self, Error> {
         if concurrency < 1 {
             return Err(Error::InvalidConfiguration(
@@ -81,20 +80,13 @@ impl LIFORequestQueue {
             u64::try_from(usize::try_from(concurrency).unwrap() + depth).unwrap();
         let metrics = Metrics::new(meter, meter_prefix, max_outstanding_requests)
             .map_err(|e| Error::Internal(e.to_string()))?;
-        Self::dispatcher(
-            message_rx,
-            concurrency,
-            depth,
-            metrics.clone(),
-            request_timeout,
-            service_timeout,
-            message_tx.clone(),
-        );
+        Self::dispatcher(message_rx, concurrency, depth, metrics.clone());
 
         Ok(Self {
             id_counter,
             dispatcher_tx: message_tx,
             metrics,
+            request_timeout,
         })
     }
 
@@ -112,15 +104,11 @@ impl LIFORequestQueue {
         concurrency: u32,
         depth: usize,
         metrics: Metrics,
-        request_timeout: Option<Duration>,
-        service_timeout: Option<Duration>,
-        dispatcher_tx: mpsc::UnboundedSender<DispatcherMessage>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            // Use BTreeMaps to allow for cancellation (i.e. removal) of waiting requests in
+            // Use a BTreeMap to allow for cancellation (i.e. removal) of waiting requests in
             // sublinear time, and to maintain LIFO ordering by ID.
-            let mut stack: BTreeMap<u64, StackedRequest> = BTreeMap::new();
-            let mut active_requests: BTreeMap<u64, ActiveRequest> = BTreeMap::new();
+            let mut stack: BTreeMap<u64, PermitTx> = BTreeMap::new();
 
             // Unwrap safety: conversion only fails on architectures where usize is less than
             // 32-bits.
@@ -133,12 +121,6 @@ impl LIFORequestQueue {
                 .await
                 .unwrap();
 
-            // Cleanup timed-out tasks from the queued-up stack periodically
-            let cleanup_interval = request_timeout
-                .map(|t| t / 4)
-                .unwrap_or(Duration::from_secs(30));
-            let mut cleanup_timer = interval(cleanup_interval);
-
             loop {
                 let semaphore = Arc::clone(&semaphore);
                 select! {
@@ -148,33 +130,17 @@ impl LIFORequestQueue {
                                 match message {
                                     DispatcherMessage::Enqueue(id, permit_tx) => {
                                         if let Some(permit) = permits.split(1) {
-                                            // Start service timeout tracking
-                                            let timeout_handle = start_service_timeout(
-                                                id,
-                                                service_timeout,
-                                                dispatcher_tx.clone()
-                                            );
-                                            active_requests.insert(id, ActiveRequest {
-                                                started_at: Instant::now(),
-                                                timeout_handle,
-                                            });
-                                            permit_tx.send(Ok(TimeoutAwarePermit::new(
-                                                permit,
-                                                id,
-                                                dispatcher_tx.clone()
-                                            )));
+                                            permit_tx.send(Ok(permit));
                                             metrics.requests_processed_immediately.add(1, &[]);
                                         } else if stack.len() < depth {
-                                            let queued_request = StackedRequest {
-                                                permit_tx,
-                                                queued_at: Instant::now(),
-                                            };
-                                            if stack.insert(id, queued_request).is_some() {
+                                            if stack.insert(id, permit_tx).is_some() {
                                                 // Avoid panicking on this bug, since if this
                                                 // process dies, request processing stops.
                                                 error!(?id, "bug: overwrote existing request in the queue");
+                                                metrics.requests_queued.add(1, &[KeyValue::new("status", "overwrote")]);
+                                            } else {
+                                                metrics.requests_queued.add(1, &[]);
                                             }
-                                            metrics.requests_queued.add(1, &[]);
                                         } else {
                                             permit_tx.send(Err(Error::TooManyRequests));
                                             metrics.requests_rejected.add(1, &[]);
@@ -184,24 +150,6 @@ impl LIFORequestQueue {
                                         debug!(?id, "removing request");
                                         if stack.remove(&id).is_some() {
                                             metrics.requests_cancelled.add(1, &[]);
-                                        }
-                                        if let Some(active) = active_requests.remove(&id) {
-                                            if let Some(handle) = active.timeout_handle {
-                                                handle.abort();
-                                            }
-                                            // Record processing time for requests that completed
-                                            let processing_time = active.started_at.elapsed();
-                                            metrics.processing_time_histogram.record(processing_time.as_secs_f64(), &[]);
-                                        }
-                                    },
-                                    DispatcherMessage::ServiceTimeout(id) => {
-                                        debug!(?id, "request timed out during service");
-                                        if let Some(active) = active_requests.remove(&id) {
-                                            metrics.requests_timeout_service.add(1, &[]);
-                                            // Record processing time even for timed out requests
-                                            let processing_time = active.started_at.elapsed();
-                                            metrics.processing_time_histogram.record(processing_time.as_secs_f64(), &[]);
-                                            // The permit will be returned when the TimeoutAwarePermit is dropped
                                         }
                                     },
                                 }
@@ -225,32 +173,12 @@ impl LIFORequestQueue {
                         // This property isn't preserved when the ID generator overflows, but that
                         // is not a practical concern. See [`Self::id_counter`].
                         match stack.pop_last() {
-                            Some((id, queued)) => {
-                                // Start service timeout tracking
-                                let timeout_handle = start_service_timeout(
-                                    id,
-                                    service_timeout,
-                                    dispatcher_tx.clone()
-                                );
-
-                                active_requests.insert(id, ActiveRequest {
-                                    started_at: Instant::now(),
-                                    timeout_handle,
-                                });
-
-                                queued.permit_tx.send(Ok(TimeoutAwarePermit::new(
-                                    permit,
-                                    id,
-                                    dispatcher_tx.clone()
-                                )));
+                            Some((_id, permit_tx)) => {
+                                permit_tx.send(Ok(permit));
                                 metrics.requests_dequeued.add(1, &[]);
                             }
                             None => permits.merge(permit),
                         }
-                    }
-
-                    _ = cleanup_timer.tick() => {
-                        cleanup_expired_requests(&mut stack, request_timeout, &metrics);
                     }
                 }
 
@@ -265,54 +193,13 @@ impl LIFORequestQueue {
                 metrics
                     .queued_requests
                     .store(stack.len().try_into().unwrap(), Ordering::Relaxed);
-                metrics
-                    .active_requests
-                    .store(active_requests.len().try_into().unwrap(), Ordering::Relaxed);
             }
         })
-    }
-}
-
-/// Start a service timeout task for the given request
-fn start_service_timeout(
-    request_id: u64,
-    service_timeout: Option<Duration>,
-    dispatcher_tx: mpsc::UnboundedSender<DispatcherMessage>,
-) -> Option<JoinHandle<()>> {
-    service_timeout.map(|timeout| {
-        tokio::spawn(async move {
-            tokio::time::sleep(timeout).await;
-            let _ = dispatcher_tx.send(DispatcherMessage::ServiceTimeout(request_id));
-        })
-    })
-}
-
-/// Clean up expired requests from the stack
-fn cleanup_expired_requests(
-    stack: &mut BTreeMap<u64, StackedRequest>,
-    request_timeout: Option<Duration>,
-    metrics: &Metrics,
-) {
-    if let Some(timeout) = request_timeout {
-        let now = Instant::now();
-        let expired_ids: Vec<u64> = stack
-            .iter()
-            .filter(|(_, req)| now.duration_since(req.queued_at) > timeout)
-            .map(|(id, _)| *id)
-            .collect();
-
-        for id in expired_ids {
-            if let Some(queued) = stack.remove(&id) {
-                queued.permit_tx.send(Err(Error::RequestTimeout));
-                metrics.requests_timeout_queue.add(1, &[]);
-                debug!(?id, "cleaned up expired request from queue");
-            }
-        }
     }
 }
 
 impl LIFORequestQueue {
-    async fn acquire(&self) -> Result<TimeoutAwarePermit, Error> {
+    async fn acquire(&self) -> Result<OwnedSemaphorePermit, Error> {
         let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
         let (permit_tx, permit_rx) = oneshot::channel();
 
@@ -357,20 +244,28 @@ impl LIFORequestQueue {
         }
 
         let mut drop_guard = CancelDropGuard::new(id, self.dispatcher_tx.clone());
-        let permit = permit_rx.await;
-        drop_guard.disarm();
 
-        let wait_time = enqueue_time.elapsed();
+        let permit_future = async {
+            let permit = permit_rx
+                .await
+                .map_err(|_| Error::Internal("rx channel dropped".to_string()))?;
+            drop_guard.disarm();
+            let wait_time = enqueue_time.elapsed();
+            self.metrics
+                .wait_time_histogram
+                .record(wait_time.as_secs_f64(), &[]);
+            permit
+        };
 
-        self.metrics
-            .wait_time_histogram
-            .record(wait_time.as_secs_f64(), &[]);
-
-        // If the rx channel is prematurely dropped, we'll reach this error, indicating that
-        // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
-        // causes the rx channel to be dropped, we shouldn't reach this error because the overall
-        // future would have been dropped.
-        permit.map_err(|_| Error::Internal("rx channel dropped".to_string()))?
+        match self.request_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, permit_future)
+                .await
+                .map_err(|_| {
+                    self.metrics.requests_timeout_queue.add(1, &[]);
+                    Error::RequestTimeout
+                })?,
+            None => permit_future.await,
+        }
     }
 }
 
@@ -383,94 +278,19 @@ enum DispatcherMessage {
     /// A request has reneged, likely because the connection has timed out, so remove the request
     /// from the queue.
     Cancel(u64),
-
-    /// A request has timed out while being processed.
-    ServiceTimeout(u64),
 }
 
-/// Represents a request waiting in the stack.
-#[derive(Debug)]
-struct StackedRequest {
-    permit_tx: PermitTx,
-    queued_at: Instant,
-}
-
-/// Represents a request currently being processed.
-#[derive(Debug)]
-struct ActiveRequest {
-    started_at: Instant,
-    timeout_handle: Option<JoinHandle<()>>,
-}
 
 /// Dispatcher-side permit sender channel. May receive failure if the queue is full.
 #[derive(Debug)]
-struct PermitTx(oneshot::Sender<Result<TimeoutAwarePermit, Error>>);
+struct PermitTx(oneshot::Sender<Result<OwnedSemaphorePermit, Error>>);
 
 impl PermitTx {
-    fn send(self, result: Result<TimeoutAwarePermit, Error>) {
+    fn send(self, result: Result<OwnedSemaphorePermit, Error>) {
         let _ = self
             .0
             .send(result)
             .map_err(|_| warn!("failed to dispatch, request cancelled?"));
-    }
-}
-
-/// A wrapper around [`OwnedSemaphorePermit`] that tracks request completion and handles timeouts.
-#[derive(Debug)]
-pub struct TimeoutAwarePermit {
-    permit: OwnedSemaphorePermit,
-    request_id: u64,
-    dispatcher_tx: mpsc::UnboundedSender<DispatcherMessage>,
-    completed: bool,
-}
-
-impl TimeoutAwarePermit {
-    fn new(
-        permit: OwnedSemaphorePermit,
-        request_id: u64,
-        dispatcher_tx: mpsc::UnboundedSender<DispatcherMessage>,
-    ) -> Self {
-        Self {
-            permit,
-            request_id,
-            dispatcher_tx,
-            completed: false,
-        }
-    }
-
-    /// Mark the request as successfully completed. This should be called when request processing
-    /// finishes normally to avoid triggering timeout cleanup.
-    pub fn complete(mut self) {
-        self.completed = true;
-        // Notify dispatcher that request completed normally
-        let _ = self
-            .dispatcher_tx
-            .send(DispatcherMessage::Cancel(self.request_id));
-    }
-}
-
-impl Drop for TimeoutAwarePermit {
-    fn drop(&mut self) {
-        if !self.completed {
-            // Request was dropped without calling complete() - likely timeout or cancellation
-            let _ = self
-                .dispatcher_tx
-                .send(DispatcherMessage::Cancel(self.request_id));
-        }
-    }
-}
-
-impl Deref for TimeoutAwarePermit {
-    type Target = OwnedSemaphorePermit;
-
-    fn deref(&self) -> &Self::Target {
-        &self.permit
-    }
-}
-
-impl DerefMut for TimeoutAwarePermit {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.permit
     }
 }
 
@@ -493,11 +313,7 @@ impl<H: Handler> LIFOQueueHandler<H> {
     async fn run(&self, mut conn: Conn) -> Conn {
         match conn.cancel_on_disconnect(self.queue.acquire()).await {
             Some(permit) => match permit {
-                Ok(timeout_permit) => {
-                    let result = self.handler.run(conn).await;
-                    timeout_permit.complete();
-                    result
-                }
+                Ok(_permit) => self.handler.run(conn).await,
                 Err(err) => err.run(conn).await,
             },
             None => Error::ClientDisconnected.run(conn).await,
@@ -521,14 +337,8 @@ struct Metrics {
     /// Number of requests currently waiting in the queue.
     queued_requests: Arc<AtomicU64>,
 
-    /// Number of requests currently being actively processed.
-    active_requests: Arc<AtomicU64>,
-
     /// Histogram measuring how long a queue item waited before being dequeued.
     wait_time_histogram: Histogram<f64>,
-
-    /// Histogram measuring how long requests spend being actively processed.
-    processing_time_histogram: Histogram<f64>,
 
     /// Counter for requests processed immediately without queueing.
     requests_processed_immediately: Counter<u64>,
@@ -547,18 +357,13 @@ struct Metrics {
 
     /// Counter for requests that timed out while waiting in the queue.
     requests_timeout_queue: Counter<u64>,
-
-    /// Counter for requests that timed out while being processed.
-    requests_timeout_service: Counter<u64>,
 }
 
 impl Metrics {
     const OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "outstanding_requests";
     const MAX_OUTSTANDING_REQUESTS_METRIC_NAME: &'static str = "max_outstanding_requests";
     const QUEUED_REQUESTS_METRIC_NAME: &'static str = "queued_requests";
-    const ACTIVE_REQUESTS_METRIC_NAME: &'static str = "active_requests";
     const WAIT_TIME_METRIC_NAME: &'static str = "lifo_queue_wait_time";
-    const PROCESSING_TIME_METRIC_NAME: &'static str = "lifo_queue_processing_time";
     const REQUESTS_PROCESSED_IMMEDIATELY_METRIC_NAME: &'static str =
         "requests_processed_immediately";
     const REQUESTS_QUEUED_METRIC_NAME: &'static str = "requests_queued";
@@ -566,7 +371,6 @@ impl Metrics {
     const REQUESTS_REJECTED_METRIC_NAME: &'static str = "requests_rejected";
     const REQUESTS_CANCELLED_METRIC_NAME: &'static str = "requests_cancelled";
     const REQUESTS_TIMEOUT_QUEUE_METRIC_NAME: &'static str = "requests_timeout_queue";
-    const REQUESTS_TIMEOUT_SERVICE_METRIC_NAME: &'static str = "requests_timeout_service";
 
     fn metric_name(prefix: &str, name: &str) -> String {
         [prefix, name].into_iter().join("_")
@@ -579,7 +383,6 @@ impl Metrics {
     ) -> Result<Self, MetricsError> {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
         let queued_requests = Arc::new(AtomicU64::new(0));
-        let active_requests = Arc::new(AtomicU64::new(0));
 
         // Observable gauges for current queue state
         let outstanding_requests_gauge = meter
@@ -631,55 +434,21 @@ impl Metrics {
             .with_unit("{request}")
             .init();
 
-        meter.register_callback(
-            &[
-                queued_requests_gauge.as_any(),
-            ],
-            {
-                let queued_requests = Arc::clone(&queued_requests);
-                move |observer| {
-                    observer.observe_u64(
-                        &queued_requests_gauge,
-                        queued_requests.load(Ordering::Relaxed),
-                        &[],
-                    );
-                }
-            },
-        )?;
-
-        let active_requests_gauge = meter
-            .u64_observable_gauge(Self::metric_name(prefix, Self::ACTIVE_REQUESTS_METRIC_NAME))
-            .with_description("Number of requests currently being actively processed.")
-            .with_unit("{request}")
-            .init();
-
-        meter.register_callback(
-            &[
-                active_requests_gauge.as_any(),
-            ],
-            {
-                let active_requests = Arc::clone(&active_requests);
-                move |observer| {
-                    observer.observe_u64(
-                        &active_requests_gauge,
-                        active_requests.load(Ordering::Relaxed),
-                        &[],
-                    );
-                }
-            },
-        )?;
+        meter.register_callback(&[queued_requests_gauge.as_any()], {
+            let queued_requests = Arc::clone(&queued_requests);
+            move |observer| {
+                observer.observe_u64(
+                    &queued_requests_gauge,
+                    queued_requests.load(Ordering::Relaxed),
+                    &[],
+                );
+            }
+        })?;
 
         // Histogram for wait time
         let wait_time_histogram = meter
             .f64_histogram(Self::metric_name(prefix, Self::WAIT_TIME_METRIC_NAME))
             .with_description("Time spent waiting by items in LIFO queue before being dequeued")
-            .with_unit("s")
-            .init();
-
-        // Histogram for processing time
-        let processing_time_histogram = meter
-            .f64_histogram(Self::metric_name(prefix, Self::PROCESSING_TIME_METRIC_NAME))
-            .with_description("Time spent actively processing requests")
             .with_unit("s")
             .init();
 
@@ -735,28 +504,16 @@ impl Metrics {
             .with_unit("{request}")
             .init();
 
-        let requests_timeout_service = meter
-            .u64_counter(Self::metric_name(
-                prefix,
-                Self::REQUESTS_TIMEOUT_SERVICE_METRIC_NAME,
-            ))
-            .with_description("Number of requests that timed out while being processed")
-            .with_unit("{request}")
-            .init();
-
         Ok(Self {
             outstanding_requests,
             queued_requests,
-            active_requests,
             wait_time_histogram,
-            processing_time_histogram,
             requests_processed_immediately,
             requests_queued,
             requests_dequeued,
             requests_rejected,
             requests_cancelled,
             requests_timeout_queue,
-            requests_timeout_service,
         })
     }
 }
@@ -976,7 +733,8 @@ mod tests {
             runtime_flavor.run(async move {
                 let meter_prefix = "test";
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &noop_meter(), meter_prefix, None, None).unwrap(),
+                    LIFORequestQueue::new(concurrency, depth, &noop_meter(), meter_prefix, None)
+                        .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
@@ -1016,7 +774,7 @@ mod tests {
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let unhang = Arc::new(Notify::new());
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None, None)
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
                         .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
@@ -1097,7 +855,7 @@ mod tests {
                 let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None, None)
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
                         .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
@@ -1162,7 +920,7 @@ mod tests {
                 let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None, None)
+                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
                         .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
