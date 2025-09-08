@@ -8,7 +8,10 @@ use std::{
 };
 
 use itertools::Itertools;
-use opentelemetry::metrics::{Counter, Histogram, Meter, MetricsError};
+use opentelemetry::{
+    metrics::{Counter, Histogram, Meter, MetricsError},
+    KeyValue,
+};
 use tokio::{
     select,
     sync::{
@@ -147,7 +150,7 @@ impl LIFORequestQueue {
                                         }
                                     },
                                     DispatcherMessage::Cancel(id) => {
-                                        debug!(?id, "removing request");
+                                        debug!(?id, "removing request from the queue");
                                         if stack.remove(&id).is_some() {
                                             metrics.requests_cancelled.add(1, &[]);
                                         }
@@ -216,14 +219,23 @@ impl LIFORequestQueue {
             id: u64,
             sender: mpsc::UnboundedSender<DispatcherMessage>,
             armed: bool,
+            metrics: Metrics,
+            enqueue_time: Instant,
         }
 
         impl CancelDropGuard {
-            fn new(id: u64, sender: mpsc::UnboundedSender<DispatcherMessage>) -> Self {
+            fn new(
+                id: u64,
+                sender: mpsc::UnboundedSender<DispatcherMessage>,
+                metrics: Metrics,
+                enqueue_time: Instant,
+            ) -> Self {
                 Self {
                     id,
                     sender,
                     armed: true,
+                    metrics,
+                    enqueue_time,
                 }
             }
 
@@ -235,6 +247,10 @@ impl LIFORequestQueue {
         impl Drop for CancelDropGuard {
             fn drop(&mut self) {
                 if self.armed {
+                    self.metrics.wait_time_histogram.record(
+                        self.enqueue_time.elapsed().as_secs_f64(),
+                        &[KeyValue::new("status", "cancelled")],
+                    );
                     let _ = self
                         .sender
                         .send(DispatcherMessage::Cancel(self.id))
@@ -243,9 +259,18 @@ impl LIFORequestQueue {
             }
         }
 
-        let mut drop_guard = CancelDropGuard::new(id, self.dispatcher_tx.clone());
+        let mut drop_guard = CancelDropGuard::new(
+            id,
+            self.dispatcher_tx.clone(),
+            self.metrics.clone(),
+            enqueue_time,
+        );
 
         let permit_future = async {
+           // If the rx channel is prematurely dropped, we'll reach this error, indicating that
+           // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
+           // causes the rx channel to be dropped, we shouldn't reach this error because the overall
+           // future would have been dropped.
             let permit = permit_rx
                 .await
                 .map_err(|_| Error::Internal("rx channel dropped".to_string()))?;
@@ -253,7 +278,7 @@ impl LIFORequestQueue {
             let wait_time = enqueue_time.elapsed();
             self.metrics
                 .wait_time_histogram
-                .record(wait_time.as_secs_f64(), &[]);
+                .record(wait_time.as_secs_f64(), &[KeyValue::new("status", "dequeued")]);
             permit
         };
 
@@ -279,7 +304,6 @@ enum DispatcherMessage {
     /// from the queue.
     Cancel(u64),
 }
-
 
 /// Dispatcher-side permit sender channel. May receive failure if the queue is full.
 #[derive(Debug)]
@@ -384,7 +408,6 @@ impl Metrics {
         let outstanding_requests = Arc::new(AtomicU64::new(0));
         let queued_requests = Arc::new(AtomicU64::new(0));
 
-        // Observable gauges for current queue state
         let outstanding_requests_gauge = meter
             .u64_observable_gauge(Self::metric_name(
                 prefix,
@@ -445,7 +468,6 @@ impl Metrics {
             }
         })?;
 
-        // Histogram for wait time
         let wait_time_histogram = meter
             .f64_histogram(Self::metric_name(prefix, Self::WAIT_TIME_METRIC_NAME))
             .with_description("Time spent waiting by items in LIFO queue before being dequeued")

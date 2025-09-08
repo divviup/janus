@@ -469,7 +469,7 @@ pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_error
 pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
 pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
 pub const TRANSACTION_POOL_WAIT_METER_NAME: &str = "janus_database_pool_wait_duration";
-pub const TRANSACTION_TOTAL_DURATION_METER_NAME: &str = "janus_database_transacton_total_duration";
+pub const TRANSACTION_TOTAL_DURATION_METER_NAME: &str = "janus_database_transaction_total_duration";
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {
