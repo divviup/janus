@@ -166,6 +166,22 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "again later."
             )),
         ),
+        Error::RequestTimeout => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#request-timeout",
+                "Request timed out waiting in queue.",
+                Status::RequestTimeout,
+            )
+            .with_detail("The request spent too long waiting to be processed."),
+        ),
+        Error::ServiceTimeout => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#service-timeout",
+                "Request timed out during processing.",
+                Status::RequestTimeout,
+            )
+            .with_detail("The request took too long to process."),
+        ),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -348,7 +364,7 @@ where
         let helper_queue = self
             .helper_aggregation_request_queue
             .map(|HelperAggregationRequestQueue { depth, concurrency }| {
-                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper")
+                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper", None, None)
             })
             .transpose()?
             .map(Arc::new);

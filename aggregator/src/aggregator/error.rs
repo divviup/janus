@@ -147,6 +147,10 @@ pub enum Error {
     ClientDisconnected,
     #[error("too many requests")]
     TooManyRequests,
+    #[error("request timed out waiting in queue")]
+    RequestTimeout,
+    #[error("request timed out during service")]
+    ServiceTimeout,
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -315,6 +319,8 @@ impl Error {
             Error::DifferentialPrivacy(_) => "differential_privacy",
             Error::ClientDisconnected => "client_disconnected",
             Error::TooManyRequests => "too_many_requests",
+            Error::RequestTimeout => "request_timeout",
+            Error::ServiceTimeout => "service_timeout",
         }
     }
 }
