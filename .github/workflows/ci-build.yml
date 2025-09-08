@@ -42,7 +42,7 @@ jobs:
       run: echo "release=$(lsb_release --release --short)" >> $GITHUB_OUTPUT
     - uses: actions/checkout@v5
     - name: Setup Go toolchain
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
     - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
