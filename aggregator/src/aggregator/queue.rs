@@ -155,7 +155,6 @@ impl LIFORequestQueue {
                                                 dispatcher_tx.clone()
                                             );
                                             active_requests.insert(id, ActiveRequest {
-                                                id,
                                                 started_at: Instant::now(),
                                                 timeout_handle,
                                             });
@@ -167,7 +166,6 @@ impl LIFORequestQueue {
                                             metrics.requests_processed_immediately.add(1, &[]);
                                         } else if stack.len() < depth {
                                             let queued_request = StackedRequest {
-                                                id,
                                                 permit_tx,
                                                 queued_at: Instant::now(),
                                             };
@@ -191,12 +189,18 @@ impl LIFORequestQueue {
                                             if let Some(handle) = active.timeout_handle {
                                                 handle.abort();
                                             }
+                                            // Record processing time for requests that completed
+                                            let processing_time = active.started_at.elapsed();
+                                            metrics.processing_time_histogram.record(processing_time.as_secs_f64(), &[]);
                                         }
                                     },
                                     DispatcherMessage::ServiceTimeout(id) => {
                                         debug!(?id, "request timed out during service");
-                                        if active_requests.remove(&id).is_some() {
+                                        if let Some(active) = active_requests.remove(&id) {
                                             metrics.requests_timeout_service.add(1, &[]);
+                                            // Record processing time even for timed out requests
+                                            let processing_time = active.started_at.elapsed();
+                                            metrics.processing_time_histogram.record(processing_time.as_secs_f64(), &[]);
                                             // The permit will be returned when the TimeoutAwarePermit is dropped
                                         }
                                     },
@@ -230,7 +234,6 @@ impl LIFORequestQueue {
                                 );
 
                                 active_requests.insert(id, ActiveRequest {
-                                    id,
                                     started_at: Instant::now(),
                                     timeout_handle,
                                 });
@@ -388,7 +391,6 @@ enum DispatcherMessage {
 /// Represents a request waiting in the stack.
 #[derive(Debug)]
 struct StackedRequest {
-    id: u64, // TKTK: do I need this?
     permit_tx: PermitTx,
     queued_at: Instant,
 }
@@ -396,8 +398,7 @@ struct StackedRequest {
 /// Represents a request currently being processed.
 #[derive(Debug)]
 struct ActiveRequest {
-    id: u64, // TKTK: do I need this?
-    started_at: Instant, // TKTK: get into metrics
+    started_at: Instant,
     timeout_handle: Option<JoinHandle<()>>,
 }
 
@@ -526,6 +527,9 @@ struct Metrics {
     /// Histogram measuring how long a queue item waited before being dequeued.
     wait_time_histogram: Histogram<f64>,
 
+    /// Histogram measuring how long requests spend being actively processed.
+    processing_time_histogram: Histogram<f64>,
+
     /// Counter for requests processed immediately without queueing.
     requests_processed_immediately: Counter<u64>,
 
@@ -554,6 +558,7 @@ impl Metrics {
     const QUEUED_REQUESTS_METRIC_NAME: &'static str = "queued_requests";
     const ACTIVE_REQUESTS_METRIC_NAME: &'static str = "active_requests";
     const WAIT_TIME_METRIC_NAME: &'static str = "lifo_queue_wait_time";
+    const PROCESSING_TIME_METRIC_NAME: &'static str = "lifo_queue_processing_time";
     const REQUESTS_PROCESSED_IMMEDIATELY_METRIC_NAME: &'static str =
         "requests_processed_immediately";
     const REQUESTS_QUEUED_METRIC_NAME: &'static str = "requests_queued";
@@ -671,6 +676,13 @@ impl Metrics {
             .with_unit("s")
             .init();
 
+        // Histogram for processing time
+        let processing_time_histogram = meter
+            .f64_histogram(Self::metric_name(prefix, Self::PROCESSING_TIME_METRIC_NAME))
+            .with_description("Time spent actively processing requests")
+            .with_unit("s")
+            .init();
+
         // Counters for different request lifecycle events
         let requests_processed_immediately = meter
             .u64_counter(Self::metric_name(
@@ -737,6 +749,7 @@ impl Metrics {
             queued_requests,
             active_requests,
             wait_time_histogram,
+            processing_time_histogram,
             requests_processed_immediately,
             requests_queued,
             requests_dequeued,
