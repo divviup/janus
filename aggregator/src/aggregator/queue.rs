@@ -550,15 +550,16 @@ mod tests {
             atomic::{AtomicU32, Ordering},
             Arc,
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
+    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use backoff::{future::retry, ExponentialBackoff};
     use futures::{future::join_all, Future};
     use janus_aggregator_core::test_util::noop_meter;
     use janus_core::test_util::install_test_trace_subscriber;
-    use opentelemetry_sdk::metrics::data::Gauge;
+    use opentelemetry_sdk::metrics::data::{Gauge, Sum};
     use quickcheck::{quickcheck, Arbitrary, TestResult};
     use tokio::{
         runtime::Builder as RuntimeBuilder,
@@ -568,7 +569,7 @@ mod tests {
     };
     use tracing::debug;
     use trillium::{Conn, Handler, Status};
-    use trillium_testing::{assert_ok, assert_status, methods::get};
+    use trillium_testing::{assert_ok, methods::get};
 
     use crate::{
         aggregator::queue::{queued_lifo, LIFORequestQueue, Metrics},
@@ -659,10 +660,15 @@ mod tests {
                         let handler = Arc::clone(&handler);
                         async move {
                             let request = get("/").run_async(&handler).await;
-                            if request.status().unwrap() == Status::Ok {
-                                Ok(())
-                            } else {
-                                Err(backoff::Error::transient(()))
+                            match request.status().unwrap() {
+                                Status::Ok => Ok(()),
+                                Status::RequestTimeout => Ok(()), // Timeouts are fine during filling
+                                Status::TooManyRequests => {
+                                    Err(backoff::Error::transient(format!("429, retry")))
+                                }
+                                status => Err(backoff::Error::Permanent(format!(
+                                    "Unexpected status: {status:?}"
+                                ))),
                             }
                         }
                     })
@@ -685,6 +691,8 @@ mod tests {
         depth: usize,
         concurrency: u32,
         requests: usize,
+        /// Request timeout in milliseconds. None means no timeout. Only used in the _full test.
+        request_timeout_ms: Option<u64>,
     }
 
     impl Arbitrary for Parameters {
@@ -698,6 +706,12 @@ mod tests {
                 depth: u8::arbitrary(g) as usize,
                 concurrency: u8::arbitrary(g) as u32 + 1,
                 requests: (u16::arbitrary(g) / 10) as usize + 1,
+                request_timeout_ms: if bool::arbitrary(g) {
+                    // Between 10 and 2000ms
+                    Some(10u64 + u64::arbitrary(g) % 1990)
+                } else {
+                    None
+                },
             }
         }
     }
@@ -753,13 +767,21 @@ mod tests {
                 depth,
                 concurrency,
                 requests,
+                request_timeout_ms,
             } = parameters;
 
             runtime_flavor.run(async move {
                 let meter_prefix = "test";
+                let request_timeout = request_timeout_ms.map(Duration::from_millis);
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &noop_meter(), meter_prefix, None)
-                        .unwrap(),
+                    LIFORequestQueue::new(
+                        concurrency,
+                        depth,
+                        &noop_meter(),
+                        meter_prefix,
+                        request_timeout,
+                    )
+                    .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
@@ -872,6 +894,7 @@ mod tests {
                 runtime_flavor,
                 depth,
                 concurrency,
+                request_timeout_ms,
                 ..
             } = parameters;
 
@@ -879,9 +902,16 @@ mod tests {
                 let unhang = Arc::new(Notify::new());
                 let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
+                let request_timeout = request_timeout_ms.map(Duration::from_millis);
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
-                        .unwrap(),
+                    LIFORequestQueue::new(
+                        concurrency,
+                        depth,
+                        &metrics.meter,
+                        meter_prefix,
+                        request_timeout,
+                    )
+                    .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
@@ -901,7 +931,10 @@ mod tests {
 
                 debug!("sending request, should fail");
                 let request = get("/").run_async(&handler).await;
-                assert_status!(request, Status::TooManyRequests);
+                assert_matches!(
+                    request.status(),
+                    Some(Status::TooManyRequests) | Some(Status::RequestTimeout)
+                );
 
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
@@ -945,8 +978,14 @@ mod tests {
                 let meter_prefix = "test";
                 let metrics = InMemoryMetricsInfrastructure::new();
                 let queue = Arc::new(
-                    LIFORequestQueue::new(concurrency, depth, &metrics.meter, meter_prefix, None)
-                        .unwrap(),
+                    LIFORequestQueue::new(
+                        concurrency,
+                        depth,
+                        &metrics.meter,
+                        meter_prefix,
+                        None, // Disable timeouts for the core test
+                    )
+                    .unwrap(),
                 );
                 let handler = Arc::new(queued_lifo(
                     Arc::clone(&queue),
@@ -1008,5 +1047,92 @@ mod tests {
 
         install_test_trace_subscriber();
         quickcheck(qc as fn(Parameters) -> TestResult);
+    }
+
+    #[test]
+    fn test_request_timeout() {
+        install_test_trace_subscriber();
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let meter_prefix = "test";
+            let metrics = InMemoryMetricsInfrastructure::new();
+            let concurrency = 1;
+            let depth = 1;
+            let timeout = Duration::from_millis(100);
+
+            let queue = Arc::new(
+                LIFORequestQueue::new(
+                    concurrency,
+                    depth,
+                    &metrics.meter,
+                    meter_prefix,
+                    Some(timeout),
+                )
+                .unwrap(),
+            );
+
+            // Create a hanging handler that never releases requests
+            let unhang = Arc::new(Notify::new());
+            let handler = Arc::new(queued_lifo(
+                Arc::clone(&queue),
+                HangingHandler {
+                    unhang: Arc::clone(&unhang),
+                },
+            ));
+
+            // Fill up the active slots (concurrency) but leave queue empty
+            let mut requests = Vec::new();
+            for _ in 0..concurrency {
+                let handler = Arc::clone(&handler);
+                requests.push(tokio::spawn(
+                    async move { get("/").run_async(&handler).await },
+                ));
+            }
+
+            // Wait for all active slots to be filled
+            tokio::time::sleep(Duration::from_millis(10)).await;
+
+            // Now make a request that will be queued and should timeout
+            let start = Instant::now();
+            let result = get("/").run_async(&handler).await;
+            let elapsed = start.elapsed();
+
+            // Should have timed out with RequestTimeout status
+            assert_eq!(
+                result.status().unwrap(),
+                Status::RequestTimeout,
+                "Expected RequestTimeout (408) but got {:?}",
+                result.status().unwrap()
+            );
+            // Should have taken approximately the timeout duration (with some tolerance)
+            assert!(
+                elapsed >= timeout && elapsed < timeout + Duration::from_millis(200),
+                "Request took {elapsed:?}, expected around {timeout:?}"
+            );
+
+            // Check timeout metric was incremented
+            let timeout_count = metrics
+                .collect()
+                .await
+                .get(&Metrics::metric_name(
+                    meter_prefix,
+                    Metrics::REQUESTS_TIMEOUT_QUEUE_METRIC_NAME,
+                ))
+                .unwrap()
+                .data
+                .as_any()
+                .downcast_ref::<Sum<u64>>()
+                .unwrap()
+                .data_points[0]
+                .value;
+            assert_eq!(timeout_count, 1);
+
+            // Clean up: cancel the hanging requests
+            for request in requests {
+                request.abort();
+            }
+
+            metrics.shutdown().await;
+        });
     }
 }
