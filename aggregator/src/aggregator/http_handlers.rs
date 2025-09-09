@@ -168,6 +168,14 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 later.",
             ),
         ),
+        Error::RequestTimeout => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#request-timeout",
+                "Request timed out waiting in queue.",
+                Status::TooManyRequests,
+            )
+            .with_detail("The request spent too long waiting to be processed."),
+        ),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -299,6 +307,9 @@ pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_share
 pub struct HelperAggregationRequestQueue {
     pub depth: usize,
     pub concurrency: u32,
+    /// Maximum lifespan, in milliseconds, of requests in the Request Queue.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 pub struct AggregatorHandlerBuilder<'a, C>
@@ -349,9 +360,21 @@ where
     pub fn build(self) -> Result<impl Handler, Error> {
         let helper_queue = self
             .helper_aggregation_request_queue
-            .map(|HelperAggregationRequestQueue { depth, concurrency }| {
-                LIFORequestQueue::new(concurrency, depth, self.meter, "janus_helper")
-            })
+            .map(
+                |HelperAggregationRequestQueue {
+                     depth,
+                     concurrency,
+                     timeout_ms,
+                 }| {
+                    LIFORequestQueue::new(
+                        concurrency,
+                        depth,
+                        self.meter,
+                        "janus_helper",
+                        timeout_ms.map(StdDuration::from_millis),
+                    )
+                },
+            )
             .transpose()?
             .map(Arc::new);
 
@@ -914,6 +937,7 @@ pub mod test_util {
             .with_helper_aggregation_request_queue(super::HelperAggregationRequestQueue {
                 depth: 16,
                 concurrency: 2,
+                timeout_ms: None,
             })
             .build()
             .unwrap();
