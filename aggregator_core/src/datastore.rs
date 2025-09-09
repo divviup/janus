@@ -22,7 +22,10 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, DurationExt, IntervalExt, TimeExt},
+    time::{
+        Clock, DurationExt, InstantClock, InstantLike, IntervalExt, RealInstantClock,
+        TimeExt,
+    },
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -55,7 +58,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration as StdDuration, Instant},
+    time::Duration as StdDuration,
 };
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{IsolationLevel, Row, Statement, ToStatement, error::SqlState, row::RowIndex};
@@ -110,7 +113,7 @@ supported_schema_versions!(1);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
-pub struct Datastore<C: Clock> {
+pub struct Datastore<C: Clock, I: InstantClock = RealInstantClock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
     clock: C,
@@ -122,9 +125,10 @@ pub struct Datastore<C: Clock> {
     transaction_pool_wait_histogram: Histogram<f64>,
     transaction_total_duration_histogram: Histogram<f64>,
     max_transaction_retries: u64,
+    instant_clock: I,
 }
 
-impl<C: Clock> Debug for Datastore<C> {
+impl<C: Clock, I: InstantClock> Debug for Datastore<C, I> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Datastore")
     }
@@ -139,7 +143,28 @@ impl<C: Clock> Datastore<C> {
         clock: C,
         meter: &Meter,
         max_transaction_retries: u64,
-    ) -> Result<Datastore<C>, Error> {
+    ) -> Result<Self, Error> {
+        Self::with_instant_clock(
+            pool,
+            crypter,
+            clock,
+            meter,
+            max_transaction_retries,
+            RealInstantClock,
+        )
+        .await
+    }
+}
+
+impl<C: Clock, I: InstantClock> Datastore<C, I> {
+    pub async fn with_instant_clock(
+        pool: deadpool_postgres::Pool,
+        crypter: Crypter,
+        clock: C,
+        meter: &Meter,
+        max_transaction_retries: u64,
+        instant_clock: I,
+    ) -> Result<Datastore<C, I>, Error> {
         Self::new_with_supported_versions(
             pool,
             crypter,
@@ -147,6 +172,7 @@ impl<C: Clock> Datastore<C> {
             meter,
             SUPPORTED_SCHEMA_VERSIONS,
             max_transaction_retries,
+            instant_clock,
         )
         .await
     }
@@ -158,13 +184,15 @@ impl<C: Clock> Datastore<C> {
         meter: &Meter,
         supported_schema_versions: &[i64],
         max_transaction_retries: u64,
-    ) -> Result<Datastore<C>, Error> {
+        instant_clock: I,
+    ) -> Result<Datastore<C, I>, Error> {
         let datastore = Self::new_without_supported_versions(
             pool,
             crypter,
             clock,
             meter,
             max_transaction_retries,
+            instant_clock,
         )
         .await;
 
@@ -190,7 +218,8 @@ impl<C: Clock> Datastore<C> {
         clock: C,
         meter: &Meter,
         max_transaction_retries: u64,
-    ) -> Datastore<C> {
+        instant_clock: I,
+    ) -> Datastore<C, I> {
         let transaction_status_counter = meter
             .u64_counter(TRANSACTION_METER_NAME)
             .with_description("Count of database transactions run, with their status.")
@@ -250,6 +279,7 @@ impl<C: Clock> Datastore<C> {
             transaction_pool_wait_histogram,
             transaction_total_duration_histogram,
             max_transaction_retries,
+            instant_clock,
         }
     }
 
@@ -269,7 +299,7 @@ impl<C: Clock> Datastore<C> {
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
-        let before = Instant::now();
+        let before = self.instant_clock.now();
         let mut retry_count = 0;
         loop {
             let (mut rslt, retry) = self.run_tx_once(name, &f).await;
@@ -323,7 +353,7 @@ impl<C: Clock> Datastore<C> {
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         // Acquire connection from the connection pooler.
-        let before = Instant::now();
+        let before = self.instant_clock.now();
         let result = self.pool.get().await;
         let elapsed = before.elapsed();
         // We don't record the transaction name for this metric, since it's not particularly
@@ -341,7 +371,7 @@ impl<C: Clock> Datastore<C> {
         };
 
         // Open transaction.
-        let before = Instant::now();
+        let before = self.instant_clock.now();
         let raw_tx = match client
             .build_transaction()
             .isolation_level(IsolationLevel::RepeatableRead)

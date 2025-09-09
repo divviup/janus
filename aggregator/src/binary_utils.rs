@@ -139,7 +139,7 @@ pub async fn datastore<C: Clock>(
     datastore_keys: &[String],
     check_schema_version: bool,
     max_transaction_retries: u64,
-) -> Result<Datastore<C>> {
+) -> Result<Datastore<C, janus_core::time::RealInstantClock>> {
     let datastore_keys = datastore_keys
         .iter()
         .filter(|k| !k.is_empty())
@@ -165,21 +165,25 @@ pub async fn datastore<C: Clock>(
     }
 
     let datastore = if check_schema_version {
-        Datastore::new(
+        use janus_core::time::RealInstantClock;
+        Datastore::with_instant_clock(
             pool,
             Crypter::new(datastore_keys),
             clock,
             meter,
             max_transaction_retries,
+            RealInstantClock,
         )
         .await?
     } else {
+        use janus_core::time::RealInstantClock;
         Datastore::new_without_supported_versions(
             pool,
             Crypter::new(datastore_keys),
             clock,
             meter,
             max_transaction_retries,
+            RealInstantClock,
         )
         .await
     };
