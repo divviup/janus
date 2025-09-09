@@ -227,3 +227,8 @@ helper_aggregation_request_queue:
   # a concurrency slot to become available. Excess requests are rejected with
   # HTTP status 429 Too Many Requests.
   depth: 24
+
+  # The maximum lifespan, in milliseconds, of requests in the queue. Requests
+  # that timeout are rejected with HTTP status 408 RequestTimeout. (optional;
+  # experimental, can be disabled by omitting or setting to null).
+  timeout_ms: 300000

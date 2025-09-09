@@ -185,17 +185,18 @@ impl LIFORequestQueue {
                     }
                 }
 
+                let stack_len = stack.len();
                 // Unwrap safety: only fails on architectures where usize is less than 32 bits, or
                 // greater than 64 bits.
                 metrics.outstanding_requests.store(
-                    (stack.len() + usize::try_from(concurrency).unwrap() - permits.num_permits())
+                    (stack_len + usize::try_from(concurrency).unwrap() - permits.num_permits())
                         .try_into()
                         .unwrap(),
                     Ordering::Relaxed,
                 );
                 metrics
                     .stacked_requests
-                    .store(u64::try_from(stack.len()).unwrap(), Ordering::Relaxed);
+                    .store(u64::try_from(stack_len).unwrap(), Ordering::Relaxed);
             }
         })
     }
@@ -277,7 +278,11 @@ impl LIFORequestQueue {
             // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
             // causes the rx channel to be dropped, we shouldn't reach this error because the overall
             // future would have been dropped.
-            permit.map_err(|_| Error::Internal("rx channel dropped".to_string()))?
+            permit.map_err(|_| {
+                Error::Internal(
+                    "permit channel dropped; dispatcher may have shut down?".to_string(),
+                )
+            })?
         };
 
         // If a request timeout is provided, impose it. If not, use the original release/0.7
