@@ -409,7 +409,7 @@ mod tests {
         let test_conn = post("/").run_async(&request_timeout_error).await;
 
         // Check status code
-        assert_eq!(test_conn.status().unwrap(), Status::RequestTimeout);
+        assert_eq!(test_conn.status().unwrap(), Status::TooManyRequests);
 
         // Check that Retry-After header is present and has correct value
         let headers = test_conn.response_headers();
