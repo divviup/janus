@@ -149,8 +149,6 @@ pub enum Error {
     TooManyRequests,
     #[error("request timed out waiting in queue")]
     RequestTimeout,
-    #[error("request timed out during service")]
-    ServiceTimeout,
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
@@ -320,7 +318,6 @@ impl Error {
             Error::ClientDisconnected => "client_disconnected",
             Error::TooManyRequests => "too_many_requests",
             Error::RequestTimeout => "request_timeout",
-            Error::ServiceTimeout => "service_timeout",
         }
     }
 }
