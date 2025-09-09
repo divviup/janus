@@ -783,6 +783,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
             "taskid": format!("{another_task_id}"),
+            "detail": "this aggregator is not peered with the given leader aggregator",
         })
     );
 }
@@ -864,6 +865,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
             "taskid": format!("{another_task_id}"),
+            "detail": "this aggregator is not peered with the given leader aggregator",
         })
     );
 }
