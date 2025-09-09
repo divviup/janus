@@ -172,7 +172,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#request-timeout",
                 "Request timed out waiting in queue.",
-                Status::RequestTimeout,
+                Status::TooManyRequests,
             )
             .with_detail("The request spent too long waiting to be processed."),
         ),

@@ -151,9 +151,8 @@ impl LIFORequestQueue {
                                     },
                                     DispatcherMessage::Cancel(id) => {
                                         debug!(?id, "removing request from the queue");
-                                        if stack.remove(&id).is_some() {
-                                            metrics.requests_cancelled.add(1, &[]);
-                                        }
+                                        stack.remove(&id);
+                                        metrics.requests_cancelled.add(1, &[]);
                                     },
                                 }
                             }
@@ -667,10 +666,7 @@ mod tests {
                             let request = get("/").run_async(&handler).await;
                             match request.status().unwrap() {
                                 Status::Ok => Ok(()),
-                                Status::RequestTimeout => Ok(()), // Timeouts are fine during filling
-                                Status::TooManyRequests => {
-                                    Err(backoff::Error::transient("429, retry".to_string()))
-                                }
+                                Status::TooManyRequests => Ok(()), // Timeouts and queue full are fine during filling
                                 status => Err(backoff::Error::Permanent(format!(
                                     "Unexpected status: {status:?}"
                                 ))),
@@ -936,10 +932,7 @@ mod tests {
 
                 debug!("sending request, should fail");
                 let request = get("/").run_async(&handler).await;
-                assert_matches!(
-                    request.status(),
-                    Some(Status::TooManyRequests) | Some(Status::RequestTimeout)
-                );
+                assert_matches!(request.status(), Some(Status::TooManyRequests));
 
                 debug!("draining the queue");
                 while get_outstanding_requests_gauge(&metrics, meter_prefix).await > Some(0) {
@@ -1102,11 +1095,11 @@ mod tests {
             let result = get("/").run_async(&handler).await;
             let elapsed = start.elapsed();
 
-            // Should have timed out with RequestTimeout status
+            // Should have timed out with TooManyRequests status
             assert_eq!(
                 result.status().unwrap(),
-                Status::RequestTimeout,
-                "Expected RequestTimeout (408) but got {:?}",
+                Status::TooManyRequests,
+                "Expected TooManyRequests (429) but got {:?}",
                 result.status().unwrap()
             );
             // Should have taken approximately the timeout duration (with some tolerance)
