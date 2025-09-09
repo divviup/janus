@@ -163,6 +163,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently overloaded.",
                 Status::TooManyRequests,
             )
+            .with_retry_after(StdDuration::from_secs(30))
             .with_detail(
                 "The server is currently servicing too many requests, please try the request again \
                 later.",
@@ -174,6 +175,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "Request timed out waiting in queue.",
                 Status::TooManyRequests,
             )
+            .with_retry_after(StdDuration::from_secs(30))
             .with_detail("The request spent too long waiting to be processed."),
         ),
     };
