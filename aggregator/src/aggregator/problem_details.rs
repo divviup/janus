@@ -52,8 +52,6 @@ pub struct ProblemDocument<'a> {
     aggregation_job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collection_job_id: Option<String>,
-    #[serde(skip)]
-    retry_after: Option<Duration>,
 }
 
 impl<'a> ProblemDocument<'a> {
@@ -72,7 +70,6 @@ impl<'a> ProblemDocument<'a> {
             detail: None,
             aggregation_job_id: None,
             collection_job_id: None,
-            retry_after: None,
         }
     }
 
@@ -112,13 +109,6 @@ impl<'a> ProblemDocument<'a> {
             ..self
         }
     }
-
-    pub fn with_retry_after(self, retry_after: Duration) -> Self {
-        Self {
-            retry_after: Some(retry_after),
-            ..self
-        }
-    }
 }
 
 pub trait ProblemDetailsConnExt {
@@ -129,22 +119,25 @@ pub trait ProblemDetailsConnExt {
 
 impl ProblemDetailsConnExt for Conn {
     fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
-        let mut conn = self
-            .with_status(problem_document.status)
+        self.with_status(problem_document.status)
             .with_response_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
-            );
+            )
+            .with_json(problem_document)
+    }
+}
 
-        // Add Retry-After header if specified
-        if let Some(retry_after) = problem_document.retry_after {
-            conn = conn.with_response_header(
-                KnownHeaderName::RetryAfter,
-                retry_after.as_secs().to_string(),
-            );
-        }
+pub trait RetryAfterConnExt {
+    fn with_retry_after(self, retry_after: Duration) -> Self;
+}
 
-        conn.with_json(problem_document)
+impl RetryAfterConnExt for Conn {
+    fn with_retry_after(self, retry_after: Duration) -> Self {
+        self.with_response_header(
+            KnownHeaderName::RetryAfter,
+            retry_after.as_secs().to_string(),
+        )
     }
 }
 
@@ -387,39 +380,20 @@ mod tests {
     #[tokio::test]
     async fn test_retry_after_header() {
         // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
-        let too_many_requests_error = Error::TooManyRequests;
-        let test_conn = post("/").run_async(&too_many_requests_error).await;
+        for error in [Error::TooManyRequests, Error::RequestTimeout] {
+            let test_conn = post("/").run_async(&error).await;
 
-        // Check status code
-        assert_eq!(test_conn.status().unwrap(), Status::TooManyRequests);
+            // Check that these errot types produce a 429
+            assert_eq!(test_conn.status().unwrap(), Status::TooManyRequests);
 
-        // Check that Retry-After header is present and has correct value
-        let headers = test_conn.response_headers();
-        let retry_after = headers.get(KnownHeaderName::RetryAfter);
-        assert!(
-            retry_after.is_some(),
-            "TooManyRequests should include Retry-After header"
-        );
-
-        // Check that the retry-after value is "30" (30 seconds as configured in the handler)
-        assert_eq!(retry_after.unwrap(), "30");
-
-        // Test RequestTimeout error
-        let request_timeout_error = Error::RequestTimeout;
-        let test_conn = post("/").run_async(&request_timeout_error).await;
-
-        // Check status code
-        assert_eq!(test_conn.status().unwrap(), Status::TooManyRequests);
-
-        // Check that Retry-After header is present and has correct value
-        let headers = test_conn.response_headers();
-        let retry_after = headers.get(KnownHeaderName::RetryAfter);
-        assert!(
-            retry_after.is_some(),
-            "RequestTimeout should include Retry-After header"
-        );
-
-        // Check that the retry-after value is "30" (30 seconds as configured in the handler)
-        assert_eq!(retry_after.unwrap(), "30");
+            // Check that Retry-After header is present and has correct value
+            let headers = test_conn.response_headers();
+            let retry_after = headers.get(KnownHeaderName::RetryAfter);
+            assert!(
+                retry_after.is_some(),
+                "{error} should include Retry-After header"
+            );
+            assert_eq!(retry_after.unwrap(), "30");
+        }
     }
 }
