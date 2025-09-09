@@ -27,7 +27,7 @@ jobs:
         run: cargo +nightly udeps | tee log_default_features.txt
       - name: Create issue
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

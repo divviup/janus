@@ -110,7 +110,7 @@ impl LIFORequestQueue {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             // Use a BTreeMap to allow for cancellation (i.e. removal) of waiting requests in
-            // sublinear time, and to maintain LIFO ordering by ID.
+            // sublinear time.
             let mut stack: BTreeMap<u64, PermitTx> = BTreeMap::new();
 
             // Unwrap safety: conversion only fails on architectures where usize is less than
@@ -664,7 +664,7 @@ mod tests {
                                 Status::Ok => Ok(()),
                                 Status::RequestTimeout => Ok(()), // Timeouts are fine during filling
                                 Status::TooManyRequests => {
-                                    Err(backoff::Error::transient(format!("429, retry")))
+                                    Err(backoff::Error::transient("429, retry".to_string()))
                                 }
                                 status => Err(backoff::Error::Permanent(format!(
                                     "Unexpected status: {status:?}"

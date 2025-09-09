@@ -150,8 +150,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         ),
         Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
         Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-        Error::InvalidTask(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
+        Error::InvalidTask(task_id, opt_out_reason) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidTask)
+                .with_task_id(task_id)
+                .with_detail(&format!("{opt_out_reason}")),
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         Error::ClientDisconnected => conn.with_status(Status::BadRequest),
@@ -161,10 +163,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently overloaded.",
                 Status::TooManyRequests,
             )
-            .with_detail(concat!(
-                "The server is currently servicing too many requests, please try the request ",
-                "again later."
-            )),
+            .with_detail(
+                "The server is currently servicing too many requests, please try the request again \
+                later.",
+            ),
         ),
         Error::RequestTimeout => conn.with_problem_document(
             &ProblemDocument::new(
