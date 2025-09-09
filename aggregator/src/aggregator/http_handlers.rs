@@ -136,11 +136,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The collection job has been abandoned.",
                 Status::InternalServerError,
             )
-            .with_detail(concat!(
-                "An internal problem has caused the server to stop processing this collection ",
-                "job. The job is no longer collectable. Contact the server operators for ",
-                "assistance."
-            ))
+            .with_detail(
+                "An internal problem has caused the server to stop processing this collection job. \
+                The job is no longer collectable. Contact the server operators for assistance.",
+            )
             .with_task_id(task_id)
             .with_collection_job_id(collection_job_id),
         ),
@@ -193,8 +192,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             )
             .with_detail(&detail.to_string()),
         ),
-        Error::InvalidTask(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
+        Error::InvalidTask(task_id, opt_out_reason) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidTask)
+                .with_task_id(task_id)
+                .with_detail(&format!("{opt_out_reason}")),
         ),
         Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         Error::ClientDisconnected => conn.with_status(Status::BadRequest),
@@ -204,10 +205,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently overloaded.",
                 Status::TooManyRequests,
             )
-            .with_detail(concat!(
-                "The server is currently servicing too many requests, please try the request ",
-                "again later."
-            )),
+            .with_detail(
+                "The server is currently servicing too many requests, please try the request again \
+                later.",
+            ),
         ),
     };
 
