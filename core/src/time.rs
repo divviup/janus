@@ -5,6 +5,7 @@ use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
+    time::{Duration as StdDuration, Instant as StdInstant},
 };
 
 /// A clock knows what time it currently is.
@@ -409,10 +410,136 @@ impl IntervalExt for Interval {
     }
 }
 
+/// A trait for types that behave like `std::time::Instant` for duration measurements.
+pub trait InstantLike: Clone + Debug + Send + Sync {
+    /// Get the elapsed time since this instant.
+    fn elapsed(&self) -> StdDuration;
+}
+
+/// Standard library Instant wrapper that implements InstantLike.
+#[derive(Clone, Debug)]
+pub struct RealInstant(StdInstant);
+
+impl RealInstant {
+    pub fn new(instant: StdInstant) -> Self {
+        Self(instant)
+    }
+}
+
+impl InstantLike for RealInstant {
+    fn elapsed(&self) -> StdDuration {
+        self.0.elapsed()
+    }
+}
+
+/// A clock that provides instants for duration measurements, separate from DAP time tracking.
+pub trait InstantClock: Clone + Debug + Send + Sync {
+    type Instant: InstantLike;
+
+    /// Get the current instant for timing measurements.
+    fn now(&self) -> Self::Instant;
+}
+
+/// Real instant clock that uses the system clock.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RealInstantClock;
+
+impl InstantClock for RealInstantClock {
+    type Instant = RealInstant;
+
+    fn now(&self) -> Self::Instant {
+        RealInstant::new(StdInstant::now())
+    }
+}
+
+#[cfg(feature = "test-util")]
+/// Mock instant for testing duration measurements.
+#[derive(Clone, Debug)]
+pub struct MockInstant {
+    elapsed: Arc<Mutex<StdDuration>>,
+}
+
+#[cfg(feature = "test-util")]
+impl Default for MockInstant {
+    fn default() -> Self {
+        Self {
+            elapsed: Arc::new(Mutex::new(StdDuration::ZERO)),
+        }
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl MockInstant {
+    /// Advance the mock elapsed time by the specified duration.
+    pub fn advance(&self, duration: StdDuration) {
+        let mut elapsed = self.elapsed.lock().unwrap();
+        *elapsed += duration;
+    }
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl InstantLike for MockInstant {
+    fn elapsed(&self) -> StdDuration {
+        *self.elapsed.lock().unwrap()
+    }
+}
+
+#[cfg(feature = "test-util")]
+/// Mock instant clock for testing.
+#[derive(Clone, Debug)]
+pub struct MockInstantClock {
+    current_instant: MockInstant,
+}
+
+#[cfg(feature = "test-util")]
+impl Default for MockInstantClock {
+    fn default() -> Self {
+        Self {
+            current_instant: MockInstant::new(),
+        }
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl MockInstantClock {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Advance time by the specified duration.
+    pub fn advance(&self, duration: StdDuration) {
+        self.current_instant.advance(duration);
+    }
+
+    /// Get a reference to the current instant for advancing time in tests.
+    pub fn current_instant(&self) -> &MockInstant {
+        &self.current_instant
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl InstantClock for MockInstantClock {
+    type Instant = MockInstant;
+
+    fn now(&self) -> Self::Instant {
+        self.current_instant.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt};
+    #[cfg(feature = "test-util")]
+    use crate::time::MockInstantClock;
+    use crate::time::{
+        Clock, DurationExt, InstantClock, InstantLike, IntervalExt, MockClock, RealInstantClock,
+        TimeExt,
+    };
     use janus_messages::{Duration, Interval, Time};
+    use std::time::Duration as StdDuration;
 
     #[test]
     fn round_up_duration() {
@@ -635,6 +762,33 @@ mod tests {
                 false => assert!(result.is_err(), "{label}"),
             }
         }
+    }
+
+    #[test]
+    fn instant_clock_basic() {
+        let instant = RealInstantClock.now();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let elapsed = instant.elapsed();
+        assert!(elapsed.as_millis() >= 1);
+    }
+
+    #[cfg(feature = "test-util")]
+    #[test]
+    fn mock_instant_clock() {
+        let mock_clock = MockInstantClock::new();
+        let instant = mock_clock.now();
+
+        // Initially, elapsed time should be zero
+        assert_eq!(instant.elapsed(), StdDuration::ZERO);
+
+        // Advance time and check elapsed
+        let advance_duration = StdDuration::from_millis(100);
+        mock_clock.advance(advance_duration);
+        assert_eq!(instant.elapsed(), advance_duration);
+
+        // Create a new instant and verify it has the advanced time
+        let new_instant = mock_clock.now();
+        assert_eq!(new_instant.elapsed(), advance_duration);
     }
 
     #[test]

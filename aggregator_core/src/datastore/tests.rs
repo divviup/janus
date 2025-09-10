@@ -88,6 +88,7 @@ async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatasto
         &noop_meter(),
         &[0],
         TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+        janus_core::time::RealInstantClock,
     )
     .await
     .unwrap_err();

@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
 use janus_core::{
     test_util::testcontainers::Postgres,
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, MockClock, RealInstantClock, TimeExt},
 };
 use janus_messages::Time;
 use rand::{Rng, distr::StandardUniform, random, rng};
@@ -217,13 +217,15 @@ pub const TEST_DATASTORE_MAX_TRANSACTION_RETRIES: u64 = 1000;
 impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
-    pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-        Datastore::new(
+    pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C, RealInstantClock> {
+        use RealInstantClock;
+        Datastore::with_instant_clock(
             self.pool(),
             self.crypter(),
             clock,
             &noop_meter(),
             TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+            RealInstantClock,
         )
         .await
         .unwrap()
@@ -233,13 +235,15 @@ impl EphemeralDatastore {
         &self,
         clock: C,
         max_transaction_retries: u64,
-    ) -> Datastore<C> {
-        Datastore::new(
+    ) -> Datastore<C, RealInstantClock> {
+        use RealInstantClock;
+        Datastore::with_instant_clock(
             self.pool(),
             self.crypter(),
             clock,
             &noop_meter(),
             max_transaction_retries,
+            RealInstantClock,
         )
         .await
         .unwrap()
