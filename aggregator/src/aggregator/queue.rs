@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use janus_aggregator_core::TIME_HISTOGRAM_BOUNDARIES;
 use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
@@ -369,6 +370,7 @@ impl Metrics {
 
         let wait_time_histogram = meter
             .f64_histogram(Self::metric_name(prefix, Self::WAIT_TIME_METRIC_NAME))
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
             .with_description("Time spent waiting by items in LIFO queue before being dequeued")
             .with_unit("s")
             .build();
