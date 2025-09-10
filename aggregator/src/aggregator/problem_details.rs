@@ -163,8 +163,8 @@ mod tests {
     use rand::random;
     use reqwest::Client;
     use std::{borrow::Cow, sync::Arc};
-    use trillium::{KnownHeaderName, Status};
-    use trillium_testing::prelude::post;
+    use trillium::Status;
+    use trillium_testing::{assert_headers, assert_status, prelude::post};
 
     #[test]
     fn dap_problem_type_round_trip() {
@@ -382,18 +382,8 @@ mod tests {
         // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
         for error in [Error::TooManyRequests, Error::RequestTimeout] {
             let test_conn = post("/").run_async(&error).await;
-
-            // Check that these errot types produce a 429
-            assert_eq!(test_conn.status().unwrap(), Status::TooManyRequests);
-
-            // Check that Retry-After header is present and has correct value
-            let headers = test_conn.response_headers();
-            let retry_after = headers.get(KnownHeaderName::RetryAfter);
-            assert!(
-                retry_after.is_some(),
-                "{error} should include Retry-After header"
-            );
-            assert_eq!(retry_after.unwrap(), "30");
+            assert_status!(test_conn, Status::TooManyRequests);
+            assert_headers!(test_conn, "Retry-After" => "30");
         }
     }
 }
