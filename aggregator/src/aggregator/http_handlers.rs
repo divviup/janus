@@ -3,7 +3,9 @@ use super::{
     queue::{queued_lifo, LIFORequestQueue},
     Aggregator, Config, Error,
 };
-use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
+use crate::aggregator::problem_details::{
+    ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt,
+};
 use async_trait::async_trait;
 use aws_lc_rs::digest::{digest, SHA256};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -167,7 +169,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 "The server is currently servicing too many requests, please try the request again \
                 later.",
             ),
-        ),
+        ).with_retry_after(StdDuration::from_secs(30)),
         Error::RequestTimeout => conn.with_problem_document(
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#request-timeout",
@@ -175,7 +177,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 Status::TooManyRequests,
             )
             .with_detail("The request spent too long waiting to be processed."),
-        ),
+        ).with_retry_after(StdDuration::from_secs(30)),
     };
 
     if matches!(conn.status(), Some(status) if status.is_server_error()) {

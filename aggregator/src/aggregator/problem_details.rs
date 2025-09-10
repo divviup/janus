@@ -1,5 +1,6 @@
 use janus_messages::{problem_type::DapProblemType, AggregationJobId, CollectionJobId, TaskId};
 use serde::Serialize;
+use std::time::Duration;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
 
@@ -127,6 +128,19 @@ impl ProblemDetailsConnExt for Conn {
     }
 }
 
+pub trait RetryAfterConnExt {
+    fn with_retry_after(self, retry_after: Duration) -> Self;
+}
+
+impl RetryAfterConnExt for Conn {
+    fn with_retry_after(self, retry_after: Duration) -> Self {
+        self.with_response_header(
+            KnownHeaderName::RetryAfter,
+            retry_after.as_secs().to_string(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
@@ -149,7 +163,8 @@ mod tests {
     use rand::random;
     use reqwest::Client;
     use std::{borrow::Cow, sync::Arc};
-    use trillium_testing::prelude::post;
+    use trillium::Status;
+    use trillium_testing::{assert_headers, assert_status, prelude::post};
 
     #[test]
     fn dap_problem_type_round_trip() {
@@ -300,6 +315,14 @@ mod tests {
                     Box::new(|| Error::BatchQueriedTooManyTimes(random(), 99)),
                     Some(DapProblemType::BatchQueriedTooManyTimes),
                 ),
+                TestCase::new(
+                    Box::new(|| Error::TooManyRequests),
+                    None,
+                ),
+                TestCase::new(
+                    Box::new(|| Error::RequestTimeout),
+                    None,
+                ),
             ]
             .into_iter()
             .map(|test_case| {
@@ -352,5 +375,15 @@ mod tests {
             }),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_header() {
+        // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
+        for error in [Error::TooManyRequests, Error::RequestTimeout] {
+            let test_conn = post("/").run_async(&error).await;
+            assert_status!(test_conn, Status::TooManyRequests);
+            assert_headers!(test_conn, "Retry-After" => "30");
+        }
     }
 }
