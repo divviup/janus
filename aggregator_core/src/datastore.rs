@@ -120,6 +120,7 @@ pub struct Datastore<C: Clock> {
     rollback_error_counter: Counter<u64>,
     transaction_duration_histogram: Histogram<f64>,
     transaction_pool_wait_histogram: Histogram<f64>,
+    transaction_total_duration_histogram: Histogram<f64>,
     max_transaction_retries: u64,
 }
 
@@ -227,6 +228,15 @@ impl<C: Clock> Datastore<C> {
             .with_unit("s")
             .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
             .build();
+        let transaction_total_duration_histogram = meter
+            .f64_histogram(TRANSACTION_TOTAL_DURATION_METER_NAME)
+            .with_description(
+                "Total time spent on a database transaction, including connection pool wait time \
+                and retries",
+            )
+            .with_unit("s")
+            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+            .build();
 
         Self {
             pool,
@@ -238,6 +248,7 @@ impl<C: Clock> Datastore<C> {
             rollback_error_counter,
             transaction_duration_histogram,
             transaction_pool_wait_histogram,
+            transaction_total_duration_histogram,
             max_transaction_retries,
         }
     }
@@ -258,6 +269,7 @@ impl<C: Clock> Datastore<C> {
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
+        let before = Instant::now();
         let mut retry_count = 0;
         loop {
             let (mut rslt, retry) = self.run_tx_once(name, &f).await;
@@ -298,6 +310,8 @@ impl<C: Clock> Datastore<C> {
 
             self.transaction_retry_histogram
                 .record(retry_count, &[KeyValue::new("tx", name)]);
+            self.transaction_total_duration_histogram
+                .record(before.elapsed().as_secs_f64(), &[KeyValue::new("tx", name)]);
             return rslt;
         }
     }
@@ -465,6 +479,7 @@ pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_error
 pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
 pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
 pub const TRANSACTION_POOL_WAIT_METER_NAME: &str = "janus_database_pool_wait_duration";
+pub const TRANSACTION_TOTAL_DURATION_METER_NAME: &str = "janus_database_transaction_total_duration";
 
 /// These boundaries are for the number of times a database transaction was retried.
 const RETRIES_HISTOGRAM_BOUNDARIES: &[f64] = &[
