@@ -74,7 +74,7 @@ impl LIFORequestQueue {
         let max_outstanding_requests =
             u64::try_from(usize::try_from(concurrency).unwrap() + depth).unwrap();
         let metrics = Metrics::new(meter, meter_prefix, max_outstanding_requests)
-            .map_err(|e| Error::Internal(e.to_string().into()))?;
+            .map_err(|e| Error::Internal(e.into()))?;
         Self::dispatcher(message_rx, concurrency, depth, metrics.clone());
 
         Ok(Self {
