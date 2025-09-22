@@ -132,9 +132,9 @@ jobs:
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy
-      run: cargo clippy --profile ci --workspace --all-targets
+      run: cargo clippy --profile ci --workspace --all-targets -- -Dwarnings
     - name: Clippy (all features)
-      run: cargo clippy --profile ci --workspace --all-targets --all-features
+      run: cargo clippy --profile ci --workspace --all-targets --all-features -- -Dwarnings
     - name: Document
       run: cargo doc --profile ci --workspace --all-features
     - name: cargo-deny
