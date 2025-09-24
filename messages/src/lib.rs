@@ -943,9 +943,8 @@ impl Encode for ExtensionType {
 impl Decode for ExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ExtensionType value {val}").into())
-        })
+        Self::try_from(val)
+            .map_err(|_| CodecError::Other(anyhow!("unexpected ExtensionType value {val}").into()))
     }
 }
 
