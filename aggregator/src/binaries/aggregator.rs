@@ -502,7 +502,7 @@ impl BinaryConfig for Config {
 pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<EcdsaKeyPair> {
     let pem = pem::parse(ec_private_key_pem)?;
     let ec_private_key = EcPrivateKey::try_from(pem.contents())
-        .map_err(|err| anyhow!("couldn't parse EcPrivateKey: {:?}", err))?;
+        .map_err(|err| anyhow!("couldn't parse EcPrivateKey: {err:?}"))?;
     EcdsaKeyPair::from_private_key_and_public_key(
         &ECDSA_P256_SHA256_ASN1_SIGNING,
         ec_private_key.private_key,
@@ -510,7 +510,7 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
             .public_key
             .ok_or_else(|| anyhow!("EcPrivateKey missing public key component"))?,
     )
-    .map_err(|err| anyhow!("couldn't create EcdsaKeyPair: {:?}", err))
+    .map_err(|err| anyhow!("couldn't create EcdsaKeyPair: {err:?}"))
 }
 
 #[cfg(test)]

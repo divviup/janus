@@ -401,7 +401,7 @@ impl Decode for VdafConfig {
 
             val => {
                 return Err(CodecError::Other(
-                    anyhow!("unexpected VDAF type code value {}", val).into(),
+                    anyhow!("unexpected VDAF type code value {val}").into(),
                 ));
             }
         };
@@ -494,7 +494,7 @@ impl Decode for TaskbindExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected TaskbindExtensionType value ({})", val).into())
+            CodecError::Other(anyhow!("unexpected TaskbindExtensionType value ({val})").into())
         })
     }
 }

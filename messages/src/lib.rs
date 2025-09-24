@@ -665,7 +665,7 @@ impl Decode for Role {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected Role value {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected Role value {val}").into()))
     }
 }
 
@@ -1027,9 +1027,8 @@ impl Encode for ExtensionType {
 impl Decode for ExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ExtensionType value {}", val).into())
-        })
+        Self::try_from(val)
+            .map_err(|_| CodecError::Other(anyhow!("unexpected ExtensionType value {val}").into()))
     }
 }
 
@@ -2233,7 +2232,7 @@ impl Decode for ReportError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ReportShareError value {}", val).into())
+            CodecError::Other(anyhow!("unexpected ReportShareError value {val}").into())
         })
     }
 }
