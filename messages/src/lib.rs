@@ -581,7 +581,7 @@ impl Decode for Role {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected Role value {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected Role value {val}").into()))
     }
 }
 
@@ -943,9 +943,8 @@ impl Encode for ExtensionType {
 impl Decode for ExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ExtensionType value {}", val).into())
-        })
+        Self::try_from(val)
+            .map_err(|_| CodecError::Other(anyhow!("unexpected ExtensionType value {val}").into()))
     }
 }
 
@@ -1471,7 +1470,7 @@ impl Decode for FixedSizeQuery {
             }
             1 => Ok(FixedSizeQuery::CurrentBatch),
             _ => Err(CodecError::Other(
-                anyhow!("unexpected FixedSizeQueryType value {}", query_type).into(),
+                anyhow!("unexpected FixedSizeQueryType value {query_type}").into(),
             )),
         }
     }
@@ -2209,7 +2208,7 @@ impl Decode for PrepareError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ReportShareError value {}", val).into())
+            CodecError::Other(anyhow!("unexpected ReportShareError value {val}").into())
         })
     }
 }

@@ -259,7 +259,7 @@ impl Decode for Query {
             },
             val => {
                 return Err(CodecError::Other(
-                    anyhow!("unexpected QueryType value {}", val).into(),
+                    anyhow!("unexpected QueryType value {val}").into(),
                 ))
             }
         })
@@ -460,7 +460,7 @@ impl Decode for VdafType {
             },
             val => {
                 return Err(CodecError::Other(
-                    anyhow!("unexpected VDAF type code value {}", val).into(),
+                    anyhow!("unexpected VDAF type code value {val}").into(),
                 ))
             }
         };
