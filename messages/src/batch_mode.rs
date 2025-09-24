@@ -146,6 +146,6 @@ impl Decode for Code {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected BatchMode code {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected BatchMode code {val}").into()))
     }
 }

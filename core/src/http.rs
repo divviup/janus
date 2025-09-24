@@ -152,7 +152,7 @@ pub fn check_content_type(
     let mime: Mime = content_type
         .to_str()?
         .parse()
-        .map_err(|e| anyhow!("failed to parse Content-Type header: {}", e))?;
+        .map_err(|e| anyhow!("failed to parse Content-Type header: {e}"))?;
     if mime.essence_str() != expected {
         return Err(anyhow!(
             "unexpected Content-Type header {} != {}",
@@ -181,7 +181,7 @@ pub fn parse_retry_after(headers: &http::HeaderMap) -> Result<Option<RetryAfter>
         .get(RETRY_AFTER)
         .map(RetryAfter::try_from)
         .transpose()
-        .map_err(|e| anyhow!("Unable to parse Retry-After: {}", e))
+        .map_err(|e| anyhow!("Unable to parse Retry-After: {e}"))
 }
 
 /// Extension trait on [`reqwest::RequestBuilder`] to fluently add request authentication.
