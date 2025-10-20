@@ -29,7 +29,7 @@ async-trait = "0.1"
 aws-lc-rs = "1.13.3"
 backoff = "0.4.0"
 base64 = "0.22.1"
-bhttp = "0.5.4"
+bhttp = "0.6.1"
 bytes = "1"
 cfg-if = "1.0.3"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
