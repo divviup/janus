@@ -27,7 +27,7 @@ anyhow = "1"
 assert_matches = "1"
 async-trait = "0.1"
 aws-lc-rs = "1.14.1"
-backon = { version = "1.5.2", features = ["tokio-sleep"] }
+backon = { version = "1.6.0", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.5.4"
 bytes = "1"
