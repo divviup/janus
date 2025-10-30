@@ -55,47 +55,31 @@ pub mod vdaf_dp_strategies {
     use serde::{Deserialize, Serialize};
 
     /// Differential privacy strategies supported by `Prio3Histogram`.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
     #[serde(tag = "dp_strategy")]
     pub enum Prio3Histogram {
+        #[default]
         NoDifferentialPrivacy,
         PureDpDiscreteLaplace(PureDpDiscreteLaplace),
-    }
-
-    impl Default for Prio3Histogram {
-        fn default() -> Self {
-            Self::NoDifferentialPrivacy
-        }
     }
 
     /// Differential privacy strategies supported by `Prio3SumVec`.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
     #[serde(tag = "dp_strategy")]
     pub enum Prio3SumVec {
+        #[default]
         NoDifferentialPrivacy,
         PureDpDiscreteLaplace(PureDpDiscreteLaplace),
-    }
-
-    impl Default for Prio3SumVec {
-        fn default() -> Self {
-            Self::NoDifferentialPrivacy
-        }
     }
 
     /// Differential privacy strategies supported by `Prio3FixedPointBoundedL2VecSum`.
     #[cfg(feature = "fpvec_bounded_l2")]
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
     #[serde(tag = "dp_strategy")]
     pub enum Prio3FixedPointBoundedL2VecSum {
+        #[default]
         NoDifferentialPrivacy,
         ZCdpDiscreteGaussian(ZCdpDiscreteGaussian),
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    impl Default for Prio3FixedPointBoundedL2VecSum {
-        fn default() -> Self {
-            Self::NoDifferentialPrivacy
-        }
     }
 }
 
