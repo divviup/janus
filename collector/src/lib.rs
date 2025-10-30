@@ -644,7 +644,7 @@ impl<V: vdaf::Collector> Collector<V> {
     /// A convenience method to repeatedly request the result of an in-progress collection job until
     /// it completes.
     ///
-    /// This uses the parameters provided via [`CollectorBuilder.with_collect_poll_wait_parameters`]
+    /// This uses the parameters provided via [`CollectorBuilder::with_collect_poll_backoff`]
     /// to control how frequently to poll for completion.
     pub async fn poll_until_complete<Q: QueryType>(
         &self,
