@@ -75,7 +75,7 @@ postgres-protocol = "0.6.9"
 postgres-types = "0.2.11"
 pretty_assertions = "1.4.1"
 # Disable default features so that individual workspace crates can choose to re-enable them
-prio = { version = "0.18.1-alpha.0", default-features = false, features = ["experimental"], git = "https://github.com/divviup/libprio-rs.git", rev = "5aee52cb112b2ec24075c7a8d5da0732f6f46a8c" }
+prio = { version = "0.18.1-alpha.2", default-features = false, features = ["experimental"], git = "https://github.com/divviup/libprio-rs.git", rev = "b4e06b6b32755e95c445b03ce67bd2c424a837e4" }
 prometheus = "0.13.4"
 querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }

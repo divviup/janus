@@ -62,7 +62,7 @@ impl AggregatorWithNoise<0, 16, NoDifferentialPrivacy> for dummy::Vdaf {
 
 // identity strategy implementations for vdafs from libprio
 impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Sum<Field64> {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
@@ -73,7 +73,7 @@ impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Sum<Field64> {
 }
 
 impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Count<Field64> {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
@@ -87,7 +87,7 @@ impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Histogram<Fi
 where
     PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
 {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
@@ -101,7 +101,7 @@ impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field
 where
     PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
 {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
@@ -115,7 +115,7 @@ impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field
 where
     PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
 {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
@@ -133,7 +133,7 @@ where
     SPoly: ParallelSumGadget<Field128, PolyEval<Field128>> + Eq + Clone + 'static,
     SBlindPoly: ParallelSumGadget<Field128, Mul<Field128>> + Eq + Clone + 'static,
 {
-    fn add_noise_to_result(
+    fn add_noise_to_agg_share(
         &self,
         _dp_strategy: &NoDifferentialPrivacy,
         _agg_result: &mut [Self::Field],
