@@ -47,6 +47,7 @@ allow = [
     "BSL-1.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-DFS-2016",
     "Unicode-3.0",
