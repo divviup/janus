@@ -1269,7 +1269,7 @@ dependencies = [
  "num-bigint",
  "num-rational",
  "pad-adapter",
- "prio",
+ "prio 0.16.7",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -2579,7 +2579,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.17.0",
  "prometheus",
  "quickcheck",
  "quickcheck_macros",
@@ -2688,7 +2688,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -2728,7 +2728,7 @@ dependencies = [
  "janus_messages 0.7.95",
  "mockito",
  "ohttp",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "reqwest",
  "thiserror 2.0.17",
@@ -2754,7 +2754,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.95",
  "mockito",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "reqwest",
  "retry-after",
@@ -2790,7 +2790,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio",
+ "prio 0.17.0",
  "quickcheck",
  "rand 0.8.5",
  "regex",
@@ -2841,7 +2841,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "opentelemetry",
- "prio",
+ "prio 0.17.0",
  "quickcheck",
  "rand 0.8.5",
  "regex",
@@ -2881,7 +2881,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.7.95",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -2911,7 +2911,7 @@ dependencies = [
  "educe",
  "hex",
  "num_enum",
- "prio",
+ "prio 0.16.7",
  "rand 0.8.5",
  "serde",
  "thiserror 2.0.17",
@@ -2929,7 +2929,7 @@ dependencies = [
  "hex",
  "num_enum",
  "pretty_assertions",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "serde",
  "serde_test",
@@ -2950,7 +2950,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.7.95",
- "prio",
+ "prio 0.17.0",
  "rand 0.8.5",
  "reqwest",
  "serde_json",
@@ -4014,7 +4014,6 @@ dependencies = [
  "fiat-crypto",
  "fixed",
  "getrandom 0.2.15",
- "hex",
  "hmac",
  "num-bigint",
  "num-integer",
@@ -4023,14 +4022,42 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "sha3",
+ "subtle",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "prio"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac0b3cb73cf53e2608f559ac116f67436318cafa7004498395d9f419e2611063"
+dependencies = [
+ "aes",
+ "bitvec",
+ "byteorder",
+ "ctr",
+ "fiat-crypto",
+ "fixed",
+ "hex",
+ "hmac",
+ "num-bigint",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+ "rand 0.9.0",
+ "rand_core 0.9.0",
+ "rand_distr",
  "rayon",
  "serde",
  "serde_json",
  "sha2",
  "sha3",
  "subtle",
- "thiserror 1.0.69",
- "zipf",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -4251,6 +4278,16 @@ checksum = "b08f3c9802962f7e1b25113931d94f43ed9725bebc59db9d0c3e9a23b67e15ff"
 dependencies = [
  "getrandom 0.3.1",
  "zerocopy 0.8.14",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
+dependencies = [
+ "num-traits",
+ "rand 0.9.0",
 ]
 
 [[package]]
@@ -4893,9 +4930,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.8"
+version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -5447,7 +5484,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -7042,13 +7079,4 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "zipf"
-version = "7.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "390e51da0ed8cc3ade001d15fa5ba6f966b99c858fb466ec6b06d1682f1f94dd"
-dependencies = [
- "rand 0.8.5",
 ]
