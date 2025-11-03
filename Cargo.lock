@@ -2067,9 +2067,9 @@ dependencies = [
 
 [[package]]
 name = "hex-literal"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
+checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "hkdf"
@@ -4059,7 +4059,8 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.18.1-alpha.2"
-source = "git+https://github.com/divviup/libprio-rs.git?rev=b4e06b6b32755e95c445b03ce67bd2c424a837e4#b4e06b6b32755e95c445b03ce67bd2c424a837e4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e4b9f090159bffc869adc24e16800a79733787bc0f208f75379caa595e8a727"
 dependencies = [
  "aes",
  "bitvec",
