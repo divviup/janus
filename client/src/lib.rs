@@ -398,7 +398,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///     .await
     ///     .unwrap();
     ///
-    ///     client.upload(&true).await.unwrap();
+    ///     client.upload(&[true]).await.unwrap();
     /// }
     /// ```
     #[cfg(feature = "ohttp")]
