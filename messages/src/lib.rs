@@ -1633,7 +1633,7 @@ pub struct UploadResponse {
 
 impl UploadResponse {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-upload-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-upload-resp";
 
     pub fn new(statuses: &[ReportUploadStatus]) -> Self {
         Self {
