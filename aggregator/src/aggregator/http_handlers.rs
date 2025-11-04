@@ -599,25 +599,24 @@ async fn upload<C: Clock>(
     validate_content_type(conn, UploadRequest::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(conn).map_err(Arc::new)?;
-    let content_length = conn
-        .request_headers()
-        .get(KnownHeaderName::ContentLength)
-        .ok_or_else(|| Error::BadRequest("no Content-Length header".into()))
-        .map_err(Arc::new)?;
-    let content_length = content_length
-        .as_str()
-        .unwrap()
-        .parse::<usize>()
-        .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
-    if content_length != body.len() {
-        return Err(Arc::new(Error::InvalidMessage(
-            Some(task_id),
-            "unexpected content length",
-        ))
-        .into());
+
+    // Validate Content-Length if present. For chunked Transfer-Encoding, there won't be a
+    // Content-Length header, which is OK - we use body.len() for decoding in both cases.
+    if let Some(content_length) = conn.request_headers().get(KnownHeaderName::ContentLength) {
+        let content_length = content_length
+            .as_str()
+            .unwrap()
+            .parse::<usize>()
+            .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
+        if content_length != body.len() {
+            return Err(Arc::new(Error::InvalidMessage(
+                Some(task_id),
+                "unexpected content length",
+            ))
+            .into());
+        }
     }
-    // TODO(timg): it's possible that trillium already uses the Content-Length when fetching the
-    // request body, in which case we can skip checking it ourselves TKTK
+
     let response = conn
         .cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
         .await
@@ -633,7 +632,7 @@ async fn upload<C: Clock>(
 
     // Regardless of whether all or any reports were accepted, return 200 OK to indicate that the
     // HTTP messages were exchanged successfully. The client will have to examine the response body
-    // no matter what.
+    // to determine which reports were accepted or rejected.
     Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE).with_status(Status::Ok))
 }
 

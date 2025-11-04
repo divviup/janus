@@ -22,7 +22,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
     UploadResponse,
 };
@@ -50,6 +50,16 @@ async fn upload_handler() {
     ) {
         // HTTP status is OK regardless of what happened to the constituent reports because the HTTP
         // messages were exchanged successfully.
+        if test_conn.status() != Some(Status::Ok) {
+            println!(
+                "ERROR: Report {} got status {:?}",
+                desired_report_id,
+                test_conn.status()
+            );
+            if let Some(body) = test_conn.take_response_body_string() {
+                println!("Response body: {}", body);
+            }
+        }
         assert_eq!(test_conn.status(), Some(Status::Ok));
 
         assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
@@ -106,7 +116,11 @@ async fn upload_handler() {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert!(test_conn.take_response_body().is_none());
+        assert!(
+            test_conn
+                .take_response_body_string()
+                .is_some_and(|s| s.is_empty())
+        );
     }
 
     // Upload a report with a versioned media-type header
@@ -123,7 +137,11 @@ async fn upload_handler() {
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(test_conn.take_response_body().is_none());
+    assert!(
+        test_conn
+            .take_response_body_string()
+            .is_some_and(|s| s.is_empty())
+    );
 
     let accepted_report_id = report.metadata().id();
 
@@ -147,7 +165,11 @@ async fn upload_handler() {
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(test_conn.take_response_body().is_none());
+    assert!(
+        test_conn
+            .take_response_body_string()
+            .is_some_and(|s| s.is_empty())
+    );
 
     // Upload multiple reports in a single request
     let reports = vec![
@@ -173,7 +195,11 @@ async fn upload_handler() {
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(test_conn.take_response_body().is_none());
+    assert!(
+        test_conn
+            .take_response_body_string()
+            .is_some_and(|s| s.is_empty())
+    );
 
     // Verify that reports older than the report expiry age are rejected with the reportRejected
     // error type.
@@ -487,8 +513,12 @@ async fn upload_handler() {
         /* helper */ Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(dupe_ext_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&dupe_ext_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
@@ -718,13 +748,13 @@ async fn upload_client_early_disconnect() {
         &hpke_keypair,
         clock.now_aligned_to_precision(task.time_precision()),
     );
-    let encoded_report_1 = report_1.get_encoded().unwrap();
+    let encoded_report_1 = UploadRequest::new(&[report_1]).get_encoded().unwrap();
     let report_2 = create_report(
         &leader_task,
         &hpke_keypair,
         clock.now_aligned_to_precision(task.time_precision()),
     );
-    let encoded_report_2 = report_2.get_encoded().unwrap();
+    let encoded_report_2 = UploadRequest::new(&[report_2]).get_encoded().unwrap();
 
     let stopper = Stopper::new();
     let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -739,7 +769,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-report\r\n\
+        Content-Type: application/dap-upload-req\r\n\
         Content-Length: {}\r\n\r\n",
         encoded_report_1.len(),
     );
@@ -762,7 +792,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-report\r\n\
+        Content-Type: application/dap-upload-req\r\n\
         Content-Length: 1000\r\n\r\n"
     );
     client_socket
@@ -777,7 +807,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-report\r\n\
+        Content-Type: application/dap-upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -806,7 +836,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-report\r\n\
+        Content-Type: application/dap-upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -929,6 +959,6 @@ async fn upload_client_early_disconnect() {
                     .to_string()
             })
             .collect::<HashSet<String>>(),
-        HashSet::from(["400".into(), "201".into()])
+        HashSet::from(["400".into(), "200".into()])
     );
 }
