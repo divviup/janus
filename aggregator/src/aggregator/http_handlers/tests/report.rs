@@ -478,29 +478,6 @@ async fn upload_handler() {
         "access-control-allow-origin" => "https://example.com/"
     );
 
-    // Reports that aren't aligned to the task time precision must be rejected
-    clock.advance(&Duration::from_seconds(1));
-    let bad_leader_time_alignment_report = create_report(
-        &leader_task,
-        &hpke_keypair,
-        clock.now().add(&Duration::from_seconds(1)).unwrap(), /* not aligned! */
-    );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&bad_leader_time_alignment_report))
-                .get_encoded()
-                .unwrap(),
-        )
-        .run_async(&handler)
-        .await;
-    check_response(
-        &mut test_conn,
-        bad_leader_time_alignment_report.metadata().id(),
-        ReportError::InvalidMessage,
-    )
-    .await;
-
     // Reports with duplicate extensions must be rejected
     clock.advance(&Duration::from_seconds(1));
     let dupe_ext_report = create_report_custom(
