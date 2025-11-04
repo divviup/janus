@@ -572,13 +572,13 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_messages::{Duration};
+    /// # use janus_messages::{Duration, Time};
     /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
     /// #
     /// # async fn test() -> Result<(), Error> {
-    /// # let measurement = true;
-    /// # let timestamp = 1_700_000_000;
+    /// # let measurement1 = true;
+    /// # let measurement2 = false;
     /// # let vdaf = Prio3::new_count(2).unwrap();
     /// let client = Client::new(
     ///     random(),
@@ -587,11 +587,20 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///     Duration::from_seconds(3600),
     ///     vdaf,
     /// ).await?;
-    /// // TODO(timg): this example should use two different times but also illustrate that you can
-    /// // use multiple time types
+    ///
+    /// // Upload multiple measurements with explicit timestamps.
+    /// // Can use SystemTime for wall clock times:
+    /// let now = std::time::SystemTime::now();
+    /// let earlier = now - std::time::Duration::from_secs(3600);
     /// client.upload_with_time(&[
-    ///     (measurement, std::time::SystemTime::now()),
-    ///     (measurement, std::time::SystemTime::now()),
+    ///     (measurement1, earlier),
+    ///     (measurement2, now),
+    /// ]).await?;
+    ///
+    /// // Or use janus_messages::Time for specific timestamps:
+    /// client.upload_with_time(&[
+    ///     (measurement1, Time::from_seconds_since_epoch(1_700_000_000)),
+    ///     (measurement2, Time::from_seconds_since_epoch(1_700_003_600)),
     /// ]).await?;
     /// # Ok(())
     /// # }
