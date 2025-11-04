@@ -610,7 +610,11 @@ async fn upload<C: Clock>(
         .parse::<usize>()
         .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
     if content_length != body.len() {
-        panic!("unexpected content length")
+        return Err(Arc::new(Error::InvalidMessage(
+            Some(task_id),
+            "unexpected content length",
+        ))
+        .into());
     }
     // TODO(timg): it's possible that trillium already uses the Content-Length when fetching the
     // request body, in which case we can skip checking it ourselves TKTK
