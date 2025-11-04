@@ -506,6 +506,192 @@ async fn upload_handler() {
     .await;
 }
 
+/// Test mixed success and failure in a single batch upload.
+/// This validates that UploadResponse only includes failed reports, not successful ones.
+#[tokio::test]
+async fn upload_handler_mixed_success_failure() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(Duration::from_seconds(1000))
+    .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+    .build();
+
+    let leader_task = task.leader_view().unwrap();
+    datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+    // Create three reports: success, failure (expired), success
+    let valid_report_1 = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
+
+    let expired_report = Report::new(
+        ReportMetadata::new(
+            random(),
+            clock
+                .now_aligned_to_precision(task.time_precision())
+                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .unwrap()
+                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .unwrap(),
+            Vec::new(),
+        ),
+        valid_report_1.public_share().to_vec(),
+        valid_report_1.leader_encrypted_input_share().clone(),
+        valid_report_1.helper_encrypted_input_share().clone(),
+    );
+
+    let valid_report_2 = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
+
+    // Upload all three reports in a single batch
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(vec![
+                valid_report_1.clone(),
+                expired_report.clone(),
+                valid_report_2.clone(),
+            ])
+            .get_encoded()
+            .unwrap(),
+        )
+        .run_async(&handler)
+        .await;
+
+    // Should get HTTP 200 OK even with mixed results
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+
+    // Parse the response
+    let body = take_response_body(&mut test_conn).await;
+    let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
+
+    // Should have exactly one error status for the expired report
+    // Successful reports should NOT appear in the response
+    assert_eq!(
+        upload_response.status().len(),
+        1,
+        "Expected exactly 1 failed report"
+    );
+    assert_eq!(
+        upload_response.status()[0].report_id(),
+        *expired_report.metadata().id()
+    );
+    assert_eq!(
+        upload_response.status()[0].error(),
+        ReportError::TaskExpired
+    );
+
+    // Verify that the two valid reports were actually written to the datastore
+    // by checking they can't be uploaded again
+    for valid_report in &[valid_report_1, valid_report_2] {
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+            .with_request_body(
+                UploadRequest::new(vec![valid_report.clone()])
+                    .get_encoded()
+                    .unwrap(),
+            )
+            .run_async(&handler)
+            .await;
+
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let body = take_response_body(&mut test_conn).await;
+        let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
+        // Should succeed (empty response) because report was already accepted
+        assert_eq!(upload_response.status().len(), 0);
+    }
+}
+
+/// Test that reports uploaded before task start time are rejected with TaskNotStarted.
+#[tokio::test]
+async fn upload_handler_task_not_started() {
+    let HttpHandlerTest {
+        clock,
+        ephemeral_datastore: _ephemeral_datastore,
+        datastore,
+        handler,
+        hpke_keypair,
+        ..
+    } = HttpHandlerTest::new().await;
+
+    // Create a task that starts in the future (must be aligned to time precision)
+    let time_precision = Duration::from_seconds(1000);
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(time_precision)
+    .with_task_start(Some(
+        clock
+            .now_aligned_to_precision(&time_precision)
+            .add(&time_precision) // Add one time precision interval
+            .unwrap()
+            .add(&time_precision) // Add another to be clearly in the future
+            .unwrap(),
+    ))
+    // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
+    .with_tolerable_clock_skew(Duration::from_seconds(time_precision.as_seconds() * 10))
+    .build();
+
+    let leader_task = task.leader_view().unwrap();
+    datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+    // Create a report with current time (before task start)
+    let early_report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
+
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(vec![early_report.clone()])
+                .get_encoded()
+                .unwrap(),
+        )
+        .run_async(&handler)
+        .await;
+
+    // Should get HTTP 200 OK but with TaskNotStarted error in response
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+
+    let body = take_response_body(&mut test_conn).await;
+    let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
+
+    assert_eq!(upload_response.status().len(), 1);
+    assert_eq!(
+        upload_response.status()[0].report_id(),
+        *early_report.metadata().id()
+    );
+    assert_eq!(
+        upload_response.status()[0].error(),
+        ReportError::TaskNotStarted
+    );
+}
+
 // Helper should not expose `tasks/{task-id}/reports` endpoint.
 #[tokio::test]
 async fn upload_handler_helper() {
