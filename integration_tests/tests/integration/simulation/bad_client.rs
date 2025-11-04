@@ -340,7 +340,7 @@ async fn upload_report(
         .leader_aggregator_endpoint()
         .join(&format!("tasks/{task_id}/reports"))
         .unwrap();
-    let upload_request = UploadRequest::new(&[report]).get_encoded()?;
+    let upload_request = UploadRequest::from_slice(&[report]).get_encoded()?;
     retry_http_request(http_request_exponential_backoff().build(), || async {
         http_client
             .post(url.clone())

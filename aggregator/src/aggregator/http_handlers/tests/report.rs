@@ -108,7 +108,7 @@ async fn upload_handler() {
         let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
             .with_request_body(
-                UploadRequest::new(std::slice::from_ref(&report))
+                UploadRequest::from_slice(std::slice::from_ref(&report))
                     .get_encoded()
                     .unwrap(),
             )
@@ -130,7 +130,7 @@ async fn upload_handler() {
             format!("{};version=07", UploadRequest::MEDIA_TYPE),
         )
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&report))
+            UploadRequest::from_slice(std::slice::from_ref(&report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -158,7 +158,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(&[duplicate_id_report])
+            UploadRequest::from_slice(&[duplicate_id_report])
                 .get_encoded()
                 .unwrap(),
         )
@@ -191,7 +191,7 @@ async fn upload_handler() {
     ];
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::new(&reports).get_encoded().unwrap())
+        .with_request_body(UploadRequest::from_slice(&reports).get_encoded().unwrap())
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -219,7 +219,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&gc_eligible_report))
+            UploadRequest::from_slice(std::slice::from_ref(&gc_eligible_report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -252,7 +252,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&bad_report))
+            UploadRequest::from_slice(std::slice::from_ref(&bad_report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -285,7 +285,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&bad_report))
+            UploadRequest::from_slice(std::slice::from_ref(&bad_report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -335,7 +335,7 @@ async fn upload_handler() {
     let mut test_conn = post(task_end_soon.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&report_2))
+            UploadRequest::from_slice(std::slice::from_ref(&report_2))
                 .get_encoded()
                 .unwrap(),
         )
@@ -364,7 +364,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(&[bad_public_share_report.clone()])
+            UploadRequest::from_slice(&[bad_public_share_report.clone()])
                 .get_encoded()
                 .unwrap(),
         )
@@ -391,7 +391,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&undecryptable_report))
+            UploadRequest::from_slice(std::slice::from_ref(&undecryptable_report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -432,7 +432,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(&[bad_leader_input_share_report.clone()])
+            UploadRequest::from_slice(&[bad_leader_input_share_report.clone()])
                 .get_encoded()
                 .unwrap(),
         )
@@ -469,7 +469,7 @@ async fn upload_handler() {
     let test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::new(&[report]).get_encoded().unwrap())
+        .with_request_body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
         .run_async(&handler)
         .await;
     assert!(test_conn.status().unwrap().is_success());
@@ -492,7 +492,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
-            UploadRequest::new(std::slice::from_ref(&dupe_ext_report))
+            UploadRequest::from_slice(std::slice::from_ref(&dupe_ext_report))
                 .get_encoded()
                 .unwrap(),
         )
@@ -535,7 +535,7 @@ async fn upload_handler_helper() {
 
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::new(&[report]).get_encoded().unwrap())
+        .with_request_body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
         .run_async(&handler)
         .await;
 
@@ -625,7 +625,7 @@ async fn upload_handler_error_fanout() {
     let response = client
         .post(url.clone())
         .header("Content-Type", UploadRequest::MEDIA_TYPE)
-        .body(UploadRequest::new(&[report]).get_encoded().unwrap())
+        .body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
         .send()
         .await
         .unwrap();
@@ -668,7 +668,7 @@ async fn upload_handler_error_fanout() {
                     let response = client
                         .post(url)
                         .header("Content-Type", UploadRequest::MEDIA_TYPE)
-                        .body(UploadRequest::new(&[report]).get_encoded().unwrap())
+                        .body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
                         .send()
                         .await
                         .unwrap();
@@ -725,13 +725,17 @@ async fn upload_client_early_disconnect() {
         &hpke_keypair,
         clock.now_aligned_to_precision(task.time_precision()),
     );
-    let encoded_report_1 = UploadRequest::new(&[report_1]).get_encoded().unwrap();
+    let encoded_report_1 = UploadRequest::from_slice(&[report_1])
+        .get_encoded()
+        .unwrap();
     let report_2 = create_report(
         &leader_task,
         &hpke_keypair,
         clock.now_aligned_to_precision(task.time_precision()),
     );
-    let encoded_report_2 = UploadRequest::new(&[report_2]).get_encoded().unwrap();
+    let encoded_report_2 = UploadRequest::from_slice(&[report_2])
+        .get_encoded()
+        .unwrap();
 
     let stopper = Stopper::new();
     let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

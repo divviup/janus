@@ -1747,8 +1747,9 @@ impl VdafOps {
         C: Clock,
         B: UploadableBatchMode,
     {
-        let mut status = Vec::new();
-        for report in upload_request.reports() {
+        let reports = upload_request.reports();
+        let mut status = Vec::with_capacity(reports.len());
+        for report in reports {
             match Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
                 Arc::clone(&vdaf),
                 clock,
@@ -1765,7 +1766,7 @@ impl VdafOps {
                         *rejection.report_id(),
                         rejection.reason().report_error(),
                     )),
-                    _ => return Err(Arc::clone(&e)),
+                    _ => return Err(e),
                 },
                 _ => continue,
             }

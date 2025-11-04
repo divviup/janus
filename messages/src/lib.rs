@@ -1550,7 +1550,11 @@ impl UploadRequest {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-upload-req";
 
-    pub fn new(reports: &[Report]) -> Self {
+    pub fn new(reports: Vec<Report>) -> Self {
+        Self { reports }
+    }
+
+    pub fn from_slice(reports: &[Report]) -> Self {
         Self {
             reports: reports.to_vec(),
         }
@@ -1652,7 +1656,11 @@ impl Encode for UploadResponse {
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(ReportId::LEN + 1)
+        Some(
+            self.status
+                .iter()
+                .fold(0, |acc, s| acc + s.encoded_len().unwrap_or_default()),
+        )
     }
 }
 

@@ -1,7 +1,9 @@
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
-    Report, ReportId, ReportMetadata, TaskId, Time, roundtrip_encoding,
+    Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time,
+    UploadResponse, roundtrip_encoding,
 };
+use prio::codec::Encode;
 
 #[test]
 fn roundtrip_report_id() {
@@ -313,4 +315,13 @@ fn roundtrip_input_share_aad() {
             ),
         ),
     )])
+}
+
+#[test]
+fn upload_response_size() {
+    let response = UploadResponse::new(&[
+        ReportUploadStatus::new(ReportId::from([0u8; 16]), ReportError::TaskExpired),
+        ReportUploadStatus::new(ReportId::from([1u8; 16]), ReportError::InvalidMessage),
+    ]);
+    assert_eq!(response.encoded_len(), Some(34));
 }

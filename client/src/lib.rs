@@ -617,7 +617,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             )?);
         }
 
-        let upload_request = UploadRequest::new(reports.as_slice()).get_encoded()?;
+        let upload_request = UploadRequest::new(reports).get_encoded()?;
         let upload_endpoint = self
             .parameters
             .reports_resource_uri(&self.parameters.task_id)?;

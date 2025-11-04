@@ -605,7 +605,10 @@ async fn upload<C: Clock>(
     if let Some(content_length) = conn.request_headers().get(KnownHeaderName::ContentLength) {
         let content_length = content_length
             .as_str()
-            .unwrap()
+            .ok_or(Arc::new(Error::InvalidMessage(
+                Some(task_id),
+                "invalid content length encoding",
+            )))?
             .parse::<usize>()
             .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
         if content_length != body.len() {
