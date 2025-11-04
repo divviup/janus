@@ -561,7 +561,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             .iter()
             .map(|m| (m.clone(), Clock::now(&RealClock::default())))
             .collect();
-        self.upload_with_time(with_time).await
+        self.upload_with_time(&with_time).await
     }
 
     /// Upload a [`Report`] to the leader, per the [DAP specification][1], and override the report's
@@ -589,7 +589,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// ).await?;
     /// // TODO(timg): this example should use two different times but also illustrate that you can
     /// // use multiple time types
-    /// client.upload_with_time(vec![
+    /// client.upload_with_time(&[
     ///     (measurement, std::time::SystemTime::now()),
     ///     (measurement, std::time::SystemTime::now()),
     /// ]).await?;
@@ -599,19 +599,18 @@ impl<V: vdaf::Client<16>> Client<V> {
     #[tracing::instrument(skip(measurements), err)]
     pub async fn upload_with_time<T>(
         &self,
-        // TODO(timg): should take a slice
-        measurements: Vec<(V::Measurement, T)>,
+        measurements: &[(V::Measurement, T)],
     ) -> Result<(), Error>
     where
-        T: TryInto<Time> + Debug,
+        T: TryInto<Time> + Debug + Clone,
         Error: From<<T as TryInto<Time>>::Error>,
     {
         let mut reports = Vec::new();
 
-        for (measurement, time) in measurements.into_iter() {
+        for (measurement, time) in measurements.iter() {
             reports.push(self.prepare_report(
-                &measurement,
-                &time.try_into()?,
+                measurement,
+                &time.clone().try_into()?,
                 self.leader_hpke_config.lock().await.get().await?,
                 self.helper_hpke_config.lock().await.get().await?,
             )?);
