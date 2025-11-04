@@ -33,7 +33,7 @@
 //!     )
 //!     .await
 //!     .unwrap();
-//!     client.upload(&5).await.unwrap();
+//!     client.upload(&[5]).await.unwrap();
 //! }
 //! ```
 
@@ -58,8 +58,8 @@ use janus_core::{
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
-    Duration, HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report,
-    ReportId, ReportMetadata, Role, TaskId, Time,
+    Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
+    ReportMetadata, Role, TaskId, Time, UploadRequest,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
@@ -76,6 +76,7 @@ use url::Url;
 #[cfg(test)]
 mod tests;
 
+// TODO(timg): need way to convey per-report errors
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid parameter {0}")]
@@ -550,14 +551,17 @@ impl<V: vdaf::Client<16>> Client<V> {
         ))
     }
 
-    /// Upload a [`Report`] to the leader, per the [DAP specification][1]. The provided measurement
-    /// is sharded into two shares and then uploaded to the leader.
+    /// Upload one or more measurements to the leader, per the [DAP specification][1]. The provided
+    /// measurements are sharded into two shares and then uploaded to the leader.
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
-    #[tracing::instrument(skip(measurement), err)]
-    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        self.upload_with_time(measurement, Clock::now(&RealClock::default()))
-            .await
+    #[tracing::instrument(skip(measurements), err)]
+    pub async fn upload(&self, measurements: &[V::Measurement]) -> Result<(), Error> {
+        let with_time: Vec<_> = measurements
+            .iter()
+            .map(|m| (m.clone(), Clock::now(&RealClock::default())))
+            .collect();
+        self.upload_with_time(with_time).await
     }
 
     /// Upload a [`Report`] to the leader, per the [DAP specification][1], and override the report's
@@ -568,7 +572,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_messages::Duration;
+    /// # use janus_messages::{Duration};
     /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
     /// #
@@ -583,37 +587,47 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///     Duration::from_seconds(3600),
     ///     vdaf,
     /// ).await?;
-    /// client.upload_with_time(&measurement, std::time::SystemTime::now()).await?;
-    /// client.upload_with_time(&measurement, janus_messages::Time::from_seconds_since_epoch(timestamp)).await?;
+    /// // TODO(timg): this example should use two different times but also illustrate that you can
+    /// // use multiple time types
+    /// client.upload_with_time(vec![
+    ///     (measurement, std::time::SystemTime::now()),
+    ///     (measurement, std::time::SystemTime::now()),
+    /// ]).await?;
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(measurement), err)]
+    #[tracing::instrument(skip(measurements), err)]
     pub async fn upload_with_time<T>(
         &self,
-        measurement: &V::Measurement,
-        time: T,
+        // TODO(timg): should take a slice
+        measurements: Vec<(V::Measurement, T)>,
     ) -> Result<(), Error>
     where
         T: TryInto<Time> + Debug,
         Error: From<<T as TryInto<Time>>::Error>,
     {
-        let report = self
-            .prepare_report(
-                measurement,
+        let mut reports = Vec::new();
+
+        for (measurement, time) in measurements.into_iter() {
+            reports.push(self.prepare_report(
+                &measurement,
                 &time.try_into()?,
                 self.leader_hpke_config.lock().await.get().await?,
                 self.helper_hpke_config.lock().await.get().await?,
-            )?
-            .get_encoded()?;
+            )?);
+        }
+
+        let upload_request = UploadRequest::new(reports.as_slice()).get_encoded()?;
         let upload_endpoint = self
             .parameters
             .reports_resource_uri(&self.parameters.task_id)?;
 
         #[cfg(feature = "ohttp")]
-        let upload_status = self.upload_with_ohttp(&upload_endpoint, &report).await?;
+        let upload_status = self
+            .upload_with_ohttp(&upload_endpoint, &upload_request)
+            .await?;
         #[cfg(not(feature = "ohttp"))]
-        let upload_status = self.put_report(&upload_endpoint, &report).await?;
+        let upload_status = self.put_report(&upload_endpoint, &upload_request).await?;
 
         if !upload_status.is_success() {
             return Err(Error::Http(Box::new(HttpErrorResponse::from(
@@ -634,7 +648,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             || async {
                 self.http_client
                     .post(upload_endpoint.clone())
-                    .header(CONTENT_TYPE, Report::MEDIA_TYPE)
+                    .header(CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
                     .body(request_body.to_vec())
                     .send()
                     .await
@@ -669,7 +683,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             upload_endpoint.authority().into(),
             upload_endpoint.path().into(),
         );
-        message.put_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE);
+        message.put_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE);
         message.write_content(request_body);
 
         // ...get the BHTTP encoding of the message...

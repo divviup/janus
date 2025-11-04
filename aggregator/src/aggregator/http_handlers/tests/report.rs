@@ -1,8 +1,8 @@
 use crate::{
     aggregator::{
-        error::ReportRejectionReason,
         http_handlers::{
             AggregatorHandlerBuilder,
+            test_util::take_response_body,
             test_util::{HttpHandlerTest, take_problem_details},
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
@@ -23,11 +23,12 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
-    PlaintextInputShare, Report, ReportMetadata, Role, TaskId,
+    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
+    UploadResponse,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
-use prio::codec::Encode;
+use prio::codec::{Encode, ParameterizedDecode};
 use rand::random;
 use serde_json::json;
 use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
@@ -44,26 +45,24 @@ use trillium_tokio::Stopper;
 async fn upload_handler() {
     async fn check_response(
         test_conn: &mut TestConn,
-        desired_status: Status,
-        desired_type: &str,
-        desired_title: &str,
-        desired_task_id: &TaskId,
-        desired_detail: Option<&str>,
+        desired_report_id: &ReportId,
+        desired_report_error: ReportError,
     ) {
-        let mut desired_response = json!({
-            "status": desired_status as u16,
-            "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
-            "title": desired_title,
-            "taskid": format!("{desired_task_id}"),
-        });
-        if let Some(detail) = desired_detail {
-            desired_response
-                .as_object_mut()
-                .unwrap()
-                .insert("detail".to_string(), json!(detail));
+        // HTTP status is OK regardless of what happened to the constituent reports because the HTTP
+        // messages were exchanged successfully.
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+
+        assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+        let body = &take_response_body(test_conn).await;
+        let expected_content_len = format!("{}", body.len());
+        let len_str = expected_content_len.as_str();
+        assert_headers!(&test_conn, "content-length" => len_str);
+        let upload_response = UploadResponse::get_decoded_with_param(&body.len(), body).unwrap();
+
+        for status in upload_response.status() {
+            assert_eq!(status.report_id(), *desired_report_id);
+            assert_eq!(status.error(), desired_report_error);
         }
-        assert_eq!(test_conn.status(), Some(desired_status));
-        assert_eq!(take_problem_details(test_conn).await, desired_response);
     }
 
     let HttpHandlerTest {
@@ -97,12 +96,16 @@ async fn upload_handler() {
     // Upload a report. Do this twice to prove that PUT is idempotent.
     for _ in 0..2 {
         let mut test_conn = post(task.report_upload_uri().unwrap().path())
-            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(report.get_encoded().unwrap())
+            .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+            .with_request_body(
+                UploadRequest::new(std::slice::from_ref(&report))
+                    .get_encoded()
+                    .unwrap(),
+            )
             .run_async(&handler)
             .await;
 
-        assert_eq!(test_conn.status(), Some(Status::Created));
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert!(test_conn.take_response_body().is_none());
     }
 
@@ -110,12 +113,16 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(
             KnownHeaderName::ContentType,
-            format!("{};version=07", Report::MEDIA_TYPE),
+            format!("{};version=07", UploadRequest::MEDIA_TYPE),
         )
-        .with_request_body(report.get_encoded().unwrap())
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_eq!(test_conn.status(), Some(Status::Ok));
     assert!(test_conn.take_response_body().is_none());
 
     let accepted_report_id = report.metadata().id();
@@ -131,11 +138,41 @@ async fn upload_handler() {
         Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(duplicate_id_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(&[duplicate_id_report])
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert!(test_conn.take_response_body().is_none());
+
+    // Upload multiple reports in a single request
+    let reports = vec![
+        create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        ),
+        create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        ),
+        create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        ),
+    ];
+    let mut test_conn = post(task.report_upload_uri().unwrap().path())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(UploadRequest::new(&reports).get_encoded().unwrap())
+        .run_async(&handler)
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
     assert!(test_conn.take_response_body().is_none());
 
     // Verify that reports older than the report expiry age are rejected with the reportRejected
@@ -154,17 +191,18 @@ async fn upload_handler() {
         report.helper_encrypted_input_share().clone(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(gc_eligible_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&gc_eligible_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportRejected",
-        "Report could not be processed.",
-        task.id(),
-        Some(ReportRejectionReason::Expired.detail()),
+        gc_eligible_report.metadata().id(),
+        ReportError::TaskExpired,
     )
     .await;
 
@@ -186,17 +224,18 @@ async fn upload_handler() {
         report.helper_encrypted_input_share().clone(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(bad_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&bad_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "outdatedConfig",
-        "The message was generated using an outdated configuration.",
-        task.id(),
-        None,
+        bad_report.metadata().id(),
+        ReportError::HpkeUnknownConfigId,
     )
     .await;
 
@@ -218,17 +257,18 @@ async fn upload_handler() {
         report.helper_encrypted_input_share().clone(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(bad_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&bad_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportTooEarly",
-        "Report could not be processed because it arrived too early.",
-        task.id(),
-        None,
+        bad_report.metadata().id(),
+        ReportError::ReportTooEarly,
     )
     .await;
 
@@ -267,17 +307,18 @@ async fn upload_handler() {
             .unwrap(),
     );
     let mut test_conn = post(task_end_soon.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(report_2.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&report_2))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportRejected",
-        "Report could not be processed.",
-        task_end_soon.id(),
-        Some(ReportRejectionReason::TaskEnded.detail()),
+        report_2.metadata().id(),
+        ReportError::TaskExpired,
     )
     .await;
 
@@ -295,17 +336,18 @@ async fn upload_handler() {
             .clone(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(bad_public_share_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(&[bad_public_share_report.clone()])
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportRejected",
-        "Report could not be processed.",
-        leader_task.id(),
-        Some(ReportRejectionReason::DecodeFailure.detail()),
+        bad_public_share_report.metadata().id(),
+        ReportError::InvalidMessage,
     )
     .await;
 
@@ -321,17 +363,18 @@ async fn upload_handler() {
         Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(undecryptable_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&undecryptable_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportRejected",
-        "Report could not be processed.",
-        leader_task.id(),
-        Some(ReportRejectionReason::DecryptFailure.detail()),
+        undecryptable_report.metadata().id(),
+        ReportError::HpkeDecryptError,
     )
     .await;
 
@@ -361,17 +404,18 @@ async fn upload_handler() {
             .clone(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(bad_leader_input_share_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(&[bad_leader_input_share_report.clone()])
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "reportRejected",
-        "Report could not be processed.",
-        leader_task.id(),
-        Some(ReportRejectionReason::DecodeFailure.detail()),
+        bad_leader_input_share_report.metadata().id(),
+        ReportError::InvalidMessage,
     )
     .await;
 
@@ -398,8 +442,8 @@ async fn upload_handler() {
     // Check for appropriate CORS headers in response to the main request.
     let test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(UploadRequest::new(&[report]).get_encoded().unwrap())
         .run_async(&handler)
         .await;
     assert!(test_conn.status().unwrap().is_success());
@@ -416,20 +460,18 @@ async fn upload_handler() {
         clock.now().add(&Duration::from_seconds(1)).unwrap(), /* not aligned! */
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(bad_leader_time_alignment_report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(
+            UploadRequest::new(std::slice::from_ref(&bad_leader_time_alignment_report))
+                .get_encoded()
+                .unwrap(),
+        )
         .run_async(&handler)
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "invalidMessage",
-        "Time unaligned.",
-        leader_task.id(),
-        Some(
-            "time is unaligned (precision = 1000 seconds, \
-            inner error = timestamp is not a multiple of the time precision)",
-        ),
+        bad_leader_time_alignment_report.metadata().id(),
+        ReportError::InvalidMessage,
     )
     .await;
 
@@ -451,11 +493,8 @@ async fn upload_handler() {
         .await;
     check_response(
         &mut test_conn,
-        Status::BadRequest,
-        "invalidMessage",
-        "The message type for a response was incorrect or the payload was malformed.",
-        leader_task.id(),
-        Some("Report contains duplicate extensions."),
+        dupe_ext_report.metadata().id(),
+        ReportError::InvalidMessage,
     )
     .await;
 }
@@ -488,8 +527,8 @@ async fn upload_handler_helper() {
     );
 
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-        .with_request_body(report.get_encoded().unwrap())
+        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
+        .with_request_body(UploadRequest::new(&[report]).get_encoded().unwrap())
         .run_async(&handler)
         .await;
 
@@ -578,12 +617,12 @@ async fn upload_handler_error_fanout() {
     );
     let response = client
         .post(url.clone())
-        .header("Content-Type", Report::MEDIA_TYPE)
-        .body(report.get_encoded().unwrap())
+        .header("Content-Type", UploadRequest::MEDIA_TYPE)
+        .body(UploadRequest::new(&[report]).get_encoded().unwrap())
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status().as_u16(), 201);
+    assert_eq!(response.status().as_u16(), 200);
 
     // Use up the connection pool's connections to cause a transaction-level error in the next
     // uploads.
@@ -621,8 +660,8 @@ async fn upload_handler_error_fanout() {
                     let report = create_report(&leader_task, &hpke_keypair, clock.now());
                     let response = client
                         .post(url)
-                        .header("Content-Type", Report::MEDIA_TYPE)
-                        .body(report.get_encoded().unwrap())
+                        .header("Content-Type", UploadRequest::MEDIA_TYPE)
+                        .body(UploadRequest::new(&[report]).get_encoded().unwrap())
                         .send()
                         .await
                         .unwrap();

@@ -325,7 +325,7 @@ where
     pub async fn upload(&self, measurement: &V::Measurement, time: Time) -> anyhow::Result<()> {
         match self {
             ClientImplementation::InProcess { client } => client
-                .upload_with_time(measurement, time)
+                .upload_with_time(vec![(measurement.clone(), time)])
                 .await
                 .map_err(Into::into),
             ClientImplementation::Container(inner) => {

@@ -419,6 +419,7 @@ async fn upload_report_in_the_future_past_clock_skew() {
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
         .unwrap_err();
+    // TODO(timg): check that we get the right UploadResponse TKTK
     assert_matches!(upload_error.as_ref(), Error::ReportRejected(rejection) => {
         assert_eq!(task.id(), rejection.task_id());
         assert_eq!(report.metadata().id(), rejection.report_id());

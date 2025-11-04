@@ -7,7 +7,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Duration, HpkeConfigList, MediaType, Report, Role, Time};
+use janus_messages::{Duration, HpkeConfigList, MediaType, Role, Time, UploadRequest};
 use prio::{
     codec::Encode,
     vdaf::{self, prio3::Prio3},
@@ -66,13 +66,13 @@ async fn upload_prio3_count() {
             "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
-        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
         .with_status(200)
         .expect(1)
         .create_async()
         .await;
 
-    client.upload(&true).await.unwrap();
+    client.upload(&[true]).await.unwrap();
 
     mocked_upload.assert_async().await;
 }
@@ -88,7 +88,7 @@ async fn upload_prio3_invalid_measurement() {
     // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
     // Make sure we get the right error variant but otherwise we aren't
     // picky about its contents.
-    assert_matches!(client.upload(&65536).await, Err(Error::Vdaf(_)));
+    assert_matches!(client.upload(&[65536]).await, Err(Error::Vdaf(_)));
 }
 
 #[tokio::test]
@@ -103,14 +103,14 @@ async fn upload_prio3_http_status_code() {
             "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
-        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
         .with_status(501)
         .expect(1)
         .create_async()
         .await;
 
     assert_matches!(
-        client.upload(&true).await,
+        client.upload(&[true]).await,
         Err(Error::Http(error_response)) => {
             assert_eq!(error_response.status(), StatusCode::NOT_IMPLEMENTED);
         }
@@ -131,7 +131,7 @@ async fn upload_problem_details() {
             "POST",
             format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
         )
-        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
         .with_status(400)
         .with_header("Content-Type", "application/problem+json")
         .with_body(concat!(
@@ -144,7 +144,7 @@ async fn upload_problem_details() {
         .await;
 
     assert_matches!(
-        client.upload(&true).await,
+        client.upload(&[true]).await,
         Err(Error::Http(error_response)) => {
             assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             assert_eq!(
@@ -178,7 +178,7 @@ async fn upload_bad_time_precision() {
     .build()
     .await
     .unwrap();
-    let result = client.upload(&true).await;
+    let result = client.upload(&[true]).await;
     assert_matches!(result, Err(Error::InvalidParameter(_)));
 }
 

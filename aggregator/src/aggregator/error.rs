@@ -238,23 +238,37 @@ pub enum ReportRejectionReason {
 }
 
 impl ReportRejectionReason {
-    pub fn detail(&self) -> &'static str {
+    pub fn report_error(&self) -> ReportError {
         match self {
-            ReportRejectionReason::IntervalCollected => {
-                "Report falls into a time interval that has already been collected."
-            }
-            ReportRejectionReason::DecryptFailure => "Report share could not be decrypted.",
-            ReportRejectionReason::DecodeFailure => "Report could not be decoded.",
-            ReportRejectionReason::TaskEnded => "Task has ended.",
-            ReportRejectionReason::Expired => "Report timestamp is too old.",
-            ReportRejectionReason::TooEarly => "Report timestamp is too far in the future.",
-            ReportRejectionReason::OutdatedHpkeConfig(_) => {
-                "Report is using an outdated HPKE configuration."
-            }
-            ReportRejectionReason::TaskNotStarted => "Task has not started.",
-            ReportRejectionReason::DuplicateExtension => "Report contains duplicate extensions.",
+            ReportRejectionReason::IntervalCollected => ReportError::ReportReplayed,
+            ReportRejectionReason::DecryptFailure => ReportError::HpkeDecryptError,
+            ReportRejectionReason::DecodeFailure => ReportError::InvalidMessage,
+            ReportRejectionReason::TaskEnded => ReportError::TaskExpired,
+            ReportRejectionReason::Expired => ReportError::TaskExpired,
+            ReportRejectionReason::TooEarly => ReportError::ReportTooEarly,
+            ReportRejectionReason::OutdatedHpkeConfig(_) => ReportError::HpkeUnknownConfigId,
+            ReportRejectionReason::TaskNotStarted => ReportError::TaskNotStarted,
+            ReportRejectionReason::DuplicateExtension => todo!(), // TKTK
         }
     }
+
+    // TKTK
+    // pub fn detail(&self) -> &'static str {
+    //     match self {
+    //         ReportRejectionReason::IntervalCollected => {
+    //             "Report falls into a time interval that has already been collected."
+    //         }
+    //         ReportRejectionReason::DecryptFailure => "Report share could not be decrypted.",
+    //         ReportRejectionReason::DecodeFailure => "Report could not be decoded.",
+    //         ReportRejectionReason::TaskEnded => "Task has ended.",
+    //         ReportRejectionReason::Expired => "Report timestamp is too old.",
+    //         ReportRejectionReason::TooEarly => "Report timestamp is too far in the future.",
+    //         ReportRejectionReason::OutdatedHpkeConfig(_) => {
+    //             "Report is using an outdated HPKE configuration."
+    //         }
+    //         ReportRejectionReason::TaskNotStarted => "Task has not started.",
+    //     }
+    // }
 }
 
 impl Display for ReportRejectionReason {
