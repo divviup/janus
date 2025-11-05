@@ -127,7 +127,7 @@ async fn upload_handler() {
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(
             KnownHeaderName::ContentType,
-            format!("{};version=16", UploadRequest::MEDIA_TYPE),
+            format!("{};version_suffixes=ignored", UploadRequest::MEDIA_TYPE),
         )
         .with_request_body(
             UploadRequest::from_slice(std::slice::from_ref(&report))
