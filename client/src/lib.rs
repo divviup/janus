@@ -76,7 +76,7 @@ use url::Url;
 #[cfg(test)]
 mod tests;
 
-// TODO(timg): need way to convey per-report errors
+// TODO(Issue #4146): need way to convey per-report errors
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid parameter {0}")]
