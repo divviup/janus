@@ -2951,3 +2951,56 @@ where
         )
     }
 }
+
+/// Test helper for roundtrip encoding of types that implement `ParameterizedDecode`.
+///
+/// This is similar to `roundtrip_encoding` but works with types that need a parameter
+/// to decode (like `UploadRequest` and `UploadResponse` which use content length).
+#[cfg(test)]
+pub(crate) fn roundtrip_encoding_parameterized<T, P>(vals_and_encodings: &[(T, &str)])
+where
+    T: Encode + ParameterizedDecode<P> + Debug + Eq,
+    P: From<usize>,
+{
+    struct Wrapper<T>(T);
+
+    impl<T: PartialEq> PartialEq for Wrapper<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl<T: Eq> Eq for Wrapper<T> {}
+
+    impl<T: Debug> Debug for Wrapper<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            write!(f, "{:02x?}", &self.0)
+        }
+    }
+
+    for (val, hex_encoding) in vals_and_encodings {
+        let mut encoded_val = Vec::new();
+        val.encode(&mut encoded_val).unwrap();
+        let expected = Wrapper(hex::decode(hex_encoding).unwrap());
+        let encoded_val = Wrapper(encoded_val);
+        pretty_assertions::assert_eq!(
+            encoded_val,
+            expected,
+            "Couldn't roundtrip (encoded value differs): {val:?}"
+        );
+
+        // For ParameterizedDecode, use the byte length as the parameter
+        let param = P::from(encoded_val.0.len());
+        let decoded_val = T::get_decoded_with_param(&param, &encoded_val.0).unwrap();
+        pretty_assertions::assert_eq!(
+            &decoded_val,
+            val,
+            "Couldn't roundtrip (decoded value differs): {val:?}"
+        );
+        pretty_assertions::assert_eq!(
+            encoded_val.0.len(),
+            val.encoded_len().expect("No encoded length hint"),
+            "Encoded length hint is incorrect: {val:?}"
+        )
+    }
+}

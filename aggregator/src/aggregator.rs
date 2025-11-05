@@ -376,12 +376,12 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_upload(
         &self,
         task_id: &TaskId,
-        report_bytes: &[u8],
+        request_bytes: &[u8],
     ) -> Result<UploadResponse, Arc<Error>> {
-        // Assume that report_bytes is the entire request body, and so its length is the HTTP
+        // Assume that request_bytes is the entire request body, and so its length is the HTTP
         // Content-Length and can be used to decode the vector of reports.
         let upload_request =
-            UploadRequest::get_decoded_with_param(&report_bytes.len(), report_bytes)
+            UploadRequest::get_decoded_with_param(&request_bytes.len(), request_bytes)
                 .map_err(|err| Arc::new(Error::MessageDecode(err)))?;
 
         let task_aggregator = self

@@ -72,6 +72,7 @@ async fn upload_handler() {
         for status in upload_response.status() {
             assert_eq!(status.report_id(), *desired_report_id);
             assert_eq!(status.error(), desired_report_error);
+            assert_eq!(status.encoded_len(), Some(17)); // TKTK
         }
     }
 
@@ -228,7 +229,7 @@ async fn upload_handler() {
     check_response(
         &mut test_conn,
         gc_eligible_report.metadata().id(),
-        ReportError::TaskExpired,
+        ReportError::ReportDropped,
     )
     .await;
 
@@ -597,28 +598,15 @@ async fn upload_handler_mixed_success_failure() {
     );
     assert_eq!(
         upload_response.status()[0].error(),
-        ReportError::TaskExpired
+        ReportError::ReportDropped
     );
 
     // Verify that the two valid reports were actually written to the datastore
-    // by checking they can't be uploaded again
-    for valid_report in &[valid_report_1, valid_report_2] {
-        let mut test_conn = post(task.report_upload_uri().unwrap().path())
-            .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-            .with_request_body(
-                UploadRequest::new(vec![valid_report.clone()])
-                    .get_encoded()
-                    .unwrap(),
-            )
-            .run_async(&handler)
-            .await;
-
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        let body = take_response_body(&mut test_conn).await;
-        let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
-        // Should succeed (empty response) because report was already accepted
-        assert_eq!(upload_response.status().len(), 0);
-    }
+    let report_count = datastore
+        .count_client_reports_for_task(leader_task.id())
+        .await
+        .unwrap();
+    assert_eq!(report_count, 2, "Expected 2 valid reports in the datastore");
 }
 
 /// Test that reports uploaded before task start time are rejected with TaskNotStarted.

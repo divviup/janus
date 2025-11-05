@@ -759,7 +759,7 @@ async fn upload_report_report_expired() {
     let result_upload_status = &upload_result.status()[0];
     assert_matches!(
         result_upload_status.error(),
-        ReportError::TaskExpired => {
+        ReportError::ReportDropped => {
             assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );

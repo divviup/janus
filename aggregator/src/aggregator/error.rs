@@ -244,7 +244,7 @@ impl ReportRejectionReason {
             ReportRejectionReason::DecryptFailure => ReportError::HpkeDecryptError,
             ReportRejectionReason::DecodeFailure => ReportError::InvalidMessage,
             ReportRejectionReason::TaskEnded => ReportError::TaskExpired,
-            ReportRejectionReason::Expired => ReportError::TaskExpired,
+            ReportRejectionReason::Expired => ReportError::ReportDropped,
             ReportRejectionReason::TooEarly => ReportError::ReportTooEarly,
             ReportRejectionReason::OutdatedHpkeConfig(_) => ReportError::HpkeUnknownConfigId,
             ReportRejectionReason::TaskNotStarted => ReportError::TaskNotStarted,

@@ -431,6 +431,30 @@ impl<C: Clock> Datastore<C> {
         .await
     }
 
+    /// Count the number of reports for the provided task.
+    #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+    pub async fn count_client_reports_for_task(&self, task_id: &TaskId) -> Result<usize, Error> {
+        self.run_tx("test-get-reports-for-task", |tx| {
+            let task_id = *task_id;
+            Box::pin(async move {
+                let task_info = match tx.task_info_for(&task_id).await? {
+                    Some(task_info) => task_info,
+                    None => return Ok(0),
+                };
+                let count: i64 = tx
+                    .query_one(
+                        "SELECT COUNT(*) FROM client_reports WHERE task_id = $1",
+                        &[&task_info.pkey],
+                    )
+                    .await?
+                    .get(0);
+                Ok(count as usize)
+            })
+        })
+        .await
+    }
+
     /// Write an arbitrary HPKE key to the datastore and place it in the [`HpkeKeyState::Active`]
     /// state.
     #[cfg(feature = "test-util")]
