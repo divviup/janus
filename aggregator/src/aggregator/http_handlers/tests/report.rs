@@ -191,7 +191,7 @@ async fn upload_handler() {
     ];
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::from_slice(&reports).get_encoded().unwrap())
+        .with_request_body(UploadRequest::new(reports).get_encoded().unwrap())
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
