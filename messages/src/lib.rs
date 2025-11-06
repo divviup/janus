@@ -2952,10 +2952,6 @@ where
     }
 }
 
-/// Test helper for roundtrip encoding of types that implement `ParameterizedDecode`.
-///
-/// This is similar to `roundtrip_encoding` but works with types that need a parameter
-/// to decode (like `UploadRequest` and `UploadResponse` which use content length).
 #[cfg(test)]
 pub(crate) fn roundtrip_encoding_parameterized<T, P>(vals_and_encodings: &[(T, &str)])
 where

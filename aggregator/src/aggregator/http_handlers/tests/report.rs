@@ -556,6 +556,29 @@ async fn upload_handler_mixed_success_failure() {
         valid_report_1.helper_encrypted_input_share().clone(),
     );
 
+    let unused_hpke_config_id =
+        HpkeConfigId::from(u8::from(*hpke_keypair.config().id()).wrapping_add(1));
+    let invalid_hpke_report = Report::new(
+        ReportMetadata::new(
+            random(),
+            clock.now_aligned_to_precision(task.time_precision()),
+            Vec::new(),
+        ),
+        valid_report_1.public_share().to_vec(),
+        HpkeCiphertext::new(
+            unused_hpke_config_id,
+            valid_report_1
+                .leader_encrypted_input_share()
+                .encapsulated_key()
+                .to_vec(),
+            valid_report_1
+                .leader_encrypted_input_share()
+                .payload()
+                .to_vec(),
+        ),
+        valid_report_1.helper_encrypted_input_share().clone(),
+    );
+
     let valid_report_2 = create_report(
         &leader_task,
         &hpke_keypair,
@@ -570,6 +593,7 @@ async fn upload_handler_mixed_success_failure() {
                 valid_report_1.clone(),
                 expired_report.clone(),
                 valid_report_2.clone(),
+                invalid_hpke_report.clone(),
             ])
             .get_encoded()
             .unwrap(),
@@ -585,21 +609,23 @@ async fn upload_handler_mixed_success_failure() {
     let body = take_response_body(&mut test_conn).await;
     let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
 
-    // Should have exactly one error status for the expired report
     // Successful reports should NOT appear in the response
     assert_eq!(
         upload_response.status().len(),
-        1,
-        "Expected exactly 1 failed report"
+        2,
+        "Expected exactly 2 failed reports"
     );
-    assert_eq!(
-        upload_response.status()[0].report_id(),
-        *expired_report.metadata().id()
-    );
-    assert_eq!(
-        upload_response.status()[0].error(),
-        ReportError::ReportDropped
-    );
+    for report in upload_response.status() {
+        match report.report_id() {
+            id if id == *expired_report.metadata().id() => {
+                assert_eq!(report.error(), ReportError::ReportDropped)
+            }
+            id if id == *invalid_hpke_report.metadata().id() => {
+                assert_eq!(report.error(), ReportError::HpkeUnknownConfigId)
+            }
+            _ => assert!(false, "Unexpected failed report"),
+        }
+    }
 
     // Verify that the two valid reports were actually written to the datastore
     let report_count = datastore
