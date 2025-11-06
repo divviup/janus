@@ -105,7 +105,7 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
                 .upload_with_time(&[(measurement, Time::from_seconds_since_epoch(timestamp))])
                 .await
         }
-        None => client.upload(&[measurement]).await,
+        None => client.upload(measurement).await,
     }
     .context("report generation and upload failed")
 }

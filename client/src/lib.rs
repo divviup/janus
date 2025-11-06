@@ -33,7 +33,7 @@
 //!     )
 //!     .await
 //!     .unwrap();
-//!     client.upload(&[5]).await.unwrap();
+//!     client.upload(5).await.unwrap();
 //! }
 //! ```
 
@@ -398,7 +398,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///     .await
     ///     .unwrap();
     ///
-    ///     client.upload(&[true]).await.unwrap();
+    ///     client.upload(true).await.unwrap();
     /// }
     /// ```
     #[cfg(feature = "ohttp")]
@@ -551,17 +551,14 @@ impl<V: vdaf::Client<16>> Client<V> {
         ))
     }
 
-    /// Upload one or more measurements to the leader, per the [DAP specification][1]. The provided
-    /// measurements are sharded into two shares and then uploaded to the leader.
+    /// Upload a [`Report`] to the leader, per the [DAP specification][1]. The provided measurement
+    /// is sharded into two shares and then uploaded to the leader.
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
-    #[tracing::instrument(skip(measurements), err)]
-    pub async fn upload(&self, measurements: &[V::Measurement]) -> Result<(), Error> {
-        let with_time: Vec<_> = measurements
-            .iter()
-            .map(|m| (m.clone(), Clock::now(&RealClock::default())))
-            .collect();
-        self.upload_with_time(&with_time).await
+    #[tracing::instrument(skip(measurement), err)]
+    pub async fn upload(&self, measurement: V::Measurement) -> Result<(), Error> {
+        self.upload_with_time(&[(measurement, Clock::now(&RealClock::default()))])
+            .await
     }
 
     /// Upload a [`Report`] to the leader, per the [DAP specification][1], and override the report's

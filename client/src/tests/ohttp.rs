@@ -143,7 +143,7 @@ async fn successful_upload() {
         .create_async()
         .await;
 
-    client.upload(&[true]).await.unwrap();
+    client.upload(true).await.unwrap();
 
     mocked_ohttp_keys.assert_async().await;
     mocked_ohttp_upload.assert_async().await;
@@ -252,7 +252,7 @@ async fn http_client_error_from_relay() {
         .create_async()
         .await;
 
-    let error = client.upload(&[true]).await.unwrap_err();
+    let error = client.upload(true).await.unwrap_err();
 
     assert_matches!(error, Error::Http(boxed) => {
         assert_matches!(boxed.as_ref(), HttpErrorResponse {..});
@@ -292,7 +292,7 @@ async fn http_client_error_from_target() {
         .create_async()
         .await;
 
-    let error = client.upload(&[true]).await.unwrap_err();
+    let error = client.upload(true).await.unwrap_err();
 
     assert_matches!(error, Error::Http(boxed) => {
         assert_matches!(boxed.as_ref(), HttpErrorResponse {..});
@@ -337,7 +337,7 @@ async fn encapsulated_server_message_is_http_request() {
         .create_async()
         .await;
 
-    let error = client.upload(&[true]).await.unwrap_err();
+    let error = client.upload(true).await.unwrap_err();
 
     assert_matches!(error, Error::UnexpectedServerResponse(_));
 

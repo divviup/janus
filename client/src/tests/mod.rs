@@ -72,7 +72,7 @@ async fn upload_prio3_count() {
         .create_async()
         .await;
 
-    client.upload(&[true]).await.unwrap();
+    client.upload(true).await.unwrap();
 
     mocked_upload.assert_async().await;
 }
@@ -88,7 +88,7 @@ async fn upload_prio3_invalid_measurement() {
     // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
     // Make sure we get the right error variant but otherwise we aren't
     // picky about its contents.
-    assert_matches!(client.upload(&[65536]).await, Err(Error::Vdaf(_)));
+    assert_matches!(client.upload(65536).await, Err(Error::Vdaf(_)));
 }
 
 #[tokio::test]
@@ -110,7 +110,7 @@ async fn upload_prio3_http_status_code() {
         .await;
 
     assert_matches!(
-        client.upload(&[true]).await,
+        client.upload(true).await,
         Err(Error::Http(error_response)) => {
             assert_eq!(error_response.status(), StatusCode::NOT_IMPLEMENTED);
         }
@@ -144,7 +144,7 @@ async fn upload_problem_details() {
         .await;
 
     assert_matches!(
-        client.upload(&[true]).await,
+        client.upload(true).await,
         Err(Error::Http(error_response)) => {
             assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             assert_eq!(
@@ -178,7 +178,7 @@ async fn upload_bad_time_precision() {
     .build()
     .await
     .unwrap();
-    let result = client.upload(&[true]).await;
+    let result = client.upload(true).await;
     assert_matches!(result, Err(Error::InvalidParameter(_)));
 }
 

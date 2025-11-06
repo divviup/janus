@@ -72,7 +72,7 @@ async fn upload_handler() {
         for status in upload_response.status() {
             assert_eq!(status.report_id(), *desired_report_id);
             assert_eq!(status.error(), desired_report_error);
-            assert_eq!(status.encoded_len(), Some(17)); // TKTK
+            assert_eq!(status.encoded_len(), Some(17));
         }
     }
 
@@ -623,7 +623,7 @@ async fn upload_handler_mixed_success_failure() {
             id if id == *invalid_hpke_report.metadata().id() => {
                 assert_eq!(report.error(), ReportError::HpkeUnknownConfigId)
             }
-            _ => assert!(false, "Unexpected failed report"),
+            _ => unreachable!("Unexpected report failure"),
         }
     }
 
