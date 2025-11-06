@@ -69,10 +69,10 @@ async fn upload_handler() {
         assert_headers!(&test_conn, "content-length" => len_str);
         let upload_response = UploadResponse::get_decoded_with_param(&body.len(), body).unwrap();
 
+        assert_eq!(upload_response.status().len(), 1);
         for status in upload_response.status() {
             assert_eq!(status.report_id(), *desired_report_id);
             assert_eq!(status.error(), desired_report_error);
-            assert_eq!(status.encoded_len(), Some(17));
         }
     }
 
