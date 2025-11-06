@@ -328,10 +328,10 @@ fn upload_response_size() {
 
 #[test]
 fn roundtrip_upload_request() {
-    roundtrip_encoding_parameterized::<UploadRequest, usize>(&[
-        (UploadRequest::new(vec![]), ""),
-        (
-            UploadRequest::new(vec![Report::new(
+    roundtrip_encoding_parameterized(&[
+        (UploadRequest::new(vec![]), 0, ""),
+        {
+            let val = UploadRequest::new(vec![Report::new(
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321),
@@ -344,8 +344,8 @@ fn roundtrip_upload_request() {
                     Vec::from("543210"),
                 ),
                 HpkeCiphertext::new(HpkeConfigId::from(13), Vec::from("abce"), Vec::from("abfd")),
-            )]),
-            concat!(
+            )]);
+            let hex = concat!(
                 concat!(
                     // metadata
                     "100F0E0D0C0B0A090807060504030201", // report_id
@@ -396,10 +396,11 @@ fn roundtrip_upload_request() {
                         "61626664", // opaque data
                     ),
                 ),
-            ),
-        ),
-        (
-            UploadRequest::new(vec![
+            );
+            (val, hex.len() / 2, hex)
+        },
+        {
+            let val = UploadRequest::new(vec![
                 Report::new(
                     ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -420,8 +421,8 @@ fn roundtrip_upload_request() {
                     HpkeCiphertext::new(HpkeConfigId::from(30), Vec::from("123"), Vec::from("456")),
                     HpkeCiphertext::new(HpkeConfigId::from(40), Vec::from("789"), Vec::from("012")),
                 ),
-            ]),
-            concat!(
+            ]);
+            let hex = concat!(
                 // First report
                 concat!(
                     // metadata
@@ -506,20 +507,22 @@ fn roundtrip_upload_request() {
                         "303132",   // "012"
                     ),
                 ),
-            ),
-        ),
+            );
+            (val, hex.len() / 2, hex)
+        },
     ]);
 }
 
 #[test]
 fn roundtrip_upload_response() {
-    roundtrip_encoding_parameterized::<UploadResponse, usize>(&[
-        (UploadResponse::new(&[]), ""),
+    roundtrip_encoding_parameterized(&[
+        (UploadResponse::new(&[]), 0, ""),
         (
             UploadResponse::new(&[ReportUploadStatus::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 ReportError::TaskExpired,
             )]),
+            17,
             concat!(
                 "0102030405060708090A0B0C0D0E0F10", // report_id
                 "07",                               // error = TaskExpired (7)
@@ -537,6 +540,7 @@ fn roundtrip_upload_response() {
                 ),
                 ReportUploadStatus::new(ReportId::from([0u8; 16]), ReportError::HpkeDecryptError),
             ]),
+            17 * 3,
             concat!(
                 // First failure
                 "0102030405060708090A0B0C0D0E0F10", // report_id

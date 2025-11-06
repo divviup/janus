@@ -21,6 +21,8 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
+#[cfg(test)]
+use std::borrow::Borrow;
 use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
@@ -2908,55 +2910,33 @@ impl Decode for AggregateShare {
 }
 
 #[cfg(test)]
-pub(crate) fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
+pub(crate) fn roundtrip_encoding<'a, T, I, B>(vals_and_encodings: I)
 where
-    T: Encode + Decode + Debug + Eq,
+    T: Encode + Decode + Debug + Eq + 'a,
+    B: Borrow<T> + 'a,
+    I: IntoIterator<Item = &'a (B, &'a str)>,
 {
-    struct Wrapper<T>(T);
-
-    impl<T: PartialEq> PartialEq for Wrapper<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.0 == other.0
-        }
+    fn add_parameter<'a, T, B>((val, encoding): &'a (B, &str)) -> (&'a T, (), &'a str)
+    where
+        B: Borrow<T> + 'a,
+    {
+        (val.borrow(), (), encoding)
     }
 
-    impl<T: Eq> Eq for Wrapper<T> {}
-
-    impl<T: Debug> Debug for Wrapper<T> {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{:02x?}", &self.0)
-        }
-    }
-
-    for (val, hex_encoding) in vals_and_encodings {
-        let mut encoded_val = Vec::new();
-        val.encode(&mut encoded_val).unwrap();
-        let expected = Wrapper(hex::decode(hex_encoding).unwrap());
-        let encoded_val = Wrapper(encoded_val);
-        pretty_assertions::assert_eq!(
-            encoded_val,
-            expected,
-            "Couldn't roundtrip (encoded value differs): {val:?}"
-        );
-        let decoded_val = T::get_decoded(&encoded_val.0).unwrap();
-        pretty_assertions::assert_eq!(
-            &decoded_val,
-            val,
-            "Couldn't roundtrip (decoded value differs): {val:?}"
-        );
-        pretty_assertions::assert_eq!(
-            encoded_val.0.len(),
-            val.encoded_len().expect("No encoded length hint"),
-            "Encoded length hint is incorrect: {val:?}"
-        )
-    }
+    roundtrip_encoding_parameterized::<'a, T, (), _, _, _>(
+        vals_and_encodings.into_iter().map(add_parameter),
+    );
 }
 
 #[cfg(test)]
-pub(crate) fn roundtrip_encoding_parameterized<T, P>(vals_and_encodings: &[(T, &str)])
-where
-    T: Encode + ParameterizedDecode<P> + Debug + Eq,
-    P: From<usize>,
+pub(crate) fn roundtrip_encoding_parameterized<'a, T, P, TB, PB, I>(
+    tuples: impl IntoIterator<Item = I>,
+) where
+    T: Encode + ParameterizedDecode<P> + Debug + Eq + 'a,
+    P: 'a,
+    TB: Borrow<T> + 'a,
+    PB: Borrow<P> + 'a,
+    I: Borrow<(TB, PB, &'a str)> + 'a,
 {
     struct Wrapper<T>(T);
 
@@ -2974,20 +2954,19 @@ where
         }
     }
 
-    for (val, hex_encoding) in vals_and_encodings {
-        let mut encoded_val = Vec::new();
-        val.encode(&mut encoded_val).unwrap();
+    for tuple in tuples {
+        let (val, decoding_parameter, hex_encoding) = tuple.borrow();
+        let val = val.borrow();
+        let decoding_parameter = decoding_parameter.borrow();
+        let encoded_val = Wrapper(val.get_encoded().unwrap());
         let expected = Wrapper(hex::decode(hex_encoding).unwrap());
-        let encoded_val = Wrapper(encoded_val);
         pretty_assertions::assert_eq!(
             encoded_val,
             expected,
             "Couldn't roundtrip (encoded value differs): {val:?}"
         );
 
-        // For ParameterizedDecode, use the byte length as the parameter
-        let param = P::from(encoded_val.0.len());
-        let decoded_val = T::get_decoded_with_param(&param, &encoded_val.0).unwrap();
+        let decoded_val = T::get_decoded_with_param(decoding_parameter, &encoded_val.0).unwrap();
         pretty_assertions::assert_eq!(
             &decoded_val,
             val,
