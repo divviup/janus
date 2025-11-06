@@ -533,7 +533,7 @@ async fn upload_handler_mixed_success_failure() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    // Create three reports: success, failure (expired), success
+    // Create four reports: success, failure (expired), success, failure (HPKE config)
     let valid_report_1 = create_report(
         &leader_task,
         &hpke_keypair,
@@ -585,7 +585,7 @@ async fn upload_handler_mixed_success_failure() {
         clock.now_aligned_to_precision(task.time_precision()),
     );
 
-    // Upload all three reports in a single batch
+    // Upload all four reports in a single batch
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
         .with_request_body(
