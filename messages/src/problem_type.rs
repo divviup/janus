@@ -8,9 +8,6 @@ pub enum DapProblemType {
     InvalidMessage,
     UnrecognizedTask,
     UnrecognizedAggregationJob,
-    OutdatedConfig,
-    ReportRejected,
-    ReportTooEarly,
     BatchInvalid,
     InvalidBatchSize,
     InvalidAggregationParameter,
@@ -34,9 +31,6 @@ impl DapProblemType {
             DapProblemType::UnrecognizedAggregationJob => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
             }
-            DapProblemType::OutdatedConfig => "urn:ietf:params:ppm:dap:error:outdatedConfig",
-            DapProblemType::ReportRejected => "urn:ietf:params:ppm:dap:error:reportRejected",
-            DapProblemType::ReportTooEarly => "urn:ietf:params:ppm:dap:error:reportTooEarly",
             DapProblemType::BatchInvalid => "urn:ietf:params:ppm:dap:error:batchInvalid",
             DapProblemType::InvalidBatchSize => "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             DapProblemType::InvalidAggregationParameter => {
@@ -63,13 +57,6 @@ impl DapProblemType {
             }
             DapProblemType::UnrecognizedAggregationJob => {
                 "An endpoint received a message with an unknown aggregation job ID."
-            }
-            DapProblemType::OutdatedConfig => {
-                "The message was generated using an outdated configuration."
-            }
-            DapProblemType::ReportRejected => "Report could not be processed.",
-            DapProblemType::ReportTooEarly => {
-                "Report could not be processed because it arrived too early."
             }
             DapProblemType::BatchInvalid => "The batch implied by the query is invalid.",
             DapProblemType::InvalidBatchSize => {
@@ -107,9 +94,6 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob" => {
                 Ok(DapProblemType::UnrecognizedAggregationJob)
             }
-            "urn:ietf:params:ppm:dap:error:outdatedConfig" => Ok(DapProblemType::OutdatedConfig),
-            "urn:ietf:params:ppm:dap:error:reportRejected" => Ok(DapProblemType::ReportRejected),
-            "urn:ietf:params:ppm:dap:error:reportTooEarly" => Ok(DapProblemType::ReportTooEarly),
             "urn:ietf:params:ppm:dap:error:batchInvalid" => Ok(DapProblemType::BatchInvalid),
             "urn:ietf:params:ppm:dap:error:invalidBatchSize" => {
                 Ok(DapProblemType::InvalidBatchSize)

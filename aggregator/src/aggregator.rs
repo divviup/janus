@@ -41,7 +41,10 @@ use fixed::{
     FixedI16, FixedI32,
     types::extra::{U15, U31},
 };
-use futures::{future::try_join_all, stream::TryStreamExt};
+use futures::{
+    future::{join_all, try_join_all},
+    stream::TryStreamExt,
+};
 use http::{Method, header::CONTENT_TYPE};
 use janus_aggregator_core::{
     AsyncAggregator, AsyncAggregatorWithNoise,
@@ -76,7 +79,8 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
-    PlaintextInputShare, PrepareResp, Report, ReportError, Role, TaskId,
+    PlaintextInputShare, PrepareResp, Report, ReportError, ReportUploadStatus, Role, TaskId,
+    UploadRequest, UploadResponse,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -98,7 +102,7 @@ use prio::{
 use rand::{Rng, random, rng};
 use reqwest::Client;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     collections::{HashMap, HashSet},
     fmt::Debug,
     panic,
@@ -372,9 +376,16 @@ impl<C: Clock> Aggregator<C> {
         Ok((encoded_hpke_config_list, signature))
     }
 
-    async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
-        let report =
-            Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::MessageDecode(err)))?;
+    async fn handle_upload(
+        &self,
+        task_id: &TaskId,
+        request_bytes: &[u8],
+    ) -> Result<UploadResponse, Arc<Error>> {
+        // Assume that request_bytes is the entire request body, and so its length is the HTTP
+        // Content-Length and can be used to decode the vector of reports.
+        let upload_request =
+            UploadRequest::get_decoded_with_param(&request_bytes.len(), request_bytes)
+                .map_err(|err| Arc::new(Error::MessageDecode(err)))?;
 
         let task_aggregator = self
             .task_aggregators
@@ -385,7 +396,12 @@ impl<C: Clock> Aggregator<C> {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
         task_aggregator
-            .handle_upload(&self.clock, &self.hpke_keypairs, &self.metrics, report)
+            .handle_upload(
+                &self.clock,
+                &self.hpke_keypairs,
+                &self.metrics,
+                upload_request,
+            )
             .await
     }
 
@@ -1070,8 +1086,8 @@ impl<C: Clock> TaskAggregator<C> {
         clock: &C,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
-        report: Report,
-    ) -> Result<(), Arc<Error>> {
+        upload_request: UploadRequest,
+    ) -> Result<UploadResponse, Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
                 clock,
@@ -1079,7 +1095,7 @@ impl<C: Clock> TaskAggregator<C> {
                 metrics,
                 &self.task,
                 &self.report_writer,
-                report,
+                upload_request,
             )
             .await
     }
@@ -1509,8 +1525,8 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        report: Report,
-    ) -> Result<(), Arc<Error>> {
+        upload_request: UploadRequest,
+    ) -> Result<UploadResponse, Arc<Error>> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -1521,7 +1537,7 @@ impl VdafOps {
                         metrics,
                         task,
                         report_writer,
-                        report,
+                        upload_request,
                     )
                     .await
                 })
@@ -1535,7 +1551,7 @@ impl VdafOps {
                         metrics,
                         task,
                         report_writer,
-                        report,
+                        upload_request,
                     )
                     .await
                 })
@@ -1727,7 +1743,56 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        report: Report,
+        upload_request: UploadRequest,
+    ) -> Result<UploadResponse, Arc<Error>>
+    where
+        A: AsyncAggregator<SEED_SIZE>,
+        C: Clock,
+        B: UploadableBatchMode,
+    {
+        let futures = upload_request.reports().iter().map(|report| {
+            Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
+                Arc::clone(&vdaf),
+                clock,
+                hpke_keypairs,
+                metrics,
+                task,
+                report_writer,
+                report,
+            )
+        });
+        let mut status = Vec::new();
+        for result in join_all(futures).await {
+            match result {
+                Err(e) => match e.borrow() {
+                    Error::ReportRejected(rejection) => {
+                        status.push(ReportUploadStatus::new(
+                            *rejection.report_id(),
+                            rejection.reason().report_error(),
+                        ));
+                    }
+                    _ => {
+                        // Non-rejection errors are fatal
+                        return Err(e);
+                    }
+                },
+                Ok(_) => {
+                    // Report succeeded, no status entry needed
+                }
+            }
+        }
+
+        Ok(UploadResponse::new(&status))
+    }
+
+    async fn handle_uploaded_report<const SEED_SIZE: usize, B, A, C>(
+        vdaf: Arc<A>,
+        clock: &C,
+        hpke_keypairs: &HpkeKeypairCache,
+        metrics: &AggregatorMetrics,
+        task: &AggregatorTask,
+        report_writer: &ReportWriteBatcher<C>,
+        report: &Report,
     ) -> Result<(), Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,

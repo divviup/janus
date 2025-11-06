@@ -11,8 +11,8 @@ use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
     codec::{
-        CodecError, Decode, Encode, decode_u16_items, decode_u32_items, encode_u16_items,
-        encode_u32_items,
+        CodecError, Decode, Encode, ParameterizedDecode, decode_fixlen_items, decode_u16_items,
+        decode_u32_items, encode_fixlen_items, encode_u16_items, encode_u32_items,
     },
     topology::ping_pong::PingPongMessage,
 };
@@ -1540,6 +1540,138 @@ impl Decode for Report {
     }
 }
 
+/// Represents a request to upload reports to DAP aggregators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadRequest {
+    reports: Vec<Report>,
+}
+
+impl UploadRequest {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-upload-req";
+
+    pub fn new(reports: Vec<Report>) -> Self {
+        Self { reports }
+    }
+
+    pub fn from_slice(reports: &[Report]) -> Self {
+        Self {
+            reports: reports.to_vec(),
+        }
+    }
+
+    pub fn reports(&self) -> &[Report] {
+        &self.reports
+    }
+}
+
+impl Encode for UploadRequest {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_fixlen_items(bytes, &self.reports)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 0;
+        for report in &self.reports {
+            length += report.encoded_len()?;
+        }
+
+        Some(length)
+    }
+}
+
+impl ParameterizedDecode<usize> for UploadRequest {
+    fn decode_with_param(length: &usize, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let reports = decode_fixlen_items(*length, &(), bytes)?;
+
+        Ok(Self { reports })
+    }
+}
+
+/// Represents the status of a report upload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportUploadStatus {
+    id: ReportId,
+    error: ReportError,
+}
+
+impl ReportUploadStatus {
+    pub fn new(id: ReportId, error: ReportError) -> Self {
+        Self { id, error }
+    }
+
+    pub fn report_id(&self) -> ReportId {
+        self.id
+    }
+
+    pub fn error(&self) -> ReportError {
+        self.error
+    }
+}
+
+impl Encode for ReportUploadStatus {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.id.encode(bytes)?;
+        self.error.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.id.encoded_len()? + self.error.encoded_len()?)
+    }
+}
+
+impl Decode for ReportUploadStatus {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let id = ReportId::decode(bytes)?;
+        let error = ReportError::decode(bytes)?;
+
+        Ok(Self { id, error })
+    }
+}
+
+/// Represents a response to a request to upload reports to DAP aggregators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadResponse {
+    status: Vec<ReportUploadStatus>,
+}
+
+impl UploadResponse {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-upload-resp";
+
+    pub fn new(statuses: &[ReportUploadStatus]) -> Self {
+        Self {
+            status: statuses.to_vec(),
+        }
+    }
+
+    pub fn status(&self) -> &[ReportUploadStatus] {
+        &self.status
+    }
+}
+
+impl Encode for UploadResponse {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_fixlen_items(bytes, &self.status)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.status
+                .iter()
+                .fold(0, |acc, s| acc + s.encoded_len().unwrap_or_default()),
+        )
+    }
+}
+
+impl ParameterizedDecode<usize> for UploadResponse {
+    fn decode_with_param(length: &usize, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let status = decode_fixlen_items(*length, &(), bytes)?;
+
+        Ok(Self { status })
+    }
+}
+
 /// Represents a query for a specific batch identifier, received from a Collector as part of the
 /// collection flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2807,6 +2939,55 @@ where
             "Couldn't roundtrip (encoded value differs): {val:?}"
         );
         let decoded_val = T::get_decoded(&encoded_val.0).unwrap();
+        pretty_assertions::assert_eq!(
+            &decoded_val,
+            val,
+            "Couldn't roundtrip (decoded value differs): {val:?}"
+        );
+        pretty_assertions::assert_eq!(
+            encoded_val.0.len(),
+            val.encoded_len().expect("No encoded length hint"),
+            "Encoded length hint is incorrect: {val:?}"
+        )
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn roundtrip_encoding_parameterized<T, P>(vals_and_encodings: &[(T, &str)])
+where
+    T: Encode + ParameterizedDecode<P> + Debug + Eq,
+    P: From<usize>,
+{
+    struct Wrapper<T>(T);
+
+    impl<T: PartialEq> PartialEq for Wrapper<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl<T: Eq> Eq for Wrapper<T> {}
+
+    impl<T: Debug> Debug for Wrapper<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            write!(f, "{:02x?}", &self.0)
+        }
+    }
+
+    for (val, hex_encoding) in vals_and_encodings {
+        let mut encoded_val = Vec::new();
+        val.encode(&mut encoded_val).unwrap();
+        let expected = Wrapper(hex::decode(hex_encoding).unwrap());
+        let encoded_val = Wrapper(encoded_val);
+        pretty_assertions::assert_eq!(
+            encoded_val,
+            expected,
+            "Couldn't roundtrip (encoded value differs): {val:?}"
+        );
+
+        // For ParameterizedDecode, use the byte length as the parameter
+        let param = P::from(encoded_val.0.len());
+        let decoded_val = T::get_decoded_with_param(&param, &encoded_val.0).unwrap();
         pretty_assertions::assert_eq!(
             &decoded_val,
             val,

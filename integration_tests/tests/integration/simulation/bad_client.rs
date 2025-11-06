@@ -22,8 +22,8 @@ use janus_core::{
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_application_context, vdaf_dp_strategies},
 };
 use janus_messages::{
-    HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, TaskId, Time,
+    HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
+    ReportMetadata, Role, TaskId, Time, UploadRequest,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -340,11 +340,12 @@ async fn upload_report(
         .leader_aggregator_endpoint()
         .join(&format!("tasks/{task_id}/reports"))
         .unwrap();
+    let upload_request = UploadRequest::from_slice(&[report]).get_encoded()?;
     retry_http_request(http_request_exponential_backoff().build(), || async {
         http_client
             .post(url.clone())
-            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-            .body(report.get_encoded().unwrap())
+            .header(CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+            .body(upload_request.clone())
             .send()
             .await
     })

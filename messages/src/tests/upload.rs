@@ -1,7 +1,9 @@
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
-    Report, ReportId, ReportMetadata, TaskId, Time, roundtrip_encoding,
+    Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, UploadRequest,
+    UploadResponse, roundtrip_encoding, roundtrip_encoding_parameterized,
 };
+use prio::codec::Encode;
 
 #[test]
 fn roundtrip_report_id() {
@@ -313,4 +315,239 @@ fn roundtrip_input_share_aad() {
             ),
         ),
     )])
+}
+
+#[test]
+fn upload_response_size() {
+    let response = UploadResponse::new(&[
+        ReportUploadStatus::new(ReportId::from([0u8; 16]), ReportError::TaskExpired),
+        ReportUploadStatus::new(ReportId::from([1u8; 16]), ReportError::InvalidMessage),
+    ]);
+    assert_eq!(response.encoded_len(), Some(34));
+}
+
+#[test]
+fn roundtrip_upload_request() {
+    roundtrip_encoding_parameterized::<UploadRequest, usize>(&[
+        (UploadRequest::new(vec![]), ""),
+        (
+            UploadRequest::new(vec![Report::new(
+                ReportMetadata::new(
+                    ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                    Time::from_seconds_since_epoch(54321),
+                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                ),
+                Vec::from("3210"),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(42),
+                    Vec::from("012345"),
+                    Vec::from("543210"),
+                ),
+                HpkeCiphertext::new(HpkeConfigId::from(13), Vec::from("abce"), Vec::from("abfd")),
+            )]),
+            concat!(
+                concat!(
+                    // metadata
+                    "100F0E0D0C0B0A090807060504030201", // report_id
+                    "000000000000D431",                 // time
+                    concat!(
+                        // public_extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        ),
+                    ),
+                ),
+                concat!(
+                    // public_share
+                    "00000004", // length
+                    "33323130", // opaque data
+                ),
+                concat!(
+                    // leader_encrypted_input_share
+                    "2A", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0006",         // length
+                        "303132333435"  // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "00000006",     // length
+                        "353433323130", // opaque data
+                    ),
+                ),
+                concat!(
+                    // helper_encrypted_input_share
+                    "0D", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0004",     // length
+                        "61626365", // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "00000004", // length
+                        "61626664", // opaque data
+                    ),
+                ),
+            ),
+        ),
+        (
+            UploadRequest::new(vec![
+                Report::new(
+                    ReportMetadata::new(
+                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        Time::from_seconds_since_epoch(12345),
+                        Vec::new(),
+                    ),
+                    Vec::new(),
+                    HpkeCiphertext::new(HpkeConfigId::from(10), Vec::from("abc"), Vec::from("def")),
+                    HpkeCiphertext::new(HpkeConfigId::from(20), Vec::from("xyz"), Vec::from("uvw")),
+                ),
+                Report::new(
+                    ReportMetadata::new(
+                        ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        Time::from_seconds_since_epoch(54321),
+                        Vec::new(),
+                    ),
+                    Vec::new(),
+                    HpkeCiphertext::new(HpkeConfigId::from(30), Vec::from("123"), Vec::from("456")),
+                    HpkeCiphertext::new(HpkeConfigId::from(40), Vec::from("789"), Vec::from("012")),
+                ),
+            ]),
+            concat!(
+                // First report
+                concat!(
+                    // metadata
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
+                    "0000000000003039",                 // time
+                    concat!(
+                        // public_extensions
+                        "0000", // length
+                    ),
+                ),
+                concat!(
+                    // public_share
+                    "00000000", // length
+                ),
+                concat!(
+                    // leader_encrypted_input_share
+                    "0A", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0003",   // length
+                        "616263", // "abc"
+                    ),
+                    concat!(
+                        // payload
+                        "00000003", // length
+                        "646566",   // "def"
+                    ),
+                ),
+                concat!(
+                    // helper_encrypted_input_share
+                    "14", // config_id = 20
+                    concat!(
+                        // encapsulated_context
+                        "0003",   // length
+                        "78797A", // "xyz"
+                    ),
+                    concat!(
+                        // payload
+                        "00000003", // length
+                        "757677",   // "uvw"
+                    ),
+                ),
+                // Second report
+                concat!(
+                    // metadata
+                    "100F0E0D0C0B0A090807060504030201", // report_id
+                    "000000000000D431",                 // time
+                    concat!(
+                        // public_extensions
+                        "0000", // length
+                    ),
+                ),
+                concat!(
+                    // public_share
+                    "00000000", // length
+                ),
+                concat!(
+                    // leader_encrypted_input_share
+                    "1E", // config_id = 30
+                    concat!(
+                        // encapsulated_context
+                        "0003",   // length
+                        "313233", // "123"
+                    ),
+                    concat!(
+                        // payload
+                        "00000003", // length
+                        "343536",   // "456"
+                    ),
+                ),
+                concat!(
+                    // helper_encrypted_input_share
+                    "28", // config_id = 40
+                    concat!(
+                        // encapsulated_context
+                        "0003",   // length
+                        "373839", // "789"
+                    ),
+                    concat!(
+                        // payload
+                        "00000003", // length
+                        "303132",   // "012"
+                    ),
+                ),
+            ),
+        ),
+    ]);
+}
+
+#[test]
+fn roundtrip_upload_response() {
+    roundtrip_encoding_parameterized::<UploadResponse, usize>(&[
+        (UploadResponse::new(&[]), ""),
+        (
+            UploadResponse::new(&[ReportUploadStatus::new(
+                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                ReportError::TaskExpired,
+            )]),
+            concat!(
+                "0102030405060708090A0B0C0D0E0F10", // report_id
+                "07",                               // error = TaskExpired (7)
+            ),
+        ),
+        (
+            UploadResponse::new(&[
+                ReportUploadStatus::new(
+                    ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    ReportError::TaskExpired,
+                ),
+                ReportUploadStatus::new(
+                    ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                    ReportError::InvalidMessage,
+                ),
+                ReportUploadStatus::new(ReportId::from([0u8; 16]), ReportError::HpkeDecryptError),
+            ]),
+            concat!(
+                // First failure
+                "0102030405060708090A0B0C0D0E0F10", // report_id
+                "07",                               // error = TaskExpired (7)
+                // Second failure
+                "100F0E0D0C0B0A090807060504030201", // report_id
+                "08",                               // error = InvalidMessage (8)
+                // Third failure
+                "00000000000000000000000000000000", // report_id
+                "05",                               // error = HpkeDecryptError (5)
+            ),
+        ),
+    ]);
 }

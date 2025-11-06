@@ -1,6 +1,6 @@
 use super::{
     Aggregator, Config, Error,
-    error::{ArcError, ReportRejectionReason},
+    error::ArcError,
     queue::{LIFORequestQueue, queued_lifo},
 };
 use crate::aggregator::AggregationJobContinueResult;
@@ -25,9 +25,9 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
-    TaskId, batch_mode::TimeInterval, codec::Decode, problem_type::DapProblemType,
-    taskprov::TaskConfig,
+    CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, TaskId,
+    UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
+    problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{
@@ -62,26 +62,9 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
         }
         Error::MessageEncode(_) => conn.with_status(Status::InternalServerError),
-        Error::ReportRejected(rejection) => match rejection.reason() {
-            ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
-                    .with_task_id(rejection.task_id()),
-            ),
-            ReportRejectionReason::TooEarly => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
-                    .with_task_id(rejection.task_id()),
-            ),
-            ReportRejectionReason::DuplicateExtension => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidMessage)
-                    .with_task_id(rejection.task_id())
-                    .with_detail(rejection.reason().detail()),
-            ),
-            _ => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
-                    .with_task_id(rejection.task_id())
-                    .with_detail(rejection.reason().detail()),
-            ),
-        },
+        Error::ReportRejected(_) => {
+            panic!("no report rejected error should make it to the error handler")
+        }
         Error::InvalidMessage(task_id, detail) => {
             let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
             if let Some(task_id) = task_id {
@@ -612,11 +595,33 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 async fn upload<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Status, ArcError> {
-    validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
+) -> Result<EncodedBody<UploadResponse>, ArcError> {
+    validate_content_type(conn, UploadRequest::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(conn).map_err(Arc::new)?;
-    conn.cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
+
+    // Validate Content-Length if present. For chunked Transfer-Encoding, there won't be a
+    // Content-Length header, which is OK - we use body.len() for decoding in both cases.
+    if let Some(content_length) = conn.request_headers().get(KnownHeaderName::ContentLength) {
+        let content_length = content_length
+            .as_str()
+            .ok_or(Arc::new(Error::InvalidMessage(
+                Some(task_id),
+                "invalid content length encoding",
+            )))?
+            .parse::<usize>()
+            .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
+        if content_length != body.len() {
+            return Err(Arc::new(Error::InvalidMessage(
+                Some(task_id),
+                "unexpected content length",
+            ))
+            .into());
+        }
+    }
+
+    let response = conn
+        .cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
         .await
         .ok_or(Arc::new(Error::ClientDisconnected))??;
 
@@ -628,7 +633,10 @@ async fn upload<C: Clock>(
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
-    Ok(Status::Created)
+    // Regardless of whether all or any reports were accepted, return 200 OK to indicate that the
+    // HTTP messages were exchanged successfully. The client will have to examine the response body
+    // to determine which reports were accepted or rejected.
+    Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE).with_status(Status::Ok))
 }
 
 /// Handler for CORS preflight requests to "/tasks/.../reports".
