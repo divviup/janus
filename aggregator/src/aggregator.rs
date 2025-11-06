@@ -41,7 +41,10 @@ use fixed::{
     FixedI16, FixedI32,
     types::extra::{U15, U31},
 };
-use futures::{future::try_join_all, stream::TryStreamExt};
+use futures::{
+    future::{join_all, try_join_all},
+    stream::TryStreamExt,
+};
 use http::{Method, header::CONTENT_TYPE};
 use janus_aggregator_core::{
     AsyncAggregator, AsyncAggregatorWithNoise,
@@ -1747,10 +1750,8 @@ impl VdafOps {
         C: Clock,
         B: UploadableBatchMode,
     {
-        let reports = upload_request.reports();
-        let mut status = Vec::with_capacity(reports.len());
-        for report in reports {
-            match Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
+        let futures = upload_request.reports().iter().map(|report| {
+            Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
                 Arc::clone(&vdaf),
                 clock,
                 hpke_keypairs,
@@ -1759,16 +1760,25 @@ impl VdafOps {
                 report_writer,
                 report,
             )
-            .await
-            {
+        });
+        let mut status = Vec::new();
+        for result in join_all(futures).await {
+            match result {
                 Err(e) => match e.borrow() {
-                    Error::ReportRejected(rejection) => status.push(ReportUploadStatus::new(
-                        *rejection.report_id(),
-                        rejection.reason().report_error(),
-                    )),
-                    _ => return Err(e),
+                    Error::ReportRejected(rejection) => {
+                        status.push(ReportUploadStatus::new(
+                            *rejection.report_id(),
+                            rejection.reason().report_error(),
+                        ));
+                    }
+                    _ => {
+                        // Non-rejection errors are fatal
+                        return Err(e);
+                    }
                 },
-                _ => continue,
+                Ok(_) => {
+                    // Report succeeded, no status entry needed
+                }
             }
         }
 
