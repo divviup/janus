@@ -17,7 +17,7 @@ fn roundtrip_url() {
     ] {
         roundtrip_encoding(&[(
             Url::try_from(test.as_ref()).unwrap(),
-            &(hex::encode(len) + &hex::encode(test)),
+            (hex::encode(len) + &hex::encode(test)).as_str(),
         )])
     }
 
