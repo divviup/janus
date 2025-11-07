@@ -187,7 +187,7 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, MockClock},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -295,8 +295,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -486,8 +486,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -659,8 +659,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -862,8 +862,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);

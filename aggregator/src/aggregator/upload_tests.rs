@@ -640,7 +640,7 @@ async fn upload_report_task_ended() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Advance the clock to end the task.
-    clock.advance(task.time_precision());
+    clock.advance(task.time_precision().to_chrono().unwrap());
     // Create a report exactly at the end time
     let report = create_report(&task, &hpke_keypair, task_end_time);
 
@@ -707,7 +707,7 @@ async fn upload_report_unaligned_time() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Ensure the time is unaligned
-    clock.advance(&Duration::from_seconds(100));
+    clock.advance(chrono::TimeDelta::try_seconds(100).unwrap());
     // Now don't align the report's clock, just take it as-is
     let report = create_report(&task, &hpke_keypair, clock.now());
 
@@ -759,7 +759,7 @@ async fn upload_report_report_expired() {
     );
 
     // Advance the clock to expire the report.
-    clock.advance(&Duration::from_seconds(61));
+    clock.advance(chrono::TimeDelta::try_seconds(61).unwrap());
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator

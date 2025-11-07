@@ -794,7 +794,6 @@ pub mod test_util {
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::HpkeKeypair,
-        time::DurationExt,
         url_ensure_trailing_slash,
         vdaf::VdafInstance,
     };
@@ -1381,7 +1380,6 @@ mod tests {
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         test_util::roundtrip_encoding,
-        time::DurationExt,
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{

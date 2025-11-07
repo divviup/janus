@@ -12,7 +12,7 @@ use janus_aggregator_core::{
         },
     },
 };
-use janus_core::time::{Clock, DurationExt, TimeExt};
+use janus_core::time::{Clock, TimeDeltaExt, TimeExt};
 use janus_messages::{
     AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
     batch_mode::LeaderSelected,
@@ -377,10 +377,13 @@ where
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let client_timestamp_interval = Interval::new(
             min_client_timestamp.to_batch_interval_start(&time_precision)?,
-            max_client_timestamp
-                .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?
-                .round_up(&time_precision)?,
+            Duration::from_chrono(
+                max_client_timestamp
+                    .difference(&min_client_timestamp)?
+                    .to_chrono()?
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
+                    .round_up(&time_precision.to_chrono()?)?,
+            ),
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
             task_id,

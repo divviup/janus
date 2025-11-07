@@ -662,7 +662,7 @@ mod tests {
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER, test_util::WithAuthenticationToken},
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-        time::{Clock, MockClock, TimeExt as _},
+        time::{Clock, MockClock},
         vdaf::VdafInstance,
     };
     use janus_messages::{

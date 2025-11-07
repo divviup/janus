@@ -31,7 +31,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
     test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, DurationExt, MockClock, TimeExt},
+    time::{Clock, MockClock},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
@@ -578,7 +578,8 @@ async fn taskprov_opt_out_task_ended_regression() {
     let aggregation_job_id: AggregationJobId = random();
 
     // Advance clock past task end time.
-    test.clock.advance(&Duration::from_hours(48).unwrap());
+    test.clock
+        .advance(chrono::TimeDelta::try_hours(48).unwrap());
 
     let test_conn = put(test
         .task

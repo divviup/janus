@@ -7,7 +7,7 @@
 use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::time::{DurationExt, TimeExt};
+use janus_core::time::TimeDeltaExt;
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
@@ -640,10 +640,15 @@ impl Op {
                 Op::AdvanceTime {
                     amount: other_amount,
                 },
-            ) => self_amount
-                .add(other_amount)
-                .ok()
-                .map(|amount| Op::AdvanceTime { amount }),
+            ) => Some(Op::AdvanceTime {
+                amount: janus_messages::Duration::from_chrono(
+                    self_amount
+                        .to_chrono()
+                        .ok()?
+                        .add(&other_amount.to_chrono().ok()?)
+                        .ok()?,
+                ),
+            }),
             (
                 Op::Upload {
                     report_time: self_report_time,

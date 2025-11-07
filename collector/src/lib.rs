@@ -75,7 +75,7 @@ use janus_core::{
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
-    time::{DurationExt, TimeExt},
+    time::TimeExt,
     url_ensure_trailing_slash,
 };
 use janus_messages::{
@@ -610,7 +610,7 @@ impl<V: vdaf::Collector> Collector<V> {
             report_count: collect_response.report_count,
             interval: (
                 Utc.from_utc_datetime(&collect_response.interval.start().as_naive_date_time()?),
-                collect_response.interval.duration().as_chrono_duration()?,
+                collect_response.interval.duration().to_chrono()?,
             ),
             aggregate_result,
         }))

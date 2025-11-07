@@ -65,7 +65,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
-    time::{Clock, DurationExt, IntervalExt, TimeExt},
+    time::{Clock, IntervalExt, TimeDeltaExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
@@ -2098,10 +2098,13 @@ impl VdafOps {
             .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
         let client_timestamp_interval = Interval::new(
             min_client_timestamp,
-            max_client_timestamp
-                .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?
-                .round_up(task.time_precision())?,
+            Duration::from_chrono(
+                max_client_timestamp
+                    .difference(&min_client_timestamp)?
+                    .to_chrono()?
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
+                    .round_up(&task.time_precision().to_chrono()?)?,
+            ),
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
             *task.id(),

@@ -150,6 +150,78 @@ impl Duration {
     pub fn as_seconds(&self) -> u64 {
         self.0
     }
+
+    /// Convert this [`Duration`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+
+    /// Create a [`Duration`] from a [`chrono::TimeDelta`].
+    ///
+    /// The duration will be rounded down to the nearest second.
+    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
+        // TimeDelta can represent negative durations, but in DAP durations are
+        // always non-negative, so we clamp to 0.
+        Self::from_seconds(delta.num_seconds().max(0) as u64)
+    }
+
+    /// Confirm that this duration is a multiple of the task time precision.
+    pub fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error> {
+        let is_multiple_of_time_precision = self
+            .0
+            .checked_rem(time_precision.0)
+            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(Error::InvalidParameter(
+                "duration is not a multiple of the time precision",
+            ))
+        }
+    }
+
+    /// Create a duration from a number of microseconds. The time will be rounded down to the nearest second.
+    pub fn from_microseconds(microseconds: u64) -> Self {
+        const USEC_PER_SEC: u64 = 1_000_000;
+        Self::from_seconds(microseconds / USEC_PER_SEC)
+    }
+
+    /// Get the number of microseconds this duration represents. Note that the precision of this
+    /// type is one second, so this method will always return a multiple of 1,000,000 microseconds.
+    pub fn as_microseconds(&self) -> Result<u64, Error> {
+        const USEC_PER_SEC: u64 = 1_000_000;
+        self.0
+            .checked_mul(USEC_PER_SEC)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    /// Create a duration representing the provided number of minutes.
+    pub fn from_minutes(minutes: u64) -> Result<Self, Error> {
+        60u64
+            .checked_mul(minutes)
+            .map(Self::from_seconds)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    /// Create a duration representing the provided number of hours.
+    pub fn from_hours(hours: u64) -> Result<Self, Error> {
+        3600u64
+            .checked_mul(hours)
+            .map(Self::from_seconds)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
 }
 
 impl Encode for Duration {
@@ -190,6 +262,47 @@ impl Time {
     /// by this [`Time`] (i.e., the Unix timestamp for the instant it represents).
     pub fn as_seconds_since_epoch(&self) -> u64 {
         self.0
+    }
+
+    /// Add the provided duration to this time.
+    pub fn add(&self, duration: &Duration) -> Result<Self, Error> {
+        self.0
+            .checked_add(duration.0)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    /// Subtract the provided duration from this time.
+    pub fn sub(&self, duration: &Duration) -> Result<Self, Error> {
+        self.0
+            .checked_sub(duration.0)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
+    pub fn difference(&self, other: &Self) -> Result<Duration, Error> {
+        self.0
+            .checked_sub(other.0)
+            .map(Duration::from_seconds)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    /// Confirm that the time is a multiple of the task time precision.
+    pub fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error> {
+        let is_multiple_of_time_precision = self
+            .0
+            .checked_rem(time_precision.0)
+            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(Error::InvalidParameter(
+                "timestamp is not a multiple of the time precision",
+            ))
+        }
     }
 }
 

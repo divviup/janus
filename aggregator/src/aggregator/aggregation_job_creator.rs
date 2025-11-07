@@ -29,7 +29,7 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, DurationExt as _, TimeExt as _},
+    time::{Clock, TimeDeltaExt, TimeExt as _},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
@@ -695,10 +695,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
                             let client_timestamp_interval = Interval::new(
                                 *min_client_timestamp,
-                                max_client_timestamp
-                                    .difference(min_client_timestamp)?
-                                    .add(&DurationMsg::from_seconds(1))?
-                                    .round_up(task.time_precision())?,
+                                DurationMsg::from_chrono(
+                                    max_client_timestamp
+                                        .difference(min_client_timestamp)?
+                                        .to_chrono()?
+                                        .add(&DurationMsg::from_seconds(1).to_chrono()?)?
+                                        .round_up(&task.time_precision().to_chrono()?)?,
+                                ),
                             )?;
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
@@ -838,10 +841,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .unwrap();
                             let client_timestamp_interval = Interval::new(
                                 *min_client_timestamp,
-                                max_client_timestamp
-                                    .difference(min_client_timestamp)?
-                                    .add(&DurationMsg::from_seconds(1))?
-                                    .round_up(task.time_precision())?,
+                                DurationMsg::from_chrono(
+                                    max_client_timestamp
+                                        .difference(min_client_timestamp)?
+                                        .to_chrono()?
+                                        .add(&DurationMsg::from_seconds(1).to_chrono()?)?
+                                        .round_up(&task.time_precision().to_chrono()?)?,
+                                ),
                             )?;
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
@@ -966,7 +972,7 @@ mod tests {
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, MockClock, TimeExt},
+        time::{Clock, MockClock, TimeExt},
         vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
     };
     use janus_messages::{
@@ -1683,7 +1689,7 @@ mod tests {
         assert!(batch_aggregations.is_empty());
 
         // Advance time.
-        clock.advance(&late_report_grace_period);
+        clock.advance(late_report_grace_period.to_chrono().unwrap());
 
         // Run.
         Arc::clone(&job_creator)

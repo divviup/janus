@@ -29,7 +29,7 @@ use futures::future::try_join_all;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, run_vdaf},
-    time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+    time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
@@ -644,7 +644,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock so that the report is expired, and verify that it does not exist.
-    clock.advance(&Duration::from_seconds(1));
+    clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
     let retrieved_report = ds
         .run_unnamed_tx(|tx| {
             let task_id = *report.task_id();
@@ -761,7 +761,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     // Verify that we can acquire both unaggregated reports.
     let got_reports_ids: HashSet<_> = ds
@@ -1319,7 +1319,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let (report_count, no_reports_task_report_count) = ds
         .run_unnamed_tx(|tx| {
@@ -1503,7 +1503,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let report_count = ds
         .run_unnamed_tx(|tx| {
@@ -1635,7 +1635,12 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
     assert!(got_helper_input_share.is_none());
 
     // Advance the clock well past the report expiry age.
-    clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
+    let doubled = report_expiry_age
+        .to_chrono()
+        .unwrap()
+        .add(&report_expiry_age.to_chrono().unwrap())
+        .unwrap();
+    clock.advance(doubled);
     let unexpired_timestamp = clock.now_aligned_to_precision(task.time_precision());
 
     // Make a "new" scrubbed report with the same ID, but which is not expired. It should get
@@ -1739,7 +1744,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
         .run_unnamed_tx(|tx| {
@@ -1867,8 +1872,8 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
 
     // Advance the clock to verify that the aggregation jobs have expired & are no longer
     // returned.
-    clock.advance(&TIME_PRECISION);
-    clock.advance(&Duration::from_seconds(1));
+    clock.advance(TIME_PRECISION.to_chrono().unwrap());
+    clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
         .run_unnamed_tx(|tx| {
             let (new_leader_aggregation_job, new_helper_aggregation_job) = (
@@ -2165,7 +2170,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     // Run: run several transactions that all call acquire_incomplete_aggregation_jobs
     // concurrently. (We do things concurrently in an attempt to make sure the
@@ -2371,7 +2376,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Advance the clock past the reacquire delay, then reacquire the leases we released with a
     // reacquire delay.
-    clock.advance(&Duration::from_seconds(REACQUIRE_DELAY.as_secs()));
+    clock.advance(chrono::TimeDelta::try_seconds(REACQUIRE_DELAY.as_secs() as i64).unwrap());
 
     let mut got_aggregation_jobs: Vec<_> = ds
         .run_unnamed_tx(|tx| {
@@ -2398,9 +2403,12 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
     // to acquire aggregation jobs again.
-    clock.advance(&Duration::from_seconds(
-        LEASE_DURATION.as_secs() - REACQUIRE_DELAY.as_secs(),
-    ));
+    clock.advance(
+        chrono::TimeDelta::try_seconds(
+            (LEASE_DURATION.as_secs() - REACQUIRE_DELAY.as_secs()) as i64,
+        )
+        .unwrap(),
+    );
     let want_expiry_time = clock.now().as_naive_date_time().unwrap()
         + chrono::Duration::from_std(LEASE_DURATION).unwrap();
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
@@ -2444,7 +2452,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Run: advance time again to release jobs, acquire a single job, modify its lease token
     // to simulate a previously-held lease, and attempt to release it. Verify that releasing
     // fails.
-    clock.advance(&Duration::from_seconds(LEASE_DURATION.as_secs()));
+    clock.advance(chrono::TimeDelta::try_seconds(LEASE_DURATION.as_secs() as i64).unwrap());
     let lease = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
@@ -2839,7 +2847,7 @@ WHERE client_report_id = $1",
             .unwrap();
 
         // Advance the clock to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
@@ -2932,7 +2940,7 @@ SELECT updated_at, updated_by FROM report_aggregations
         assert_eq!(Some(want_report_aggregation), got_report_aggregation);
 
         // Advance the clock again to expire relevant datastore items.
-        clock.advance(&REPORT_EXPIRY_AGE);
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
@@ -3136,7 +3144,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let got_report_aggregations = ds
         .run_unnamed_tx(|tx| {
@@ -3156,7 +3164,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     assert_eq!(want_report_aggregations, got_report_aggregations);
 
     // Advance the clock again to expire relevant datastore entities.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let got_report_aggregations = ds
         .run_unnamed_tx(|tx| {
@@ -3349,7 +3357,12 @@ async fn create_report_aggregation_from_client_reports_table(
     assert_eq!(want_report_aggregations, got_report_aggregations);
 
     // Advance the clock to logically GC existing rows
-    clock.advance(&REPORT_EXPIRY_AGE.add(&REPORT_EXPIRY_AGE).unwrap());
+    let doubled = REPORT_EXPIRY_AGE
+        .to_chrono()
+        .unwrap()
+        .add(&REPORT_EXPIRY_AGE.to_chrono().unwrap())
+        .unwrap();
+    clock.advance(doubled);
 
     ds.run_unnamed_tx(|tx| {
         let unexpired_report_aggregation_metadata =
@@ -3493,7 +3506,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -3619,7 +3632,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock again to expire everything that has been written.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -4386,7 +4399,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 
     // Advance time by the task expiry. We should no longer get the first maybe lease.
-    clock.advance(&Duration::from_seconds(200));
+    clock.advance(chrono::TimeDelta::try_seconds(200).unwrap());
     ds.run_unnamed_tx(|tx| {
         let (task_id, acquired_job_id, non_acquired_job_id) =
             (task_id, *collection_jobs[0].id(), *collection_jobs[1].id());
@@ -4545,7 +4558,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         .unwrap();
 
     // Advance time by the lease duration
-    clock.advance(&Duration::from_seconds(100));
+    clock.advance(chrono::TimeDelta::try_seconds(100).unwrap());
 
     ds.run_tx("test-reacquire-leases", |tx| {
         let reacquired_jobs = reacquired_jobs.clone();
@@ -4592,7 +4605,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
     .unwrap();
 
     // Advance time by the reacquire delay, and verify we can reacquire the job.
-    clock.advance(&Duration::from_seconds(600));
+    clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let collection_job_leases = collection_job_leases.clone();
@@ -4730,7 +4743,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
         .unwrap();
 
     // Advance time by the lease duration
-    clock.advance(&Duration::from_seconds(100));
+    clock.advance(chrono::TimeDelta::try_seconds(100).unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let reacquired_jobs = reacquired_jobs.clone();
@@ -4769,7 +4782,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
     .unwrap();
 
     // Advance time by the reacquire delay, and verify we can reacquire the job.
-    clock.advance(&Duration::from_seconds(600));
+    clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let collection_job_leases = collection_job_leases.clone();
@@ -5380,7 +5393,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5483,7 +5496,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     .unwrap();
 
     // Advance the clock again to expire all written entities.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5649,7 +5662,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5706,7 +5719,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
     .unwrap();
 
     // Advance the clock again to expire all written entities.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5803,7 +5816,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -5864,7 +5877,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     .unwrap();
 
     // Advance the clock to expire all written entities.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -5972,7 +5985,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -6022,7 +6035,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
     .unwrap();
 
     // Advance the clock to expire all written entities.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -6326,7 +6339,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     let (
         outstanding_batches_task_1,
@@ -6426,7 +6439,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     assert_eq!(outstanding_batches_empty_time_bucket, Vec::new());
 
     // Advance the clock further to trigger expiration of the written batches.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     // Verify that the batch is no longer available.
     let outstanding_batches = ds
@@ -6661,11 +6674,15 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         let max_client_timestamp = client_timestamps.iter().max().unwrap();
         let client_timestamp_interval = Interval::new(
             *min_client_timestamp,
-            max_client_timestamp
-                .difference(min_client_timestamp)
-                .unwrap()
-                .add(&Duration::from_seconds(1))
-                .unwrap(),
+            Duration::from_chrono(
+                max_client_timestamp
+                    .difference(min_client_timestamp)
+                    .unwrap()
+                    .to_chrono()
+                    .unwrap()
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -6998,7 +7015,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     // Run.
     let deleted_aggregation_job_counts = ds
@@ -7753,8 +7770,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
-    clock.advance(&TIME_PRECISION);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+    clock.advance(TIME_PRECISION.to_chrono().unwrap());
 
     // Run.
     let deleted_batch_counts = ds
@@ -8267,7 +8284,7 @@ async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
                 );
 
                 // Try modifying state.
-                clock.advance(&Duration::from_seconds(100));
+                clock.advance(chrono::TimeDelta::try_seconds(100).unwrap());
                 tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                     .await
                     .unwrap();
@@ -8279,7 +8296,7 @@ async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
                     HpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now())
                 );
 
-                clock.advance(&Duration::from_seconds(100));
+                clock.advance(chrono::TimeDelta::try_seconds(100).unwrap());
                 tx.set_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
                     .await
                     .unwrap();
@@ -8510,7 +8527,12 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock well past the report expiry age.
-    clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
+    let doubled = report_expiry_age
+        .to_chrono()
+        .unwrap()
+        .add(&report_expiry_age.to_chrono().unwrap())
+        .unwrap();
+    clock.advance(doubled);
 
     // Validate that the report can't be read, that it can be written, and that even after writing
     // it still can't be read.

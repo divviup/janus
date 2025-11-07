@@ -209,7 +209,7 @@ impl Simulation {
     }
 
     async fn execute_advance_time(&mut self, amount: &Duration) -> ControlFlow<TestResult> {
-        self.state.clock.advance(amount);
+        self.state.clock.advance(amount.to_chrono().unwrap());
         ControlFlow::Continue(())
     }
 

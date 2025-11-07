@@ -1715,7 +1715,7 @@ mod tests {
         runtime_manager.wait_for_completed_tasks("stepper", 1).await;
         // Advance the clock by the lease duration, so that the job driver can pick up the job
         // and try again.
-        clock.advance(&Duration::from_seconds(600));
+        clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
 
         // Shut down the job driver.
         stopper.stop();
@@ -1829,7 +1829,7 @@ mod tests {
             runtime_manager.wait_for_completed_tasks("stepper", i).await;
             // Advance the clock by the lease duration, so that the job driver can pick up the job
             // and try again.
-            clock.advance(&Duration::from_seconds(600));
+            clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
         }
         // Shut down the job driver.
         stopper.stop();
@@ -2179,7 +2179,7 @@ mod tests {
             .await;
 
         // Move forward so we can check that it's still incomplete
-        clock.advance(&Duration::from_seconds(1));
+        clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
 
         let task_id = *task.id();
         let collection_job_id = *collection_job.id();

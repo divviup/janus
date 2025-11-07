@@ -513,7 +513,7 @@ mod tests {
     use janus_core::{
         hpke::{self, HpkeCiphersuite},
         test_util::install_test_trace_subscriber,
-        time::{Clock, DurationExt, MockClock},
+        time::{Clock, MockClock, TimeDeltaExt},
     };
     use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
     use quickcheck::{Arbitrary, Gen, TestResult};
@@ -578,7 +578,7 @@ mod tests {
         assert_state(&keypairs, HpkeKeyState::Active);
 
         // Advance the clock only a little, no action should be taken.
-        clock.advance(&Duration::from_seconds(1));
+        clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
         key_rotator.run().await.unwrap();
         let keypairs = get_hpke_keypairs(&ds).await;
         assert_eq!(keypairs.len(), 2);
@@ -587,7 +587,13 @@ mod tests {
         // Run through several lifetimes.
         for _ in 0..4 {
             // Age out the keys. We should insert a couple of pending keys.
-            clock.advance(&active_duration.add(&Duration::from_seconds(1)).unwrap());
+            clock.advance(
+                active_duration
+                    .to_chrono()
+                    .unwrap()
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .unwrap(),
+            );
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -595,7 +601,7 @@ mod tests {
             assert_state(&keypairs, HpkeKeyState::Pending);
 
             // Advance the clock only a little, no action should be taken.
-            clock.advance(&Duration::from_seconds(1));
+            clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -604,7 +610,13 @@ mod tests {
 
             // Move past the pending duration, we should promote the new keypairs to active and the
             // old ones to expired.
-            clock.advance(&pending_duration.add(&Duration::from_seconds(1)).unwrap());
+            clock.advance(
+                pending_duration
+                    .to_chrono()
+                    .unwrap()
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .unwrap(),
+            );
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -612,7 +624,7 @@ mod tests {
             assert_state(&keypairs, HpkeKeyState::Expired);
 
             // Advance the clock only a little, no action should be taken.
-            clock.advance(&Duration::from_seconds(1));
+            clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -620,7 +632,13 @@ mod tests {
             assert_state(&keypairs, HpkeKeyState::Expired);
 
             // Move past the expiration duration, we should remove the old keys.
-            clock.advance(&expired_duration.add(&Duration::from_seconds(1)).unwrap());
+            clock.advance(
+                expired_duration
+                    .to_chrono()
+                    .unwrap()
+                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .unwrap(),
+            );
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 2);

@@ -18,7 +18,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -409,7 +409,7 @@ async fn upload_handler() {
     );
 
     // Reports that aren't aligned to the task time precision must be rejected
-    clock.advance(&Duration::from_seconds(1));
+    clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
     let bad_leader_time_alignment_report = create_report(
         &leader_task,
         &hpke_keypair,
@@ -434,7 +434,7 @@ async fn upload_handler() {
     .await;
 
     // Reports with duplicate extensions must be rejected
-    clock.advance(&Duration::from_seconds(1));
+    clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
     let dupe_ext_report = create_report_custom(
         &leader_task,
         clock.now_aligned_to_precision(task.time_precision()),

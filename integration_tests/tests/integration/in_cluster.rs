@@ -24,7 +24,6 @@ use janus_core::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
     },
-    time::DurationExt,
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_integration_tests::{TaskParameters, client::ClientBackend};

@@ -1,5 +1,5 @@
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
+use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber};
 use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
