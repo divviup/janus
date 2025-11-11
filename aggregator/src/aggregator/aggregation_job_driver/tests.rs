@@ -1255,7 +1255,9 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let leader_task = task.leader_view().unwrap();
 
     let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .sub(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
+        .sub_timedelta(
+            &chrono::TimeDelta::try_seconds((3 * TIME_PRECISION.as_seconds()) as i64).unwrap(),
+        )
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -1264,7 +1266,9 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time, Vec::new());
 
     let gc_ineligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .add(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
+        .add_timedelta(
+            &chrono::TimeDelta::try_seconds((3 * TIME_PRECISION.as_seconds()) as i64).unwrap(),
+        )
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -1347,9 +1351,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                         gc_eligible_time,
                         Duration::from_chrono(
                             gc_ineligible_time
-                                .difference(&gc_eligible_time)
-                                .unwrap()
-                                .to_chrono()
+                                .difference_as_time_delta(&gc_eligible_time)
                                 .unwrap()
                                 .round_up(&time_precision.to_chrono().unwrap())
                                 .unwrap(),
@@ -1534,9 +1536,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                 gc_eligible_time,
                 Duration::from_chrono(
                     gc_ineligible_time
-                        .difference(&gc_eligible_time)
-                        .unwrap()
-                        .to_chrono()
+                        .difference_as_time_delta(&gc_eligible_time)
                         .unwrap()
                         .round_up(&time_precision.to_chrono().unwrap())
                         .unwrap(),
@@ -2259,7 +2259,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let other_batch_identifier = Interval::new(
         active_batch_identifier
             .start()
-            .add(task.time_precision())
+            .add_duration(task.time_precision())
             .unwrap(),
         *task.time_precision(),
     )

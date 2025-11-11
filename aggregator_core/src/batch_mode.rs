@@ -370,9 +370,12 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         // batch interval used to create the iterator.
         let interval = Interval::new(
             self.start
-                .add(&Duration::from_seconds(
-                    self.step * self.time_precision.as_seconds(),
-                ))
+                .add_timedelta(
+                    &chrono::TimeDelta::try_seconds(
+                        (self.step * self.time_precision.as_seconds()) as i64,
+                    )
+                    .unwrap(),
+                )
                 .unwrap(),
             self.time_precision,
         )

@@ -351,7 +351,7 @@ async fn upload_report_in_the_future_boundary_condition() {
         &hpke_keypair,
         clock
             .now()
-            .add(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew())
             .unwrap()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
@@ -409,9 +409,9 @@ async fn upload_report_in_the_future_past_clock_skew() {
         &hpke_keypair,
         clock
             .now()
-            .add(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew())
             .unwrap()
-            .add(&Duration::from_seconds(1))
+            .add_timedelta(&chrono::TimeDelta::try_seconds(1_i64).unwrap())
             .unwrap(),
     );
 
@@ -560,7 +560,10 @@ async fn upload_report_task_not_started() {
     )
     .with_time_precision(Duration::from_seconds(100))
     .with_task_start(Some(
-        clock.now().add(&Duration::from_seconds(3600)).unwrap(),
+        clock
+            .now()
+            .add_timedelta(&chrono::TimeDelta::try_seconds(3600_i64).unwrap())
+            .unwrap(),
     ))
     .build()
     .leader_view()

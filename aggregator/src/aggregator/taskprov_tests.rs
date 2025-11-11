@@ -31,7 +31,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
     test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock},
+    time::{Clock, MockClock, TimeExt},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
@@ -147,7 +147,7 @@ where
         let time_precision = Duration::from_seconds(1);
         let min_batch_size = 1;
         let task_start = clock.now();
-        let task_duration = Duration::from_hours(24).unwrap();
+        let task_duration = Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap());
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -180,7 +180,7 @@ where
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
         .with_task_start(Some(task_start))
-        .with_task_end(Some(task_start.add(&task_duration).unwrap()))
+        .with_task_end(Some(task_start.add_duration(&task_duration).unwrap()))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(Duration::from_seconds(1))
@@ -629,7 +629,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_hours(24).unwrap(),
+        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -696,7 +696,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_hours(24).unwrap(),
+        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -761,7 +761,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_hours(24).unwrap(),
+        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )

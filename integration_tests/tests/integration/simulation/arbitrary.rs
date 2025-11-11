@@ -7,7 +7,7 @@
 use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::time::TimeDeltaExt;
+use janus_core::time::{TimeDeltaExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
@@ -99,7 +99,7 @@ impl Context {
     fn update(&mut self, op: &Op) {
         match op {
             Op::AdvanceTime { amount } => {
-                self.current_time = self.current_time.add(amount).unwrap()
+                self.current_time = self.current_time.add_duration(amount).unwrap()
             }
             Op::CollectorStart {
                 collection_job_id,
@@ -248,23 +248,26 @@ fn arbitrary_report_time(g: &mut Gen, context: &Context) -> Time {
         // future
         context
             .current_time
-            .add(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .add_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
             .unwrap()
     } else {
         // past
         context
             .current_time
-            .sub(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .sub_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
             .unwrap()
     }
 }
 
 /// Generate a collect start operation, using a time interval query.
 fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) -> Op {
-    let start_to_now = context.current_time.difference(&START_TIME).unwrap();
-    let random_range = start_to_now.as_seconds() / context.time_precision.as_seconds() + 10;
+    let start_to_now = context
+        .current_time
+        .difference_as_time_delta(&START_TIME)
+        .unwrap();
+    let random_range = start_to_now.num_seconds() as u64 / context.time_precision.as_seconds() + 10;
     let start = START_TIME
-        .add(&Duration::from_seconds(
+        .add_duration(&Duration::from_seconds(
             u64::arbitrary(g) % random_range * context.time_precision.as_seconds(),
         ))
         .unwrap();

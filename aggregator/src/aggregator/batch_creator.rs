@@ -379,8 +379,7 @@ where
             min_client_timestamp.to_batch_interval_start(&time_precision)?,
             Duration::from_chrono(
                 max_client_timestamp
-                    .difference(&min_client_timestamp)?
-                    .to_chrono()?
+                    .difference_as_time_delta(&min_client_timestamp)?
                     .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
                     .round_up(&time_precision.to_chrono()?)?,
             ),

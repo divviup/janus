@@ -72,7 +72,7 @@ impl MockClock {
 
     pub fn advance(&self, dur: chrono::TimeDelta) {
         let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add_duration(dur).unwrap();
+        *current_time = current_time.add_timedelta(&dur).unwrap();
     }
 }
 
@@ -94,6 +94,30 @@ impl Default for MockClock {
 
 /// Number of microseconds per second.
 const USEC_PER_SEC: u64 = 1_000_000;
+
+/// Extension methods on [`Duration`] for working with DAP time precision validation.
+pub trait DurationExt: Sized {
+    /// Confirm that this duration is a multiple of the task time precision.
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error>;
+}
+
+impl DurationExt for Duration {
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error> {
+        let is_multiple_of_time_precision = self
+            .as_seconds()
+            .checked_rem(time_precision.as_seconds())
+            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(Error::InvalidParameter(
+                "duration is not a multiple of the time precision",
+            ))
+        }
+    }
+}
 
 /// Extension methods on [`chrono::TimeDelta`] for working with DAP durations.
 pub trait TimeDeltaExt: Sized {
@@ -225,10 +249,15 @@ pub trait TimeExt: Sized {
     fn from_naive_date_time(time: &NaiveDateTime) -> Self;
 
     /// Add the provided duration to this time.
-    fn add_duration(&self, duration: chrono::TimeDelta) -> Result<Self, Error>;
+    fn add_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error>;
+
+    /// Subtract the provided timedelta from this time.
+    fn sub_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error>;
+    /// Add the provided duration to this time.
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Subtract the provided duration from this time.
-    fn sub_duration(&self, duration: chrono::TimeDelta) -> Result<Self, Error>;
+    fn sub_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
     fn difference_as_time_delta(&self, other: &Self) -> Result<chrono::TimeDelta, Error>;
@@ -299,22 +328,38 @@ impl TimeExt for Time {
         Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64)
     }
 
-    fn add_duration(&self, duration: chrono::TimeDelta) -> Result<Self, Error> {
-        let seconds: u64 = duration
+    fn add_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error> {
+        let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
-            .map_err(|_| Error::IllegalTimeArithmetic("duration is negative or too large"))?;
+            .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
         self.as_seconds_since_epoch()
             .checked_add(seconds)
             .map(Self::from_seconds_since_epoch)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn sub_duration(&self, duration: chrono::TimeDelta) -> Result<Self, Error> {
-        let seconds: u64 = duration
+    fn sub_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error> {
+        let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
-            .map_err(|_| Error::IllegalTimeArithmetic("duration is negative or too large"))?;
+            .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
+        self.as_seconds_since_epoch()
+            .checked_sub(seconds)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
+        self.as_seconds_since_epoch()
+            .checked_add(seconds)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn sub_duration(&self, duration: &Duration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
         self.as_seconds_since_epoch()
             .checked_sub(seconds)
             .map(Self::from_seconds_since_epoch)
@@ -371,9 +416,7 @@ pub trait IntervalExt: Sized {
 impl IntervalExt for Interval {
     fn end(&self) -> Time {
         // Unwrap safety: [`Self::new`] verified that this addition doesn't overflow.
-        self.start()
-            .add_duration(self.duration().to_chrono().unwrap())
-            .unwrap()
+        self.start().add_duration(self.duration()).unwrap()
     }
 
     fn merge(&self, other: &Self) -> Result<Self, Error> {
@@ -427,7 +470,7 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt};
+    use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
     use janus_messages::{Duration, Interval, Time};
 
     #[test]

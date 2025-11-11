@@ -187,7 +187,7 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -230,7 +230,10 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = clock.now().sub(&Duration::from_seconds(10)).unwrap();
+                    let client_timestamp = clock
+                        .now()
+                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
+                        .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -398,7 +401,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now_aligned_to_precision(task.time_precision())
-                        .sub(task.time_precision())
+                        .sub_duration(task.time_precision())
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
@@ -590,9 +593,9 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub(&REPORT_EXPIRY_AGE)
+                        .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(10))
+                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
@@ -770,9 +773,9 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub(&REPORT_EXPIRY_AGE)
+                        .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(10))
+                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),

@@ -22,7 +22,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, IntervalExt, TimeExt},
+    time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{

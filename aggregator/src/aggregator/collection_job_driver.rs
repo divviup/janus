@@ -1047,14 +1047,24 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1193,14 +1203,24 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1311,14 +1331,24 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(
+                                        &chrono::TimeDelta::try_seconds(1000_i64).unwrap(),
+                                    )
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),

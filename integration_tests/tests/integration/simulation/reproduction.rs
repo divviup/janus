@@ -1,5 +1,5 @@
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber};
+use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
 use janus_messages::{Duration, Interval, Time};
 use rand::random;
 
@@ -269,7 +269,9 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
                 amount: Duration::from_seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(&chrono::TimeDelta::try_seconds(3600_i64).unwrap())
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -311,7 +313,9 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
                 amount: Duration::from_seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME.add(&Duration::from_seconds(3600)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(&chrono::TimeDelta::try_seconds(3600_i64).unwrap())
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -353,7 +357,9 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
                 amount: Duration::from_seconds(2000),
             },
             Op::Upload {
-                report_time: START_TIME.add(&Duration::from_seconds(2000)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(&chrono::TimeDelta::try_seconds(2000_i64).unwrap())
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,

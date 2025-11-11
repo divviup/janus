@@ -1141,7 +1141,8 @@ pub mod test_util {
                 None,
                 None,
                 /* Min batch size */ 1,
-                /* Time precision */ Duration::from_hours(8).unwrap(),
+                /* Time precision */
+                Duration::from_chrono(chrono::TimeDelta::try_hours(8).unwrap()),
                 /* Tolerable clock skew */
                 Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
@@ -1850,7 +1851,9 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
+                batch_time_window_size: Some(Duration::from_chrono(
+                    chrono::TimeDelta::try_hours(1).unwrap(),
+                )),
             },
             &[
                 Token::StructVariant {

@@ -9,7 +9,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{self, HpkeCiphersuite},
     report_id::ReportIdChecksumExt,
-    time::{IntervalExt, TimeExt},
+    time::{IntervalExt, TimeDeltaExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -2177,15 +2177,18 @@ impl<'a> FromSql<'a> for SqlInterval {
                 // Convert from SQL timestamp representation to the internal representation.
                 let negative = start_timestamp < 0;
                 let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration = Duration::from_microseconds(abs_start_us);
+                let abs_start_duration =
+                    Duration::from_chrono(chrono::TimeDelta::microseconds(abs_start_us as i64));
                 let time = if negative {
-                    SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| {
-                        "Interval cannot represent timestamp ranges starting before the Unix \
+                    SQL_EPOCH_TIME
+                        .sub_duration(&abs_start_duration)
+                        .map_err(|_| {
+                            "Interval cannot represent timestamp ranges starting before the Unix \
                              epoch"
-                    })?
+                        })?
                 } else {
                     SQL_EPOCH_TIME
-                        .add(&abs_start_duration)
+                        .add_duration(&abs_start_duration)
                         .map_err(|_| "overflow when converting to Interval")?
                 };
 
@@ -2193,7 +2196,8 @@ impl<'a> FromSql<'a> for SqlInterval {
                     return Err("timestamp range ends before it starts".into());
                 }
                 let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration = Duration::from_microseconds(duration_us);
+                let duration =
+                    Duration::from_chrono(chrono::TimeDelta::microseconds(duration_us as i64));
 
                 Ok(SqlInterval(Interval::new(time, duration)?))
             }
@@ -2205,10 +2209,14 @@ impl<'a> FromSql<'a> for SqlInterval {
 
 fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
     if time.is_after(&SQL_EPOCH_TIME) {
-        let absolute_difference_us = time.difference(&SQL_EPOCH_TIME)?.as_microseconds()?;
+        let absolute_difference_us = time
+            .difference_as_time_delta(&SQL_EPOCH_TIME)?
+            .as_microseconds()?;
         Ok(absolute_difference_us.try_into()?)
     } else {
-        let absolute_difference_us = SQL_EPOCH_TIME.difference(&time)?.as_microseconds()?;
+        let absolute_difference_us = SQL_EPOCH_TIME
+            .difference_as_time_delta(&time)?
+            .as_microseconds()?;
         Ok(-i64::try_from(absolute_difference_us)?)
     }
 }

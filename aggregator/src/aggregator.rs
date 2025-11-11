@@ -824,7 +824,9 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task_end = task_config.task_start().add(task_config.task_duration())?;
+        let task_end = task_config
+            .task_start()
+            .add_duration(task_config.task_duration())?;
 
         let task = Arc::new(
             AggregatorTask::new(
@@ -1748,18 +1750,18 @@ impl VdafOps {
 
         let now = clock.now();
         let report_deadline = now
-            .add(task.tolerable_clock_skew())
+            .add_timedelta(&task.tolerable_clock_skew().to_chrono().unwrap())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
-        if let Ok(clock_skew) = report.metadata().time().difference(&now) {
+        if let Ok(clock_skew) = report.metadata().time().difference_as_time_delta(&now) {
             metrics
                 .early_report_clock_skew_histogram
-                .record(clock_skew.as_seconds(), &[]);
+                .record(clock_skew.num_seconds() as u64, &[]);
         }
-        if let Ok(clock_skew) = now.difference(report.metadata().time()) {
+        if let Ok(clock_skew) = now.difference_as_time_delta(report.metadata().time()) {
             metrics
                 .past_report_clock_skew_histogram
-                .record(clock_skew.as_seconds(), &[]);
+                .record(clock_skew.num_seconds() as u64, &[]);
         }
 
         // Reject reports from too far in the future.
@@ -1788,7 +1790,7 @@ impl VdafOps {
             let report_expiry_time = report
                 .metadata()
                 .time()
-                .add(report_expiry_age)
+                .add_timedelta(&report_expiry_age.to_chrono().unwrap())
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
@@ -2100,8 +2102,7 @@ impl VdafOps {
             min_client_timestamp,
             Duration::from_chrono(
                 max_client_timestamp
-                    .difference(&min_client_timestamp)?
-                    .to_chrono()?
+                    .difference_as_time_delta(&min_client_timestamp)?
                     .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
                     .round_up(&task.time_precision().to_chrono()?)?,
             ),
@@ -3487,7 +3488,9 @@ impl VdafOps {
             if let Some(batch_interval) =
                 B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
             {
-                let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
+                let aggregate_share_expiry_time = batch_interval
+                    .end()
+                    .add_timedelta(&report_expiry_age.to_chrono().unwrap())?;
                 if clock.now().is_after(&aggregate_share_expiry_time) {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),

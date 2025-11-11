@@ -18,7 +18,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock},
+    time::{Clock, MockClock, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -145,7 +145,9 @@ async fn upload_handler() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
+                .sub_timedelta(
+                    &chrono::TimeDelta::try_seconds((REPORT_EXPIRY_AGE + 30000) as i64).unwrap(),
+                )
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
         ),
@@ -203,7 +205,7 @@ async fn upload_handler() {
     // Reports from the future should be rejected.
     let bad_report_time = clock
         .now_aligned_to_precision(task.time_precision())
-        .add(&Duration::from_seconds(
+        .add_duration(&Duration::from_seconds(
             task.time_precision().as_seconds() * 2,
         ))
         .unwrap();
@@ -247,7 +249,7 @@ async fn upload_handler() {
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(task.time_precision())
+            .add_duration(task.time_precision())
             .unwrap(),
     ))
     .build();
@@ -261,7 +263,7 @@ async fn upload_handler() {
         &hpke_keypair,
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(&Duration::from_seconds(
+            .add_duration(&Duration::from_seconds(
                 task.time_precision().as_seconds() * 2,
             ))
             .unwrap(),
@@ -413,7 +415,10 @@ async fn upload_handler() {
     let bad_leader_time_alignment_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now().add(&Duration::from_seconds(1)).unwrap(), /* not aligned! */
+        clock
+            .now()
+            .add_timedelta(&chrono::TimeDelta::try_seconds(1_i64).unwrap())
+            .unwrap(), /* not aligned! */
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
         .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
