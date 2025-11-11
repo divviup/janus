@@ -1,6 +1,5 @@
 use crate::aggregator::{
     Aggregator, Config, Error,
-    error::ReportRejectionReason,
     test_util::{create_report, create_report_custom, default_aggregator_config},
 };
 use assert_matches::assert_matches;
@@ -31,7 +30,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    PlaintextInputShare, Query, Report, Role, batch_mode::TimeInterval,
+    PlaintextInputShare, Query, Report, ReportError, Role, batch_mode::TimeInterval,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
@@ -304,14 +303,10 @@ async fn upload_wrong_hpke_config_id() {
     let result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
-    assert_matches!(result.as_ref(), Error::ReportRejected(rejection) => {
-        assert_eq!(task.id(), rejection.task_id());
-        assert_eq!(report.metadata().id(), rejection.report_id());
-        assert_eq!(report.metadata().time(), rejection.time());
-        assert_matches!(rejection.reason(), ReportRejectionReason::OutdatedHpkeConfig(id) => {
-            assert_eq!(id, &unused_hpke_config_id);
-        })
+        .unwrap();
+    let report_upload_status = &result.status()[0];
+    assert_matches!(report_upload_status.error(), ReportError::HpkeUnknownConfigId => {
+        assert_eq!(report.metadata().id(), &report_upload_status.report_id());
     });
 
     // Wait for the report writer to have completed one write task.
@@ -415,16 +410,17 @@ async fn upload_report_in_the_future_past_clock_skew() {
             .unwrap(),
     );
 
-    let upload_error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
-    assert_matches!(upload_error.as_ref(), Error::ReportRejected(rejection) => {
-        assert_eq!(task.id(), rejection.task_id());
-        assert_eq!(report.metadata().id(), rejection.report_id());
-        assert_eq!(report.metadata().time(), rejection.time());
-        assert_matches!(rejection.reason(), ReportRejectionReason::TooEarly);
-    });
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::ReportTooEarly => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
+        }
+    );
 
     // Wait for the report writer to have completed one write task.
     runtime_manager
@@ -502,17 +498,15 @@ async fn upload_report_for_collected_batch() {
         .unwrap();
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::IntervalCollected);
+        result_upload_status.error(),
+        ReportError::ReportReplayed => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -577,17 +571,15 @@ async fn upload_report_task_not_started() {
     );
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::TaskNotStarted);
+        result_upload_status.error(),
+        ReportError::TaskNotStarted => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -648,17 +640,15 @@ async fn upload_report_task_ended() {
     let report = create_report(&task, &hpke_keypair, task_end_time);
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::TaskEnded);
+        result_upload_status.error(),
+        ReportError::TaskExpired => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -765,17 +755,15 @@ async fn upload_report_report_expired() {
     clock.advance(chrono::TimeDelta::try_seconds(61).unwrap());
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::Expired);
+        result_upload_status.error(),
+        ReportError::ReportDropped => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -830,17 +818,15 @@ async fn upload_report_faulty_encryption() {
     );
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::DecryptFailure);
+        result_upload_status.error(),
+        ReportError::HpkeDecryptError => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -893,17 +879,15 @@ async fn upload_report_public_share_decode_failure() {
     );
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::DecodeFailure);
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -970,17 +954,15 @@ async fn upload_report_leader_input_share_decode_failure() {
     );
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::DecodeFailure);
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 
@@ -1044,17 +1026,15 @@ async fn upload_report_duplicate_extensions() {
     );
 
     // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
+    let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
     assert_matches!(
-        error.as_ref(),
-        Error::ReportRejected(rejection) => {
-            assert_eq!(task.id(), rejection.task_id());
-            assert_eq!(report.metadata().id(), rejection.report_id());
-            assert_eq!(report.metadata().time(), rejection.time());
-            assert_matches!(rejection.reason(), ReportRejectionReason::DuplicateExtension);
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report.metadata().id(), &result_upload_status.report_id());
         }
     );
 

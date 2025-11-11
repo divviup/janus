@@ -11,8 +11,8 @@ use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
     codec::{
-        CodecError, Decode, Encode, decode_u16_items, decode_u32_items, encode_u16_items,
-        encode_u32_items,
+        CodecError, Decode, Encode, ParameterizedDecode, decode_fixlen_items, decode_u16_items,
+        decode_u32_items, encode_fixlen_items, encode_u16_items, encode_u32_items,
     },
     topology::ping_pong::PingPongMessage,
 };
@@ -21,6 +21,8 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
+#[cfg(test)]
+use std::borrow::Borrow;
 use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
@@ -1564,6 +1566,138 @@ impl Decode for Report {
     }
 }
 
+/// Represents a request to upload reports to DAP aggregators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadRequest {
+    reports: Vec<Report>,
+}
+
+impl UploadRequest {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-upload-req";
+
+    pub fn new(reports: Vec<Report>) -> Self {
+        Self { reports }
+    }
+
+    pub fn from_slice(reports: &[Report]) -> Self {
+        Self {
+            reports: reports.to_vec(),
+        }
+    }
+
+    pub fn reports(&self) -> &[Report] {
+        &self.reports
+    }
+}
+
+impl Encode for UploadRequest {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_fixlen_items(bytes, &self.reports)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 0;
+        for report in &self.reports {
+            length += report.encoded_len()?;
+        }
+
+        Some(length)
+    }
+}
+
+impl ParameterizedDecode<usize> for UploadRequest {
+    fn decode_with_param(length: &usize, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let reports = decode_fixlen_items(*length, &(), bytes)?;
+
+        Ok(Self { reports })
+    }
+}
+
+/// Represents the status of a report upload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportUploadStatus {
+    id: ReportId,
+    error: ReportError,
+}
+
+impl ReportUploadStatus {
+    pub fn new(id: ReportId, error: ReportError) -> Self {
+        Self { id, error }
+    }
+
+    pub fn report_id(&self) -> ReportId {
+        self.id
+    }
+
+    pub fn error(&self) -> ReportError {
+        self.error
+    }
+}
+
+impl Encode for ReportUploadStatus {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.id.encode(bytes)?;
+        self.error.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.id.encoded_len()? + self.error.encoded_len()?)
+    }
+}
+
+impl Decode for ReportUploadStatus {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let id = ReportId::decode(bytes)?;
+        let error = ReportError::decode(bytes)?;
+
+        Ok(Self { id, error })
+    }
+}
+
+/// Represents a response to a request to upload reports to DAP aggregators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadResponse {
+    status: Vec<ReportUploadStatus>,
+}
+
+impl UploadResponse {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-upload-resp";
+
+    pub fn new(statuses: &[ReportUploadStatus]) -> Self {
+        Self {
+            status: statuses.to_vec(),
+        }
+    }
+
+    pub fn status(&self) -> &[ReportUploadStatus] {
+        &self.status
+    }
+}
+
+impl Encode for UploadResponse {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_fixlen_items(bytes, &self.status)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.status
+                .iter()
+                .fold(0, |acc, s| acc + s.encoded_len().unwrap_or_default()),
+        )
+    }
+}
+
+impl ParameterizedDecode<usize> for UploadResponse {
+    fn decode_with_param(length: &usize, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let status = decode_fixlen_items(*length, &(), bytes)?;
+
+        Ok(Self { status })
+    }
+}
+
 /// Represents a query for a specific batch identifier, received from a Collector as part of the
 /// collection flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2800,9 +2934,33 @@ impl Decode for AggregateShare {
 }
 
 #[cfg(test)]
-pub(crate) fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
+pub(crate) fn roundtrip_encoding<'a, T, I, B>(vals_and_encodings: I)
 where
-    T: Encode + Decode + Debug + Eq,
+    T: Encode + Decode + Debug + Eq + 'a,
+    B: Borrow<T> + 'a,
+    I: IntoIterator<Item = &'a (B, &'a str)>,
+{
+    fn add_parameter<'a, T, B>((val, encoding): &'a (B, &str)) -> (&'a T, (), &'a str)
+    where
+        B: Borrow<T> + 'a,
+    {
+        (val.borrow(), (), encoding)
+    }
+
+    roundtrip_encoding_parameterized::<'a, T, (), _, _, _>(
+        vals_and_encodings.into_iter().map(add_parameter),
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn roundtrip_encoding_parameterized<'a, T, P, TB, PB, I>(
+    tuples: impl IntoIterator<Item = I>,
+) where
+    T: Encode + ParameterizedDecode<P> + Debug + Eq + 'a,
+    P: 'a,
+    TB: Borrow<T> + 'a,
+    PB: Borrow<P> + 'a,
+    I: Borrow<(TB, PB, &'a str)> + 'a,
 {
     struct Wrapper<T>(T);
 
@@ -2820,17 +2978,19 @@ where
         }
     }
 
-    for (val, hex_encoding) in vals_and_encodings {
-        let mut encoded_val = Vec::new();
-        val.encode(&mut encoded_val).unwrap();
+    for tuple in tuples {
+        let (val, decoding_parameter, hex_encoding) = tuple.borrow();
+        let val = val.borrow();
+        let decoding_parameter = decoding_parameter.borrow();
+        let encoded_val = Wrapper(val.get_encoded().unwrap());
         let expected = Wrapper(hex::decode(hex_encoding).unwrap());
-        let encoded_val = Wrapper(encoded_val);
         pretty_assertions::assert_eq!(
             encoded_val,
             expected,
             "Couldn't roundtrip (encoded value differs): {val:?}"
         );
-        let decoded_val = T::get_decoded(&encoded_val.0).unwrap();
+
+        let decoded_val = T::get_decoded_with_param(decoding_parameter, &encoded_val.0).unwrap();
         pretty_assertions::assert_eq!(
             &decoded_val,
             val,

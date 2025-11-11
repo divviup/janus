@@ -219,7 +219,7 @@ impl Simulation {
         let results = join_all((0..count).flat_map(|_| self.state.next_measurement()).map(
             move |measurement| {
                 let client = client.clone();
-                async move { client.upload_with_time(&measurement, report_time).await }
+                async move { client.upload_with_time(&[(measurement, report_time)]).await }
             },
         ))
         .await;

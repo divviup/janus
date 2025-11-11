@@ -823,9 +823,10 @@ length: 10"
                 bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
                 dp_strategy:
                     vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(
-                        ZCdpDiscreteGaussian::from_budget(ZCdpBudget::new(
-                            Rational::from_unsigned(1u128, 2u128).unwrap(),
-                        )),
+                        ZCdpDiscreteGaussian::from_budget(
+                            ZCdpBudget::new(Rational::from_unsigned(1u128, 2u128).unwrap())
+                                .unwrap()
+                        ),
                     ),
                 length: 10,
             }
