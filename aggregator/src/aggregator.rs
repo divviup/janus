@@ -1750,7 +1750,7 @@ impl VdafOps {
 
         let now = clock.now();
         let report_deadline = now
-            .add_timedelta(&task.tolerable_clock_skew().to_chrono().unwrap())
+            .add_duration(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
         if let Ok(clock_skew) = report.metadata().time().difference_as_time_delta(&now) {
@@ -1790,7 +1790,7 @@ impl VdafOps {
             let report_expiry_time = report
                 .metadata()
                 .time()
-                .add_timedelta(&report_expiry_age.to_chrono().unwrap())
+                .add_duration(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
@@ -3490,7 +3490,7 @@ impl VdafOps {
             {
                 let aggregate_share_expiry_time = batch_interval
                     .end()
-                    .add_timedelta(&report_expiry_age.to_chrono().unwrap())?;
+                    .add_duration(report_expiry_age)?;
                 if clock.now().is_after(&aggregate_share_expiry_time) {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),

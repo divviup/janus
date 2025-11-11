@@ -100,7 +100,7 @@ where
     let report_aggregation_count = report_aggregations.len();
     let now = clock.now();
     let report_deadline = now
-        .add_timedelta(&task.tolerable_clock_skew().to_chrono().unwrap())
+        .add_duration(task.tolerable_clock_skew())
         .map_err(Error::from)?;
 
     // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped. This
