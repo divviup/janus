@@ -1,3 +1,4 @@
+use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
 use janus_messages::{Duration, Interval, Time};
@@ -174,7 +175,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::HelperAggregationJobDriver,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(2),
+                amount: TimeDelta::seconds(2),
             },
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
@@ -186,7 +187,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::HelperAggregationJobDriver,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(2),
+                amount: TimeDelta::seconds(2),
             },
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
@@ -198,7 +199,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::HelperAggregationJobDriver,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(2),
+                amount: TimeDelta::seconds(2),
             },
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
@@ -222,7 +223,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::HelperAggregationJobDriver,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(2),
+                amount: TimeDelta::seconds(2),
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
@@ -266,7 +267,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
                 count: 1,
             },
             Op::AdvanceTime {
-                amount: Duration::from_seconds(3600),
+                amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
                 report_time: START_TIME
@@ -277,7 +278,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(5400),
+                amount: TimeDelta::seconds(5400),
             },
             Op::LeaderGarbageCollector,
             Op::LeaderAggregationJobDriver,
@@ -310,7 +311,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
                 count: 1,
             },
             Op::AdvanceTime {
-                amount: Duration::from_seconds(3600),
+                amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
                 report_time: START_TIME
@@ -321,7 +322,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(5400),
+                amount: TimeDelta::seconds(5400),
             },
             Op::LeaderGarbageCollector,
             Op::LeaderAggregationJobDriver,
@@ -354,7 +355,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
                 count: 1,
             },
             Op::AdvanceTime {
-                amount: Duration::from_seconds(2000),
+                amount: TimeDelta::seconds(2000),
             },
             Op::Upload {
                 report_time: START_TIME
@@ -364,7 +365,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             },
             Op::AggregationJobCreator,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(3500),
+                amount: TimeDelta::seconds(3500),
             },
             Op::LeaderAggregationJobDriver,
         ]),
@@ -405,11 +406,11 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(610),
+                amount: TimeDelta::seconds(610),
             },
             Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(610),
+                amount: TimeDelta::seconds(610),
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {
@@ -450,7 +451,7 @@ fn repro_helper_accumulate_on_retried_request() {
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriverResponseError,
             Op::AdvanceTime {
-                amount: Duration::from_seconds(700),
+                amount: TimeDelta::seconds(700),
             },
             Op::LeaderAggregationJobDriver,
             Op::CollectorStart {

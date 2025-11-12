@@ -4,6 +4,7 @@
 // and/or "interesting", to control more configuration from simulation inputs, and to introduce new
 // forms of fault injection. See https://users.cs.utah.edu/~regehr/papers/swarm12.pdf for example.
 
+use chrono::TimeDelta;
 use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
@@ -99,7 +100,7 @@ impl Context {
     fn update(&mut self, op: &Op) {
         match op {
             Op::AdvanceTime { amount } => {
-                self.current_time = self.current_time.add_duration(amount).unwrap()
+                self.current_time = self.current_time.add_timedelta(amount).unwrap()
             }
             Op::CollectorStart {
                 collection_job_id,
@@ -402,7 +403,7 @@ mod choices {
 fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
     match g.choose(choices).unwrap() {
         OpKind::AdvanceTime => Op::AdvanceTime {
-            amount: Duration::from_seconds(u16::arbitrary(g).into()),
+            amount: TimeDelta::seconds(u16::arbitrary(g).into()),
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
@@ -455,7 +456,7 @@ impl Arbitrary for LeaderSelectedInput {
 fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
     match g.choose(choices).unwrap() {
         OpKind::AdvanceTime => Op::AdvanceTime {
-            amount: Duration::from_seconds(u16::arbitrary(g).into()),
+            amount: TimeDelta::seconds(u16::arbitrary(g).into()),
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
@@ -644,13 +645,7 @@ impl Op {
                     amount: other_amount,
                 },
             ) => Some(Op::AdvanceTime {
-                amount: janus_messages::Duration::from_chrono(
-                    self_amount
-                        .to_chrono()
-                        .ok()?
-                        .add(&other_amount.to_chrono().ok()?)
-                        .ok()?,
-                ),
+                amount: self_amount.add(other_amount).ok()?,
             }),
             (
                 Op::Upload {
@@ -676,31 +671,31 @@ fn coalesce_ops_correct() {
     let cases = [
         (
             Vec::from([Op::AdvanceTime {
-                amount: Duration::from_seconds(1),
+                amount: TimeDelta::seconds(1),
             }]),
             None,
         ),
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(2),
+                    amount: TimeDelta::seconds(2),
                 },
             ]),
             Some(Vec::from([Op::AdvanceTime {
-                amount: Duration::from_seconds(3),
+                amount: TimeDelta::seconds(3),
             }])),
         ),
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
             ]),
             None,
@@ -708,37 +703,37 @@ fn coalesce_ops_correct() {
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(2),
+                    amount: TimeDelta::seconds(2),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(4),
+                    amount: TimeDelta::seconds(4),
                 },
                 Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(5),
+                    amount: TimeDelta::seconds(5),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(6),
+                    amount: TimeDelta::seconds(6),
                 },
             ]),
             Some(Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(7),
+                    amount: TimeDelta::seconds(7),
                 },
                 Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(11),
+                    amount: TimeDelta::seconds(11),
                 },
             ])),
         ),
@@ -746,17 +741,17 @@ fn coalesce_ops_correct() {
             Vec::from([
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(4),
+                    amount: TimeDelta::seconds(4),
                 },
                 Op::LeaderAggregationJobDriver,
             ]),
             Some(Vec::from([
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(7),
+                    amount: TimeDelta::seconds(7),
                 },
                 Op::LeaderAggregationJobDriver,
             ])),
