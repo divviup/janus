@@ -148,6 +148,15 @@ impl Duration {
         Self(seconds)
     }
 
+    /// Create a duration representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
     /// Get the number of seconds this duration represents.
     pub fn as_seconds(&self) -> u64 {
         self.0

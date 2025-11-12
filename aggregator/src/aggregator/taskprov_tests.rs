@@ -147,7 +147,7 @@ where
         let time_precision = Duration::from_seconds(1);
         let min_batch_size = 1;
         let task_start = clock.now();
-        let task_duration = Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap());
+        let task_duration = Duration::from_hours(24);
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -629,7 +629,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
+        Duration::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -696,7 +696,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
+        Duration::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -761,7 +761,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        Duration::from_chrono(chrono::TimeDelta::try_hours(24).unwrap()),
+        Duration::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )

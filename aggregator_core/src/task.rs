@@ -1142,7 +1142,7 @@ pub mod test_util {
                 None,
                 /* Min batch size */ 1,
                 /* Time precision */
-                Duration::from_chrono(chrono::TimeDelta::try_hours(8).unwrap()),
+                Duration::from_hours(8),
                 /* Tolerable clock skew */
                 Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
