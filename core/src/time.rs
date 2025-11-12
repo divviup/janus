@@ -71,6 +71,10 @@ impl MockClock {
     }
 
     pub fn advance(&self, dur: chrono::TimeDelta) {
+        assert!(
+            dur.num_seconds() >= 0,
+            "MockClock::advance called with negative TimeDelta (time cannot go backward)"
+        );
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = current_time.add_timedelta(&dur).unwrap();
     }
