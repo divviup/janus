@@ -1609,8 +1609,7 @@ mod tests {
             .leader_view()
             .unwrap(),
         );
-        let late_report_grace_period =
-            janus_messages::Duration::from_hours(24);
+        let late_report_grace_period = janus_messages::Duration::from_hours(24);
         assert!(late_report_grace_period >= *task.time_precision());
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
@@ -2850,8 +2849,7 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
         const MIN_BATCH_SIZE: usize = 200;
-        let batch_time_window_size =
-            janus_messages::Duration::from_hours(24);
+        let batch_time_window_size = janus_messages::Duration::from_hours(24);
 
         let task = Arc::new(
             TaskBuilder::new(

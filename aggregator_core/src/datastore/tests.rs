@@ -981,18 +981,11 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_hours(8),
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+                        .unwrap(),
                 ),
                 dummy::AggregationParam(255),
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_hours(8),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await
@@ -1027,18 +1020,11 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_hours(8),
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+                        .unwrap(),
                 ),
                 dummy::AggregationParam(0),
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_hours(8),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await?;
@@ -1047,18 +1033,11 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_hours(8),
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+                        .unwrap(),
                 ),
                 dummy::AggregationParam(1),
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_hours(8),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await?;
@@ -1160,18 +1139,11 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_hours(16),
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16))
+                        .unwrap(),
                 ),
                 dummy::AggregationParam(0),
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_hours(16),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16)).unwrap(),
                 CollectionJobState::Start,
             ))
             .await?;
@@ -1180,18 +1152,11 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_hours(16),
-                    )
-                    .unwrap(),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16))
+                        .unwrap(),
                 ),
                 dummy::AggregationParam(1),
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_hours(16),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16)).unwrap(),
                 CollectionJobState::Start,
             ))
             .await?;
@@ -4463,22 +4428,15 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         task_id,
         Time::from_seconds_since_epoch(0),
     )]);
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        Duration::from_hours(8),
-    )
-    .unwrap();
+    let batch_interval =
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap();
     let aggregation_job_id = random();
     let aggregation_jobs = Vec::from([AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
         task_id,
         aggregation_job_id,
         dummy::AggregationParam(0),
         (),
-        Interval::new(
-            Time::from_seconds_since_epoch(0),
-            Duration::from_hours(8),
-        )
-        .unwrap(),
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     )]);
@@ -4894,22 +4852,15 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
         Time::from_seconds_since_epoch(0),
     )]);
     let aggregation_job_ids: [_; 2] = random();
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        Duration::from_hours(8),
-    )
-    .unwrap();
+    let batch_interval =
+        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap();
     let aggregation_jobs = Vec::from([
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
             task_id,
             aggregation_job_ids[0],
             dummy::AggregationParam(0),
             (),
-            Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_hours(8),
-            )
-            .unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4918,11 +4869,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             aggregation_job_ids[1],
             dummy::AggregationParam(1),
             (),
-            Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_hours(8),
-            )
-            .unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
