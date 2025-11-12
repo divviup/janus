@@ -18,7 +18,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeExt as _},
+    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -210,7 +210,7 @@ async fn upload_handler() {
             clock
                 .now_aligned_to_precision(task.time_precision())
                 .sub_timedelta(
-                    &chrono::TimeDelta::try_seconds((REPORT_EXPIRY_AGE + 30000) as i64).unwrap(),
+                    &chrono::TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap(),
                 )
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),

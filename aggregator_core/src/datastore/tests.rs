@@ -2386,7 +2386,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Advance the clock past the reacquire delay, then reacquire the leases we released with a
     // reacquire delay.
-    clock.advance(chrono::TimeDelta::try_seconds(REACQUIRE_DELAY.as_secs() as i64).unwrap());
+    clock.advance(chrono::TimeDelta::try_seconds_unsigned(REACQUIRE_DELAY.as_secs()).unwrap());
 
     let mut got_aggregation_jobs: Vec<_> = ds
         .run_unnamed_tx(|tx| {
@@ -2462,7 +2462,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Run: advance time again to release jobs, acquire a single job, modify its lease token
     // to simulate a previously-held lease, and attempt to release it. Verify that releasing
     // fails.
-    clock.advance(chrono::TimeDelta::try_seconds(LEASE_DURATION.as_secs() as i64).unwrap());
+    clock.advance(chrono::TimeDelta::try_seconds_unsigned(LEASE_DURATION.as_secs()).unwrap());
     let lease = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {

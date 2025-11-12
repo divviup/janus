@@ -1256,7 +1256,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 
     let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
         .sub_timedelta(
-            &chrono::TimeDelta::try_seconds((3 * TIME_PRECISION.as_seconds()) as i64).unwrap(),
+            &chrono::TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap(),
         )
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
@@ -1267,7 +1267,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 
     let gc_ineligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
         .add_timedelta(
-            &chrono::TimeDelta::try_seconds((3 * TIME_PRECISION.as_seconds()) as i64).unwrap(),
+            &chrono::TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap(),
         )
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)

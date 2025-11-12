@@ -136,6 +136,12 @@ pub trait TimeDeltaExt: Sized {
     /// Create a [`chrono::TimeDelta`] representing the provided number of hours.
     fn from_hours(hours: u64) -> Result<chrono::TimeDelta, Error>;
 
+    /// Create a [`chrono::TimeDelta`] from an unsigned number of seconds.
+    ///
+    /// This is a convenience method that safely converts u64 seconds to i64,
+    /// returning an error if the value is too large to represent.
+    fn try_seconds_unsigned(seconds: u64) -> Result<chrono::TimeDelta, Error>;
+
     /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next largest multiple of
     /// `time_precision`, or the same time delta if it's already a multiple.
     fn round_up(&self, time_precision: &chrono::TimeDelta) -> Result<chrono::TimeDelta, Error>;
@@ -182,6 +188,14 @@ impl TimeDeltaExt for chrono::TimeDelta {
             )
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
         chrono::TimeDelta::try_seconds(seconds)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn try_seconds_unsigned(seconds: u64) -> Result<chrono::TimeDelta, Error> {
+        let seconds_i64: i64 = seconds
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("seconds value too large for i64"))?;
+        chrono::TimeDelta::try_seconds(seconds_i64)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
