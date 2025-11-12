@@ -171,10 +171,17 @@ impl Duration {
     /// Create a [`Duration`] from a [`chrono::TimeDelta`].
     ///
     /// The duration will be rounded down to the nearest second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the delta is negative, as DAP durations must be non-negative.
     pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
-        // TimeDelta can represent negative durations, but DAP durations are
-        // always non-negative, so we clamp to 0.
-        Self::from_seconds(delta.num_seconds().max(0) as u64)
+        let seconds = delta.num_seconds();
+        assert!(
+            seconds >= 0,
+            "Duration::from_chrono called with negative TimeDelta"
+        );
+        Self::from_seconds(seconds as u64)
     }
 }
 
