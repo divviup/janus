@@ -165,7 +165,7 @@ impl TimeDeltaExt for TimeDelta {
     }
 
     fn as_microseconds(&self) -> Result<u64, Error> {
-        <i64 as TryInto<u64>>::try_into(self.num_seconds())
+        u64::try_from(self.num_seconds())
             .map_err(|_| Error::IllegalTimeArithmetic("time delta is negative or too large"))?
             .checked_mul(USEC_PER_SEC)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
