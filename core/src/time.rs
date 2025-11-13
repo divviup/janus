@@ -448,7 +448,6 @@ impl IntervalExt for Interval {
         let max_time = std::cmp::max(self.end(), other.end());
         let min_time = std::cmp::min(self.start(), other.start());
 
-        // This can't actually fail for any valid Intervals
         let diff = max_time.difference_as_time_delta(min_time)?;
         Self::new(*min_time, Duration::from_chrono(diff))
     }
