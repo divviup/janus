@@ -1,3 +1,4 @@
+use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 
@@ -45,7 +46,7 @@ pub(super) struct Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Op {
     /// Advance the `MockClock`'s time by `amount`.
-    AdvanceTime { amount: Duration },
+    AdvanceTime { amount: TimeDelta },
 
     /// Upload some reports.
     ///

@@ -9,6 +9,7 @@ use crate::{
     },
     metrics::test_util::InMemoryMetricInfrastructure,
 };
+use chrono::TimeDelta;
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
     task::{AggregationMode, BatchMode, test_util::TaskBuilder},
@@ -18,7 +19,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -209,7 +210,7 @@ async fn upload_handler() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
+                .sub_timedelta(&TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap())
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
         ),
@@ -269,7 +270,7 @@ async fn upload_handler() {
     // Reports from the future should be rejected.
     let bad_report_time = clock
         .now_aligned_to_precision(task.time_precision())
-        .add(&Duration::from_seconds(
+        .add_duration(&Duration::from_seconds(
             task.time_precision().as_seconds() * 2,
         ))
         .unwrap();
@@ -314,7 +315,7 @@ async fn upload_handler() {
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(task.time_precision())
+            .add_duration(task.time_precision())
             .unwrap(),
     ))
     .build();
@@ -328,7 +329,7 @@ async fn upload_handler() {
         &hpke_keypair,
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add(&Duration::from_seconds(
+            .add_duration(&Duration::from_seconds(
                 task.time_precision().as_seconds() * 2,
             ))
             .unwrap(),
@@ -480,7 +481,7 @@ async fn upload_handler() {
     );
 
     // Reports with duplicate extensions must be rejected
-    clock.advance(&Duration::from_seconds(1));
+    clock.advance(TimeDelta::seconds(1));
     let dupe_ext_report = create_report_custom(
         &leader_task,
         clock.now_aligned_to_precision(task.time_precision()),
@@ -545,9 +546,9 @@ async fn upload_handler_mixed_success_failure() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE))
                 .unwrap()
-                .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE))
                 .unwrap(),
             Vec::new(),
         ),
@@ -659,9 +660,9 @@ async fn upload_handler_task_not_started() {
     .with_task_start(Some(
         clock
             .now_aligned_to_precision(&time_precision)
-            .add(&time_precision) // Add one time precision interval
+            .add_duration(&time_precision) // Add one time precision interval
             .unwrap()
-            .add(&time_precision) // Add another to be clearly in the future
+            .add_duration(&time_precision) // Add another to be clearly in the future
             .unwrap(),
     ))
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"

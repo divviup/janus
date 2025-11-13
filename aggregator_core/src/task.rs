@@ -794,7 +794,6 @@ pub mod test_util {
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::HpkeKeypair,
-        time::DurationExt,
         url_ensure_trailing_slash,
         vdaf::VdafInstance,
     };
@@ -1142,7 +1141,8 @@ pub mod test_util {
                 None,
                 None,
                 /* Min batch size */ 1,
-                /* Time precision */ Duration::from_hours(8).unwrap(),
+                /* Time precision */
+                Duration::from_hours(8),
                 /* Tolerable clock skew */
                 Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
@@ -1378,10 +1378,10 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use chrono::TimeDelta;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         test_util::roundtrip_encoding,
-        time::DurationExt,
         vdaf::vdaf_dp_strategies,
     };
     use janus_messages::{
@@ -1852,7 +1852,7 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
+                batch_time_window_size: Some(Duration::from_chrono(TimeDelta::hours(1))),
             },
             &[
                 Token::StructVariant {

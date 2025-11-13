@@ -6,6 +6,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
+use chrono::TimeDelta;
 use educe::Educe;
 use futures::future::join_all;
 use janus_aggregator::aggregator;
@@ -21,7 +22,7 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    CollectionJobId, Duration, Time,
+    CollectionJobId, Time,
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use opentelemetry::metrics::Meter;
@@ -208,8 +209,8 @@ impl Simulation {
         result
     }
 
-    async fn execute_advance_time(&mut self, amount: &Duration) -> ControlFlow<TestResult> {
-        self.state.clock.advance(amount);
+    async fn execute_advance_time(&mut self, amount: &TimeDelta) -> ControlFlow<TestResult> {
+        self.state.clock.advance(*amount);
         ControlFlow::Continue(())
     }
 

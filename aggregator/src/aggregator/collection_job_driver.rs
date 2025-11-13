@@ -904,6 +904,7 @@ mod tests {
         binary_utils::job_driver::JobDriver,
     };
     use assert_matches::assert_matches;
+    use chrono::TimeDelta;
     use http::{StatusCode, header::CONTENT_TYPE};
     use janus_aggregator_core::{
         datastore::{
@@ -1047,14 +1048,20 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1193,14 +1200,20 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1311,14 +1324,20 @@ mod tests {
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
                             aggregation_param,
                             0,
                             Interval::new(
-                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                clock
+                                    .now()
+                                    .add_timedelta(&TimeDelta::seconds(1000))
+                                    .unwrap(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1715,7 +1734,7 @@ mod tests {
         runtime_manager.wait_for_completed_tasks("stepper", 1).await;
         // Advance the clock by the lease duration, so that the job driver can pick up the job
         // and try again.
-        clock.advance(&Duration::from_seconds(600));
+        clock.advance(TimeDelta::seconds(600));
 
         // Shut down the job driver.
         stopper.stop();
@@ -1829,7 +1848,7 @@ mod tests {
             runtime_manager.wait_for_completed_tasks("stepper", i).await;
             // Advance the clock by the lease duration, so that the job driver can pick up the job
             // and try again.
-            clock.advance(&Duration::from_seconds(600));
+            clock.advance(TimeDelta::seconds(600));
         }
         // Shut down the job driver.
         stopper.stop();
@@ -2179,7 +2198,7 @@ mod tests {
             .await;
 
         // Move forward so we can check that it's still incomplete
-        clock.advance(&Duration::from_seconds(1));
+        clock.advance(TimeDelta::seconds(1));
 
         let task_id = *task.id();
         let collection_job_id = *collection_job.id();

@@ -36,6 +36,7 @@ use aws_lc_rs::{
 };
 use backon::BackoffBuilder;
 use bytes::Bytes;
+use chrono::TimeDelta;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     FixedI16, FixedI32,
@@ -68,7 +69,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
-    time::{Clock, DurationExt, IntervalExt, TimeExt},
+    time::{Clock, IntervalExt, TimeDeltaExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
@@ -840,7 +841,9 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task_end = task_config.task_start().add(task_config.task_duration())?;
+        let task_end = task_config
+            .task_start()
+            .add_duration(task_config.task_duration())?;
 
         let task = Arc::new(
             AggregatorTask::new(
@@ -1813,18 +1816,18 @@ impl VdafOps {
 
         let now = clock.now();
         let report_deadline = now
-            .add(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
-        if let Ok(clock_skew) = report.metadata().time().difference(&now) {
+        if let Ok(clock_skew) = report.metadata().time().difference_as_time_delta(&now) {
             metrics
                 .early_report_clock_skew_histogram
-                .record(clock_skew.as_seconds(), &[]);
+                .record(clock_skew.num_seconds() as u64, &[]);
         }
-        if let Ok(clock_skew) = now.difference(report.metadata().time()) {
+        if let Ok(clock_skew) = now.difference_as_time_delta(report.metadata().time()) {
             metrics
                 .past_report_clock_skew_histogram
-                .record(clock_skew.as_seconds(), &[]);
+                .record(clock_skew.num_seconds() as u64, &[]);
         }
 
         // Reject reports from too far in the future.
@@ -1853,7 +1856,7 @@ impl VdafOps {
             let report_expiry_time = report
                 .metadata()
                 .time()
-                .add(report_expiry_age)
+                .add_duration(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
@@ -2163,10 +2166,12 @@ impl VdafOps {
             .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
         let client_timestamp_interval = Interval::new(
             min_client_timestamp,
-            max_client_timestamp
-                .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?
-                .round_up(task.time_precision())?,
+            Duration::from_chrono(
+                max_client_timestamp
+                    .difference_as_time_delta(&min_client_timestamp)?
+                    .add(&TimeDelta::seconds(1))?
+                    .round_up(&task.time_precision().to_chrono()?)?,
+            ),
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
             *task.id(),
@@ -3549,7 +3554,8 @@ impl VdafOps {
             if let Some(batch_interval) =
                 B::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
             {
-                let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
+                let aggregate_share_expiry_time =
+                    batch_interval.end().add_duration(report_expiry_age)?;
                 if clock.now().is_after(&aggregate_share_expiry_time) {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),

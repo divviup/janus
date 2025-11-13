@@ -99,7 +99,9 @@ where
     let verify_key = task.vdaf_verify_key()?;
     let report_aggregation_count = report_aggregations.len();
     let now = clock.now();
-    let report_deadline = now.add(task.tolerable_clock_skew()).map_err(Error::from)?;
+    let report_deadline = now
+        .add_duration(task.tolerable_clock_skew())
+        .map_err(Error::from)?;
 
     // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped. This
     // will cause any attempts to send on `sender` to return a `SendError`, which will be returned
@@ -314,18 +316,18 @@ where
                             .report_share()
                             .metadata()
                             .time()
-                            .difference(&now)
+                            .difference_as_time_delta(&now)
                         {
                             metrics
                                 .early_report_clock_skew_histogram
-                                .record(clock_skew.as_seconds(), &[]);
+                                .record(clock_skew.num_seconds() as u64, &[]);
                         }
                         if let Ok(clock_skew) =
-                            now.difference(prepare_init.report_share().metadata().time())
+                            now.difference_as_time_delta(prepare_init.report_share().metadata().time())
                         {
                             metrics
                                 .past_report_clock_skew_histogram
-                                .record(clock_skew.as_seconds(), &[]);
+                                .record(clock_skew.num_seconds() as u64, &[]);
                         }
 
                         // Reject reports from too far in the future.
@@ -649,6 +651,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use chrono::TimeDelta;
     use http::StatusCode;
     use janus_aggregator_core::{
         AsyncAggregator,
@@ -1073,7 +1076,7 @@ mod tests {
                             test_case
                                 .clock
                                 .now_aligned_to_precision(test_case.task.time_precision())
-                                .add(test_case.task.tolerable_clock_skew())
+                                .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1089,9 +1092,9 @@ mod tests {
                             test_case
                                 .clock
                                 .now_aligned_to_precision(test_case.task.time_precision())
-                                .add(test_case.task.tolerable_clock_skew())
+                                .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap()
-                                .add(test_case.task.time_precision())
+                                .add_duration(test_case.task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1187,7 +1190,9 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time.sub(helper_task.time_precision()).unwrap(),
+                            task_end_time
+                                .sub_duration(helper_task.time_precision())
+                                .unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1198,7 +1203,9 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time.add(helper_task.time_precision()).unwrap(),
+                            task_end_time
+                                .add_duration(helper_task.time_precision())
+                                .unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1275,7 +1282,7 @@ mod tests {
         let clock = MockClock::default();
         let task_start_time = clock
             .now_aligned_to_precision(&Duration::from_seconds(100))
-            .sub(&Duration::from_seconds(1000))
+            .sub_timedelta(&TimeDelta::seconds(1000))
             .unwrap();
 
         let task = TaskBuilder::new(
@@ -1329,7 +1336,9 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time.add(helper_task.time_precision()).unwrap(),
+                            task_start_time
+                                .add_duration(helper_task.time_precision())
+                                .unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1340,7 +1349,9 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time.sub(helper_task.time_precision()).unwrap(),
+                            task_start_time
+                                .sub_duration(helper_task.time_precision())
+                                .unwrap(),
                             Vec::new(),
                         ),
                         &0,

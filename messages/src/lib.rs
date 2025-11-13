@@ -148,9 +148,49 @@ impl Duration {
         Self(seconds)
     }
 
+    /// Create a duration representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
     /// Get the number of seconds this duration represents.
     pub fn as_seconds(&self) -> u64 {
         self.0
+    }
+
+    /// Convert this [`Duration`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+
+    /// Create a [`Duration`] from a [`chrono::TimeDelta`].
+    ///
+    /// The duration will be rounded down to the nearest second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the delta is negative, as DAP durations must be non-negative.
+    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
+        let seconds = delta.num_seconds();
+        assert!(
+            seconds >= 0,
+            "Duration::from_chrono called with negative TimeDelta"
+        );
+        Self::from_seconds(seconds as u64)
     }
 }
 

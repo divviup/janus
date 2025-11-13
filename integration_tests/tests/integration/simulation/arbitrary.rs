@@ -4,10 +4,11 @@
 // and/or "interesting", to control more configuration from simulation inputs, and to introduce new
 // forms of fault injection. See https://users.cs.utah.edu/~regehr/papers/swarm12.pdf for example.
 
+use chrono::TimeDelta;
 use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::time::{DurationExt, TimeExt};
+use janus_core::time::{TimeDeltaExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
@@ -99,7 +100,7 @@ impl Context {
     fn update(&mut self, op: &Op) {
         match op {
             Op::AdvanceTime { amount } => {
-                self.current_time = self.current_time.add(amount).unwrap()
+                self.current_time = self.current_time.add_timedelta(amount).unwrap()
             }
             Op::CollectorStart {
                 collection_job_id,
@@ -248,23 +249,26 @@ fn arbitrary_report_time(g: &mut Gen, context: &Context) -> Time {
         // future
         context
             .current_time
-            .add(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .add_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
             .unwrap()
     } else {
         // past
         context
             .current_time
-            .sub(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .sub_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
             .unwrap()
     }
 }
 
 /// Generate a collect start operation, using a time interval query.
 fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) -> Op {
-    let start_to_now = context.current_time.difference(&START_TIME).unwrap();
-    let random_range = start_to_now.as_seconds() / context.time_precision.as_seconds() + 10;
+    let start_to_now = context
+        .current_time
+        .difference_as_time_delta(&START_TIME)
+        .unwrap();
+    let random_range = start_to_now.num_seconds() as u64 / context.time_precision.as_seconds() + 10;
     let start = START_TIME
-        .add(&Duration::from_seconds(
+        .add_duration(&Duration::from_seconds(
             u64::arbitrary(g) % random_range * context.time_precision.as_seconds(),
         ))
         .unwrap();
@@ -399,7 +403,7 @@ mod choices {
 fn arbitrary_op_time_interval(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
     match g.choose(choices).unwrap() {
         OpKind::AdvanceTime => Op::AdvanceTime {
-            amount: Duration::from_seconds(u16::arbitrary(g).into()),
+            amount: TimeDelta::seconds(u16::arbitrary(g).into()),
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
@@ -452,7 +456,7 @@ impl Arbitrary for LeaderSelectedInput {
 fn arbitrary_op_leader_selected(g: &mut Gen, context: &Context, choices: &[OpKind]) -> Op {
     match g.choose(choices).unwrap() {
         OpKind::AdvanceTime => Op::AdvanceTime {
-            amount: Duration::from_seconds(u16::arbitrary(g).into()),
+            amount: TimeDelta::seconds(u16::arbitrary(g).into()),
         },
         OpKind::Upload => arbitrary_upload_op(g, context),
         OpKind::UploadReplay => arbitrary_upload_replay_op(g, context),
@@ -640,10 +644,9 @@ impl Op {
                 Op::AdvanceTime {
                     amount: other_amount,
                 },
-            ) => self_amount
-                .add(other_amount)
-                .ok()
-                .map(|amount| Op::AdvanceTime { amount }),
+            ) => Some(Op::AdvanceTime {
+                amount: self_amount.add(other_amount).ok()?,
+            }),
             (
                 Op::Upload {
                     report_time: self_report_time,
@@ -668,31 +671,31 @@ fn coalesce_ops_correct() {
     let cases = [
         (
             Vec::from([Op::AdvanceTime {
-                amount: Duration::from_seconds(1),
+                amount: TimeDelta::seconds(1),
             }]),
             None,
         ),
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(2),
+                    amount: TimeDelta::seconds(2),
                 },
             ]),
             Some(Vec::from([Op::AdvanceTime {
-                amount: Duration::from_seconds(3),
+                amount: TimeDelta::seconds(3),
             }])),
         ),
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
             ]),
             None,
@@ -700,37 +703,37 @@ fn coalesce_ops_correct() {
         (
             Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(1),
+                    amount: TimeDelta::seconds(1),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(2),
+                    amount: TimeDelta::seconds(2),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(4),
+                    amount: TimeDelta::seconds(4),
                 },
                 Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(5),
+                    amount: TimeDelta::seconds(5),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(6),
+                    amount: TimeDelta::seconds(6),
                 },
             ]),
             Some(Vec::from([
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(7),
+                    amount: TimeDelta::seconds(7),
                 },
                 Op::LeaderAggregationJobDriver,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(11),
+                    amount: TimeDelta::seconds(11),
                 },
             ])),
         ),
@@ -738,17 +741,17 @@ fn coalesce_ops_correct() {
             Vec::from([
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(3),
+                    amount: TimeDelta::seconds(3),
                 },
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(4),
+                    amount: TimeDelta::seconds(4),
                 },
                 Op::LeaderAggregationJobDriver,
             ]),
             Some(Vec::from([
                 Op::AggregationJobCreator,
                 Op::AdvanceTime {
-                    amount: Duration::from_seconds(7),
+                    amount: TimeDelta::seconds(7),
                 },
                 Op::LeaderAggregationJobDriver,
             ])),

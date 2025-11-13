@@ -13,6 +13,7 @@ use crate::{
     cache::HpkeKeypairCache,
 };
 use assert_matches::assert_matches;
+use chrono::TimeDelta;
 use futures::future::join_all;
 use http::{StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
@@ -38,7 +39,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-    time::{Clock, DurationExt, MockClock, TimeExt},
+    time::{Clock, MockClock, TimeDeltaExt, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -1255,7 +1256,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let leader_task = task.leader_view().unwrap();
 
     let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .sub(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
+        .sub_timedelta(&TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap())
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -1264,7 +1265,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time, Vec::new());
 
     let gc_ineligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .add(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
+        .add_timedelta(&TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap())
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -1345,11 +1346,13 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                     (),
                     Interval::new(
                         gc_eligible_time,
-                        gc_ineligible_time
-                            .difference(&gc_eligible_time)
-                            .unwrap()
-                            .round_up(&time_precision)
-                            .unwrap(),
+                        Duration::from_chrono(
+                            gc_ineligible_time
+                                .difference_as_time_delta(&gc_eligible_time)
+                                .unwrap()
+                                .round_up(&time_precision.to_chrono().unwrap())
+                                .unwrap(),
+                        ),
                     )
                     .unwrap(),
                     AggregationJobState::Active,
@@ -1422,7 +1425,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
@@ -1528,11 +1531,13 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
             (),
             Interval::new(
                 gc_eligible_time,
-                gc_ineligible_time
-                    .difference(&gc_eligible_time)
-                    .unwrap()
-                    .round_up(&time_precision)
-                    .unwrap(),
+                Duration::from_chrono(
+                    gc_ineligible_time
+                        .difference_as_time_delta(&gc_eligible_time)
+                        .unwrap()
+                        .round_up(&time_precision.to_chrono().unwrap())
+                        .unwrap(),
+                ),
             )
             .unwrap(),
             AggregationJobState::Finished,
@@ -2251,7 +2256,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let other_batch_identifier = Interval::new(
         active_batch_identifier
             .start()
-            .add(task.time_precision())
+            .add_duration(task.time_precision())
             .unwrap(),
         *task.time_precision(),
     )
@@ -6379,7 +6384,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         runtime_manager.wait_for_completed_tasks("stepper", i).await;
         // Advance the clock by the lease duration, so that the job driver can pick up the job
         // and try again.
-        clock.advance(&Duration::from_seconds(600));
+        clock.advance(TimeDelta::seconds(600));
     }
     stopper.stop();
     task_handle.await.unwrap();
@@ -6625,7 +6630,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     runtime_manager.wait_for_completed_tasks("stepper", 1).await;
     // Advance the clock by the lease duration, so that the job driver can pick up the job
     // and try again.
-    clock.advance(&Duration::from_seconds(600));
+    clock.advance(TimeDelta::seconds(600));
     stopper.stop();
     task_handle.await.unwrap();
 

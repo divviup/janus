@@ -669,7 +669,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let second_batch_interval_clock = MockClock::new(
         first_batch_interval_clock
             .now()
-            .add(task.time_precision())
+            .add_duration(task.time_precision())
             .unwrap(),
     );
 

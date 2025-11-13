@@ -173,6 +173,7 @@ impl<C: Clock> GarbageCollector<C> {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::garbage_collector::GarbageCollector;
+    use chrono::TimeDelta;
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -187,7 +188,7 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -230,7 +231,8 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = clock.now().sub(&Duration::from_seconds(10)).unwrap();
+                    let client_timestamp =
+                        clock.now().sub_timedelta(&TimeDelta::seconds(10)).unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -295,8 +297,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -398,7 +400,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now_aligned_to_precision(task.time_precision())
-                        .sub(task.time_precision())
+                        .sub_duration(task.time_precision())
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
@@ -486,8 +488,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -590,9 +592,9 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub(&REPORT_EXPIRY_AGE)
+                        .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(10))
+                        .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
@@ -659,8 +661,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);
@@ -770,9 +772,9 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub(&REPORT_EXPIRY_AGE)
+                        .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub(&Duration::from_seconds(10))
+                        .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
@@ -862,8 +864,8 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(&REPORT_EXPIRY_AGE);
-        clock.advance(task.time_precision());
+        clock.advance(REPORT_EXPIRY_AGE.to_chrono().unwrap());
+        clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
         let task = Arc::new(task);

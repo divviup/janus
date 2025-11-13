@@ -3,6 +3,7 @@ use crate::aggregator::{
     test_util::{create_report, create_report_custom, default_aggregator_config},
 };
 use assert_matches::assert_matches;
+use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
@@ -346,7 +347,7 @@ async fn upload_report_in_the_future_boundary_condition() {
         &hpke_keypair,
         clock
             .now()
-            .add(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew())
             .unwrap()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
@@ -404,9 +405,9 @@ async fn upload_report_in_the_future_past_clock_skew() {
         &hpke_keypair,
         clock
             .now()
-            .add(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew())
             .unwrap()
-            .add(&Duration::from_seconds(1))
+            .add_timedelta(&TimeDelta::seconds(1))
             .unwrap(),
     );
 
@@ -554,7 +555,10 @@ async fn upload_report_task_not_started() {
     )
     .with_time_precision(Duration::from_seconds(100))
     .with_task_start(Some(
-        clock.now().add(&Duration::from_seconds(3600)).unwrap(),
+        clock
+            .now()
+            .add_timedelta(&TimeDelta::seconds(3600))
+            .unwrap(),
     ))
     .build()
     .leader_view()
@@ -632,7 +636,7 @@ async fn upload_report_task_ended() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Advance the clock to end the task.
-    clock.advance(task.time_precision());
+    clock.advance(task.time_precision().to_chrono().unwrap());
     // Create a report exactly at the end time
     let report = create_report(&task, &hpke_keypair, task_end_time);
 
@@ -697,7 +701,7 @@ async fn upload_report_unaligned_time() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Ensure the time is unaligned
-    clock.advance(&Duration::from_seconds(100));
+    clock.advance(TimeDelta::seconds(100));
     // Now don't align the report's clock, just take it as-is
     let report = create_report(&task, &hpke_keypair, clock.now());
 
@@ -749,7 +753,7 @@ async fn upload_report_report_expired() {
     );
 
     // Advance the clock to expire the report.
-    clock.advance(&Duration::from_seconds(61));
+    clock.advance(TimeDelta::seconds(61));
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator

@@ -1,6 +1,6 @@
 //! Utilities for timestamps and durations.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
@@ -70,13 +70,13 @@ impl MockClock {
         *current_time = when;
     }
 
-    pub fn advance(&self, dur: &Duration) {
+    pub fn advance(&self, dur: TimeDelta) {
+        assert!(
+            dur.num_seconds() >= 0,
+            "MockClock::advance called with negative TimeDelta (time cannot go backward)"
+        );
         let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time
-            .as_seconds_since_epoch()
-            .checked_add(dur.as_seconds())
-            .map(Time::from_seconds_since_epoch)
-            .unwrap();
+        *current_time = current_time.add_timedelta(&dur).unwrap();
     }
 }
 
@@ -99,113 +99,151 @@ impl Default for MockClock {
 /// Number of microseconds per second.
 const USEC_PER_SEC: u64 = 1_000_000;
 
-/// Extension methods on [`Duration`].
+/// Extension methods on [`Duration`] for working with DAP time precision validation.
 pub trait DurationExt: Sized {
-    /// Convert this [`Duration`] into a [`chrono::Duration`].
-    fn as_chrono_duration(&self) -> Result<chrono::Duration, Error>;
-
-    /// Add this duration with another duration.
-    fn add(&self, duration: &Duration) -> Result<Self, Error>;
-
-    /// Create a duration from a number of microseconds. The time will be rounded down to the next
-    /// second.
-    fn from_microseconds(microseconds: u64) -> Self;
-
-    /// Get the number of microseconds this duration represents. Note that the precision of this
-    /// type is one second, so this method will always return a multiple of 1,000,000 microseconds.
-    fn as_microseconds(&self) -> Result<u64, Error>;
-
-    /// Create a duration representing the provided number of minutes.
-    fn from_minutes(minutes: u64) -> Result<Self, Error>;
-
-    /// Create a duration representing the provided number of hours.
-    fn from_hours(hours: u64) -> Result<Self, Error>;
-
-    /// Return a duration representing this duration rounded up to the next largest multiple of
-    /// `time_precision`, or the same duration if it already a multiple.
-    fn round_up(&self, time_precision: &Duration) -> Result<Self, Error>;
-
     /// Confirm that this duration is a multiple of the task time precision.
     fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error>;
 }
 
 impl DurationExt for Duration {
-    fn as_chrono_duration(&self) -> Result<chrono::Duration, Error> {
-        chrono::Duration::try_seconds(
-            self.as_seconds()
-                .try_into()
-                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
-        )
-        .ok_or(Error::IllegalTimeArithmetic(
-            "number of milliseconds too big for i64",
-        ))
-    }
-
-    fn add(&self, other: &Duration) -> Result<Self, Error> {
-        self.as_seconds()
-            .checked_add(other.as_seconds())
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-            .map(Duration::from_seconds)
-    }
-
-    fn from_microseconds(microseconds: u64) -> Self {
-        Self::from_seconds(microseconds / USEC_PER_SEC)
-    }
-
-    fn as_microseconds(&self) -> Result<u64, Error> {
-        self.as_seconds()
-            .checked_mul(USEC_PER_SEC)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn from_minutes(minutes: u64) -> Result<Self, Error> {
-        60u64
-            .checked_mul(minutes)
-            .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn from_hours(hours: u64) -> Result<Self, Error> {
-        3600u64
-            .checked_mul(hours)
-            .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn round_up(&self, time_precision: &Duration) -> Result<Self, Error> {
-        let rem = self
-            .as_seconds()
-            .checked_rem(time_precision.as_seconds())
-            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
-                "remainder would overflow/underflow",
-            ))?;
-
-        // self is already aligned
-        if rem == 0 {
-            return Ok(*self);
-        }
-
-        let rem_inv = Self::from_seconds(time_precision.as_seconds().checked_sub(rem).ok_or(
-            Error::IllegalTimeArithmetic("difference cannot be represented as u64"),
-        )?);
-
-        self.add(&rem_inv)
-    }
-
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error> {
         let is_multiple_of_time_precision = self
             .as_seconds()
             .checked_rem(time_precision.as_seconds())
-            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
-                "remainder cannot be zero",
-            ))
+            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
             .is_ok_and(|rem| rem == 0);
 
         if is_multiple_of_time_precision {
             Ok(self)
         } else {
-            Err(janus_messages::Error::InvalidParameter(
+            Err(Error::InvalidParameter(
                 "duration is not a multiple of the time precision",
+            ))
+        }
+    }
+}
+
+/// Extension methods on [`chrono::TimeDelta`] for working with DAP durations.
+pub trait TimeDeltaExt: Sized {
+    /// Add two [`chrono::TimeDelta`] values.
+    fn add(&self, other: &TimeDelta) -> Result<TimeDelta, Error>;
+
+    /// Create a [`chrono::TimeDelta`] from a number of microseconds.
+    fn from_microseconds(microseconds: u64) -> TimeDelta;
+
+    /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second precision.
+    fn as_microseconds(&self) -> Result<u64, Error>;
+
+    /// Create a [`chrono::TimeDelta`] representing the provided number of minutes.
+    fn from_minutes(minutes: u64) -> Result<TimeDelta, Error>;
+
+    /// Create a [`chrono::TimeDelta`] representing the provided number of hours.
+    fn from_hours(hours: u64) -> Result<TimeDelta, Error>;
+
+    /// Create a [`chrono::TimeDelta`] from an unsigned number of seconds.
+    ///
+    /// This is a convenience method that safely converts u64 seconds to i64,
+    /// returning an error if the value is too large to represent.
+    fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error>;
+
+    /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next largest multiple of
+    /// `time_precision`, or the same time delta if it's already a multiple.
+    fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error>;
+
+    /// Confirm that this time delta is a multiple of the task time precision.
+    fn validate_precision(self, time_precision: &TimeDelta) -> Result<Self, Error>;
+}
+
+impl TimeDeltaExt for TimeDelta {
+    fn add(&self, other: &TimeDelta) -> Result<TimeDelta, Error> {
+        self.checked_add(other)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn from_microseconds(microseconds: u64) -> TimeDelta {
+        TimeDelta::microseconds((microseconds as i64).max(0))
+    }
+
+    fn as_microseconds(&self) -> Result<u64, Error> {
+        u64::try_from(self.num_seconds())
+            .map_err(|_| Error::IllegalTimeArithmetic("time delta is negative or too large"))?
+            .checked_mul(USEC_PER_SEC)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn from_minutes(minutes: u64) -> Result<TimeDelta, Error> {
+        60i64
+            .checked_mul(
+                minutes
+                    .try_into()
+                    .map_err(|_| Error::IllegalTimeArithmetic("minutes value too large"))?,
+            )
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+            .map(TimeDelta::try_seconds)?
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn from_hours(hours: u64) -> Result<TimeDelta, Error> {
+        let seconds: i64 = 3600i64
+            .checked_mul(
+                hours
+                    .try_into()
+                    .map_err(|_| Error::IllegalTimeArithmetic("hours value too large"))?,
+            )
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
+        TimeDelta::try_seconds(seconds)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error> {
+        let seconds_i64: i64 = seconds
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("seconds value too large for i64"))?;
+        TimeDelta::try_seconds(seconds_i64)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error> {
+        let rem = self
+            .num_seconds()
+            .checked_rem(time_precision.num_seconds())
+            .ok_or(Error::IllegalTimeArithmetic(
+                "remainder would overflow/underflow",
+            ))?;
+
+        // time delta is already aligned
+        if rem == 0 {
+            return Ok(*self);
+        }
+
+        let rem_inv =
+            time_precision
+                .num_seconds()
+                .checked_sub(rem)
+                .ok_or(Error::IllegalTimeArithmetic(
+                    "difference cannot be represented as u64",
+                ))?;
+
+        TimeDelta::try_seconds(
+            self.num_seconds()
+                .checked_add(rem_inv)
+                .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn validate_precision(self, time_precision: &TimeDelta) -> Result<Self, Error> {
+        let is_multiple_of_time_precision = self
+            .num_seconds()
+            .checked_rem(time_precision.num_seconds())
+            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
+            .is_ok_and(|rem| rem == 0);
+
+        if is_multiple_of_time_precision {
+            Ok(self)
+        } else {
+            Err(Error::InvalidParameter(
+                "time delta is not a multiple of the time precision",
             ))
         }
     }
@@ -229,13 +267,18 @@ pub trait TimeExt: Sized {
     fn from_naive_date_time(time: &NaiveDateTime) -> Self;
 
     /// Add the provided duration to this time.
-    fn add(&self, duration: &Duration) -> Result<Self, Error>;
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
+
+    /// Subtract the provided timedelta from this time.
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
+    /// Add the provided duration to this time.
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Subtract the provided duration from this time.
-    fn sub(&self, duration: &Duration) -> Result<Self, Error>;
+    fn sub_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
-    fn difference(&self, other: &Self) -> Result<Duration, Error>;
+    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error>;
 
     /// Get the difference between the provided `other` and `self` using saturating arithmetic. If
     /// `self` is before `other`, the result is zero.
@@ -303,25 +346,54 @@ impl TimeExt for Time {
         Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64)
     }
 
-    fn add(&self, duration: &Duration) -> Result<Self, Error> {
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+        let seconds: u64 = timedelta
+            .num_seconds()
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
         self.as_seconds_since_epoch()
-            .checked_add(duration.as_seconds())
+            .checked_add(seconds)
             .map(Self::from_seconds_since_epoch)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn sub(&self, duration: &Duration) -> Result<Self, Error> {
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+        let seconds: u64 = timedelta
+            .num_seconds()
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
         self.as_seconds_since_epoch()
-            .checked_sub(duration.as_seconds())
+            .checked_sub(seconds)
             .map(Self::from_seconds_since_epoch)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
-    fn difference(&self, other: &Self) -> Result<Duration, Error> {
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
         self.as_seconds_since_epoch()
-            .checked_sub(other.as_seconds_since_epoch())
-            .map(Duration::from_seconds)
+            .checked_add(seconds)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn sub_duration(&self, duration: &Duration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
+        self.as_seconds_since_epoch()
+            .checked_sub(seconds)
+            .map(Self::from_seconds_since_epoch)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error> {
+        let diff = self
+            .as_seconds_since_epoch()
+            .checked_sub(other.as_seconds_since_epoch())
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
+        let diff_i64: i64 = diff
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("difference too large"))?;
+        TimeDelta::try_seconds(diff_i64)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
     fn saturating_difference(&self, other: &Self) -> Duration {
@@ -361,8 +433,8 @@ pub trait IntervalExt: Sized {
 
 impl IntervalExt for Interval {
     fn end(&self) -> Time {
-        // [`Self::new`] verified that this addition doesn't overflow.
-        self.start().add(self.duration()).unwrap()
+        // Unwrap safety: [`Self::new`] verified that this addition doesn't overflow.
+        self.start().add_duration(self.duration()).unwrap()
     }
 
     fn merge(&self, other: &Self) -> Result<Self, Error> {
@@ -376,8 +448,8 @@ impl IntervalExt for Interval {
         let max_time = std::cmp::max(self.end(), other.end());
         let min_time = std::cmp::min(self.start(), other.start());
 
-        // This can't actually fail for any valid Intervals
-        Self::new(*min_time, max_time.difference(min_time)?)
+        let diff = max_time.difference_as_time_delta(min_time)?;
+        Self::new(*min_time, Duration::from_chrono(diff))
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
@@ -388,14 +460,18 @@ impl IntervalExt for Interval {
         // Round the interval start *down* to the time precision
         let aligned_start = self.start().to_batch_interval_start(time_precision)?;
         // Round the interval duration *up* to the time precision
-        let aligned_duration = self.duration().round_up(time_precision)?;
+        let duration_td = self.duration().to_chrono()?;
+        let precision_td = time_precision.to_chrono()?;
+        let aligned_duration_td = duration_td.round_up(&precision_td)?;
+        let aligned_duration = Duration::from_chrono(aligned_duration_td);
 
         let aligned_interval = Self::new(aligned_start, aligned_duration)?;
 
         // Rounding the start down may have shifted the interval far enough to exclude the previous
         // interval's end. Extend the duration by time_precision if necessary.
         if self.end().is_after(&aligned_interval.end()) {
-            let padded_duration = aligned_duration.add(time_precision)?;
+            let padded_duration_td = aligned_duration_td.add(&precision_td)?;
+            let padded_duration = Duration::from_chrono(padded_duration_td);
             Self::new(aligned_start, padded_duration)
         } else {
             Ok(aligned_interval)
@@ -411,7 +487,8 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt};
+    use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
+    use chrono::TimeDelta;
     use janus_messages::{Duration, Interval, Time};
 
     #[test]
@@ -421,11 +498,12 @@ mod tests {
             ("zero time precision", 100, 0, None),
             ("rounded up", 50, 100, Some(100)),
         ] {
-            let result =
-                Duration::from_seconds(duration).round_up(&Duration::from_seconds(time_precision));
+            let duration_td = TimeDelta::seconds(duration);
+            let precision_td = TimeDelta::seconds(time_precision);
+            let result = duration_td.round_up(&precision_td);
             match expected {
                 Some(expected) => {
-                    assert_eq!(Duration::from_seconds(expected), result.unwrap(), "{label}",)
+                    assert_eq!(expected, result.unwrap().num_seconds(), "{label}",)
                 }
                 None => assert!(result.is_err(), "{label}"),
             }

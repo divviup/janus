@@ -7,6 +7,7 @@ use crate::{
     },
     initialize_rustls,
 };
+use chrono::TimeDelta;
 use chrono::prelude::*;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
@@ -24,7 +25,6 @@ use janus_core::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
     },
-    time::DurationExt,
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_integration_tests::{TaskParameters, client::ClientBackend};
@@ -646,7 +646,7 @@ async fn in_cluster_time_bucketed_leader_selected() {
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
+            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
         },
     )
     .await;
@@ -944,7 +944,7 @@ async fn in_cluster_histogram_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
+            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
         },
     )
     .await;
@@ -1017,7 +1017,7 @@ async fn in_cluster_sumvec_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_hours(8).unwrap()),
+            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
         },
     )
     .await;
