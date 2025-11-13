@@ -1,6 +1,6 @@
 //! Utilities for timestamps and durations.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
@@ -70,7 +70,7 @@ impl MockClock {
         *current_time = when;
     }
 
-    pub fn advance(&self, dur: chrono::TimeDelta) {
+    pub fn advance(&self, dur: TimeDelta) {
         assert!(
             dur.num_seconds() >= 0,
             "MockClock::advance called with negative TimeDelta (time cannot go backward)"
@@ -126,42 +126,42 @@ impl DurationExt for Duration {
 /// Extension methods on [`chrono::TimeDelta`] for working with DAP durations.
 pub trait TimeDeltaExt: Sized {
     /// Add two [`chrono::TimeDelta`] values.
-    fn add(&self, other: &chrono::TimeDelta) -> Result<chrono::TimeDelta, Error>;
+    fn add(&self, other: &TimeDelta) -> Result<TimeDelta, Error>;
 
     /// Create a [`chrono::TimeDelta`] from a number of microseconds.
-    fn from_microseconds(microseconds: u64) -> chrono::TimeDelta;
+    fn from_microseconds(microseconds: u64) -> TimeDelta;
 
     /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second precision.
     fn as_microseconds(&self) -> Result<u64, Error>;
 
     /// Create a [`chrono::TimeDelta`] representing the provided number of minutes.
-    fn from_minutes(minutes: u64) -> Result<chrono::TimeDelta, Error>;
+    fn from_minutes(minutes: u64) -> Result<TimeDelta, Error>;
 
     /// Create a [`chrono::TimeDelta`] representing the provided number of hours.
-    fn from_hours(hours: u64) -> Result<chrono::TimeDelta, Error>;
+    fn from_hours(hours: u64) -> Result<TimeDelta, Error>;
 
     /// Create a [`chrono::TimeDelta`] from an unsigned number of seconds.
     ///
     /// This is a convenience method that safely converts u64 seconds to i64,
     /// returning an error if the value is too large to represent.
-    fn try_seconds_unsigned(seconds: u64) -> Result<chrono::TimeDelta, Error>;
+    fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error>;
 
     /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next largest multiple of
     /// `time_precision`, or the same time delta if it's already a multiple.
-    fn round_up(&self, time_precision: &chrono::TimeDelta) -> Result<chrono::TimeDelta, Error>;
+    fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error>;
 
     /// Confirm that this time delta is a multiple of the task time precision.
-    fn validate_precision(self, time_precision: &chrono::TimeDelta) -> Result<Self, Error>;
+    fn validate_precision(self, time_precision: &TimeDelta) -> Result<Self, Error>;
 }
 
-impl TimeDeltaExt for chrono::TimeDelta {
-    fn add(&self, other: &chrono::TimeDelta) -> Result<chrono::TimeDelta, Error> {
+impl TimeDeltaExt for TimeDelta {
+    fn add(&self, other: &TimeDelta) -> Result<TimeDelta, Error> {
         self.checked_add(other)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn from_microseconds(microseconds: u64) -> chrono::TimeDelta {
-        chrono::TimeDelta::microseconds((microseconds as i64).max(0))
+    fn from_microseconds(microseconds: u64) -> TimeDelta {
+        TimeDelta::microseconds((microseconds as i64).max(0))
     }
 
     fn as_microseconds(&self) -> Result<u64, Error> {
@@ -171,7 +171,7 @@ impl TimeDeltaExt for chrono::TimeDelta {
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn from_minutes(minutes: u64) -> Result<chrono::TimeDelta, Error> {
+    fn from_minutes(minutes: u64) -> Result<TimeDelta, Error> {
         60i64
             .checked_mul(
                 minutes
@@ -179,11 +179,11 @@ impl TimeDeltaExt for chrono::TimeDelta {
                     .map_err(|_| Error::IllegalTimeArithmetic("minutes value too large"))?,
             )
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-            .map(chrono::TimeDelta::try_seconds)?
+            .map(TimeDelta::try_seconds)?
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn from_hours(hours: u64) -> Result<chrono::TimeDelta, Error> {
+    fn from_hours(hours: u64) -> Result<TimeDelta, Error> {
         let seconds: i64 = 3600i64
             .checked_mul(
                 hours
@@ -191,19 +191,19 @@ impl TimeDeltaExt for chrono::TimeDelta {
                     .map_err(|_| Error::IllegalTimeArithmetic("hours value too large"))?,
             )
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
-        chrono::TimeDelta::try_seconds(seconds)
+        TimeDelta::try_seconds(seconds)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn try_seconds_unsigned(seconds: u64) -> Result<chrono::TimeDelta, Error> {
+    fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error> {
         let seconds_i64: i64 = seconds
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("seconds value too large for i64"))?;
-        chrono::TimeDelta::try_seconds(seconds_i64)
+        TimeDelta::try_seconds(seconds_i64)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn round_up(&self, time_precision: &chrono::TimeDelta) -> Result<chrono::TimeDelta, Error> {
+    fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error> {
         let rem = self
             .num_seconds()
             .checked_rem(time_precision.num_seconds())
@@ -224,7 +224,7 @@ impl TimeDeltaExt for chrono::TimeDelta {
                     "difference cannot be represented as u64",
                 ))?;
 
-        chrono::TimeDelta::try_seconds(
+        TimeDelta::try_seconds(
             self.num_seconds()
                 .checked_add(rem_inv)
                 .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?,
@@ -232,7 +232,7 @@ impl TimeDeltaExt for chrono::TimeDelta {
         .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn validate_precision(self, time_precision: &chrono::TimeDelta) -> Result<Self, Error> {
+    fn validate_precision(self, time_precision: &TimeDelta) -> Result<Self, Error> {
         let is_multiple_of_time_precision = self
             .num_seconds()
             .checked_rem(time_precision.num_seconds())
@@ -267,10 +267,10 @@ pub trait TimeExt: Sized {
     fn from_naive_date_time(time: &NaiveDateTime) -> Self;
 
     /// Add the provided duration to this time.
-    fn add_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error>;
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
 
     /// Subtract the provided timedelta from this time.
-    fn sub_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error>;
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
     /// Add the provided duration to this time.
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
@@ -278,7 +278,7 @@ pub trait TimeExt: Sized {
     fn sub_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
-    fn difference_as_time_delta(&self, other: &Self) -> Result<chrono::TimeDelta, Error>;
+    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error>;
 
     /// Get the difference between the provided `other` and `self` using saturating arithmetic. If
     /// `self` is before `other`, the result is zero.
@@ -346,7 +346,7 @@ impl TimeExt for Time {
         Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64)
     }
 
-    fn add_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error> {
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
         let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
@@ -357,7 +357,7 @@ impl TimeExt for Time {
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn sub_timedelta(&self, timedelta: &chrono::TimeDelta) -> Result<Self, Error> {
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
         let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
@@ -384,7 +384,7 @@ impl TimeExt for Time {
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
-    fn difference_as_time_delta(&self, other: &Self) -> Result<chrono::TimeDelta, Error> {
+    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error> {
         let diff = self
             .as_seconds_since_epoch()
             .checked_sub(other.as_seconds_since_epoch())
@@ -392,7 +392,7 @@ impl TimeExt for Time {
         let diff_i64: i64 = diff
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("difference too large"))?;
-        chrono::TimeDelta::try_seconds(diff_i64)
+        TimeDelta::try_seconds(diff_i64)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
@@ -489,6 +489,7 @@ impl IntervalExt for Interval {
 #[cfg(test)]
 mod tests {
     use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
+    use chrono::TimeDelta;
     use janus_messages::{Duration, Interval, Time};
 
     #[test]
@@ -498,8 +499,8 @@ mod tests {
             ("zero time precision", 100, 0, None),
             ("rounded up", 50, 100, Some(100)),
         ] {
-            let duration_td = chrono::TimeDelta::try_seconds(duration).unwrap();
-            let precision_td = chrono::TimeDelta::try_seconds(time_precision).unwrap();
+            let duration_td = TimeDelta::seconds(duration);
+            let precision_td = TimeDelta::seconds(time_precision);
             let result = duration_td.round_up(&precision_td);
             match expected {
                 Some(expected) => {

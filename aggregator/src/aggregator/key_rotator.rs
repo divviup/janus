@@ -499,11 +499,7 @@ impl Arbitrary for HpkeKeyRotatorConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
-
+    use chrono::TimeDelta;
     use itertools::Itertools;
     use janus_aggregator_core::datastore::{
         Datastore,
@@ -518,6 +514,10 @@ mod tests {
     use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
     use quickcheck::{Arbitrary, Gen, TestResult};
     use quickcheck_macros::quickcheck;
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
 
     use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator, duration_since};
 
@@ -578,7 +578,7 @@ mod tests {
         assert_state(&keypairs, HpkeKeyState::Active);
 
         // Advance the clock only a little, no action should be taken.
-        clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
+        clock.advance(TimeDelta::seconds(1));
         key_rotator.run().await.unwrap();
         let keypairs = get_hpke_keypairs(&ds).await;
         assert_eq!(keypairs.len(), 2);
@@ -591,7 +591,7 @@ mod tests {
                 active_duration
                     .to_chrono()
                     .unwrap()
-                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .add(&TimeDelta::seconds(1))
                     .unwrap(),
             );
             key_rotator.run().await.unwrap();
@@ -601,7 +601,7 @@ mod tests {
             assert_state(&keypairs, HpkeKeyState::Pending);
 
             // Advance the clock only a little, no action should be taken.
-            clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
+            clock.advance(TimeDelta::seconds(1));
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -614,7 +614,7 @@ mod tests {
                 pending_duration
                     .to_chrono()
                     .unwrap()
-                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .add(&TimeDelta::seconds(1))
                     .unwrap(),
             );
             key_rotator.run().await.unwrap();
@@ -624,7 +624,7 @@ mod tests {
             assert_state(&keypairs, HpkeKeyState::Expired);
 
             // Advance the clock only a little, no action should be taken.
-            clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
+            clock.advance(TimeDelta::seconds(1));
             key_rotator.run().await.unwrap();
             let keypairs = get_hpke_keypairs(&ds).await;
             assert_eq!(keypairs.len(), 4);
@@ -636,7 +636,7 @@ mod tests {
                 expired_duration
                     .to_chrono()
                     .unwrap()
-                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())
+                    .add(&TimeDelta::seconds(1))
                     .unwrap(),
             );
             key_rotator.run().await.unwrap();

@@ -651,6 +651,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use chrono::TimeDelta;
     use http::StatusCode;
     use janus_aggregator_core::{
         AsyncAggregator,
@@ -1281,7 +1282,7 @@ mod tests {
         let clock = MockClock::default();
         let task_start_time = clock
             .now_aligned_to_precision(&Duration::from_seconds(100))
-            .sub_timedelta(&chrono::TimeDelta::try_seconds(1000_i64).unwrap())
+            .sub_timedelta(&TimeDelta::seconds(1000))
             .unwrap();
 
         let task = TaskBuilder::new(

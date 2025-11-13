@@ -1,6 +1,7 @@
 //! In-memory data structure to incrementally build leader-selected batches.
 
 use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
+use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -380,7 +381,7 @@ where
             Duration::from_chrono(
                 max_client_timestamp
                     .difference_as_time_delta(&min_client_timestamp)?
-                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
+                    .add(&TimeDelta::seconds(1))?
                     .round_up(&time_precision.to_chrono()?)?,
             ),
         )?;

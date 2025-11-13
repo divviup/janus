@@ -9,6 +9,7 @@ use crate::{
     },
     metrics::test_util::InMemoryMetricInfrastructure,
 };
+use chrono::TimeDelta;
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
     task::{AggregationMode, BatchMode, test_util::TaskBuilder},
@@ -209,9 +210,7 @@ async fn upload_handler() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub_timedelta(
-                    &chrono::TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap(),
-                )
+                .sub_timedelta(&TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap())
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
         ),
@@ -482,7 +481,7 @@ async fn upload_handler() {
     );
 
     // Reports with duplicate extensions must be rejected
-    clock.advance(chrono::TimeDelta::try_seconds(1).unwrap());
+    clock.advance(TimeDelta::seconds(1));
     let dupe_ext_report = create_report_custom(
         &leader_task,
         clock.now_aligned_to_precision(task.time_precision()),

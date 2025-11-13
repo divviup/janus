@@ -13,6 +13,7 @@ use crate::{
     cache::HpkeKeypairCache,
 };
 use assert_matches::assert_matches;
+use chrono::TimeDelta;
 use futures::future::join_all;
 use http::{StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
@@ -1255,9 +1256,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let leader_task = task.leader_view().unwrap();
 
     let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .sub_timedelta(
-            &chrono::TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap(),
-        )
+        .sub_timedelta(&TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap())
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -1266,9 +1265,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time, Vec::new());
 
     let gc_ineligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
-        .add_timedelta(
-            &chrono::TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap(),
-        )
+        .add_timedelta(&TimeDelta::try_seconds_unsigned(3 * TIME_PRECISION.as_seconds()).unwrap())
         .unwrap()
         .to_batch_interval_start(&TIME_PRECISION)
         .unwrap();
@@ -6387,7 +6384,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
         runtime_manager.wait_for_completed_tasks("stepper", i).await;
         // Advance the clock by the lease duration, so that the job driver can pick up the job
         // and try again.
-        clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
+        clock.advance(TimeDelta::seconds(600));
     }
     stopper.stop();
     task_handle.await.unwrap();
@@ -6633,7 +6630,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     runtime_manager.wait_for_completed_tasks("stepper", 1).await;
     // Advance the clock by the lease duration, so that the job driver can pick up the job
     // and try again.
-    clock.advance(chrono::TimeDelta::try_seconds(600).unwrap());
+    clock.advance(TimeDelta::seconds(600));
     stopper.stop();
     task_handle.await.unwrap();
 

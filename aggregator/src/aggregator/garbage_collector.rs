@@ -173,6 +173,7 @@ impl<C: Clock> GarbageCollector<C> {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::garbage_collector::GarbageCollector;
+    use chrono::TimeDelta;
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -230,10 +231,8 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = clock
-                        .now()
-                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
-                        .unwrap();
+                    let client_timestamp =
+                        clock.now().sub_timedelta(&TimeDelta::seconds(10)).unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -595,7 +594,7 @@ mod tests {
                         .now()
                         .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
+                        .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
@@ -775,7 +774,7 @@ mod tests {
                         .now()
                         .sub_duration(&REPORT_EXPIRY_AGE)
                         .unwrap()
-                        .sub_timedelta(&chrono::TimeDelta::try_seconds(10_i64).unwrap())
+                        .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),

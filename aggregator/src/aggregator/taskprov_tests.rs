@@ -8,6 +8,7 @@ use crate::{
 };
 use assert_matches::assert_matches;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::TimeDelta;
 use janus_aggregator_core::{
     AsyncAggregator,
     datastore::{
@@ -578,8 +579,7 @@ async fn taskprov_opt_out_task_ended_regression() {
     let aggregation_job_id: AggregationJobId = random();
 
     // Advance clock past task end time.
-    test.clock
-        .advance(chrono::TimeDelta::try_hours(48).unwrap());
+    test.clock.advance(TimeDelta::hours(48));
 
     let test_conn = put(test
         .task

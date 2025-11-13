@@ -7,6 +7,7 @@ use crate::{
     task::AggregatorTask,
 };
 use async_trait::async_trait;
+use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeDeltaExt as _, TimeExt as _};
 use janus_messages::{
@@ -371,10 +372,8 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         let interval = Interval::new(
             self.start
                 .add_timedelta(
-                    &chrono::TimeDelta::try_seconds_unsigned(
-                        self.step * self.time_precision.as_seconds(),
-                    )
-                    .unwrap(),
+                    &TimeDelta::try_seconds_unsigned(self.step * self.time_precision.as_seconds())
+                        .unwrap(),
                 )
                 .unwrap(),
             self.time_precision,

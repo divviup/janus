@@ -1378,6 +1378,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use chrono::TimeDelta;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         test_util::roundtrip_encoding,
@@ -1851,9 +1852,7 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                batch_time_window_size: Some(Duration::from_chrono(
-                    chrono::TimeDelta::try_hours(1).unwrap(),
-                )),
+                batch_time_window_size: Some(Duration::from_chrono(TimeDelta::hours(1))),
             },
             &[
                 Token::StructVariant {

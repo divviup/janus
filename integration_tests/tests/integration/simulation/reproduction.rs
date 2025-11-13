@@ -270,9 +270,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
                 amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME
-                    .add_timedelta(&chrono::TimeDelta::try_seconds(3600_i64).unwrap())
-                    .unwrap(),
+                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(3600)).unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -314,9 +312,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
                 amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME
-                    .add_timedelta(&chrono::TimeDelta::try_seconds(3600_i64).unwrap())
-                    .unwrap(),
+                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(3600)).unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -358,9 +354,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
                 amount: TimeDelta::seconds(2000),
             },
             Op::Upload {
-                report_time: START_TIME
-                    .add_timedelta(&chrono::TimeDelta::try_seconds(2000_i64).unwrap())
-                    .unwrap(),
+                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(2000)).unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,

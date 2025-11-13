@@ -36,6 +36,7 @@ use aws_lc_rs::{
 };
 use backon::BackoffBuilder;
 use bytes::Bytes;
+use chrono::TimeDelta;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     FixedI16, FixedI32,
@@ -2168,7 +2169,7 @@ impl VdafOps {
             Duration::from_chrono(
                 max_client_timestamp
                     .difference_as_time_delta(&min_client_timestamp)?
-                    .add(&chrono::TimeDelta::try_seconds(1).unwrap())?
+                    .add(&TimeDelta::seconds(1))?
                     .round_up(&task.time_precision().to_chrono()?)?,
             ),
         )?;
