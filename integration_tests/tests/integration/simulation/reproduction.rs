@@ -1,7 +1,7 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
-use janus_messages::{Duration, Interval, Time};
+use janus_messages::{Duration, Interval, TaskDuration, Time};
 use rand::random;
 
 use crate::simulation::{
@@ -19,7 +19,7 @@ fn successful_collection_time_interval() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(3600),
+            time_precision: TaskDuration::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
@@ -53,7 +53,7 @@ fn successful_collection_time_interval() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
@@ -71,7 +71,7 @@ fn successful_collection_time_interval() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
@@ -94,7 +94,7 @@ fn successful_collection_leader_selected() {
     let input = Input {
         is_leader_selected: true,
         config: Config {
-            time_precision: Duration::from_seconds(3600),
+            time_precision: TaskDuration::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
@@ -157,7 +157,7 @@ fn successful_collection_asynchronous() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(3600),
+            time_precision: TaskDuration::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
@@ -206,7 +206,7 @@ fn successful_collection_asynchronous() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
@@ -229,7 +229,7 @@ fn successful_collection_asynchronous() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1_699_999_200),
                         Duration::from_seconds(3600),
                     )
@@ -252,7 +252,7 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(3600),
+            time_precision: TaskDuration::from_seconds(3600),
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
@@ -294,7 +294,7 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
     let input = Input {
         is_leader_selected: true,
         config: Config {
-            time_precision: Duration::from_seconds(3600),
+            time_precision: TaskDuration::from_seconds(3600),
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(7200)),
@@ -336,7 +336,7 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(1000),
+            time_precision: TaskDuration::from_seconds(1000),
             min_batch_size: 100,
             batch_time_window_size: None,
             report_expiry_age: Some(Duration::from_seconds(4000)),
@@ -377,7 +377,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(1000),
+            time_precision: TaskDuration::from_seconds(1000),
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
@@ -410,7 +410,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new(START_TIME, Duration::from_seconds(1000)).unwrap(),
+                    Interval::new_with_duration(START_TIME, Duration::from_seconds(1000)).unwrap(),
                 ),
             },
             Op::CollectionJobDriver,
@@ -428,7 +428,7 @@ fn repro_helper_accumulate_on_retried_request() {
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: Duration::from_seconds(1000),
+            time_precision: TaskDuration::from_seconds(1000),
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
@@ -451,7 +451,7 @@ fn repro_helper_accumulate_on_retried_request() {
             Op::CollectorStart {
                 collection_job_id: random(),
                 query: Query::TimeInterval(
-                    Interval::new(START_TIME, Duration::from_seconds(1000)).unwrap(),
+                    Interval::new_with_duration(START_TIME, Duration::from_seconds(1000)).unwrap(),
                 ),
             },
             Op::CollectionJobDriver,

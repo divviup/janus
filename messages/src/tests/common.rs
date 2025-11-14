@@ -54,7 +54,7 @@ fn roundtrip_time() {
 
 #[test]
 fn roundtrip_interval() {
-    Interval::new(
+    Interval::new_with_duration(
         Time::from_seconds_since_epoch(1),
         Duration::from_seconds(u64::MAX),
     )

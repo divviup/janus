@@ -36,7 +36,7 @@ use janus_messages::{
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
     PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskDuration, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_types::Timestamp;
@@ -68,7 +68,7 @@ use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: TimeDelta = TimeDelta::try_seconds(1000).unwrap();
-const TIME_PRECISION: Duration = Duration::from_seconds(100);
+const TIME_PRECISION: TaskDuration = TaskDuration::from_seconds(100);
 
 #[test]
 fn check_supported_versions() {
@@ -511,7 +511,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(report_expiry_age)))
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TaskDuration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -718,7 +718,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     let expired_report = LeaderStoredReport::new_dummy(
         *task.id(),
         OLDEST_ALLOWED_REPORT_TIMESTAMP
-            .sub_duration(&TIME_PRECISION)
+            .sub_duration(&TIME_PRECISION.into())
             .unwrap(),
     );
     let aggregated_report =
@@ -924,7 +924,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TaskDuration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -933,7 +933,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TaskDuration::from_seconds(100))
     .build()
     .leader_view()
     .unwrap();
@@ -981,11 +981,18 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8),
+                    )
+                    .unwrap(),
                 ),
                 dummy::AggregationParam(255),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_hours(8),
+                )
+                .unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await
@@ -1020,11 +1027,18 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8),
+                    )
+                    .unwrap(),
                 ),
                 dummy::AggregationParam(0),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_hours(8),
+                )
+                .unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await?;
@@ -1033,11 +1047,18 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8),
+                    )
+                    .unwrap(),
                 ),
                 dummy::AggregationParam(1),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_hours(8),
+                )
+                .unwrap(),
                 CollectionJobState::<0, dummy::Vdaf>::Start,
             ))
             .await?;
@@ -1048,14 +1069,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(8 * 3600),
                         Duration::from_hours(8),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(2),
-                Interval::new(
+                Interval::new_with_duration(
                     Time::from_seconds_since_epoch(8 * 3600),
                     Duration::from_hours(8),
                 )
@@ -1139,11 +1160,18 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(16),
+                    )
+                    .unwrap(),
                 ),
                 dummy::AggregationParam(0),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16)).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_hours(16),
+                )
+                .unwrap(),
                 CollectionJobState::Start,
             ))
             .await?;
@@ -1152,11 +1180,18 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 random(),
                 Query::<TimeInterval>::new(
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(16),
+                    )
+                    .unwrap(),
                 ),
                 dummy::AggregationParam(1),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(16)).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_hours(16),
+                )
+                .unwrap(),
                 CollectionJobState::Start,
             ))
             .await?;
@@ -1201,7 +1236,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1210,7 +1245,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1219,7 +1254,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1293,7 +1328,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
                 let report_count = tx
                     .count_client_reports_for_interval(
                         task.id(),
-                        &Interval::new(
+                        &Interval::new_with_duration(
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub_timedelta(&TimeDelta::seconds(1))
                                 .unwrap(),
@@ -1307,7 +1342,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
                 let no_reports_task_report_count = tx
                     .count_client_reports_for_interval(
                         no_reports_task.id(),
-                        &Interval::new(
+                        &Interval::new_with_duration(
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
                                 .sub_timedelta(&TimeDelta::seconds(1))
                                 .unwrap(),
@@ -1343,7 +1378,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1354,7 +1389,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -1391,7 +1426,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     random(),
                     dummy::AggregationParam(22),
                     batch_id,
-                    Interval::new(
+                    Interval::new_with_duration(
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub_timedelta(&TimeDelta::seconds(2))
                             .unwrap(),
@@ -1409,8 +1444,11 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     random(),
                     dummy::AggregationParam(22),
                     batch_id,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(2))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(2),
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 );
@@ -1915,7 +1953,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     const AGGREGATION_JOB_COUNT: usize = 10;
-    const TIME_PRECISION: Duration = Duration::from_seconds(200);
+    const TIME_PRECISION: TaskDuration = TaskDuration::from_seconds(200);
     let leader_task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -2487,8 +2525,11 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
                         random(),
                         (),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Interval::new_with_duration(
+                            Time::from_seconds_since_epoch(0),
+                            Duration::from_seconds(1),
+                        )
+                        .unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ),
@@ -2740,7 +2781,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             VdafInstance::Fake { rounds: 2 },
         )
         .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-        .with_time_precision(Duration::from_seconds(100))
+        .with_time_precision(TaskDuration::from_seconds(100))
         .build()
         .view_for_role(role)
         .unwrap();
@@ -3034,7 +3075,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
         VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .helper_view()
     .unwrap();
@@ -3052,8 +3093,11 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -3206,7 +3250,7 @@ async fn create_report_aggregation_from_client_reports_table(
         VdafInstance::Fake { rounds: 2 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -3216,7 +3260,8 @@ async fn create_report_aggregation_from_client_reports_table(
         random(),
         aggregation_param,
         (),
-        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
+        Interval::new_with_duration(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+            .unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -3416,13 +3461,14 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
     let first_batch_interval =
-        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100)).unwrap();
-    let second_batch_interval = Interval::new(
+        Interval::new_with_duration(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
+            .unwrap();
+    let second_batch_interval = Interval::new_with_duration(
         OLDEST_ALLOWED_REPORT_TIMESTAMP
             .add_timedelta(&TimeDelta::seconds(100))
             .unwrap(),
@@ -3645,16 +3691,16 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
-    let abandoned_batch_interval = Interval::new(
+    let abandoned_batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(100),
         Duration::from_seconds(100),
     )
     .unwrap();
-    let deleted_batch_interval = Interval::new(
+    let deleted_batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(200),
         Duration::from_seconds(100),
     )
@@ -3805,7 +3851,7 @@ impl TestBatchModeExt for TimeInterval {
     fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier {
         let min_client_timestamp = *client_timestamps.iter().min().unwrap();
         let max_client_timestamp = *client_timestamps.iter().max().unwrap();
-        Interval::new(
+        Interval::new_with_duration(
             min_client_timestamp,
             Duration::from_seconds(
                 (max_client_timestamp
@@ -3969,7 +4015,7 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
                             c.collection_job_id.unwrap(),
                             test_case.batch_mode,
                             VdafInstance::Fake { rounds: 1 },
-                            Duration::from_hours(8),
+                            TaskDuration::from_hours(8),
                             c.batch_identifier.get_encoded().unwrap(),
                             c.agg_param.get_encoded().unwrap(),
                             0,
@@ -4008,7 +4054,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
                 VdafInstance::Fake { rounds: 1 },
             )
             .with_id(*task_id)
-            .with_time_precision(Duration::from_seconds(1))
+            .with_time_precision(TaskDuration::from_seconds(1))
             .with_report_expiry_age(Some(Duration::from_seconds(100)))
             .build()
         })
@@ -4021,12 +4067,12 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
         // Other task collection job
         LeaderStoredReport::new_dummy(other_task_id, Time::from_seconds_since_epoch(0)),
     ]);
-    let batch_interval = Interval::new(
+    let batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(0),
         Duration::from_seconds(100),
     )
     .unwrap();
-    let second_batch_interval = Interval::new(
+    let second_batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(300),
         Duration::from_seconds(100),
     )
@@ -4038,7 +4084,11 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Interval::new_with_duration(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(1),
+            )
+            .unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4048,7 +4098,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(300),
                 Duration::from_seconds(1),
             )
@@ -4062,7 +4112,11 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Interval::new_with_duration(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(1),
+            )
+            .unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4421,14 +4475,16 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         Time::from_seconds_since_epoch(0),
     )]);
     let batch_interval =
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap();
+        Interval::new_with_duration(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+            .unwrap();
     let aggregation_job_id = random();
     let aggregation_jobs = Vec::from([AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
         task_id,
         aggregation_job_id,
         dummy::AggregationParam(0),
         (),
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+        Interval::new_with_duration(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+            .unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     )]);
@@ -4595,7 +4651,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
 async fn leader_selected_collection_job_acquire_release_happy_path(
     ephemeral_datastore: EphemeralDatastore,
 ) {
-    const TIME_PRECISION: Duration = Duration::from_seconds(28800);
+    const TIME_PRECISION: TaskDuration = TaskDuration::from_seconds(28800);
     install_test_trace_subscriber();
     let clock = MockClock::default();
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
@@ -4770,7 +4826,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn collection_job_acquire_release_job_finished(ephemeral_datastore: EphemeralDatastore) {
-    const TIME_PRECISION: Duration = Duration::from_seconds(28800);
+    const TIME_PRECISION: TaskDuration = TaskDuration::from_seconds(28800);
     install_test_trace_subscriber();
     let clock = MockClock::default();
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
@@ -4781,7 +4837,7 @@ async fn collection_job_acquire_release_job_finished(ephemeral_datastore: Epheme
         Time::from_seconds_since_epoch(0),
     )]);
     let aggregation_job_id = random();
-    let batch_interval = Interval::new(
+    let batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(0),
         Duration::from_seconds(100),
     )
@@ -4845,14 +4901,16 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
     )]);
     let aggregation_job_ids: [_; 2] = random();
     let batch_interval =
-        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap();
+        Interval::new_with_duration(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+            .unwrap();
     let aggregation_jobs = Vec::from([
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
             task_id,
             aggregation_job_ids[0],
             dummy::AggregationParam(0),
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+            Interval::new_with_duration(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+                .unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4861,7 +4919,8 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             aggregation_job_ids[1],
             dummy::AggregationParam(1),
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_hours(8)).unwrap(),
+            Interval::new_with_duration(Time::from_seconds_since_epoch(0), Duration::from_hours(8))
+                .unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4958,7 +5017,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             c.collection_job_id.unwrap(),
                             task::BatchMode::TimeInterval,
                             VdafInstance::Fake { rounds: 1 },
-                            Duration::from_hours(8),
+                            TaskDuration::from_hours(8),
                             c.batch_identifier.get_encoded().unwrap(),
                             c.agg_param.get_encoded().unwrap(),
                             0,
@@ -4992,7 +5051,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
         Time::from_seconds_since_epoch(0),
     )]);
     let aggregation_job_ids: [_; 3] = random();
-    let batch_interval = Interval::new(
+    let batch_interval = Interval::new_with_duration(
         Time::from_seconds_since_epoch(0),
         Duration::from_seconds(28800),
     )
@@ -5003,7 +5062,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             aggregation_job_ids[0],
             dummy::AggregationParam(0),
             (),
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(28800),
             )
@@ -5016,7 +5075,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             aggregation_job_ids[1],
             dummy::AggregationParam(1),
             (),
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(28800),
             )
@@ -5029,7 +5088,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             aggregation_job_ids[2],
             dummy::AggregationParam(2),
             (),
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(28800),
             )
@@ -5135,7 +5194,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-    let time_precision = Duration::from_seconds(100);
+    let time_precision = TaskDuration::from_seconds(100);
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -5173,7 +5232,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let first_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1100), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1100),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     aggregation_param,
                     0,
                     Interval::EMPTY,
@@ -5189,8 +5252,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 let second_batch_aggregation =
                     BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
-                        Interval::new(Time::from_seconds_since_epoch(1200), time_precision)
-                            .unwrap(),
+                        Interval::new_with_duration(
+                            Time::from_seconds_since_epoch(1200),
+                            time_precision.into(),
+                        )
+                        .unwrap(),
                         aggregation_param,
                         1,
                         Interval::EMPTY,
@@ -5205,7 +5271,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let third_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1300), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1300),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     aggregation_param,
                     2,
                     Interval::EMPTY,
@@ -5220,8 +5290,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 let fourth_batch_aggregation =
                     BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
-                        Interval::new(Time::from_seconds_since_epoch(1400), time_precision)
-                            .unwrap(),
+                        Interval::new_with_duration(
+                            Time::from_seconds_since_epoch(1400),
+                            time_precision.into(),
+                        )
+                        .unwrap(),
                         aggregation_param,
                         3,
                         Interval::EMPTY,
@@ -5231,7 +5304,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is before the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1000), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1000),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     aggregation_param,
                     4,
                     Interval::EMPTY,
@@ -5268,7 +5345,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Aggregation parameter differs from the one queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1000), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1000),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     dummy::AggregationParam(13),
                     5,
                     Interval::EMPTY,
@@ -5286,7 +5367,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is after the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1500), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1500),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     aggregation_param,
                     6,
                     Interval::EMPTY,
@@ -5304,7 +5389,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Task ID differs from that queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *other_task.id(),
-                    Interval::new(Time::from_seconds_since_epoch(1200), time_precision).unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(1200),
+                        time_precision.into(),
+                    )
+                    .unwrap(),
                     aggregation_param,
                     7,
                     Interval::EMPTY,
@@ -5360,7 +5449,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     task.time_precision(),
                     &vdaf,
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1100),
                         Duration::from_seconds(4 * time_precision.as_seconds()),
                     )
@@ -5388,7 +5477,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 *first_batch_aggregation.batch_interval(),
                 *first_batch_aggregation.aggregation_parameter(),
                 first_batch_aggregation.ord(),
-                Interval::new(Time::from_seconds_since_epoch(1100), time_precision).unwrap(),
+                Interval::new_with_duration(
+                    Time::from_seconds_since_epoch(1100),
+                    time_precision.into(),
+                )
+                .unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: Some(dummy::AggregateShare(92)),
                     report_count: 1,
@@ -5411,7 +5504,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     task.time_precision(),
                     &vdaf,
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1100),
                         Duration::from_seconds(4 * time_precision.as_seconds()),
                     )
@@ -5458,7 +5551,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     task.time_precision(),
                     &vdaf,
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         Time::from_seconds_since_epoch(1100),
                         Duration::from_seconds(3 * time_precision.as_seconds()),
                     )
@@ -5493,7 +5586,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-    .with_time_precision(Duration::from_seconds(1))
+    .with_time_precision(TaskDuration::from_seconds(1))
     .build()
     .leader_view()
     .unwrap();
@@ -5511,7 +5604,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -5524,8 +5617,11 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(aggregate_share),
                         report_count: 0,
@@ -5550,8 +5646,11 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     other_batch_id,
                     aggregation_param,
                     1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -5569,8 +5668,11 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     2,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(aggregate_share),
                         report_count: 0,
@@ -5588,8 +5690,11 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     3,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -5632,8 +5737,11 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                 *batch_aggregation.batch_id(),
                 *batch_aggregation.aggregation_parameter(),
                 batch_aggregation.ord(),
-                Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(200))
-                    .unwrap(),
+                Interval::new_with_duration(
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                    Duration::from_seconds(200),
+                )
+                .unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 1,
@@ -5706,7 +5814,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
                 .build()
                 .helper_view()
@@ -5715,12 +5823,18 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
                     dummy::AggregationParam(11),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -5734,8 +5848,11 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
                     dummy::AggregationParam(11),
                     dummy::AggregateShare(42),
                     random(),
@@ -5785,7 +5902,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 tx.get_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         Time::from_seconds_since_epoch(500),
                         Duration::from_seconds(100),
                     )
@@ -5803,7 +5920,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 .get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add_timedelta(&TimeDelta::seconds(5))
                             .unwrap(),
@@ -5845,7 +5962,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 tx.get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
-                    &Interval::new(
+                    &Interval::new_with_duration(
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add_timedelta(&TimeDelta::seconds(5))
                             .unwrap(),
@@ -5883,7 +6000,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
                 .build()
                 .helper_view()
@@ -5896,8 +6013,11 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     batch_id,
                     dummy::AggregationParam(11),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6028,7 +6148,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     let batch_time_window_size = Duration::from_hours(24);
     let time_bucket_start = clock
         .now()
-        .to_batch_interval_start(&batch_time_window_size)
+        .to_batch_interval_start(&TaskDuration::from_hours(24))
         .unwrap();
 
     let (task_id_1, batch_id_1, task_id_2, batch_id_2) = ds
@@ -6042,7 +6162,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
                 .build()
                 .leader_view()
@@ -6057,8 +6177,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        (*task_1.time_precision()).into(),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6074,8 +6197,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     dummy::AggregationParam(0),
                     1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_1.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        (*task_1.time_precision()).into(),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6097,7 +6223,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
                 .build()
                 .leader_view()
@@ -6112,8 +6238,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_2,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, *task_2.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                        (*task_2.time_precision()).into(),
+                    )
+                    .unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         // Let report_count be 1 without an accompanying report_aggregation in a
@@ -6138,8 +6267,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
-                    Interval::new(Time::from_seconds_since_epoch(0), *task_1.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        (*task_1.time_precision()).into(),
+                    )
+                    .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6188,8 +6320,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
-                    Interval::new(Time::from_seconds_since_epoch(0), *task_1.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        (*task_1.time_precision()).into(),
+                    )
+                    .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6228,8 +6363,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_2,
-                    Interval::new(Time::from_seconds_since_epoch(0), *task_2.time_precision())
-                        .unwrap(),
+                    Interval::new_with_duration(
+                        Time::from_seconds_since_epoch(0),
+                        (*task_2.time_precision()).into(),
+                    )
+                    .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6418,7 +6556,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .with_report_expiry_age(Some(Duration::from_chrono(report_expiry_age)))
                 .build()
                 .leader_view()
@@ -6428,7 +6566,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6523,7 +6661,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(Duration::from_seconds(100))
+                .with_time_precision(TaskDuration::from_seconds(100))
                 .with_report_expiry_age(None)
                 .build()
                 .leader_view()
@@ -6533,7 +6671,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
                 let old_report = LeaderStoredReport::new_dummy(
                     *task.id(),
                     OLDEST_ALLOWED_REPORT_TIMESTAMP
-                        .sub_duration(task.time_precision())
+                        .sub_task_duration(task.time_precision())
                         .unwrap(),
                 );
                 let new_report =
@@ -6617,7 +6755,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 
         let min_client_timestamp = client_timestamps.iter().min().unwrap();
         let max_client_timestamp = client_timestamps.iter().max().unwrap();
-        let client_timestamp_interval = Interval::new(
+        let client_timestamp_interval = Interval::new_with_duration(
             *min_client_timestamp,
             Duration::from_chrono(
                 max_client_timestamp
@@ -6674,7 +6812,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6684,7 +6822,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6696,7 +6834,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -6708,7 +6846,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_report_expiry_age(Some(Duration::from_chrono(REPORT_EXPIRY_AGE)))
-                .with_time_precision(Duration::from_seconds(1))
+                .with_time_precision(TaskDuration::from_seconds(1))
                 .build()
                 .helper_view()
                 .unwrap();
@@ -7165,11 +7303,13 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     batch_time_window_size: Some(batch_time_window_size),
                     ..
                 } => {
+                    let batch_time_window_size_td = TaskDuration::from(*batch_time_window_size);
                     let time_bucket_start = client_timestamps[0]
-                        .to_batch_interval_start(batch_time_window_size)
+                        .to_batch_interval_start(&batch_time_window_size_td)
                         .unwrap();
                     let same_bucket = client_timestamps.iter().all(|ts| {
-                        ts.to_batch_interval_start(batch_time_window_size).unwrap()
+                        ts.to_batch_interval_start(&batch_time_window_size_td)
+                            .unwrap()
                             == time_bucket_start
                     });
                     assert!(
@@ -7328,10 +7468,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_time_interval_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_time_interval_task.time_precision())
+                            .sub_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_time_interval_task.time_precision())
+                            .sub_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7350,10 +7490,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_time_interval_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_time_interval_task.time_precision())
+                            .sub_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_time_interval_task.time_precision())
+                            .add_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7377,10 +7517,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_time_interval_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_time_interval_task.time_precision())
+                            .add_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_time_interval_task.time_precision())
+                            .add_task_duration(leader_time_interval_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7397,10 +7537,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &helper_time_interval_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(helper_time_interval_task.time_precision())
+                            .sub_task_duration(helper_time_interval_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(helper_time_interval_task.time_precision())
+                            .sub_task_duration(helper_time_interval_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7413,10 +7553,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                         &helper_time_interval_task,
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub_duration(helper_time_interval_task.time_precision())
+                                .sub_task_duration(helper_time_interval_task.time_precision())
                                 .unwrap(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .add_duration(helper_time_interval_task.time_precision())
+                                .add_task_duration(helper_time_interval_task.time_precision())
                                 .unwrap(),
                         ],
                     )
@@ -7440,10 +7580,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &helper_time_interval_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(helper_time_interval_task.time_precision())
+                            .add_task_duration(helper_time_interval_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(helper_time_interval_task.time_precision())
+                            .add_task_duration(helper_time_interval_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7460,10 +7600,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_leader_selected_task.time_precision())
+                            .sub_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_leader_selected_task.time_precision())
+                            .sub_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7482,10 +7622,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(leader_leader_selected_task.time_precision())
+                            .sub_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_leader_selected_task.time_precision())
+                            .add_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7509,10 +7649,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &leader_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_leader_selected_task.time_precision())
+                            .add_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(leader_leader_selected_task.time_precision())
+                            .add_task_duration(leader_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7529,10 +7669,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(helper_leader_selected_task.time_precision())
+                            .sub_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(helper_leader_selected_task.time_precision())
+                            .sub_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7551,10 +7691,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(helper_leader_selected_task.time_precision())
+                            .sub_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(helper_leader_selected_task.time_precision())
+                            .add_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7578,10 +7718,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &helper_leader_selected_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(helper_leader_selected_task.time_precision())
+                            .add_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add_duration(helper_leader_selected_task.time_precision())
+                            .add_task_duration(helper_leader_selected_task.time_precision())
                             .unwrap(),
                     ],
                 )
@@ -7600,12 +7740,14 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                     ],
@@ -7628,12 +7770,14 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .sub_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                     ],
@@ -7661,12 +7805,14 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
                             .add_duration(
-                                leader_leader_selected_time_bucketed_task.time_precision(),
+                                &(*leader_leader_selected_time_bucketed_task.time_precision())
+                                    .into(),
                             )
                             .unwrap(),
                     ],
@@ -7692,10 +7838,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     &other_task,
                     &[
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(other_task.time_precision())
+                            .sub_duration(&(*other_task.time_precision()).into())
                             .unwrap(),
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub_duration(other_task.time_precision())
+                            .sub_duration(&(*other_task.time_precision()).into())
                             .unwrap(),
                     ],
                 )
@@ -8107,7 +8253,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
                     .await
                     .unwrap()
                     .get::<_, SqlInterval>("interval");
-                let ref_interval = Interval::new(
+                let ref_interval = Interval::new_with_duration(
                     Time::from_naive_date_time(
                         &NaiveDate::from_ymd_opt(2020, 1, 1)
                             .unwrap()
@@ -8127,7 +8273,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
                     .await
                     .unwrap()
                     .get::<_, SqlInterval>("interval");
-                let ref_interval = Interval::new(
+                let ref_interval = Interval::new_with_duration(
                     Time::from_naive_date_time(
                         &NaiveDate::from_ymd_opt(1970, 2, 3)
                             .unwrap()
@@ -8158,7 +8304,7 @@ SELECT (lower(interval) = '1972-07-21 05:30:00' AND
     NOT upper_inc(interval)) AS ok
     FROM (VALUES ($1::tsrange)) AS temp (interval)",
                         &[&SqlInterval::from(
-                            Interval::new(
+                            Interval::new_with_duration(
                                 Time::from_naive_date_time(
                                     &NaiveDate::from_ymd_opt(1972, 7, 21)
                                         .unwrap()
@@ -8184,7 +8330,7 @@ SELECT (lower(interval) = '2021-10-05 00:00:00' AND
     NOT upper_inc(interval)) AS ok
     FROM (VALUES ($1::tsrange)) AS temp (interval)",
                         &[&SqlInterval::from(
-                            Interval::new(
+                            Interval::new_with_duration(
                                 Time::from_naive_date_time(
                                     &NaiveDate::from_ymd_opt(2021, 10, 5)
                                         .unwrap()
@@ -8448,7 +8594,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_report_expiry_age(Some(report_expiry_age))
-    .with_time_precision(Duration::from_seconds(10))
+    .with_time_precision(TaskDuration::from_seconds(10))
     .build()
     .leader_view()
     .unwrap();

@@ -437,7 +437,7 @@ macro_rules! options_query_dispatch {
         ) {
             (Some(batch_interval_start), Some(batch_interval_duration)) => {
                 let $query = Query::new_time_interval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(*batch_interval_start),
                         Duration::from_seconds(*batch_interval_duration),
                     )

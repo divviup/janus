@@ -654,7 +654,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 let Ok(aggressive_aggregation_time) =
                                     oldest_report.client_timestamp().add_duration(&max(
                                         this.late_report_grace_period,
-                                        *task.time_precision(),
+                                        (*task.time_precision()).into(),
                                     ))
                                 else {
                                     break;
@@ -693,7 +693,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .map(UnaggregatedReport::client_timestamp)
                                 .max()
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let client_timestamp_interval = Interval::new(
+                            let client_timestamp_interval = Interval::new_with_duration(
                                 *min_client_timestamp,
                                 DurationMsg::from_chrono(
                                     max_client_timestamp
@@ -838,7 +838,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .map(UnaggregatedReport::client_timestamp)
                                 .max()
                                 .unwrap();
-                            let client_timestamp_interval = Interval::new(
+                            let client_timestamp_interval = Interval::new_with_duration(
                                 *min_client_timestamp,
                                 DurationMsg::from_chrono(
                                     max_client_timestamp
@@ -974,8 +974,8 @@ mod tests {
         vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
     };
     use janus_messages::{
-        AggregationJobStep, Duration as JanusDuration, Interval, Query, ReportError, ReportId,
-        ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+        AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
+        ReportMetadata, Role, TaskDuration, TaskId, Time,
         batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::vdaf::{
@@ -1221,7 +1221,7 @@ mod tests {
 
         let first_report_time = clock.now_aligned_to_precision(task.time_precision());
         let second_report_time = first_report_time
-            .add_duration(task.time_precision())
+            .add_task_duration(task.time_precision())
             .unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_n(
@@ -1609,7 +1609,7 @@ mod tests {
             .leader_view()
             .unwrap(),
         );
-        let late_report_grace_period = janus_messages::Duration::from_hours(24);
+        let late_report_grace_period = TaskDuration::from_hours(24);
         assert!(late_report_grace_period >= *task.time_precision());
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
@@ -1657,7 +1657,7 @@ mod tests {
             2,
             100,
             5000,
-            late_report_grace_period,
+            late_report_grace_period.into(),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1957,7 +1957,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .with_time_precision(JanusDuration::from_seconds(10))
+            .with_time_precision(TaskDuration::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -2322,7 +2322,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .with_time_precision(JanusDuration::from_seconds(10))
+            .with_time_precision(TaskDuration::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -2849,12 +2849,12 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
         const MIN_BATCH_SIZE: usize = 200;
-        let batch_time_window_size = janus_messages::Duration::from_hours(24);
+        let batch_time_window_size = TaskDuration::from_hours(24);
 
         let task = Arc::new(
             TaskBuilder::new(
                 TaskBatchMode::LeaderSelected {
-                    batch_time_window_size: Some(batch_time_window_size),
+                    batch_time_window_size: Some(batch_time_window_size.into()),
                 },
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
@@ -2870,7 +2870,7 @@ mod tests {
             .now()
             .to_batch_interval_start(&batch_time_window_size)
             .unwrap()
-            .sub_duration(&batch_time_window_size)
+            .sub_task_duration(&batch_time_window_size)
             .unwrap();
         let report_time_2 = clock
             .now()
@@ -3139,7 +3139,9 @@ mod tests {
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
         // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
-        let report_time = report_time.sub_duration(task.time_precision()).unwrap();
+        let report_time = report_time
+            .sub_task_duration(task.time_precision())
+            .unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
@@ -3248,7 +3250,7 @@ mod tests {
                         random(),
                         random(),
                         Query::new_time_interval(
-                            Interval::new(
+                            Interval::new_with_duration(
                                 report_time,
                                 janus_messages::Duration::from_seconds(
                                     task.time_precision().as_seconds() * 2,
@@ -3257,7 +3259,7 @@ mod tests {
                             .unwrap(),
                         ),
                         first_aggregation_param,
-                        Interval::new(
+                        Interval::new_with_duration(
                             report_time,
                             janus_messages::Duration::from_seconds(
                                 task.time_precision().as_seconds() * 2,

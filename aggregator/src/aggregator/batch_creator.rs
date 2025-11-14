@@ -15,7 +15,7 @@ use janus_aggregator_core::{
 };
 use janus_core::time::{Clock, TimeDeltaExt, TimeExt};
 use janus_messages::{
-    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskDuration, TaskId, Time,
     batch_mode::LeaderSelected,
 };
 use opentelemetry::metrics::Histogram;
@@ -62,7 +62,7 @@ struct Properties {
     task_id: TaskId,
     task_min_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
-    task_time_precision: Duration,
+    task_time_precision: TaskDuration,
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
@@ -77,7 +77,7 @@ where
         task_id: TaskId,
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
-        task_time_precision: Duration,
+        task_time_precision: TaskDuration,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
@@ -119,7 +119,9 @@ where
             .map(|batch_time_window_size| {
                 report
                     .client_timestamp()
-                    .to_batch_interval_start(&batch_time_window_size)
+                    .to_batch_interval_start(&TaskDuration::from_seconds(
+                        batch_time_window_size.as_seconds(),
+                    ))
             })
             .transpose()?;
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
@@ -337,7 +339,7 @@ where
             ReportAggregationMetadata,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
-        time_precision: Duration,
+        time_precision: TaskDuration,
         aggregation_job_size_histogram: &Histogram<u64>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
@@ -376,7 +378,7 @@ where
 
         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let client_timestamp_interval = Interval::new(
+        let client_timestamp_interval = Interval::new_with_duration(
             min_client_timestamp.to_batch_interval_start(&time_precision)?,
             Duration::from_chrono(
                 max_client_timestamp

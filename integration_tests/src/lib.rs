@@ -4,7 +4,7 @@ use janus_aggregator_core::task::BatchMode;
 use janus_client::OhttpConfig;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
-use janus_messages::{Duration, TaskId};
+use janus_messages::{TaskDuration, TaskId};
 use std::time;
 use url::Url;
 
@@ -21,7 +21,7 @@ pub struct TaskParameters {
     pub batch_mode: BatchMode,
     pub vdaf: VdafInstance,
     pub min_batch_size: u64,
-    pub time_precision: Duration,
+    pub time_precision: TaskDuration,
     pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
     pub collector_max_interval: time::Duration,

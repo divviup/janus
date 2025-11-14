@@ -74,7 +74,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(test_case.task.time_precision().as_seconds() - 1),
@@ -112,7 +112,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(test_case.task.time_precision().as_seconds()),
+                *test_case.task.time_precision(),
             )
             .unwrap(),
         ),
@@ -160,11 +160,7 @@ async fn collection_job_put_request_invalid_batch_size() {
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(task.time_precision().as_seconds()),
-            )
-            .unwrap(),
+            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
@@ -537,7 +533,7 @@ async fn collection_job_put_request_batch_overlap() {
     // Sending this request will consume a query for [0, 2 * time_precision).
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(2 * test_case.task.time_precision().as_seconds()),
             )

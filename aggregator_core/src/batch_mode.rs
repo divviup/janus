@@ -11,7 +11,7 @@ use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeDeltaExt as _, TimeExt as _};
 use janus_messages::{
-    Duration, Interval, Query, TaskId, Time,
+    Interval, Query, TaskDuration, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use std::iter;
@@ -189,7 +189,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
@@ -217,7 +217,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     >(
         tx: &Transaction<C>,
         task_id: &TaskId,
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
@@ -257,7 +257,7 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     >(
         tx: &Transaction<C>,
         task_id: &TaskId,
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(u64, u64), datastore::Error> {
@@ -299,7 +299,7 @@ impl CollectableBatchMode for TimeInterval {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(time_precision, batch_interval)
@@ -337,11 +337,11 @@ pub struct TimeIntervalBatchIdentifierIter {
     step: u64,
     total_step_count: u64,
     start: Time,
-    time_precision: Duration,
+    time_precision: TaskDuration,
 }
 
 impl TimeIntervalBatchIdentifierIter {
-    fn new(time_precision: &Duration, batch_interval: &Interval) -> Self {
+    fn new(time_precision: &TaskDuration, batch_interval: &Interval) -> Self {
         // Sanity check that the given interval is of an appropriate length. We use an assert as
         // this is expected to be checked before this method is used.
         assert_eq!(
@@ -398,7 +398,7 @@ impl CollectableBatchMode for LeaderSelected {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        _: &Duration,
+        _: &TaskDuration,
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
@@ -425,7 +425,7 @@ mod tests {
         task::{AggregationMode, BatchMode, test_util::TaskBuilder},
     };
     use janus_core::vdaf::VdafInstance;
-    use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
+    use janus_messages::{Duration, Interval, TaskDuration, Time, batch_mode::TimeInterval};
 
     #[test]
     fn validate_collect_identifier() {
@@ -435,7 +435,7 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(Duration::from_seconds(time_precision_secs))
+        .with_time_precision(TaskDuration::from_seconds(time_precision_secs))
         .build()
         .leader_view()
         .unwrap();
@@ -449,7 +449,7 @@ mod tests {
         for test_case in Vec::from([
             TestCase {
                 name: "same duration as minimum",
-                input: Interval::new(
+                input: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(time_precision_secs),
                     Duration::from_seconds(time_precision_secs),
                 )
@@ -458,7 +458,7 @@ mod tests {
             },
             TestCase {
                 name: "interval too short",
-                input: Interval::new(
+                input: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(time_precision_secs),
                     Duration::from_seconds(time_precision_secs - 1),
                 )
@@ -467,7 +467,7 @@ mod tests {
             },
             TestCase {
                 name: "interval larger than minimum",
-                input: Interval::new(
+                input: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(time_precision_secs),
                     Duration::from_seconds(time_precision_secs * 2),
                 )
@@ -476,7 +476,7 @@ mod tests {
             },
             TestCase {
                 name: "interval duration not aligned with minimum",
-                input: Interval::new(
+                input: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(time_precision_secs),
                     Duration::from_seconds(time_precision_secs + 1800),
                 )
@@ -485,7 +485,7 @@ mod tests {
             },
             TestCase {
                 name: "interval start not aligned with minimum",
-                input: Interval::new(
+                input: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(1800),
                     Duration::from_seconds(time_precision_secs),
                 )

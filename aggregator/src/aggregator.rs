@@ -843,7 +843,7 @@ impl<C: Clock> Aggregator<C> {
 
         let task_end = task_config
             .task_start()
-            .add_duration(task_config.task_duration())?;
+            .add_task_duration(task_config.task_duration())?;
 
         let task = Arc::new(
             AggregatorTask::new(
@@ -858,7 +858,7 @@ impl<C: Clock> Aggregator<C> {
                 u64::from(*task_config.min_batch_size()),
                 *task_config.time_precision(),
                 /* tolerable clock skew */
-                *task_config.time_precision(), // Use the time precision as the tolerable skew
+                (*task_config.time_precision()).into(), // Use the time precision as the tolerable skew
                 task::AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {
@@ -2164,7 +2164,7 @@ impl VdafOps {
             .map(|prepare_init| *prepare_init.report_share().metadata().time())
             .max()
             .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        let client_timestamp_interval = Interval::new(
+        let client_timestamp_interval = Interval::new_with_duration(
             min_client_timestamp,
             Duration::from_chrono(
                 max_client_timestamp

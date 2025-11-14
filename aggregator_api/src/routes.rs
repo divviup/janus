@@ -193,7 +193,7 @@ pub(super) async fn post_task<C: Clock>(
             /* min_batch_size */ req.min_batch_size,
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
-            req.time_precision, // Must be a multiple of the precision
+            req.time_precision.into(), // Must be a multiple of the precision
             aggregator_parameters,
         )
         .context("Error constructing task")

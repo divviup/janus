@@ -277,8 +277,8 @@ async fn handle_collection_start(
                     .batch_interval_duration
                     .context("\"batch_interval_duration\" was missing")?,
             );
-            let interval =
-                Interval::new(start, duration).context("invalid batch interval specification")?;
+            let interval = Interval::new_with_duration(start, duration)
+                .context("invalid batch interval specification")?;
             ParsedQuery::TimeInterval(interval)
         }
         2 => ParsedQuery::LeaderSelected,

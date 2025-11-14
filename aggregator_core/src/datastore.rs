@@ -28,7 +28,7 @@ use janus_core::{
 use janus_messages::{
     AggregateShareId, AggregationJobId, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
-    Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskDuration, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
@@ -700,7 +700,7 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
     /// Construct an error type to provide extended issue about unaligned time errors.
     fn unaligned_time_error(
         task_id: &TaskId,
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
         inner_error: janus_messages::Error,
     ) -> Error {
         Error::TimeUnaligned {
@@ -962,7 +962,8 @@ FROM tasks",
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(Duration::from_seconds);
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
-        let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
+        let time_precision =
+            TaskDuration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = row
@@ -5736,7 +5737,8 @@ SELECT id, report_expiry_age, time_precision FROM tasks WHERE tasks.task_id = $1
                     .ok_or_else(|| Error::TimeOverflow("overflow computing report expiry age"))
             })
             .transpose()?;
-        let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
+        let time_precision =
+            TaskDuration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let task_info = TaskInfo {
             pkey,
             report_expiry_age,
@@ -5760,7 +5762,7 @@ struct TaskInfo {
     report_expiry_age: Option<chrono::Duration>,
 
     /// The task's time precision
-    time_precision: Duration,
+    time_precision: TaskDuration,
 }
 
 impl TaskInfo {
@@ -6075,7 +6077,7 @@ pub enum Error {
     #[error("time is unaligned (precision = {time_precision}, inner error = {inner_error})")]
     TimeUnaligned {
         task_id: TaskId,
-        time_precision: Duration,
+        time_precision: TaskDuration,
         inner_error: janus_messages::Error,
     },
     /// An error occurred while manipulating timestamps or durations.

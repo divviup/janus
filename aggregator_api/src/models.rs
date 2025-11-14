@@ -13,7 +13,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskDuration, TaskId, Time,
     batch_mode::Code as SupportedBatchMode,
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -86,7 +86,7 @@ pub(crate) struct PostTaskReq {
     pub(crate) min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps, as seconds since
     /// the UNIX epoch.
-    pub(crate) time_precision: Duration,
+    pub(crate) time_precision: TaskDuration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
     /// If this aggregator is the leader, this is the token to use to authenticate requests to
@@ -132,7 +132,7 @@ pub(crate) struct TaskResp {
     /// The minimum number of reports in a batch to allow it to be collected.
     pub(crate) min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps.
-    pub(crate) time_precision: Duration,
+    pub(crate) time_precision: TaskDuration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     pub(crate) tolerable_clock_skew: Duration,
@@ -159,7 +159,7 @@ impl TryFrom<&AggregatorTask> for TaskResp {
             task_end: task.task_end().copied(),
             report_expiry_age: task.report_expiry_age().cloned(),
             min_batch_size: task.min_batch_size(),
-            time_precision: *task.time_precision(),
+            time_precision: task.time_precision().to_owned(),
             tolerable_clock_skew: *task.tolerable_clock_skew(),
             aggregator_auth_token: None,
             collector_hpke_config: task
