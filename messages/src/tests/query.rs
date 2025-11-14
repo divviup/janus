@@ -30,7 +30,7 @@ fn roundtrip_query() {
     roundtrip_encoding(&[
         (
             Query::<TimeInterval> {
-                query_body: Interval::new(
+                query_body: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(54321),
                     Duration::from_seconds(12345),
                 )
@@ -48,7 +48,7 @@ fn roundtrip_query() {
         ),
         (
             Query::<TimeInterval> {
-                query_body: Interval::new(
+                query_body: Interval::new_with_duration(
                     Time::from_seconds_since_epoch(48913),
                     Duration::from_seconds(44721),
                 )

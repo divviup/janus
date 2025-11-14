@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url, batch_mode};
+use crate::{Error, TaskDuration, Time, Url, batch_mode};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -22,7 +22,7 @@ pub struct TaskConfig {
     /// Helper DAP API endpoint.
     helper_aggregator_endpoint: Url,
     /// Time precision of this task.
-    time_precision: Duration,
+    time_precision: TaskDuration,
     /// The minimum batch size for this task.
     min_batch_size: u32,
     /// Determines the batch mode for this task.
@@ -30,7 +30,7 @@ pub struct TaskConfig {
     /// The earliest timestamp that will be accepted for this task.
     task_start: Time,
     /// The duration of the task.
-    task_duration: Duration,
+    task_duration: TaskDuration,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
     /// Taskbind extensions.
@@ -43,11 +43,11 @@ impl TaskConfig {
         task_info: Vec<u8>,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: Duration,
+        time_precision: TaskDuration,
         min_batch_size: u32,
         batch_mode: batch_mode::Code,
         task_start: Time,
-        task_duration: Duration,
+        task_duration: TaskDuration,
         vdaf_config: VdafConfig,
         extensions: Vec<TaskbindExtension>,
     ) -> Result<Self, Error> {
@@ -81,7 +81,7 @@ impl TaskConfig {
         &self.helper_aggregator_endpoint
     }
 
-    pub fn time_precision(&self) -> &Duration {
+    pub fn time_precision(&self) -> &TaskDuration {
         &self.time_precision
     }
 
@@ -97,7 +97,7 @@ impl TaskConfig {
         &self.task_start
     }
 
-    pub fn task_duration(&self) -> &Duration {
+    pub fn task_duration(&self) -> &TaskDuration {
         &self.task_duration
     }
 
@@ -157,7 +157,7 @@ impl Decode for TaskConfig {
         }
         let leader_aggregator_endpoint = Url::decode(bytes)?;
         let helper_aggregator_endpoint = Url::decode(bytes)?;
-        let time_precision = Duration::decode(bytes)?;
+        let time_precision = TaskDuration::decode(bytes)?;
         let min_batch_size = u32::decode(bytes)?;
         let batch_mode = batch_mode::Code::decode(bytes)?;
         let batch_config_len = u16::decode(bytes)?;
@@ -167,7 +167,7 @@ impl Decode for TaskConfig {
             ));
         };
         let task_start = Time::decode(bytes)?;
-        let task_duration = Duration::decode(bytes)?;
+        let task_duration = TaskDuration::decode(bytes)?;
         let vdaf_config = VdafConfig::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
@@ -502,7 +502,7 @@ impl Decode for TaskbindExtensionType {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Duration, Time, Url, batch_mode, roundtrip_encoding,
+        TaskDuration, Time, Url, batch_mode, roundtrip_encoding,
         taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
     };
     use assert_matches::assert_matches;
@@ -516,11 +516,11 @@ mod tests {
                     "foobar".as_bytes().to_vec(),
                     Url::try_from("https://example.com/".as_ref()).unwrap(),
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    Duration::from_seconds(3600),
+                    TaskDuration::from_seconds(3600),
                     10000,
                     batch_mode::Code::TimeInterval,
                     Time::from_seconds_since_epoch(1000000),
-                    Duration::from_seconds(100000),
+                    TaskDuration::from_seconds(100000),
                     VdafConfig::Prio3Count,
                     Vec::new(),
                 )
@@ -566,11 +566,11 @@ mod tests {
                     "f".as_bytes().to_vec(),
                     Url::try_from("https://example.com/".as_ref()).unwrap(),
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    Duration::from_seconds(1000),
+                    TaskDuration::from_seconds(1000),
                     1000,
                     batch_mode::Code::LeaderSelected,
                     Time::from_seconds_since_epoch(10000000),
-                    Duration::from_seconds(50000),
+                    TaskDuration::from_seconds(50000),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,
                     },

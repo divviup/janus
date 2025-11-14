@@ -9,7 +9,7 @@ use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{TimeDeltaExt, TimeExt};
-use janus_messages::{CollectionJobId, Duration, Interval, Time};
+use janus_messages::{CollectionJobId, Duration, Interval, TaskDuration, Time};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
 
@@ -23,7 +23,7 @@ impl Arbitrary for Config {
         let mut aggregation_job_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
         aggregation_job_size_limits.sort();
 
-        let time_precision = Duration::from_seconds(3600);
+        let time_precision = TaskDuration::from_seconds(3600);
         let late_report_grace_period = Duration::from_seconds(3600);
 
         Self {
@@ -82,7 +82,7 @@ pub(super) struct KeyRotatorInput(pub(super) Input);
 /// used when generating subsequent operations.
 struct Context {
     current_time: Time,
-    time_precision: Duration,
+    time_precision: TaskDuration,
     started_collection_job_ids: Vec<CollectionJobId>,
     polled_collection_job_ids: Vec<CollectionJobId>,
 }
@@ -275,13 +275,13 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
 
     let duration_fn = g
         .choose(&[
-            (|_g: &mut Gen, context: &Context| -> Duration { context.time_precision })
-                as fn(&mut Gen, &Context) -> Duration,
-            (|g: &mut Gen, context: &Context| -> Duration {
-                Duration::from_seconds(
+            (|_g: &mut Gen, context: &Context| -> TaskDuration { context.time_precision })
+                as fn(&mut Gen, &Context) -> TaskDuration,
+            (|g: &mut Gen, context: &Context| -> TaskDuration {
+                TaskDuration::from_seconds(
                     context.time_precision.as_seconds() * (1 + u64::from(u8::arbitrary(g) & 0x1f)),
                 )
-            }) as fn(&mut Gen, &Context) -> Duration,
+            }) as fn(&mut Gen, &Context) -> TaskDuration,
         ])
         .unwrap();
     Op::CollectorStart {

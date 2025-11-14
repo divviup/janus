@@ -136,6 +136,100 @@ impl TryFrom<&Url> for url::Url {
     }
 }
 
+/// TaskProv protocol message representing a duration with a resolution of seconds.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TaskDuration(u64);
+
+impl TaskDuration {
+    pub const ZERO: TaskDuration = TaskDuration::from_seconds(0);
+
+    /// Create a duration representing the provided number of seconds.
+    pub const fn from_seconds(seconds: u64) -> Self {
+        Self(seconds)
+    }
+
+    /// Create a duration representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
+    /// Get the number of seconds this duration represents.
+    pub fn as_seconds(&self) -> u64 {
+        self.0
+    }
+
+    /// Convert this [`TaskDuration`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+
+    /// Create a [`TaskDuration`] from a [`chrono::TimeDelta`].
+    ///
+    /// The duration will be rounded down to the nearest second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the delta is negative, as DAP durations must be non-negative.
+    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
+        let seconds = delta.num_seconds();
+        assert!(
+            seconds >= 0,
+            "Duration::from_chrono called with negative TimeDelta"
+        );
+        Self::from_seconds(seconds as u64)
+    }
+}
+
+impl Encode for TaskDuration {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
+}
+
+impl Decode for TaskDuration {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u64::decode(bytes)?))
+    }
+}
+
+impl Display for TaskDuration {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} seconds", self.0)
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<TaskDuration> for Duration {
+    fn from(value: TaskDuration) -> Self {
+        Duration::from_seconds(value.as_seconds())
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<Duration> for TaskDuration {
+    fn from(duration: Duration) -> Self {
+        TaskDuration::from_seconds(duration.as_seconds())
+    }
+}
+
 /// DAP protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
@@ -282,9 +376,27 @@ impl Interval {
         duration: Duration::ZERO,
     };
 
+    /// Create a new [`Interval`] from the provided start and task duration (time precision).
+    /// Returns an error if the end of the interval cannot be represented as a [`Time`].
+    ///
+    /// This is the preferred constructor for intervals based on task time precision.
+    /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
+    pub fn new(start: Time, time_precision: TaskDuration) -> Result<Self, Error> {
+        let duration = Duration::from_seconds(time_precision.as_seconds());
+        start
+            .0
+            .checked_add(time_precision.0)
+            .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
+
+        Ok(Self { start, duration })
+    }
+
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
     /// of the interval cannot be represented as a [`Time`].
-    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
+    ///
+    /// This constructor is for intervals with arbitrary durations. For intervals based on
+    /// task time precision, prefer [`Interval::new`].
+    pub fn new_with_duration(start: Time, duration: Duration) -> Result<Self, Error> {
         start
             .0
             .checked_add(duration.0)
@@ -320,7 +432,7 @@ impl Decode for Interval {
         let start = Time::decode(bytes)?;
         let duration = Duration::decode(bytes)?;
 
-        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
+        Self::new_with_duration(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
     }
 }
 

@@ -16,7 +16,7 @@ use janus_interop_binaries::{
     testcontainer::{Aggregator, Client, Collector},
 };
 use janus_messages::{
-    Duration, TaskId,
+    TaskDuration, TaskId,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use prio::codec::Encode;
@@ -411,7 +411,7 @@ async fn run(
     let query_json = match query_kind {
         QueryKind::TimeInterval => {
             let batch_interval_start = start_timestamp
-                .to_batch_interval_start(&Duration::from_seconds(TIME_PRECISION))
+                .to_batch_interval_start(&TaskDuration::from_seconds(TIME_PRECISION))
                 .unwrap()
                 .as_seconds_since_epoch();
             // Span the aggregation over two time precisions, just in case our measurements spilled over a

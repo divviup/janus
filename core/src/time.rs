@@ -1,7 +1,7 @@
 //! Utilities for timestamps and durations.
 
 use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
-use janus_messages::{Duration, Error, Interval, Time};
+use janus_messages::{Duration, Error, Interval, TaskDuration, Time};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
@@ -15,7 +15,7 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time, truncated to the provided time precision. The answer will
     /// be between now and now()-time_precision.
     #[cfg(feature = "test-util")]
-    fn now_aligned_to_precision(&self, time_precision: &Duration) -> Time {
+    fn now_aligned_to_precision(&self, time_precision: &TaskDuration) -> Time {
         let seconds = self.now().as_seconds_since_epoch();
         // These unwraps are unsafe, and must only be used for tests.
         let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
@@ -102,11 +102,11 @@ const USEC_PER_SEC: u64 = 1_000_000;
 /// Extension methods on [`Duration`] for working with DAP time precision validation.
 pub trait DurationExt: Sized {
     /// Confirm that this duration is a multiple of the task time precision.
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error>;
+    fn validate_precision(self, time_precision: &TaskDuration) -> Result<Self, Error>;
 }
 
 impl DurationExt for Duration {
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, Error> {
+    fn validate_precision(self, time_precision: &TaskDuration) -> Result<Self, Error> {
         let is_multiple_of_time_precision = self
             .as_seconds()
             .checked_rem(time_precision.as_seconds())
@@ -254,11 +254,14 @@ pub trait TimeExt: Sized {
     /// Compute the start of the batch interval containing this Time, given the task time precision.
     fn to_batch_interval_start(
         &self,
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
     ) -> Result<Self, janus_messages::Error>;
 
     /// Confirm that the time is a multiple of the task time precision.
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
+    fn validate_precision(
+        self,
+        time_precision: &TaskDuration,
+    ) -> Result<Self, janus_messages::Error>;
 
     /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
     fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error>;
@@ -271,6 +274,13 @@ pub trait TimeExt: Sized {
 
     /// Subtract the provided timedelta from this time.
     fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
+
+    /// Add the provided TaskDuration to this time.
+    fn add_task_duration(&self, duration: &TaskDuration) -> Result<Self, Error>;
+
+    /// Subtract the provided TaskDuration to this time.
+    fn sub_task_duration(&self, duration: &TaskDuration) -> Result<Self, Error>;
+
     /// Add the provided duration to this time.
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
@@ -294,7 +304,7 @@ pub trait TimeExt: Sized {
 impl TimeExt for Time {
     fn to_batch_interval_start(
         &self,
-        time_precision: &Duration,
+        time_precision: &TaskDuration,
     ) -> Result<Self, janus_messages::Error> {
         // This function will return an error if and only if `time_precision` is 0.
         let rem = self
@@ -311,7 +321,10 @@ impl TimeExt for Time {
             ))
     }
 
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+    fn validate_precision(
+        self,
+        time_precision: &TaskDuration,
+    ) -> Result<Self, janus_messages::Error> {
         let is_multiple_of_time_precision = self
             .as_seconds_since_epoch()
             .checked_rem(time_precision.as_seconds())
@@ -376,6 +389,22 @@ impl TimeExt for Time {
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
+    fn add_task_duration(&self, duration: &TaskDuration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
+        self.as_seconds_since_epoch()
+            .checked_add(seconds)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn sub_task_duration(&self, duration: &TaskDuration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
+        self.as_seconds_since_epoch()
+            .checked_sub(seconds)
+            .map(Self::from_seconds_since_epoch)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
     fn sub_duration(&self, duration: &Duration) -> Result<Self, Error> {
         let seconds = duration.as_seconds();
         self.as_seconds_since_epoch()
@@ -425,10 +454,13 @@ pub trait IntervalExt: Sized {
 
     /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
     /// are multiples of `time_precision`.
-    fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error>;
+    fn align_to_time_precision(&self, time_precision: &TaskDuration) -> Result<Self, Error>;
 
     /// Confirm that this interval's start and duration are both multiples of the task time precision.
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error>;
+    fn validate_precision(
+        self,
+        time_precision: &TaskDuration,
+    ) -> Result<Self, janus_messages::Error>;
 }
 
 impl IntervalExt for Interval {
@@ -449,14 +481,14 @@ impl IntervalExt for Interval {
         let min_time = std::cmp::min(self.start(), other.start());
 
         let diff = max_time.difference_as_time_delta(min_time)?;
-        Self::new(*min_time, Duration::from_chrono(diff))
+        Self::new_with_duration(*min_time, Duration::from_chrono(diff))
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        self.merge(&Self::new(*time, Duration::from_seconds(1))?)
+        self.merge(&Self::new_with_duration(*time, Duration::from_seconds(1))?)
     }
 
-    fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {
+    fn align_to_time_precision(&self, time_precision: &TaskDuration) -> Result<Self, Error> {
         // Round the interval start *down* to the time precision
         let aligned_start = self.start().to_batch_interval_start(time_precision)?;
         // Round the interval duration *up* to the time precision
@@ -465,20 +497,23 @@ impl IntervalExt for Interval {
         let aligned_duration_td = duration_td.round_up(&precision_td)?;
         let aligned_duration = Duration::from_chrono(aligned_duration_td);
 
-        let aligned_interval = Self::new(aligned_start, aligned_duration)?;
+        let aligned_interval = Self::new_with_duration(aligned_start, aligned_duration)?;
 
         // Rounding the start down may have shifted the interval far enough to exclude the previous
         // interval's end. Extend the duration by time_precision if necessary.
         if self.end().is_after(&aligned_interval.end()) {
             let padded_duration_td = aligned_duration_td.add(&precision_td)?;
             let padded_duration = Duration::from_chrono(padded_duration_td);
-            Self::new(aligned_start, padded_duration)
+            Self::new_with_duration(aligned_start, padded_duration)
         } else {
             Ok(aligned_interval)
         }
     }
 
-    fn validate_precision(self, time_precision: &Duration) -> Result<Self, janus_messages::Error> {
+    fn validate_precision(
+        self,
+        time_precision: &TaskDuration,
+    ) -> Result<Self, janus_messages::Error> {
         self.start().validate_precision(time_precision)?;
         self.duration().validate_precision(time_precision)?;
         Ok(self)
@@ -489,7 +524,7 @@ impl IntervalExt for Interval {
 mod tests {
     use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
     use chrono::TimeDelta;
-    use janus_messages::{Duration, Interval, Time};
+    use janus_messages::{Duration, Interval, TaskDuration, Time};
 
     #[test]
     fn round_up_duration() {
@@ -513,7 +548,7 @@ mod tests {
     #[test]
     fn merge_interval() {
         fn interval(start: u64, duration: u64) -> Interval {
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(start),
                 Duration::from_seconds(duration),
             )
@@ -571,12 +606,12 @@ mod tests {
             ("i1 zero duration", 0, 0, 200, 100, Some((200, 100))),
             ("i2 zero duration", 0, 100, 200, 0, Some((0, 100))),
         ] {
-            let i1 = Interval::new(
+            let i1 = Interval::new_with_duration(
                 Time::from_seconds_since_epoch(i1_start),
                 Duration::from_seconds(i1_dur),
             )
             .unwrap();
-            let i2 = Interval::new(
+            let i2 = Interval::new_with_duration(
                 Time::from_seconds_since_epoch(i2_start),
                 Duration::from_seconds(i2_dur),
             )
@@ -585,7 +620,7 @@ mod tests {
             match expected {
                 Some((expected_start, expected_duration)) => {
                     let result = result.unwrap();
-                    let expected = Interval::new(
+                    let expected = Interval::new_with_duration(
                         Time::from_seconds_since_epoch(expected_start),
                         Duration::from_seconds(expected_duration),
                     )
@@ -607,7 +642,7 @@ mod tests {
             ("gap wider unaligned", 0, 100, 1010, Some((0, 1011))),
             ("overlap", 0, 100, 0, Some((0, 100))),
         ] {
-            let i1 = Interval::new(
+            let i1 = Interval::new_with_duration(
                 Time::from_seconds_since_epoch(i1_start),
                 Duration::from_seconds(i1_dur),
             )
@@ -616,7 +651,7 @@ mod tests {
             match expected {
                 Some((expected_start, expected_duration)) => {
                     let result = result.unwrap();
-                    let expected = Interval::new(
+                    let expected = Interval::new_with_duration(
                         Time::from_seconds_since_epoch(expected_start),
                         Duration::from_seconds(expected_duration),
                     )
@@ -636,19 +671,19 @@ mod tests {
             ("round both", 25, 75, 100, Some((0, 100))),
             ("round start, pad duration", 25, 100, 100, Some((0, 200))),
         ] {
-            let interval = Interval::new(
+            let interval = Interval::new_with_duration(
                 Time::from_seconds_since_epoch(interval_start),
                 Duration::from_seconds(interval_duration),
             )
             .unwrap();
-            let time_precision = Duration::from_seconds(time_precision);
+            let time_precision = TaskDuration::from_seconds(time_precision);
 
             let result = interval.align_to_time_precision(&time_precision);
 
             match expected {
                 Some((expected_start, expected_duration)) => {
                     let result = result.unwrap();
-                    let expected = Interval::new(
+                    let expected = Interval::new_with_duration(
                         Time::from_seconds_since_epoch(expected_start),
                         Duration::from_seconds(expected_duration),
                     )
@@ -682,12 +717,12 @@ mod tests {
             ("unaligned starts are bad", 25, 100, 10, false),
             ("unaligned everything is bad", 15, 35, 10, false),
         ] {
-            let interval = Interval::new(
+            let interval = Interval::new_with_duration(
                 Time::from_seconds_since_epoch(interval_start),
                 Duration::from_seconds(interval_duration),
             )
             .unwrap();
-            let time_precision = Duration::from_seconds(time_precision);
+            let time_precision = TaskDuration::from_seconds(time_precision);
             let result = interval.validate_precision(&time_precision);
 
             assert_eq!(expected, result.is_ok(), "{label}");
@@ -705,7 +740,7 @@ mod tests {
             ("zero time on a zero timestamp", 0, 0, false),
         ] {
             let time = Time::from_seconds_since_epoch(timestamp);
-            let precision = Duration::from_seconds(timestamp_precision);
+            let precision = TaskDuration::from_seconds(timestamp_precision);
 
             let result = time.validate_precision(&precision);
             match expected {
@@ -724,7 +759,7 @@ mod tests {
             ("off by 100", 1533414100, 6000, 1533414000),
         ] {
             let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
-            let precision = Duration::from_seconds(timestamp_precision);
+            let precision = TaskDuration::from_seconds(timestamp_precision);
 
             let result = clock
                 .now_aligned_to_precision(&precision)
