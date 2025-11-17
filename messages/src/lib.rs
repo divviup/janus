@@ -176,22 +176,6 @@ impl TaskDuration {
             "number of milliseconds too big for i64",
         ))
     }
-
-    /// Create a [`TaskDuration`] from a [`chrono::TimeDelta`].
-    ///
-    /// The duration will be rounded down to the nearest second.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the delta is negative, as DAP durations must be non-negative.
-    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
-        let seconds = delta.num_seconds();
-        assert!(
-            seconds >= 0,
-            "Duration::from_chrono called with negative TimeDelta"
-        );
-        Self::from_seconds(seconds as u64)
-    }
 }
 
 impl Encode for TaskDuration {
