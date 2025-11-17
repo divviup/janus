@@ -23,7 +23,7 @@ use janus_core::{
         ExponentialWithTotalDelayBuilder, HttpResponse, is_retryable_http_client_error,
         is_retryable_http_status,
     },
-    time::Clock,
+    time::{Clock, DateTimeExt as _},
     vdaf_dispatch,
 };
 use janus_messages::{
@@ -385,7 +385,7 @@ impl CollectionJobDriver {
         let http_response = send_request_to_helper(
             &self.http_client,
             self.backoff
-                .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
+                .with_max_delay(lease.remaining_lease_duration(&clock.now().to_time(), 0)),
             method,
             task.aggregate_shares_uri(collection_job.aggregate_share_id())?
                 .ok_or_else(|| {
@@ -928,7 +928,7 @@ mod tests {
         initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, DateTimeExt, MockClock},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -968,7 +968,8 @@ mod tests {
 
         let leader_task = task.leader_view().unwrap();
         let batch_interval =
-            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
+            Interval::new_with_duration(clock.now().to_time(), Duration::from_seconds(2000))
+                .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
@@ -996,7 +997,8 @@ mod tests {
                     let report_timestamp = clock
                         .now()
                         .to_batch_interval_start(task.time_precision())
-                        .unwrap();
+                        .unwrap()
+                        .to_time();
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
@@ -1031,10 +1033,10 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1053,7 +1055,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1063,7 +1066,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1122,12 +1126,14 @@ mod tests {
         let leader_task = task.leader_view().unwrap();
         let agg_auth_token = task.aggregator_auth_token();
         let batch_interval =
-            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
+            Interval::new_with_duration(clock.now().to_time(), Duration::from_seconds(2000))
+                .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
         let report_timestamp = clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap();
+            .unwrap()
+            .to_time();
         let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
         let (collection_job_id, expected_aggregate_share_id, lease) = ds
@@ -1183,10 +1189,10 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1206,7 +1212,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1216,7 +1223,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1307,10 +1315,10 @@ mod tests {
                     tx.update_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::new(clock.now(), time_precision).unwrap(),
+                            Interval::new(clock.now().to_time(), time_precision).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1330,7 +1338,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1340,7 +1349,8 @@ mod tests {
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
-                                    .unwrap(),
+                                    .unwrap()
+                                    .to_time(),
                                 time_precision,
                             )
                             .unwrap(),
@@ -1503,7 +1513,7 @@ mod tests {
                     assert_eq!(
                         client_timestamp_interval,
                         &Interval::new_with_duration(
-                            clock.now(),
+                            clock.now().to_time(),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
                         ).unwrap()
                     );
@@ -1585,7 +1595,7 @@ mod tests {
                     assert_eq!(
                         client_timestamp_interval,
                         &Interval::new_with_duration(
-                            clock.now(),
+                            clock.now().to_time(),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
                         ).unwrap()
                     );
@@ -2047,7 +2057,8 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let batch_interval =
-            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
+            Interval::new_with_duration(clock.now().to_time(), Duration::from_seconds(2000))
+                .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(
@@ -2060,7 +2071,7 @@ mod tests {
         // Simulate helper indicating asynchronous operation; e.g., for the first request,
         // the share isn't yet ready, and it won't be until after the leader's lease ends.
         let remaining_time =
-            Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
+            Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now().to_time(), 0);
         let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
 
         let (header, value) = agg_auth_token.request_authentication();
@@ -2153,7 +2164,8 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let batch_interval =
-            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
+            Interval::new_with_duration(clock.now().to_time(), Duration::from_seconds(2000))
+                .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(

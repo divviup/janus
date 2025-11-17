@@ -69,7 +69,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
-    time::{Clock, IntervalExt, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
@@ -1819,7 +1819,11 @@ impl VdafOps {
             .add_duration(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
-        if let Ok(clock_skew) = report.metadata().time().difference_as_time_delta(&now) {
+        if let Ok(clock_skew) = report
+            .metadata()
+            .time()
+            .difference_as_time_delta(&now.to_time())
+        {
             metrics
                 .early_report_clock_skew_histogram
                 .record(clock_skew.num_seconds() as u64, &[]);
@@ -1832,7 +1836,11 @@ impl VdafOps {
 
         // Reject reports from too far in the future.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
-        if report.metadata().time().is_after(&report_deadline) {
+        if report
+            .metadata()
+            .time()
+            .is_after(&report_deadline.to_time())
+        {
             return Err(reject_report(ReportRejectionReason::TooEarly).await?);
         }
 

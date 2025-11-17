@@ -32,7 +32,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
     test_util::{VdafTranscript, install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock, TimeExt},
     vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
 };
 use janus_messages::{
@@ -156,7 +156,7 @@ where
             time_precision,
             min_batch_size,
             batch_mode::Code::LeaderSelected,
-            task_start,
+            task_start.to_time(),
             task_duration,
             vdaf_config,
             Vec::new(),
@@ -180,8 +180,13 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_start(Some(task_start))
-        .with_task_end(Some(task_start.add_time_precision(&task_duration).unwrap()))
+        .with_task_start(Some(task_start.to_time()))
+        .with_task_end(Some(
+            task_start
+                .to_time()
+                .add_time_precision(&task_duration)
+                .unwrap(),
+        ))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(TimePrecision::from_seconds(1))
@@ -628,7 +633,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now(),
+        test.clock.now().to_time(),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
@@ -695,7 +700,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now(),
+        test.clock.now().to_time(),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
@@ -760,7 +765,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now(),
+        test.clock.now().to_time(),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),

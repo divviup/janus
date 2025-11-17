@@ -29,7 +29,7 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, TimeDeltaExt, TimeExt as _},
+    time::{Clock, DateTimeExt, TimeDeltaExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
@@ -659,7 +659,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 else {
                                     break;
                                 };
-                                if tx.clock().now() < aggressive_aggregation_time {
+                                if tx.clock().now().to_time() < aggressive_aggregation_time {
                                     // Report is not old enough to merit a below-minimum size aggregation job.
                                     break;
                                 }
@@ -970,7 +970,7 @@ mod tests {
     use janus_core::{
         hpke::HpkeKeypair,
         test_util::{install_test_trace_subscriber, run_vdaf},
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, DateTimeExt, MockClock, TimeExt},
         vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
     };
     use janus_messages::{
@@ -2869,12 +2869,14 @@ mod tests {
         // Create 2 * MIN_BATCH_SIZE reports in two different time buckets.
         let report_time_1 = clock
             .now()
+            .to_time()
             .to_batch_interval_start(&batch_time_window_size)
             .unwrap()
             .sub_time_precision(&batch_time_window_size)
             .unwrap();
         let report_time_2 = clock
             .now()
+            .to_time()
             .to_batch_interval_start(&batch_time_window_size)
             .unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());

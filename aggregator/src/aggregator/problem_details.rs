@@ -142,7 +142,7 @@ mod tests {
         initialize_rustls,
         retries::test_util::LimitedRetryer,
         test_util::install_test_trace_subscriber,
-        time::{Clock, RealClock},
+        time::{Clock, DateTimeExt, RealClock},
     };
     use janus_messages::{
         Duration, Interval, ReportIdChecksum,
@@ -228,7 +228,7 @@ mod tests {
                             format!(
                                 "{}",
                                 Interval::new_with_duration(
-                                    RealClock::default().now(),
+                                    RealClock::default().now().to_time(),
                                     Duration::from_seconds(3600)
                                 )
                                 .unwrap()
@@ -241,7 +241,7 @@ mod tests {
                     Box::new(|| {
                         Error::BatchOverlap(
                             random(),
-                            Interval::new_with_duration(RealClock::default().now(), Duration::from_seconds(3600))
+                            Interval::new_with_duration(RealClock::default().now().to_time(), Duration::from_seconds(3600))
                                 .unwrap(),
                         )
                     }),

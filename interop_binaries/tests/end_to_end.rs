@@ -7,7 +7,7 @@ use futures::future::join_all;
 use janus_core::{
     initialize_rustls,
     test_util::install_test_trace_subscriber,
-    time::{Clock, RealClock, TimeExt},
+    time::{Clock, DateTimeExt, RealClock},
     vdaf::VERIFY_KEY_LENGTH_PRIO3,
 };
 use janus_interop_binaries::{

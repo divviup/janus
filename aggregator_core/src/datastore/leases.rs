@@ -6,10 +6,7 @@ use crate::datastore::{
     task,
 };
 use chrono::NaiveDateTime;
-use janus_core::{
-    time::{Clock, TimeExt},
-    vdaf::VdafInstance,
-};
+use janus_core::{time::Clock, vdaf::VdafInstance};
 use janus_messages::{
     AggregationJobId, CollectionJobId, TaskId, batch_mode::BatchMode, taskprov::TimePrecision,
 };
@@ -40,7 +37,7 @@ impl<C: Clock> Transaction<'_, C> {
             Some(task_info) => task_info,
             None => return Ok(None),
         };
-        let now = self.clock.now().as_naive_date_time()?;
+        let now = self.clock.now().naive_utc();
 
         let stmt = self
             .prepare_cached(
@@ -100,7 +97,7 @@ WHERE collection_jobs.task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
-        let now = self.clock.now().as_naive_date_time()?;
+        let now = self.clock.now().naive_utc();
 
         let stmt = self
             .prepare_cached(
@@ -176,7 +173,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task ID */ &task_info.pkey,
                 /* aggregation_job_id*/ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],
         )
         .await?
@@ -222,7 +219,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task ID */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],
         )
         .await?

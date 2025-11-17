@@ -9,6 +9,7 @@ use self::{
 };
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Utc};
 use core::slice;
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
@@ -266,6 +267,20 @@ impl TryFrom<SystemTime> for Time {
     fn try_from(time: SystemTime) -> Result<Self, Self::Error> {
         let duration = time.duration_since(SystemTime::UNIX_EPOCH)?;
         Ok(Time::from_seconds_since_epoch(duration.as_secs()))
+    }
+}
+
+// Allow direct comparison between Time and DateTime<Utc>
+impl PartialEq<DateTime<Utc>> for Time {
+    fn eq(&self, other: &DateTime<Utc>) -> bool {
+        self.as_seconds_since_epoch() == other.timestamp() as u64
+    }
+}
+
+impl PartialOrd<DateTime<Utc>> for Time {
+    fn partial_cmp(&self, other: &DateTime<Utc>) -> Option<std::cmp::Ordering> {
+        self.as_seconds_since_epoch()
+            .partial_cmp(&(other.timestamp() as u64))
     }
 }
 

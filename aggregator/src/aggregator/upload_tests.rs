@@ -26,7 +26,7 @@ use janus_core::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
     },
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -216,7 +216,8 @@ async fn upload_batch() {
             clock
                 .now()
                 .to_batch_interval_start(task.time_precision())
-                .unwrap(),
+                .unwrap()
+                .to_time(),
         )
     })
     .take(BATCH_SIZE)
@@ -351,7 +352,8 @@ async fn upload_report_in_the_future_boundary_condition() {
             .add_duration(task.tolerable_clock_skew())
             .unwrap()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
     );
 
     aggregator
@@ -404,12 +406,12 @@ async fn upload_report_in_the_future_past_clock_skew() {
     let report = create_report(
         &task.leader_view().unwrap(),
         &hpke_keypair,
-        clock
+        (clock
             .now()
             .add_duration(task.tolerable_clock_skew())
             .unwrap()
-            .add_timedelta(&TimeDelta::seconds(1))
-            .unwrap(),
+            + TimeDelta::seconds(1))
+        .to_time(),
     );
 
     let upload_result = aggregator
@@ -559,7 +561,8 @@ async fn upload_report_task_not_started() {
         clock
             .now()
             .add_timedelta(&TimeDelta::seconds(3600))
-            .unwrap(),
+            .unwrap()
+            .to_time(),
     ))
     .build()
     .leader_view()
@@ -704,7 +707,7 @@ async fn upload_report_unaligned_time() {
     // Ensure the time is unaligned
     clock.advance(TimeDelta::seconds(100));
     // Now don't align the report's clock, just take it as-is
-    let report = create_report(&task, &hpke_keypair, clock.now());
+    let report = create_report(&task, &hpke_keypair, clock.now().to_time());
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator
@@ -811,7 +814,7 @@ async fn upload_report_faulty_encryption() {
     // Encrypt with the wrong key.
     let report = create_report_custom(
         &task,
-        clock.now(),
+        clock.now().to_time(),
         random(),
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
         Vec::new(),
@@ -871,7 +874,7 @@ async fn upload_report_public_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now());
+    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
     report = Report::new(
         report.metadata().clone(),
         // Some obviously wrong public share.
@@ -932,7 +935,7 @@ async fn upload_report_leader_input_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now());
+    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
     report = Report::new(
         report.metadata().clone(),
         report.public_share().to_vec(),

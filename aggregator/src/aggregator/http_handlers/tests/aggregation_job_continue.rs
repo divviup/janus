@@ -25,7 +25,7 @@ use janus_aggregator_core::{
 use janus_core::{
     report_id::ReportIdChecksumExt,
     test_util::run_vdaf,
-    time::{Clock, IntervalExt, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -74,7 +74,8 @@ async fn aggregate_continue_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -104,7 +105,8 @@ async fn aggregate_continue_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -127,15 +129,14 @@ async fn aggregate_continue_sync() {
     );
 
     // report_share_2 falls into a batch that has already been collected.
-    let past_clock = MockClock::new(Time::from_seconds_since_epoch(
-        task.time_precision().as_seconds() / 2,
-    ));
+    let past_clock = MockClock::new((task.time_precision().as_seconds() / 2) as i64);
     let report_metadata_2 = ReportMetadata::new(
         random(),
         past_clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -427,7 +428,8 @@ async fn aggregate_continue_async() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -457,7 +459,8 @@ async fn aggregate_continue_async() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -669,8 +672,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let second_batch_interval_clock = MockClock::new(
         first_batch_interval_clock
             .now()
+            .to_time()
             .add_time_precision(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .as_seconds_since_epoch() as i64,
     );
 
     let vdaf = dummy::Vdaf::new(2);
@@ -682,7 +687,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_time_0 = first_batch_interval_clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let report_metadata_0 = ReportMetadata::new(random(), report_time_0, Vec::new());
     let transcript_0 = run_vdaf(
         &vdaf,
@@ -710,7 +716,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_time_1 = first_batch_interval_clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let report_metadata_1 = ReportMetadata::new(random(), report_time_1, Vec::new());
     let transcript_1 = run_vdaf(
         &vdaf,
@@ -740,7 +747,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         second_batch_interval_clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -1047,7 +1055,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let report_time_3 = first_batch_interval_clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let report_metadata_3 = ReportMetadata::new(random(), report_time_3, Vec::new());
     let transcript_3 = run_vdaf(
         &vdaf,
@@ -1077,7 +1086,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         second_batch_interval_clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_4 = run_vdaf(
@@ -1108,7 +1118,8 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         second_batch_interval_clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(

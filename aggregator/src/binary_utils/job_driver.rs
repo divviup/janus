@@ -5,7 +5,10 @@ use janus_aggregator_core::{
     TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, models::Lease},
 };
-use janus_core::{Runtime, time::Clock};
+use janus_core::{
+    Runtime,
+    time::{Clock, DateTimeExt},
+};
 use opentelemetry::{KeyValue, metrics::Meter};
 use rand::{Rng, rng};
 use std::{
@@ -225,7 +228,7 @@ where
                         let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
                             lease.remaining_lease_duration(
-                                &this.clock.now(),
+                                &this.clock.now().to_time(),
                                 this.worker_lease_clock_skew_allowance.as_secs(),
                             ),
                             (this.job_stepper)(lease),

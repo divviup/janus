@@ -53,7 +53,7 @@ use janus_core::{
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
-    time::{Clock, RealClock, TimeExt},
+    time::{Clock, DateTimeExt, RealClock, TimeExt},
     url_ensure_trailing_slash,
     vdaf::vdaf_application_context,
 };
@@ -557,7 +557,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: V::Measurement) -> Result<(), Error> {
-        self.upload_with_time(&[(measurement, Clock::now(&RealClock::default()))])
+        self.upload_with_time(&[(measurement, Clock::now(&RealClock::default()).to_time())])
             .await
     }
 

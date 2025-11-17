@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool, Timeouts};
 use janus_core::{
     test_util::testcontainers::Postgres,
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock, TimeExt},
 };
 use janus_messages::Time;
 use rand::{Rng, distr::StandardUniform, random, rng};
@@ -481,7 +481,7 @@ impl Transaction<'_, MockClock> {
         self.check_timestamp_columns_at_create_time(
             table,
             expected_updated_by,
-            self.clock.now(),
+            self.clock.now().to_time(),
             updated_at,
         )
         .await
@@ -520,7 +520,7 @@ impl Transaction<'_, MockClock> {
             // as expected.
             if updated_at {
                 assert_eq!(
-                    self.clock.now().as_naive_date_time().unwrap(),
+                    self.clock.now().naive_utc(),
                     row.get::<_, NaiveDateTime>("updated_at"),
                 );
             }

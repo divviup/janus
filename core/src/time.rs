@@ -10,13 +10,13 @@ use std::{
 /// A clock knows what time it currently is.
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
-    fn now(&self) -> Time;
+    fn now(&self) -> DateTime<Utc>;
 
     /// Get the current time, truncated to the provided time precision. The answer will
     /// be between now and now()-time_precision.
     #[cfg(feature = "test-util")]
     fn now_aligned_to_precision(&self, time_precision: &TimePrecision) -> Time {
-        let seconds = self.now().as_seconds_since_epoch();
+        let seconds = self.now().timestamp() as u64;
         // These unwraps are unsafe, and must only be used for tests.
         let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
 
@@ -33,13 +33,8 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
 pub struct RealClock {}
 
 impl Clock for RealClock {
-    fn now(&self) -> Time {
-        Time::from_seconds_since_epoch(
-            Utc::now()
-                .timestamp()
-                .try_into()
-                .expect("invalid or out-of-range timestamp"),
-        )
+    fn now(&self) -> DateTime<Utc> {
+        Utc::now()
     }
 }
 
@@ -55,17 +50,17 @@ impl Debug for RealClock {
 #[non_exhaustive]
 pub struct MockClock {
     /// The time that this clock will return from [`Self::now`].
-    current_time: Arc<Mutex<Time>>,
+    current_time: Arc<Mutex<i64>>,
 }
 
 impl MockClock {
-    pub fn new(when: Time) -> MockClock {
+    pub fn new(when: i64) -> MockClock {
         MockClock {
             current_time: Arc::new(Mutex::new(when)),
         }
     }
 
-    pub fn set(&self, when: Time) {
+    pub fn set(&self, when: i64) {
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = when;
     }
@@ -76,14 +71,16 @@ impl MockClock {
             "MockClock::advance called with negative TimeDelta (time cannot go backward)"
         );
         let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add_timedelta(&dur).unwrap();
+        *current_time = current_time
+            .checked_add(dur.num_seconds())
+            .expect("MockClock overflow");
     }
 }
 
 impl Clock for MockClock {
-    fn now(&self) -> Time {
+    fn now(&self) -> DateTime<Utc> {
         let current_time = self.current_time.lock().unwrap();
-        *current_time
+        DateTime::<Utc>::from_timestamp_secs(*current_time).expect("DateTime Overflow")
     }
 }
 
@@ -91,7 +88,7 @@ impl Default for MockClock {
     fn default() -> Self {
         Self {
             // Sunday, September 9, 2001 1:46:40 AM UTC
-            current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
+            current_time: Arc::new(Mutex::new(1000000000)),
         }
     }
 }
@@ -246,6 +243,118 @@ impl TimeDeltaExt for TimeDelta {
                 "time delta is not a multiple of the time precision",
             ))
         }
+    }
+}
+
+/// Extension methods to bridge between [`chrono::DateTime<Utc>`] and [`Time`].
+pub trait DateTimeExt {
+    /// Convert this [`DateTime<Utc>`] into a [`Time`].
+    fn to_time(&self) -> Time;
+
+    /// Get the timestamp as seconds since the Unix epoch.
+    fn as_seconds_since_epoch(&self) -> u64;
+
+    /// Add a [`Duration`] to this [`DateTime<Utc>`].
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error>
+    where
+        Self: Sized;
+
+    /// Add a [`TimeDelta`] to this [`DateTime<Utc>`].
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>
+    where
+        Self: Sized;
+
+    /// Subtract a [`TimeDelta`] from this [`DateTime<Utc>`].
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>
+    where
+        Self: Sized;
+
+    /// Returns true if and only if this [`DateTime<Utc>`] occurs after the given [`Time`].
+    fn is_after(&self, time: &Time) -> bool;
+
+    /// Compute the start of the batch interval containing this DateTime, given the task time precision.
+    fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
+    where
+        Self: Sized;
+
+    /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`].
+    /// `self` must be after `other`.
+    fn difference_as_time_delta(&self, other: &Time) -> Result<TimeDelta, Error>;
+
+    /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`] using
+    /// saturating arithmetic. If `self` is before `other`, the result is zero.
+    fn saturating_difference(&self, other: &Time) -> Duration;
+}
+
+impl DateTimeExt for DateTime<Utc> {
+    fn to_time(&self) -> Time {
+        Time::from_seconds_since_epoch(self.timestamp() as u64)
+    }
+
+    fn as_seconds_since_epoch(&self) -> u64 {
+        self.timestamp() as u64
+    }
+
+    fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
+        let seconds = duration.as_seconds();
+        let delta = TimeDelta::try_seconds(seconds.try_into().map_err(|_| {
+            Error::IllegalTimeArithmetic("duration seconds value too large for i64")
+        })?)
+        .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
+        self.checked_add_signed(delta)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+        self.checked_add_signed(*timedelta)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+        self.checked_sub_signed(*timedelta)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    fn is_after(&self, time: &Time) -> bool {
+        self.as_seconds_since_epoch() > time.as_seconds_since_epoch()
+    }
+
+    fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error> {
+        let seconds = self.timestamp() as u64;
+        let rem = seconds.checked_rem(time_precision.as_seconds()).ok_or(
+            Error::IllegalTimeArithmetic("remainder would overflow/underflow"),
+        )?;
+        let aligned_seconds = seconds
+            .checked_sub(rem)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
+        DateTime::<Utc>::from_timestamp(
+            aligned_seconds
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+            0,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of seconds is out of range",
+        ))
+    }
+
+    fn difference_as_time_delta(&self, other: &Time) -> Result<TimeDelta, Error> {
+        let diff = self
+            .as_seconds_since_epoch()
+            .checked_sub(other.as_seconds_since_epoch())
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
+        let diff_i64: i64 = diff
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("difference too large"))?;
+        TimeDelta::try_seconds(diff_i64)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn saturating_difference(&self, other: &Time) -> Duration {
+        Duration::from_seconds(
+            self.as_seconds_since_epoch()
+                .saturating_sub(other.as_seconds_since_epoch()),
+        )
     }
 }
 
@@ -758,7 +867,7 @@ mod tests {
             ("aligned large", 1533414000, 6000, 1533414000),
             ("off by 100", 1533414100, 6000, 1533414000),
         ] {
-            let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
+            let clock = MockClock::new(timestamp);
             let precision = TimePrecision::from_seconds(timestamp_precision);
 
             let result = clock

@@ -25,7 +25,7 @@ use janus_core::{
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     test_util::run_vdaf,
-    time::{Clock, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -279,15 +279,14 @@ async fn aggregate_init_sync() {
     let (prepare_init_4, _) = prep_init_generator.next(&measurement);
 
     // prepare_init_5 falls into a batch that has already been collected.
-    let past_clock = MockClock::new(Time::from_seconds_since_epoch(
-        task.time_precision().as_seconds() / 2,
-    ));
+    let past_clock = MockClock::new((task.time_precision().as_seconds() / 2) as i64);
     let report_metadata_5 = ReportMetadata::new(
         random(),
         past_clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(
@@ -322,7 +321,8 @@ async fn aggregate_init_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_6 = run_vdaf(
@@ -357,7 +357,8 @@ async fn aggregate_init_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
             Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -394,7 +395,8 @@ async fn aggregate_init_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript_8 = run_vdaf(
@@ -432,7 +434,8 @@ async fn aggregate_init_sync() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
     );
     let transcript_9 = run_vdaf(

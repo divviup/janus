@@ -39,7 +39,7 @@ use janus_core::{
     report_id::ReportIdChecksumExt,
     retries::test_util::LimitedRetryer,
     test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-    time::{Clock, MockClock, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, MockClock, TimeDeltaExt, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -97,7 +97,8 @@ async fn aggregation_job_driver() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
     let measurement = 13;
@@ -527,7 +528,8 @@ async fn leader_sync_time_interval_aggregation_job_init_single_step() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH_PRIO3> = task.vdaf_verify_key().unwrap();
@@ -977,7 +979,8 @@ async fn leader_sync_time_interval_aggregation_job_init_two_steps() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -1238,7 +1241,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     ds.put_hpke_key().await.unwrap();
@@ -1662,7 +1665,8 @@ async fn leader_sync_leader_selected_aggregation_job_init_single_step() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH_PRIO3> = task.vdaf_verify_key().unwrap();
@@ -1981,7 +1985,8 @@ async fn leader_sync_leader_selected_aggregation_job_init_two_steps() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -2251,7 +2256,8 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let other_batch_identifier = Interval::new(
@@ -2607,7 +2613,8 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
         clock
             .now()
             .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -2908,7 +2915,8 @@ async fn leader_async_aggregation_job_init_to_pending() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3164,7 +3172,8 @@ async fn leader_async_aggregation_job_init_to_pending_two_step() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3420,7 +3429,8 @@ async fn leader_async_aggregation_job_continue_to_pending() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let time_precision = *task.time_precision();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -3682,7 +3692,8 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3926,7 +3937,8 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -4170,7 +4182,8 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -4431,7 +4444,8 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -4692,7 +4706,8 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -4945,7 +4960,8 @@ async fn leader_async_aggregation_job_continue_poll_to_finished() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5204,7 +5220,8 @@ async fn helper_async_init_processing_to_finished() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
@@ -5448,7 +5465,8 @@ async fn helper_async_init_processing_to_continue() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
@@ -5689,7 +5707,8 @@ async fn helper_async_continue_processing_to_finished() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
@@ -5943,7 +5962,8 @@ async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<VERIFY_KEY_LENGTH_PRIO3> = task.vdaf_verify_key().unwrap();
@@ -6228,7 +6248,8 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let transcript = run_vdaf(
@@ -6479,7 +6500,8 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     let time = clock
         .now()
         .to_batch_interval_start(task.time_precision())
-        .unwrap();
+        .unwrap()
+        .to_time();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let transcript = run_vdaf(
