@@ -40,8 +40,8 @@ use janus_messages::{
     AggregateShareReq, AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
     AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
     Interval, MediaType, PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp,
-    PrepareStepResult, ReportError, ReportIdChecksum, ReportShare, Role, TaskDuration, TaskId,
-    Time,
+    PrepareStepResult, ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    TimePrecision,
     batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
     taskprov::{TaskConfig, VdafConfig},
@@ -146,10 +146,10 @@ where
         .build()
         .unwrap();
 
-        let time_precision = TaskDuration::from_seconds(1);
+        let time_precision = TimePrecision::from_seconds(1);
         let min_batch_size = 1;
         let task_start = clock.now();
-        let task_duration = TaskDuration::from_hours(24);
+        let task_duration = TimePrecision::from_hours(24);
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -182,10 +182,10 @@ where
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
         .with_task_start(Some(task_start))
-        .with_task_end(Some(task_start.add_task_duration(&task_duration).unwrap()))
+        .with_task_end(Some(task_start.add_time_precision(&task_duration).unwrap()))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
-        .with_time_precision(TaskDuration::from_seconds(1))
+        .with_time_precision(TimePrecision::from_seconds(1))
         .with_tolerable_clock_skew(Duration::from_seconds(1))
         .with_taskprov_task_info(task_config.task_info().to_vec())
         .build();
@@ -626,11 +626,11 @@ async fn taskprov_opt_out_mismatched_task_id() {
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
-        TaskDuration::from_seconds(1),
+        TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        TaskDuration::from_hours(24),
+        TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -693,11 +693,11 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         // Attempt to configure leader as a helper.
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        TaskDuration::from_seconds(1),
+        TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        TaskDuration::from_hours(24),
+        TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -758,11 +758,11 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         // Some non-existent aggregator.
         "https://foobar.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        TaskDuration::from_seconds(1),
+        TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
         test.clock.now(),
-        TaskDuration::from_hours(24),
+        TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )

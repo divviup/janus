@@ -193,7 +193,7 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskDuration, Time,
+        ReportIdChecksum, ReportMetadata, ReportShare, Role, Time, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::vdaf::dummy;
@@ -224,7 +224,7 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .with_time_precision(TaskDuration::from_seconds(10))
+                    .with_time_precision(TimePrecision::from_seconds(10))
                     .build()
                     .leader_view()
                     .unwrap();
@@ -391,7 +391,7 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .with_time_precision(TaskDuration::from_seconds(10))
+                    .with_time_precision(TimePrecision::from_seconds(10))
                     .build()
                     .helper_view()
                     .unwrap();
@@ -400,7 +400,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now_aligned_to_precision(task.time_precision())
-                        .sub_task_duration(task.time_precision())
+                        .sub_time_precision(task.time_precision())
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
@@ -583,7 +583,7 @@ mod tests {
                         VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .with_time_precision(TaskDuration::from_seconds(10))
+                    .with_time_precision(TimePrecision::from_seconds(10))
                     .build()
                     .leader_view()
                     .unwrap();
@@ -762,7 +762,7 @@ mod tests {
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
-                    .with_time_precision(TaskDuration::from_seconds(10))
+                    .with_time_precision(TimePrecision::from_seconds(10))
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build()
                     .helper_view()

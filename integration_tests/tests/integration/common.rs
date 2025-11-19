@@ -12,7 +12,7 @@ use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
 };
 use janus_messages::{
-    Duration, Interval, Query, TaskDuration, Time,
+    Duration, Interval, Query, Time, TimePrecision,
     batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
 };
@@ -190,7 +190,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 pub async fn submit_measurements_generic<V>(
     measurements: &[V::Measurement],
     client_implementation: &ClientImplementation<V>,
-    time_precision: &TaskDuration,
+    time_precision: &TimePrecision,
 ) -> Time
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,

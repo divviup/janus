@@ -12,7 +12,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Report, TaskDuration, UploadRequest};
+use janus_messages::{Report, TimePrecision, UploadRequest};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},
@@ -35,7 +35,7 @@ async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count
         task_id,
         server_url.clone(),
         server_url.clone(),
-        TaskDuration::from_seconds(1),
+        TimePrecision::from_seconds(1),
         Prio3::new_count(2).unwrap(),
     )
     .with_backoff(test_http_request_exponential_backoff())

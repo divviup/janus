@@ -15,8 +15,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
     Extension, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
-    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskDuration, TaskId,
-    Time,
+    Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    TimePrecision,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
 };
 use postgres_protocol::types::{
@@ -683,7 +683,7 @@ pub struct AcquiredCollectionJob {
     collection_job_id: CollectionJobId,
     batch_mode: task::BatchMode,
     vdaf: VdafInstance,
-    time_precision: TaskDuration,
+    time_precision: TimePrecision,
     encoded_batch_identifier: Vec<u8>,
     encoded_aggregation_param: Vec<u8>,
     step_attempts: u64,
@@ -697,7 +697,7 @@ impl AcquiredCollectionJob {
         collection_job_id: CollectionJobId,
         batch_mode: task::BatchMode,
         vdaf: VdafInstance,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         encoded_batch_identifier: Vec<u8>,
         encoded_aggregation_param: Vec<u8>,
         step_attempts: u64,
@@ -735,7 +735,7 @@ impl AcquiredCollectionJob {
     }
 
     /// Returns the time precision of the task associated with this acquired collection job.
-    pub fn time_precision(&self) -> &TaskDuration {
+    pub fn time_precision(&self) -> &TimePrecision {
         &self.time_precision
     }
 

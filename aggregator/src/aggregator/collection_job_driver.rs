@@ -933,7 +933,7 @@ mod tests {
     };
     use janus_messages::{
         AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration, Interval,
-        MediaType, Query, ReportIdChecksum, TaskDuration, batch_mode::TimeInterval,
+        MediaType, Query, ReportIdChecksum, TimePrecision, batch_mode::TimeInterval,
         problem_type::DapProblemType,
     };
     use postgres_types::Timestamp;
@@ -955,7 +955,7 @@ mod tests {
         Option<Lease<AcquiredCollectionJob>>,
         CollectionJob<0, TimeInterval, dummy::Vdaf>,
     ) {
-        let time_precision = TaskDuration::from_seconds(500);
+        let time_precision = TimePrecision::from_seconds(500);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
@@ -1108,7 +1108,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let time_precision = TaskDuration::from_seconds(500);
+        let time_precision = TimePrecision::from_seconds(500);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,

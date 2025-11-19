@@ -975,7 +975,7 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskDuration, TaskId, Time,
+        ReportMetadata, Role, TaskId, Time, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
     };
     use prio::vdaf::{
@@ -1221,7 +1221,7 @@ mod tests {
 
         let first_report_time = clock.now_aligned_to_precision(task.time_precision());
         let second_report_time = first_report_time
-            .add_task_duration(task.time_precision())
+            .add_time_precision(task.time_precision())
             .unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_n(
@@ -1609,7 +1609,7 @@ mod tests {
             .leader_view()
             .unwrap(),
         );
-        let late_report_grace_period = TaskDuration::from_hours(24);
+        let late_report_grace_period = TimePrecision::from_hours(24);
         assert!(late_report_grace_period >= *task.time_precision());
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
@@ -1957,7 +1957,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .with_time_precision(TaskDuration::from_seconds(10))
+            .with_time_precision(TimePrecision::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -2322,7 +2322,7 @@ mod tests {
                 VdafInstance::Prio3Count,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .with_time_precision(TaskDuration::from_seconds(10))
+            .with_time_precision(TimePrecision::from_seconds(10))
             .build()
             .leader_view()
             .unwrap(),
@@ -2849,7 +2849,7 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
         const MIN_BATCH_SIZE: usize = 200;
-        let batch_time_window_size = TaskDuration::from_hours(24);
+        let batch_time_window_size = TimePrecision::from_hours(24);
 
         let task = Arc::new(
             TaskBuilder::new(
@@ -2870,7 +2870,7 @@ mod tests {
             .now()
             .to_batch_interval_start(&batch_time_window_size)
             .unwrap()
-            .sub_task_duration(&batch_time_window_size)
+            .sub_time_precision(&batch_time_window_size)
             .unwrap();
         let report_time_2 = clock
             .now()
@@ -3140,7 +3140,7 @@ mod tests {
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
         // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
         let report_time = report_time
-            .sub_task_duration(task.time_precision())
+            .sub_time_precision(task.time_precision())
             .unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))

@@ -46,7 +46,7 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, PrepareContinue,
     PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
-    ReportShare, Role, TaskDuration, Time,
+    ReportShare, Role, Time, TimePrecision,
     batch_mode::{LeaderSelected, TimeInterval},
     problem_type::DapProblemType,
 };
@@ -1231,7 +1231,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
 
     const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(500);
-    const TIME_PRECISION: TaskDuration = TaskDuration::from_seconds(10);
+    const TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(10);
 
     // Setup: insert an "old" and "new" client report, and add them to a new aggregation job.
     install_test_trace_subscriber();
@@ -2256,7 +2256,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let other_batch_identifier = Interval::new(
         active_batch_identifier
             .start()
-            .add_task_duration(task.time_precision())
+            .add_time_precision(task.time_precision())
             .unwrap(),
         *task.time_precision(),
     )

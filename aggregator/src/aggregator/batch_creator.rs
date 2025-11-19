@@ -15,7 +15,7 @@ use janus_aggregator_core::{
 };
 use janus_core::time::{Clock, TimeDeltaExt, TimeExt};
 use janus_messages::{
-    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskDuration, TaskId, Time,
+    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time, TimePrecision,
     batch_mode::LeaderSelected,
 };
 use opentelemetry::metrics::Histogram;
@@ -62,7 +62,7 @@ struct Properties {
     task_id: TaskId,
     task_min_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
-    task_time_precision: TaskDuration,
+    task_time_precision: TimePrecision,
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
@@ -77,7 +77,7 @@ where
         task_id: TaskId,
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
-        task_time_precision: TaskDuration,
+        task_time_precision: TimePrecision,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
@@ -119,7 +119,7 @@ where
             .map(|batch_time_window_size| {
                 report
                     .client_timestamp()
-                    .to_batch_interval_start(&TaskDuration::from_seconds(
+                    .to_batch_interval_start(&TimePrecision::from_seconds(
                         batch_time_window_size.as_seconds(),
                     ))
             })
@@ -339,7 +339,7 @@ where
             ReportAggregationMetadata,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         aggregation_job_size_histogram: &Histogram<u64>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();

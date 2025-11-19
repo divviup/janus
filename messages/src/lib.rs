@@ -138,10 +138,10 @@ impl TryFrom<&Url> for url::Url {
 
 /// TaskProv protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TaskDuration(u64);
+pub struct TimePrecision(u64);
 
-impl TaskDuration {
-    pub const ZERO: TaskDuration = TaskDuration::from_seconds(0);
+impl TimePrecision {
+    pub const ZERO: TimePrecision = TimePrecision::from_seconds(0);
 
     /// Create a duration representing the provided number of seconds.
     pub const fn from_seconds(seconds: u64) -> Self {
@@ -162,7 +162,7 @@ impl TaskDuration {
         self.0
     }
 
-    /// Convert this [`TaskDuration`] into a [`chrono::TimeDelta`].
+    /// Convert this [`TimePrecision`] into a [`chrono::TimeDelta`].
     ///
     /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
     /// seconds is too large for i64 or the resulting milliseconds would overflow).
@@ -178,7 +178,7 @@ impl TaskDuration {
     }
 }
 
-impl Encode for TaskDuration {
+impl Encode for TimePrecision {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.0.encode(bytes)
     }
@@ -188,29 +188,29 @@ impl Encode for TaskDuration {
     }
 }
 
-impl Decode for TaskDuration {
+impl Decode for TimePrecision {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok(Self(u64::decode(bytes)?))
     }
 }
 
-impl Display for TaskDuration {
+impl Display for TimePrecision {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} seconds", self.0)
     }
 }
 
 /// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<TaskDuration> for Duration {
-    fn from(value: TaskDuration) -> Self {
+impl From<TimePrecision> for Duration {
+    fn from(value: TimePrecision) -> Self {
         Duration::from_seconds(value.as_seconds())
     }
 }
 
 /// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<Duration> for TaskDuration {
+impl From<Duration> for TimePrecision {
     fn from(duration: Duration) -> Self {
-        TaskDuration::from_seconds(duration.as_seconds())
+        TimePrecision::from_seconds(duration.as_seconds())
     }
 }
 
@@ -365,7 +365,7 @@ impl Interval {
     ///
     /// This is the preferred constructor for intervals based on task time precision.
     /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
-    pub fn new(start: Time, time_precision: TaskDuration) -> Result<Self, Error> {
+    pub fn new(start: Time, time_precision: TimePrecision) -> Result<Self, Error> {
         let duration = Duration::from_seconds(time_precision.as_seconds());
         start
             .0

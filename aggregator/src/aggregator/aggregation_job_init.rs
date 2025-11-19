@@ -671,7 +671,7 @@ mod tests {
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
         ExtensionType, MediaType, PartialBatchSelector, PrepareResp, PrepareStepResult,
-        ReportError, ReportMetadata, TaskDuration, batch_mode::TimeInterval,
+        ReportError, ReportMetadata, TimePrecision, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,
@@ -780,7 +780,7 @@ mod tests {
             AggregationMode::Synchronous,
             vdaf_instance,
         )
-        .with_time_precision(TaskDuration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .with_tolerable_clock_skew(Duration::from_seconds(500))
         .with_aggregator_auth_token(auth_token)
         .build();
@@ -1094,7 +1094,7 @@ mod tests {
                                 .now_aligned_to_precision(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap()
-                                .add_task_duration(test_case.task.time_precision())
+                                .add_time_precision(test_case.task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1137,14 +1137,14 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let task_end_time = clock.now_aligned_to_precision(&TaskDuration::from_seconds(100));
+        let task_end_time = clock.now_aligned_to_precision(&TimePrecision::from_seconds(100));
 
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TaskDuration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .with_tolerable_clock_skew(Duration::from_seconds(500))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_end(Some(task_end_time))
@@ -1191,7 +1191,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_end_time
-                                .sub_task_duration(helper_task.time_precision())
+                                .sub_time_precision(helper_task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1204,7 +1204,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_end_time
-                                .add_task_duration(helper_task.time_precision())
+                                .add_time_precision(helper_task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1281,7 +1281,7 @@ mod tests {
 
         let clock = MockClock::default();
         let task_start_time = clock
-            .now_aligned_to_precision(&TaskDuration::from_seconds(100))
+            .now_aligned_to_precision(&TimePrecision::from_seconds(100))
             .sub_timedelta(&TimeDelta::seconds(1000))
             .unwrap();
 
@@ -1290,7 +1290,7 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TaskDuration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .with_tolerable_clock_skew(Duration::from_seconds(500))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_start(Some(task_start_time))
@@ -1337,7 +1337,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_start_time
-                                .add_task_duration(helper_task.time_precision())
+                                .add_time_precision(helper_task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1350,7 +1350,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_start_time
-                                .sub_task_duration(helper_task.time_precision())
+                                .sub_time_precision(helper_task.time_precision())
                                 .unwrap(),
                             Vec::new(),
                         ),

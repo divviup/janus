@@ -21,8 +21,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
-    AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role,
-    TaskDuration, Time,
+    AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
+    TimePrecision,
     batch_mode::{self, TimeInterval},
 };
 use prio::{
@@ -194,7 +194,7 @@ async fn aggregate_share_request() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(TaskDuration::from_seconds(500))
+    .with_time_precision(TimePrecision::from_seconds(500))
     .with_min_batch_size(10)
     .build();
     let helper_task = task.helper_view().unwrap();

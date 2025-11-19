@@ -9,7 +9,7 @@
 //! ```no_run
 //! use url::Url;
 //! use prio::vdaf::prio3::Prio3Histogram;
-//! use janus_messages::{TaskDuration, TaskId};
+//! use janus_messages::{TimePrecision, TaskId};
 //! use std::str::FromStr;
 //!
 //! #[tokio::main]
@@ -28,7 +28,7 @@
 //!         task,
 //!         leader_url,
 //!         helper_url,
-//!         TaskDuration::from_seconds(300),
+//!         TimePrecision::from_seconds(300),
 //!         vdaf
 //!     )
 //!     .await
@@ -59,7 +59,7 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, TaskDuration, TaskId, Time, UploadRequest,
+    ReportMetadata, Role, TaskId, Time, TimePrecision, UploadRequest,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
@@ -154,7 +154,7 @@ struct ClientParameters {
     helper_aggregator_endpoint: Url,
     /// The time precision of the task. This value is shared by all parties in the protocol, and is
     /// used to compute report timestamps.
-    time_precision: TaskDuration,
+    time_precision: TimePrecision,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialWithTotalDelayBuilder,
 }
@@ -165,7 +165,7 @@ impl ClientParameters {
         task_id: TaskId,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
     ) -> Self {
         Self {
             task_id,
@@ -245,7 +245,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         task_id: TaskId,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         vdaf: V,
     ) -> Self {
         Self {
@@ -375,7 +375,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// ```no_run
     /// # use url::Url;
     /// # use prio::vdaf::prio3::Prio3Count;
-    /// # use janus_messages::{TaskDuration, TaskId};
+    /// # use janus_messages::{TimePrecision, TaskId};
     /// # use rand::random;
     /// # use std::str::FromStr;
     ///
@@ -387,7 +387,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     ///         task_id,
     ///         Url::parse("https://leader.example.com/").unwrap(),
     ///         Url::parse("https://helper.example.com/").unwrap(),
-    ///         TaskDuration::from_seconds(1),
+    ///         TimePrecision::from_seconds(1),
     ///         Prio3Count::new_count(2).unwrap(),
     ///     )
     ///     .with_ohttp_config(janus_client::OhttpConfig {
@@ -427,7 +427,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         task_id: TaskId,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         vdaf: V,
     ) -> Result<Self, Error> {
         ClientBuilder::new(
@@ -455,7 +455,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         task_id: TaskId,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         vdaf: V,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
@@ -477,7 +477,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         task_id: TaskId,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: TaskDuration,
+        time_precision: TimePrecision,
         vdaf: V,
     ) -> ClientBuilder<V> {
         ClientBuilder::new(
@@ -569,7 +569,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_messages::{TaskDuration, Time};
+    /// # use janus_messages::{TimePrecision, Time};
     /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
     /// #
@@ -581,7 +581,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///     random(),
     ///     "https://example.com/".parse().unwrap(),
     ///     "https://example.net/".parse().unwrap(),
-    ///     TaskDuration::from_seconds(3600),
+    ///     TimePrecision::from_seconds(3600),
     ///     vdaf,
     /// ).await?;
     ///

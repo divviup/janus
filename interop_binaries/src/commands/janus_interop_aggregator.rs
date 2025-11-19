@@ -19,7 +19,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
 };
-use janus_messages::{HpkeConfig, TaskDuration, Time};
+use janus_messages::{HpkeConfig, Time, TimePrecision};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -54,7 +54,7 @@ async fn handle_add_task(
             .decode(request.vdaf_verify_key)
             .context("invalid base64url content in \"vdaf_verify_key\"")?,
     );
-    let time_precision = TaskDuration::from_seconds(request.time_precision);
+    let time_precision = TimePrecision::from_seconds(request.time_precision);
     let collector_hpke_config_bytes = URL_SAFE_NO_PAD
         .decode(request.collector_hpke_config)
         .context("invalid base64url content in \"collector_hpke_config\"")?;

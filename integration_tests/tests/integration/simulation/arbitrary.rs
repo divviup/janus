@@ -9,7 +9,7 @@ use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{TimeDeltaExt, TimeExt};
-use janus_messages::{CollectionJobId, Duration, Interval, TaskDuration, Time};
+use janus_messages::{CollectionJobId, Duration, Interval, Time, TimePrecision};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
 
@@ -23,7 +23,7 @@ impl Arbitrary for Config {
         let mut aggregation_job_size_limits = [max(u8::arbitrary(g), 1), max(u8::arbitrary(g), 1)];
         aggregation_job_size_limits.sort();
 
-        let time_precision = TaskDuration::from_seconds(3600);
+        let time_precision = TimePrecision::from_seconds(3600);
         let late_report_grace_period = Duration::from_seconds(3600);
 
         Self {
@@ -82,7 +82,7 @@ pub(super) struct KeyRotatorInput(pub(super) Input);
 /// used when generating subsequent operations.
 struct Context {
     current_time: Time,
-    time_precision: TaskDuration,
+    time_precision: TimePrecision,
     started_collection_job_ids: Vec<CollectionJobId>,
     polled_collection_job_ids: Vec<CollectionJobId>,
 }
@@ -275,13 +275,13 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
 
     let duration_fn = g
         .choose(&[
-            (|_g: &mut Gen, context: &Context| -> TaskDuration { context.time_precision })
-                as fn(&mut Gen, &Context) -> TaskDuration,
-            (|g: &mut Gen, context: &Context| -> TaskDuration {
-                TaskDuration::from_seconds(
+            (|_g: &mut Gen, context: &Context| -> TimePrecision { context.time_precision })
+                as fn(&mut Gen, &Context) -> TimePrecision,
+            (|g: &mut Gen, context: &Context| -> TimePrecision {
+                TimePrecision::from_seconds(
                     context.time_precision.as_seconds() * (1 + u64::from(u8::arbitrary(g) & 0x1f)),
                 )
-            }) as fn(&mut Gen, &Context) -> TaskDuration,
+            }) as fn(&mut Gen, &Context) -> TimePrecision,
         ])
         .unwrap();
     Op::CollectorStart {

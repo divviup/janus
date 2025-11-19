@@ -843,7 +843,7 @@ impl<C: Clock> Aggregator<C> {
 
         let task_end = task_config
             .task_start()
-            .add_task_duration(task_config.task_duration())?;
+            .add_time_precision(task_config.task_duration())?;
 
         let task = Arc::new(
             AggregatorTask::new(

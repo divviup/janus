@@ -33,7 +33,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
-    TaskDuration, TaskId, Time,
+    TaskId, Time, TimePrecision,
 };
 use rand::{Rng, distr::StandardUniform, random, rng};
 use serde_test::{Token, assert_ser_tokens, assert_tokens};
@@ -207,7 +207,7 @@ async fn post_task_bad_role() {
         task_start: Some(Time::from_seconds_since_epoch(12300)),
         task_end: Some(Time::from_seconds_since_epoch(12360)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
@@ -247,7 +247,7 @@ async fn post_task_unauthorized() {
         task_start: None,
         task_end: Some(Time::from_seconds_since_epoch(12300)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
@@ -288,7 +288,7 @@ async fn post_task_helper_no_optional_fields() {
         task_start: None,
         task_end: None,
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: None,
         collector_auth_token_hash: None,
@@ -375,7 +375,7 @@ async fn post_task_helper_with_aggregator_auth_token() {
         task_start: None,
         task_end: Some(Time::from_seconds_since_epoch(12360)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: None,
@@ -417,7 +417,7 @@ async fn post_task_idempotence() {
         task_start: Some(Time::from_seconds_since_epoch(12300)),
         task_end: Some(Time::from_seconds_since_epoch(12360)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
@@ -497,7 +497,7 @@ async fn post_task_leader_all_optional_fields() {
         task_start: None,
         task_end: Some(Time::from_seconds_since_epoch(12360)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
         collector_auth_token_hash: Some(collector_auth_token_hash.clone()),
@@ -582,7 +582,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
         task_start: Some(Time::from_seconds_since_epoch(12300)),
         task_end: Some(Time::from_seconds_since_epoch(12360)),
         min_batch_size: 223,
-        time_precision: TaskDuration::from_seconds(60),
+        time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
         aggregator_auth_token: None,
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
@@ -751,7 +751,7 @@ async fn patch_task(#[case] role: Role) {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(TaskDuration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .with_task_end(Some(Time::from_seconds_since_epoch(1000)))
     .build()
     .view_for_role(role)
@@ -1745,7 +1745,7 @@ fn post_task_req_serialization() {
             task_start: None,
             task_end: None,
             min_batch_size: 100,
-            time_precision: TaskDuration::from_seconds(3600),
+            time_precision: TimePrecision::from_seconds(3600),
             collector_hpke_config: HpkeConfig::new(
                 HpkeConfigId::from(7),
                 HpkeKemId::X25519HkdfSha256,
@@ -1814,7 +1814,7 @@ fn post_task_req_serialization() {
             Token::U64(100),
             Token::Str("time_precision"),
             Token::NewtypeStruct {
-                name: "TaskDuration",
+                name: "TimePrecision",
             },
             Token::U64(3600),
             Token::Str("collector_hpke_config"),
@@ -1872,7 +1872,7 @@ fn post_task_req_serialization() {
             task_start: Some(Time::from_seconds_since_epoch(500)),
             task_end: Some(Time::from_seconds_since_epoch(1000)),
             min_batch_size: 100,
-            time_precision: TaskDuration::from_seconds(3600),
+            time_precision: TimePrecision::from_seconds(3600),
             collector_hpke_config: HpkeConfig::new(
                 HpkeConfigId::from(7),
                 HpkeKemId::X25519HkdfSha256,
@@ -1945,7 +1945,7 @@ fn post_task_req_serialization() {
             Token::U64(100),
             Token::Str("time_precision"),
             Token::NewtypeStruct {
-                name: "TaskDuration",
+                name: "TimePrecision",
             },
             Token::U64(3600),
             Token::Str("collector_hpke_config"),
@@ -2028,7 +2028,7 @@ fn task_resp_serialization() {
         None,
         None,
         100,
-        TaskDuration::from_seconds(3600),
+        TimePrecision::from_seconds(3600),
         Duration::from_seconds(60),
         AggregatorTaskParameters::Leader {
             aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
@@ -2107,7 +2107,7 @@ fn task_resp_serialization() {
             Token::U64(100),
             Token::Str("time_precision"),
             Token::NewtypeStruct {
-                name: "TaskDuration",
+                name: "TimePrecision",
             },
             Token::U64(3600),
             Token::Str("tolerable_clock_skew"),
