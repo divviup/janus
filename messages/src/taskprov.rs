@@ -9,7 +9,11 @@ use prio::codec::{
     CodecError, Decode, Encode, decode_u8_items, decode_u16_items, encode_u8_items,
     encode_u16_items,
 };
-use std::{fmt::Debug, io::Cursor};
+use serde::{Deserialize, Serialize};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    io::Cursor,
+};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -22,7 +26,7 @@ pub struct TaskConfig {
     /// Helper DAP API endpoint.
     helper_aggregator_endpoint: Url,
     /// Time precision of this task.
-    time_precision: Duration,
+    time_precision: TimePrecision,
     /// The minimum batch size for this task.
     min_batch_size: u32,
     /// Determines the batch mode for this task.
@@ -30,7 +34,7 @@ pub struct TaskConfig {
     /// The earliest timestamp that will be accepted for this task.
     task_start: Time,
     /// The duration of the task.
-    task_duration: Duration,
+    task_duration: TimePrecision,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
     /// Taskbind extensions.
@@ -43,11 +47,11 @@ impl TaskConfig {
         task_info: Vec<u8>,
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
-        time_precision: Duration,
+        time_precision: TimePrecision,
         min_batch_size: u32,
         batch_mode: batch_mode::Code,
         task_start: Time,
-        task_duration: Duration,
+        task_duration: TimePrecision,
         vdaf_config: VdafConfig,
         extensions: Vec<TaskbindExtension>,
     ) -> Result<Self, Error> {
@@ -81,7 +85,7 @@ impl TaskConfig {
         &self.helper_aggregator_endpoint
     }
 
-    pub fn time_precision(&self) -> &Duration {
+    pub fn time_precision(&self) -> &TimePrecision {
         &self.time_precision
     }
 
@@ -97,7 +101,7 @@ impl TaskConfig {
         &self.task_start
     }
 
-    pub fn task_duration(&self) -> &Duration {
+    pub fn task_duration(&self) -> &TimePrecision {
         &self.task_duration
     }
 
@@ -157,7 +161,7 @@ impl Decode for TaskConfig {
         }
         let leader_aggregator_endpoint = Url::decode(bytes)?;
         let helper_aggregator_endpoint = Url::decode(bytes)?;
-        let time_precision = Duration::decode(bytes)?;
+        let time_precision = TimePrecision::decode(bytes)?;
         let min_batch_size = u32::decode(bytes)?;
         let batch_mode = batch_mode::Code::decode(bytes)?;
         let batch_config_len = u16::decode(bytes)?;
@@ -167,7 +171,7 @@ impl Decode for TaskConfig {
             ));
         };
         let task_start = Time::decode(bytes)?;
-        let task_duration = Duration::decode(bytes)?;
+        let task_duration = TimePrecision::decode(bytes)?;
         let vdaf_config = VdafConfig::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
@@ -499,10 +503,88 @@ impl Decode for TaskbindExtensionType {
     }
 }
 
+/// TaskProv protocol message representing a duration with a resolution of seconds.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TimePrecision(u64);
+
+impl TimePrecision {
+    pub const ZERO: TimePrecision = TimePrecision::from_seconds(0);
+
+    /// Create a duration representing the provided number of seconds.
+    pub const fn from_seconds(seconds: u64) -> Self {
+        Self(seconds)
+    }
+
+    /// Create a duration representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
+    /// Get the number of seconds this duration represents.
+    pub fn as_seconds(&self) -> u64 {
+        self.0
+    }
+
+    /// Convert this [`TimePrecision`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+}
+
+impl Encode for TimePrecision {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
+}
+
+impl Decode for TimePrecision {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u64::decode(bytes)?))
+    }
+}
+
+impl Display for TimePrecision {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} seconds", self.0)
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<TimePrecision> for Duration {
+    fn from(value: TimePrecision) -> Self {
+        Duration::from_seconds(value.as_seconds())
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<Duration> for TimePrecision {
+    fn from(duration: Duration) -> Self {
+        TimePrecision::from_seconds(duration.as_seconds())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        Duration, Time, Url, batch_mode, roundtrip_encoding,
+        Time, TimePrecision, Url, batch_mode, roundtrip_encoding,
         taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
     };
     use assert_matches::assert_matches;
@@ -516,11 +598,11 @@ mod tests {
                     "foobar".as_bytes().to_vec(),
                     Url::try_from("https://example.com/".as_ref()).unwrap(),
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    Duration::from_seconds(3600),
+                    TimePrecision::from_seconds(3600),
                     10000,
                     batch_mode::Code::TimeInterval,
                     Time::from_seconds_since_epoch(1000000),
-                    Duration::from_seconds(100000),
+                    TimePrecision::from_seconds(100000),
                     VdafConfig::Prio3Count,
                     Vec::new(),
                 )
@@ -566,11 +648,11 @@ mod tests {
                     "f".as_bytes().to_vec(),
                     Url::try_from("https://example.com/".as_ref()).unwrap(),
                     Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    Duration::from_seconds(1000),
+                    TimePrecision::from_seconds(1000),
                     1000,
                     batch_mode::Code::LeaderSelected,
                     Time::from_seconds_since_epoch(10000000),
-                    Duration::from_seconds(50000),
+                    TimePrecision::from_seconds(50000),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,
                     },

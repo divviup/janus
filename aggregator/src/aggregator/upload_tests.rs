@@ -32,6 +32,7 @@ use janus_core::{
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
     PlaintextInputShare, Query, Report, ReportError, Role, batch_mode::TimeInterval,
+    taskprov::TimePrecision,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
@@ -66,7 +67,7 @@ impl UploadTest {
             AggregationMode::Synchronous,
             VdafInstance::Prio3Count,
         )
-        .with_time_precision(Duration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .build();
 
         let leader_task = task.leader_view().unwrap();
@@ -553,7 +554,7 @@ async fn upload_report_task_not_started() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .with_task_start(Some(
         clock
             .now()
@@ -620,7 +621,7 @@ async fn upload_report_task_ended() {
     )
     .await;
 
-    let precision = Duration::from_seconds(100);
+    let precision = TimePrecision::from_seconds(100);
     let task_end_time = clock.now_aligned_to_precision(&precision);
 
     let task = TaskBuilder::new(
@@ -694,7 +695,7 @@ async fn upload_report_unaligned_time() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(42))
+    .with_time_precision(TimePrecision::from_seconds(42))
     .build()
     .leader_view()
     .unwrap();
@@ -739,7 +740,7 @@ async fn upload_report_report_expired() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(60)))
     .build()
     .leader_view()
@@ -1008,7 +1009,7 @@ async fn upload_report_duplicate_extensions() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(60)))
     .build()
     .leader_view()

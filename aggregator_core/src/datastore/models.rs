@@ -17,6 +17,7 @@ use janus_messages::{
     Extension, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
     Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
     Range, RangeBound, range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
@@ -682,7 +683,7 @@ pub struct AcquiredCollectionJob {
     collection_job_id: CollectionJobId,
     batch_mode: task::BatchMode,
     vdaf: VdafInstance,
-    time_precision: Duration,
+    time_precision: TimePrecision,
     encoded_batch_identifier: Vec<u8>,
     encoded_aggregation_param: Vec<u8>,
     step_attempts: u64,
@@ -696,7 +697,7 @@ impl AcquiredCollectionJob {
         collection_job_id: CollectionJobId,
         batch_mode: task::BatchMode,
         vdaf: VdafInstance,
-        time_precision: Duration,
+        time_precision: TimePrecision,
         encoded_batch_identifier: Vec<u8>,
         encoded_aggregation_param: Vec<u8>,
         step_attempts: u64,
@@ -734,7 +735,7 @@ impl AcquiredCollectionJob {
     }
 
     /// Returns the time precision of the task associated with this acquired collection job.
-    pub fn time_precision(&self) -> &Duration {
+    pub fn time_precision(&self) -> &TimePrecision {
         &self.time_precision
     }
 
@@ -2199,7 +2200,7 @@ impl<'a> FromSql<'a> for SqlInterval {
                 let duration =
                     Duration::from_chrono(chrono::TimeDelta::microseconds(duration_us as i64));
 
-                Ok(SqlInterval(Interval::new(time, duration)?))
+                Ok(SqlInterval(Interval::new_with_duration(time, duration)?))
             }
         }
     }

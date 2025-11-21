@@ -7,7 +7,9 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Duration, HpkeConfigList, MediaType, Role, Time, UploadRequest};
+use janus_messages::{
+    HpkeConfigList, MediaType, Role, Time, UploadRequest, taskprov::TimePrecision,
+};
 use prio::{
     codec::Encode,
     vdaf::{self, prio3::Prio3},
@@ -24,7 +26,7 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
         random(),
         server_url.clone(),
         server_url,
-        Duration::from_seconds(1),
+        TimePrecision::from_seconds(1),
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
@@ -41,7 +43,7 @@ fn aggregator_endpoints_end_in_slash() {
         random(),
         "http://leader_endpoint/foo/bar".parse().unwrap(),
         "http://helper_endpoint".parse().unwrap(),
-        Duration::from_seconds(1),
+        TimePrecision::from_seconds(1),
     );
 
     assert_eq!(
@@ -170,7 +172,7 @@ async fn upload_bad_time_precision() {
         random(),
         "https://leader.endpoint".parse().unwrap(),
         "https://helper.endpoint".parse().unwrap(),
-        Duration::from_seconds(0),
+        TimePrecision::from_seconds(0),
         Prio3::new_count(2).unwrap(),
     )
     .with_leader_hpke_config(HpkeKeypair::test().config().clone())
@@ -190,7 +192,7 @@ async fn report_timestamp() {
     let vdaf = Prio3::new_count(2).unwrap();
     let mut client = setup_client(&server, vdaf).await;
 
-    client.parameters.time_precision = Duration::from_seconds(100);
+    client.parameters.time_precision = TimePrecision::from_seconds(100);
     assert_eq!(
         client
             .prepare_report(
@@ -246,7 +248,7 @@ async fn unsupported_hpke_algorithms() {
         random(),
         server_url.clone(),
         server_url,
-        Duration::from_seconds(1),
+        TimePrecision::from_seconds(1),
     );
     client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 

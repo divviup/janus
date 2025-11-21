@@ -15,6 +15,7 @@ use janus_messages::{
     Duration, Interval, Query, Time,
     batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
+    taskprov::TimePrecision,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
@@ -190,7 +191,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 pub async fn submit_measurements_generic<V>(
     measurements: &[V::Measurement],
     client_implementation: &ClientImplementation<V>,
-    time_precision: &Duration,
+    time_precision: &TimePrecision,
 ) -> Time
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
@@ -273,7 +274,7 @@ where
     // Send a collect request and verify that we got the correct result.
     let (report_count, aggregate_result) = match &task_parameters.batch_mode {
         BatchMode::TimeInterval => {
-            let batch_interval = Interval::new(
+            let batch_interval = Interval::new_with_duration(
                 before_timestamp
                     .to_batch_interval_start(&task_parameters.time_precision)
                     .unwrap(),

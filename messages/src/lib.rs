@@ -3,7 +3,10 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
+use self::{
+    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
+};
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use core::slice;
@@ -282,9 +285,27 @@ impl Interval {
         duration: Duration::ZERO,
     };
 
+    /// Create a new [`Interval`] from the provided start and time precision.
+    /// Returns an error if the end of the interval cannot be represented as a [`Time`].
+    ///
+    /// This is the preferred constructor for intervals based on task time precision.
+    /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
+    pub fn new(start: Time, time_precision: TimePrecision) -> Result<Self, Error> {
+        let duration = Duration::from_seconds(time_precision.as_seconds());
+        start
+            .0
+            .checked_add(time_precision.as_seconds())
+            .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
+
+        Ok(Self { start, duration })
+    }
+
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
     /// of the interval cannot be represented as a [`Time`].
-    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
+    ///
+    /// This constructor is for intervals with arbitrary durations. For intervals based on
+    /// task time precision, prefer [`Interval::new`].
+    pub fn new_with_duration(start: Time, duration: Duration) -> Result<Self, Error> {
         start
             .0
             .checked_add(duration.0)
@@ -320,7 +341,7 @@ impl Decode for Interval {
         let start = Time::decode(bytes)?;
         let duration = Duration::decode(bytes)?;
 
-        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
+        Self::new_with_duration(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
     }
 }
 

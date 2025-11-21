@@ -29,9 +29,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Duration, Interval,
-    PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, Time, batch_mode::TimeInterval,
+    AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Interval, PrepareContinue,
+    PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role,
+    Time, batch_mode::TimeInterval, taskprov::TimePrecision,
 };
 use prio::{
     topology::ping_pong::PingPongMessage,
@@ -52,7 +52,7 @@ async fn aggregate_continue_sync() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let aggregation_job_id = random();
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -406,7 +406,7 @@ async fn aggregate_continue_async() {
     } = HttpHandlerTest::new().await;
 
     let aggregation_job_id = random();
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
@@ -654,7 +654,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         ..
     } = HttpHandlerTest::new().await;
 
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -669,7 +669,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let second_batch_interval_clock = MockClock::new(
         first_batch_interval_clock
             .now()
-            .add_duration(task.time_precision())
+            .add_time_precision(task.time_precision())
             .unwrap(),
     );
 
@@ -1354,7 +1354,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -1469,7 +1469,7 @@ async fn aggregate_continue_prep_step_fails() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -1650,7 +1650,7 @@ async fn aggregate_continue_unexpected_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -1758,7 +1758,7 @@ async fn aggregate_continue_out_of_order_transition() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -1915,7 +1915,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    let time_precision = Duration::from_seconds(10);
+    let time_precision = TimePrecision::from_seconds(10);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,

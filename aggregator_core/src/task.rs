@@ -11,7 +11,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId,
-    Time, batch_mode,
+    Time, batch_mode, taskprov::TimePrecision,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{Rng, distr::StandardUniform, random, rng};
@@ -115,7 +115,7 @@ struct CommonTaskParameters {
     min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps to. For time-interval
     /// tasks, batch intervals must be multiples of this duration.
-    time_precision: Duration,
+    time_precision: TimePrecision,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
@@ -138,7 +138,7 @@ impl CommonTaskParameters {
         task_end: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
-        time_precision: Duration,
+        time_precision: TimePrecision,
         tolerable_clock_skew: Duration,
     ) -> Result<Self, Error> {
         if min_batch_size == 0 {
@@ -235,7 +235,7 @@ impl AggregatorTask {
         task_end: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
-        time_precision: Duration,
+        time_precision: TimePrecision,
         tolerable_clock_skew: Duration,
         aggregator_parameters: AggregatorTaskParameters,
     ) -> Result<Self, Error> {
@@ -346,7 +346,7 @@ impl AggregatorTask {
     }
 
     /// Retrieves the time precision parameter associated with this task.
-    pub fn time_precision(&self) -> &Duration {
+    pub fn time_precision(&self) -> &TimePrecision {
         &self.common_parameters.time_precision
     }
 
@@ -639,7 +639,7 @@ pub struct SerializedAggregatorTask {
     task_end: Option<Time>,
     report_expiry_age: Option<Duration>,
     min_batch_size: u64,
-    time_precision: Duration,
+    time_precision: TimePrecision,
     tolerable_clock_skew: Duration,
     collector_hpke_config: HpkeConfig,
     aggregator_auth_token: Option<AuthenticationToken>,
@@ -799,7 +799,7 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Role, TaskId, Time,
+        HpkeConfigId, Role, TaskId, Time, taskprov::TimePrecision,
     };
     use rand::{Rng, distr::StandardUniform, random, rng};
     use std::collections::HashMap;
@@ -848,7 +848,7 @@ pub mod test_util {
             task_end: Option<Time>,
             report_expiry_age: Option<Duration>,
             min_batch_size: u64,
-            time_precision: Duration,
+            time_precision: TimePrecision,
             tolerable_clock_skew: Duration,
             collector_hpke_keypair: HpkeKeypair,
             aggregator_auth_token: AuthenticationToken,
@@ -950,7 +950,7 @@ pub mod test_util {
         }
 
         /// Retrieves the time precision parameter associated with this task.
-        pub fn time_precision(&self) -> &Duration {
+        pub fn time_precision(&self) -> &TimePrecision {
             &self.common_parameters.time_precision
         }
 
@@ -1142,7 +1142,7 @@ pub mod test_util {
                 None,
                 /* Min batch size */ 1,
                 /* Time precision */
-                Duration::from_hours(8),
+                TimePrecision::from_hours(8),
                 /* Tolerable clock skew */
                 Duration::ZERO, // If ZERO, we'll copy the time precision at build time
                 /* Collector HPKE keypair */ HpkeKeypair::test(),
@@ -1238,7 +1238,7 @@ pub mod test_util {
         }
 
         /// Associates the eventual task with the given time precision parameter.
-        pub fn with_time_precision(self, time_precision: Duration) -> Self {
+        pub fn with_time_precision(self, time_precision: TimePrecision) -> Self {
             Self(Task {
                 common_parameters: CommonTaskParameters {
                     time_precision,
@@ -1249,7 +1249,7 @@ pub mod test_util {
         }
 
         /// Gets the time precision associated with the eventual task.
-        pub fn time_precision(&self) -> &Duration {
+        pub fn time_precision(&self) -> &TimePrecision {
             self.0.time_precision()
         }
 
@@ -1355,7 +1355,7 @@ pub mod test_util {
             // If the tolerable clock skew is unset, copy the time_precision
             if *self.0.tolerable_clock_skew() == Duration::ZERO {
                 let time_precision = *self.0.time_precision();
-                return self.with_tolerable_clock_skew(time_precision).0;
+                return self.with_tolerable_clock_skew(time_precision.into()).0;
             }
             self.0
         }
@@ -1386,7 +1386,7 @@ mod tests {
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        TaskId, Time,
+        TaskId, Time, taskprov::TimePrecision,
     };
     use rand::random;
     use serde_json::json;
@@ -1536,7 +1536,7 @@ mod tests {
                 None,
                 None,
                 10,
-                Duration::from_seconds(3600),
+                TimePrecision::from_seconds(3600),
                 Duration::from_seconds(60),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
@@ -1596,7 +1596,9 @@ mod tests {
                 Token::Str("min_batch_size"),
                 Token::U64(10),
                 Token::Str("time_precision"),
-                Token::NewtypeStruct { name: "Duration" },
+                Token::NewtypeStruct {
+                    name: "TimePrecision",
+                },
                 Token::U64(3600),
                 Token::Str("tolerable_clock_skew"),
                 Token::NewtypeStruct { name: "Duration" },
@@ -1681,7 +1683,7 @@ mod tests {
                 Some(Time::from_seconds_since_epoch(2000)),
                 Some(Duration::from_seconds(1800)),
                 10,
-                Duration::from_seconds(3600),
+                TimePrecision::from_seconds(3600),
                 Duration::from_seconds(60),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
@@ -1770,7 +1772,9 @@ mod tests {
                 Token::Str("min_batch_size"),
                 Token::U64(10),
                 Token::Str("time_precision"),
-                Token::NewtypeStruct { name: "Duration" },
+                Token::NewtypeStruct {
+                    name: "TimePrecision",
+                },
                 Token::U64(3600),
                 Token::Str("tolerable_clock_skew"),
                 Token::NewtypeStruct { name: "Duration" },

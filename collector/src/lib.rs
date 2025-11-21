@@ -41,7 +41,7 @@
 //!
 //! // If this is a time interval task, specify the time interval over which the aggregation
 //! // should be calculated.
-//! let interval = Interval::new(
+//! let interval = Interval::new_with_duration(
 //!     Time::from_seconds_since_epoch(1_656_000_000),
 //!     Duration::from_seconds(3600),
 //! )
@@ -857,8 +857,11 @@ mod tests {
         CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
             report_count: 1,
-            interval: Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                .unwrap(),
+            interval: Interval::new_with_duration(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(1),
+            )
+            .unwrap(),
             leader_encrypted_agg_share: hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
@@ -916,7 +919,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1017,7 +1020,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &144);
         let collector = setup_collector(&mut server, vdaf);
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1086,7 +1089,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &3);
         let collector = setup_collector(&mut server, vdaf);
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1166,7 +1169,7 @@ mod tests {
         );
         let collector = setup_collector(&mut server, vdaf);
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1312,7 +1315,7 @@ mod tests {
         .build()
         .unwrap();
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1395,7 +1398,7 @@ mod tests {
             .create_async()
             .await;
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1493,7 +1496,7 @@ mod tests {
             .create_async()
             .await;
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1740,7 +1743,7 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1817,7 +1820,7 @@ mod tests {
             collector.task_id
         );
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
@@ -1990,7 +1993,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
 
-        let batch_interval = Interval::new(
+        let batch_interval = Interval::new_with_duration(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )

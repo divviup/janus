@@ -227,7 +227,7 @@ mod tests {
                             random(),
                             format!(
                                 "{}",
-                                Interval::new(
+                                Interval::new_with_duration(
                                     RealClock::default().now(),
                                     Duration::from_seconds(3600)
                                 )
@@ -241,7 +241,7 @@ mod tests {
                     Box::new(|| {
                         Error::BatchOverlap(
                             random(),
-                            Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+                            Interval::new_with_duration(RealClock::default().now(), Duration::from_seconds(3600))
                                 .unwrap(),
                         )
                     }),

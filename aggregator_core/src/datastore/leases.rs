@@ -10,7 +10,9 @@ use janus_core::{
     time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
-use janus_messages::{AggregationJobId, CollectionJobId, Duration, TaskId, batch_mode::BatchMode};
+use janus_messages::{
+    AggregationJobId, CollectionJobId, TaskId, batch_mode::BatchMode, taskprov::TimePrecision,
+};
 use postgres_types::{Json, Timestamp};
 use prio::codec::Decode;
 use std::fmt::Debug;
@@ -268,7 +270,7 @@ pub(crate) fn acquired_collection_job_from_row(row: &Row) -> Result<AcquiredColl
     let collection_job_id = row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
     let query_type = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
     let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-    let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
+    let time_precision = TimePrecision::from_seconds(row.get_bigint_and_convert("time_precision")?);
     let encoded_batch_identifier = row.get("batch_identifier");
     let encoded_aggregation_param = row.get("aggregation_param");
     let step_attempts = row.get_bigint_and_convert("step_attempts")?;

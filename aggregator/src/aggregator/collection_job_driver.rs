@@ -934,6 +934,7 @@ mod tests {
     use janus_messages::{
         AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration, Interval,
         MediaType, Query, ReportIdChecksum, batch_mode::TimeInterval, problem_type::DapProblemType,
+        taskprov::TimePrecision,
     };
     use postgres_types::Timestamp;
     use prio::{
@@ -954,7 +955,7 @@ mod tests {
         Option<Lease<AcquiredCollectionJob>>,
         CollectionJob<0, TimeInterval, dummy::Vdaf>,
     ) {
-        let time_precision = Duration::from_seconds(500);
+        let time_precision = TimePrecision::from_seconds(500);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
@@ -966,7 +967,8 @@ mod tests {
         .build();
 
         let leader_task = task.leader_view().unwrap();
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let batch_interval =
+            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
@@ -1106,7 +1108,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let time_precision = Duration::from_seconds(500);
+        let time_precision = TimePrecision::from_seconds(500);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
@@ -1119,7 +1121,8 @@ mod tests {
 
         let leader_task = task.leader_view().unwrap();
         let agg_auth_token = task.aggregator_auth_token();
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let batch_interval =
+            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = dummy::AggregationParam(0);
         let report_timestamp = clock
             .now()
@@ -1499,7 +1502,7 @@ mod tests {
                     assert_eq!(report_count, &10);
                     assert_eq!(
                         client_timestamp_interval,
-                        &Interval::new(
+                        &Interval::new_with_duration(
                             clock.now(),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
                         ).unwrap()
@@ -1581,7 +1584,7 @@ mod tests {
                     assert_eq!(report_count, &10);
                     assert_eq!(
                         client_timestamp_interval,
-                        &Interval::new(
+                        &Interval::new_with_duration(
                             clock.now(),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
                         ).unwrap()
@@ -2043,7 +2046,8 @@ mod tests {
         ));
 
         let agg_auth_token = task.aggregator_auth_token();
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let batch_interval =
+            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(
@@ -2148,7 +2152,8 @@ mod tests {
         ));
 
         let agg_auth_token = task.aggregator_auth_token();
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let batch_interval =
+            Interval::new_with_duration(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = dummy::AggregationParam(0);
 
         let leader_request = AggregateShareReq::new(

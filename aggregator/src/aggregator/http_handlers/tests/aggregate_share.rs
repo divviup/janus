@@ -23,6 +23,7 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
     batch_mode::{self, TimeInterval},
+    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -127,7 +128,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::new(
+            Interval::new_with_duration(
                 clock.now_aligned_to_precision(task.time_precision()),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(task.time_precision().as_seconds() - 1),
@@ -193,7 +194,7 @@ async fn aggregate_share_request() {
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(Duration::from_seconds(500))
+    .with_time_precision(TimePrecision::from_seconds(500))
     .with_min_batch_size(10)
     .build();
     let helper_task = task.helper_view().unwrap();
@@ -339,7 +340,7 @@ async fn aggregate_share_request() {
     // Specified interval includes too few reports.
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(1000),
             )
@@ -380,7 +381,7 @@ async fn aggregate_share_request() {
             name: "Interval is big enough but the checksums don't match",
             request: AggregateShareReq::new(
                 BatchSelector::new_time_interval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_seconds(2000),
                     )
@@ -397,7 +398,7 @@ async fn aggregate_share_request() {
             name: "Interval is big enough but report count doesn't match",
             request: AggregateShareReq::new(
                 BatchSelector::new_time_interval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(2000),
                         Duration::from_seconds(2000),
                     )
@@ -454,7 +455,7 @@ async fn aggregate_share_request() {
             "first and second batchess",
             AggregateShareReq::new(
                 BatchSelector::new_time_interval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_seconds(2000),
                     )
@@ -470,7 +471,7 @@ async fn aggregate_share_request() {
             "third and fourth batches",
             AggregateShareReq::new(
                 BatchSelector::new_time_interval(
-                    Interval::new(
+                    Interval::new_with_duration(
                         Time::from_seconds_since_epoch(2000),
                         Duration::from_seconds(2000),
                     )
@@ -581,7 +582,7 @@ async fn aggregate_share_request() {
     // collection intervals fail.
     let all_batch_request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::new(
+            Interval::new_with_duration(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(4000),
             )
@@ -614,7 +615,7 @@ async fn aggregate_share_request() {
     for query_count_violation_request in [
         AggregateShareReq::new(
             BatchSelector::new_time_interval(
-                Interval::new(
+                Interval::new_with_duration(
                     Time::from_seconds_since_epoch(0),
                     Duration::from_seconds(2000),
                 )
@@ -626,7 +627,7 @@ async fn aggregate_share_request() {
         ),
         AggregateShareReq::new(
             BatchSelector::new_time_interval(
-                Interval::new(
+                Interval::new_with_duration(
                     Time::from_seconds_since_epoch(2000),
                     Duration::from_seconds(2000),
                 )

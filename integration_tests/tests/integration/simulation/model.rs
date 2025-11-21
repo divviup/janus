@@ -1,6 +1,6 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
-use janus_messages::{CollectionJobId, Duration, Interval, Time};
+use janus_messages::{CollectionJobId, Duration, Interval, Time, taskprov::TimePrecision};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {
@@ -17,7 +17,7 @@ pub(super) struct Input {
 #[derive(Debug, Clone)]
 pub(super) struct Config {
     /// DAP task parameter: time precision.
-    pub(super) time_precision: Duration,
+    pub(super) time_precision: TimePrecision,
 
     /// DAP task parameter: minimum batch size.
     pub(super) min_batch_size: u64,

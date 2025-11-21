@@ -25,7 +25,7 @@ use janus_core::{
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
-    UploadResponse,
+    UploadResponse, taskprov::TimePrecision,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
@@ -92,7 +92,7 @@ async fn upload_handler() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(1000))
+    .with_time_precision(TimePrecision::from_seconds(1000))
     .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
     .build();
 
@@ -315,7 +315,7 @@ async fn upload_handler() {
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add_duration(task.time_precision())
+            .add_time_precision(task.time_precision())
             .unwrap(),
     ))
     .build();
@@ -527,7 +527,7 @@ async fn upload_handler_mixed_success_failure() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(1000))
+    .with_time_precision(TimePrecision::from_seconds(1000))
     .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
     .build();
 
@@ -649,7 +649,7 @@ async fn upload_handler_task_not_started() {
     } = HttpHandlerTest::new().await;
 
     // Create a task that starts in the future (must be aligned to time precision)
-    let time_precision = Duration::from_seconds(1000);
+    let time_precision = TimePrecision::from_seconds(1000);
 
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -660,9 +660,9 @@ async fn upload_handler_task_not_started() {
     .with_task_start(Some(
         clock
             .now_aligned_to_precision(&time_precision)
-            .add_duration(&time_precision) // Add one time precision interval
+            .add_time_precision(&time_precision) // Add one time precision interval
             .unwrap()
-            .add_duration(&time_precision) // Add another to be clearly in the future
+            .add_time_precision(&time_precision) // Add another to be clearly in the future
             .unwrap(),
     ))
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
@@ -724,7 +724,7 @@ async fn upload_handler_helper() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -794,7 +794,7 @@ async fn upload_handler_error_fanout() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
     .build();
 
@@ -915,7 +915,7 @@ async fn upload_client_early_disconnect() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(Duration::from_seconds(100))
+    .with_time_precision(TimePrecision::from_seconds(100))
     .build();
     let task_id = *task.id();
     let leader_task = task.leader_view().unwrap();

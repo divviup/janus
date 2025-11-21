@@ -443,9 +443,9 @@ mod tests {
                         aggregation_job_id,
                         aggregation_parameter,
                         (),
-                        Interval::new(
+                        Interval::new_with_duration(
                             *prepare_init.report_share().metadata().time(),
-                            time_precision,
+                            time_precision.into(),
                         )
                         .unwrap(),
                         AggregationJobState::Active,

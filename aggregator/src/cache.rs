@@ -284,7 +284,7 @@ mod tests {
         time::MockClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Duration as janusDuration, Time};
+    use janus_messages::{Time, taskprov::TimePrecision};
     use tokio::time::sleep;
 
     use crate::{
@@ -357,7 +357,7 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Prio3Count,
         )
-        .with_time_precision(janusDuration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .build()
         .leader_view()
         .unwrap();
@@ -427,7 +427,7 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Prio3Count,
         )
-        .with_time_precision(janusDuration::from_seconds(100))
+        .with_time_precision(TimePrecision::from_seconds(100))
         .build()
         .leader_view()
         .unwrap();
