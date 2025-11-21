@@ -285,7 +285,7 @@ impl Interval {
         duration: Duration::ZERO,
     };
 
-    /// Create a new [`Interval`] from the provided start and task duration (time precision).
+    /// Create a new [`Interval`] from the provided start and time precision.
     /// Returns an error if the end of the interval cannot be represented as a [`Time`].
     ///
     /// This is the preferred constructor for intervals based on task time precision.
