@@ -31,10 +31,7 @@ use {
 use {
     janus_aggregator_api::git_revision,
     opentelemetry::global::set_meter_provider,
-    opentelemetry_sdk::{
-        Resource,
-        metrics::{MetricError, SdkMeterProvider},
-    },
+    opentelemetry_sdk::{Resource, metrics::SdkMeterProvider},
 };
 
 #[cfg(feature = "prometheus")]
