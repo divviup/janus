@@ -7,7 +7,9 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{HpkeConfigList, MediaType, Role, Time, TimePrecision, UploadRequest};
+use janus_messages::{
+    HpkeConfigList, MediaType, Role, Time, UploadRequest, taskprov::TimePrecision,
+};
 use prio::{
     codec::Encode,
     vdaf::{self, prio3::Prio3},

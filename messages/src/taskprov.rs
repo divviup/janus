@@ -2,14 +2,18 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Error, Time, TimePrecision, Url, batch_mode};
+use crate::{Duration, Error, Time, Url, batch_mode};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
     CodecError, Decode, Encode, decode_u8_items, decode_u16_items, encode_u8_items,
     encode_u16_items,
 };
-use std::{fmt::Debug, io::Cursor};
+use serde::{Deserialize, Serialize};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    io::Cursor,
+};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -496,6 +500,84 @@ impl Decode for TaskbindExtensionType {
         Self::try_from(val).map_err(|_| {
             CodecError::Other(anyhow!("unexpected TaskbindExtensionType value ({val})").into())
         })
+    }
+}
+
+/// TaskProv protocol message representing a duration with a resolution of seconds.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TimePrecision(u64);
+
+impl TimePrecision {
+    pub const ZERO: TimePrecision = TimePrecision::from_seconds(0);
+
+    /// Create a duration representing the provided number of seconds.
+    pub const fn from_seconds(seconds: u64) -> Self {
+        Self(seconds)
+    }
+
+    /// Create a duration representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
+    /// Get the number of seconds this duration represents.
+    pub fn as_seconds(&self) -> u64 {
+        self.0
+    }
+
+    /// Convert this [`TimePrecision`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+}
+
+impl Encode for TimePrecision {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
+}
+
+impl Decode for TimePrecision {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u64::decode(bytes)?))
+    }
+}
+
+impl Display for TimePrecision {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} seconds", self.0)
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<TimePrecision> for Duration {
+    fn from(value: TimePrecision) -> Self {
+        Duration::from_seconds(value.as_seconds())
+    }
+}
+
+/// This method is only as a bridge for Issue #4019, and will be removed.
+impl From<Duration> for TimePrecision {
+    fn from(duration: Duration) -> Self {
+        TimePrecision::from_seconds(duration.as_seconds())
     }
 }
 

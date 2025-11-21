@@ -22,8 +22,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareId,
     AggregateShareReq, BatchSelector, Duration, Interval, MediaType, ReportIdChecksum, Role, Time,
-    TimePrecision,
     batch_mode::{self, TimeInterval},
+    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode},

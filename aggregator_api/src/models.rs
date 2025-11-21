@@ -13,8 +13,8 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time, TimePrecision,
-    batch_mode::Code as SupportedBatchMode,
+    Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    batch_mode::Code as SupportedBatchMode, taskprov::TimePrecision,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;

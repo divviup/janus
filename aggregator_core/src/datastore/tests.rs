@@ -36,8 +36,9 @@ use janus_messages::{
     AggregateShareAad, AggregationJobId, AggregationJobStep, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
     PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportError, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time, TimePrecision,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 use postgres_types::Timestamp;
 use prio::{

@@ -12,7 +12,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{Report, TimePrecision, UploadRequest};
+use janus_messages::{Report, UploadRequest, taskprov::TimePrecision};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},

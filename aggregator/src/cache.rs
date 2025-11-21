@@ -284,7 +284,7 @@ mod tests {
         time::MockClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Time, TimePrecision};
+    use janus_messages::{Time, taskprov::TimePrecision};
     use tokio::time::sleep;
 
     use crate::{

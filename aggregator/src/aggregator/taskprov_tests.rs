@@ -41,10 +41,9 @@ use janus_messages::{
     AggregationJobResp, AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType,
     Interval, MediaType, PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp,
     PrepareStepResult, ReportError, ReportIdChecksum, ReportShare, Role, TaskId, Time,
-    TimePrecision,
     batch_mode::{self, LeaderSelected},
     codec::{Decode, Encode},
-    taskprov::{TaskConfig, VdafConfig},
+    taskprov::{TaskConfig, TimePrecision, VdafConfig},
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,

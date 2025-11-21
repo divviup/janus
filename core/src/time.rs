@@ -1,7 +1,7 @@
 //! Utilities for timestamps and durations.
 
 use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
-use janus_messages::{Duration, Error, Interval, Time, TimePrecision};
+use janus_messages::{Duration, Error, Interval, Time, taskprov::TimePrecision};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
@@ -524,7 +524,7 @@ impl IntervalExt for Interval {
 mod tests {
     use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
     use chrono::TimeDelta;
-    use janus_messages::{Duration, Interval, Time, TimePrecision};
+    use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 
     #[test]
     fn round_up_duration() {

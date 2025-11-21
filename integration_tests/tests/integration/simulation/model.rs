@@ -1,6 +1,6 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
-use janus_messages::{CollectionJobId, Duration, Interval, Time, TimePrecision};
+use janus_messages::{CollectionJobId, Duration, Interval, Time, taskprov::TimePrecision};
 
 #[derive(Debug, Clone)]
 pub(super) struct Input {

@@ -15,8 +15,8 @@ use janus_aggregator_core::{
 };
 use janus_core::time::{Clock, TimeDeltaExt, TimeExt};
 use janus_messages::{
-    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time, TimePrecision,
-    batch_mode::LeaderSelected,
+    AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    batch_mode::LeaderSelected, taskprov::TimePrecision,
 };
 use opentelemetry::metrics::Histogram;
 use prio::codec::Encode;

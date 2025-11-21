@@ -11,7 +11,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobId, CollectionJobId, TaskId, TimePrecision, batch_mode::BatchMode,
+    AggregationJobId, CollectionJobId, TaskId, batch_mode::BatchMode, taskprov::TimePrecision,
 };
 use postgres_types::{Json, Timestamp};
 use prio::codec::Decode;

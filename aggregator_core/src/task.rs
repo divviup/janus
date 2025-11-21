@@ -11,7 +11,7 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, Duration, HpkeConfig, Role, TaskId,
-    Time, TimePrecision, batch_mode,
+    Time, batch_mode, taskprov::TimePrecision,
 };
 use postgres_types::{FromSql, ToSql};
 use rand::{Rng, distr::StandardUniform, random, rng};
@@ -799,7 +799,7 @@ pub mod test_util {
     };
     use janus_messages::{
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
-        HpkeConfigId, Role, TaskId, Time, TimePrecision,
+        HpkeConfigId, Role, TaskId, Time, taskprov::TimePrecision,
     };
     use rand::{Rng, distr::StandardUniform, random, rng};
     use std::collections::HashMap;
@@ -1386,7 +1386,7 @@ mod tests {
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        TaskId, Time, TimePrecision,
+        TaskId, Time, taskprov::TimePrecision,
     };
     use rand::random;
     use serde_json::json;

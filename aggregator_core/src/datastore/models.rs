@@ -16,8 +16,8 @@ use janus_messages::{
     AggregateShareId, AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration,
     Extension, HpkeCiphertext, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
     Query, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
-    TimePrecision,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
     Range, RangeBound, range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,

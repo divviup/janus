@@ -24,8 +24,8 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
-    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, TimePrecision,
-    UploadRequest, UploadResponse,
+    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
+    UploadResponse, taskprov::TimePrecision,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};

@@ -933,8 +933,8 @@ mod tests {
     };
     use janus_messages::{
         AggregateShare, AggregateShareReq, AggregationJobStep, BatchSelector, Duration, Interval,
-        MediaType, Query, ReportIdChecksum, TimePrecision, batch_mode::TimeInterval,
-        problem_type::DapProblemType,
+        MediaType, Query, ReportIdChecksum, batch_mode::TimeInterval, problem_type::DapProblemType,
+        taskprov::TimePrecision,
     };
     use postgres_types::Timestamp;
     use prio::{

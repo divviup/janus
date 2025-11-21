@@ -1,7 +1,7 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
-use janus_messages::{Duration, Interval, Time, TimePrecision};
+use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 use rand::random;
 
 use crate::simulation::{

@@ -19,7 +19,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
 };
-use janus_messages::{HpkeConfig, Time, TimePrecision};
+use janus_messages::{HpkeConfig, Time, taskprov::TimePrecision};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

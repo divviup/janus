@@ -9,7 +9,7 @@ use std::cmp::max;
 
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{TimeDeltaExt, TimeExt};
-use janus_messages::{CollectionJobId, Duration, Interval, Time, TimePrecision};
+use janus_messages::{CollectionJobId, Duration, Interval, Time, taskprov::TimePrecision};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
 

@@ -11,8 +11,9 @@ use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeDeltaExt as _, TimeExt as _};
 use janus_messages::{
-    Interval, Query, TaskId, Time, TimePrecision,
+    Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 use std::iter;
 
@@ -425,7 +426,9 @@ mod tests {
         task::{AggregationMode, BatchMode, test_util::TaskBuilder},
     };
     use janus_core::vdaf::VdafInstance;
-    use janus_messages::{Duration, Interval, Time, TimePrecision, batch_mode::TimeInterval};
+    use janus_messages::{
+        Duration, Interval, Time, batch_mode::TimeInterval, taskprov::TimePrecision,
+    };
 
     #[test]
     fn validate_collect_identifier() {

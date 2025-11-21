@@ -46,9 +46,10 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     Duration, Extension, ExtensionType, Interval, MediaType, PartialBatchSelector, PrepareContinue,
     PrepareInit, PrepareResp, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata,
-    ReportShare, Role, Time, TimePrecision,
+    ReportShare, Role, Time,
     batch_mode::{LeaderSelected, TimeInterval},
     problem_type::DapProblemType,
+    taskprov::TimePrecision,
 };
 use mockito::ServerGuard;
 use prio::{

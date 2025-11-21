@@ -14,7 +14,7 @@ use fixed::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
-use janus_messages::{TaskId, Time, TimePrecision};
+use janus_messages::{TaskId, Time, taskprov::TimePrecision};
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{

@@ -4,7 +4,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_client::Client;
 use janus_core::vdaf::{Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance};
 use janus_interop_binaries::{ContainerLogsDropGuard, get_rust_log_level};
-use janus_messages::{TaskId, Time, TimePrecision};
+use janus_messages::{TaskId, Time, taskprov::TimePrecision};
 use prio::{
     codec::Encode,
     field::Field64,
