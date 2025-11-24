@@ -640,8 +640,8 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
-    use chrono::TimeDelta;
+    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
+    use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 
     #[test]
@@ -884,5 +884,145 @@ mod tests {
                 .as_seconds_since_epoch();
             assert_eq!(expected, result, "{label}");
         }
+    }
+
+    #[test]
+    fn to_time_converts_correctly() {
+        for (label, timestamp_secs, expected_secs) in [
+            ("epoch", 0, 0),
+            ("year 2000", 946684800, 946684800),
+            ("y2038", 2147483647, 2147483647), // 2038-01-19
+            ("in the year 2525", 17514169200, 17514169200),
+        ] {
+            let dt = DateTime::<Utc>::from_timestamp(timestamp_secs, 0).unwrap();
+            let time = dt.to_time();
+            assert_eq!(
+                time.as_seconds_since_epoch(),
+                expected_secs,
+                "{label}: timestamp mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn add_duration_success() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let duration = Duration::from_seconds(3600);
+
+        let result = dt.add_duration(&duration).unwrap();
+        assert_eq!(result.timestamp(), 1000000000 + 3600);
+    }
+
+    #[test]
+    fn add_duration_large_value_error() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        // Duration value too large to convert to i64 for TimeDelta
+        let duration = Duration::from_seconds(i64::MAX as u64 + 1);
+
+        let result = dt.add_duration(&duration);
+        assert!(
+            result.is_err(),
+            "should error when duration value too large for i64"
+        );
+    }
+
+    #[test]
+    fn add_timedelta_success() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let delta = TimeDelta::seconds(7200);
+
+        let result = dt.add_timedelta(&delta).unwrap();
+        assert_eq!(result.timestamp(), 1000000000 + 7200);
+    }
+
+    #[test]
+    fn add_timedelta_negative() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let delta = TimeDelta::seconds(-3600);
+
+        let result = dt.add_timedelta(&delta).unwrap();
+        assert_eq!(result.timestamp(), 1000000000 - 3600);
+    }
+
+    #[test]
+    fn sub_timedelta_success() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let delta = TimeDelta::seconds(3600);
+
+        let result = dt.sub_timedelta(&delta).unwrap();
+        assert_eq!(result.timestamp(), 1000000000 - 3600);
+    }
+
+    #[test]
+    fn sub_timedelta_large_negative_value() {
+        // Test subtracting a very large timedelta that would underflow DateTime range
+        let dt = DateTime::<Utc>::from_timestamp(0, 0).unwrap(); // is smol
+        let delta = TimeDelta::try_seconds(100000000000).unwrap(); // is big
+
+        assert!(
+            dt.sub_timedelta(&delta).is_ok(),
+            "should handle large subtraction gracefully"
+        );
+    }
+
+    #[test]
+    fn time_comparisons() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(999999999);
+
+        assert!(dt.is_after(&time), "dt should be after time");
+
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000001);
+
+        assert!(!dt.is_after(&time), "dt should not be after time");
+
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000000);
+
+        assert!(
+            !dt.to_time().is_after(&time),
+            "dt should not be after an equal time"
+        );
+        assert!(
+            !dt.to_time().is_before(&time),
+            "dt should not be before an equal time"
+        );
+    }
+
+    #[test]
+    fn difference_as_time_delta_underflow() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000001);
+
+        let result = dt.difference_as_time_delta(&time);
+        assert!(result.is_err(), "should error when dt is before time");
+    }
+
+    #[test]
+    fn saturating_difference_positive() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(999999000);
+
+        let duration = dt.saturating_difference(&time);
+        assert_eq!(duration.as_seconds(), 1000);
+    }
+
+    #[test]
+    fn saturating_difference_negative_returns_zero() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000100); // time is after dt
+
+        let duration = dt.saturating_difference(&time);
+        assert_eq!(duration.as_seconds(), 0, "should saturate to zero");
+    }
+
+    #[test]
+    fn saturating_difference_equal_returns_zero() {
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000000);
+
+        let duration = dt.saturating_difference(&time);
+        assert_eq!(duration.as_seconds(), 0);
     }
 }
