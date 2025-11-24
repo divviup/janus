@@ -13,7 +13,7 @@ jobs:
       issues: "write"
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-udeps
