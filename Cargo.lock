@@ -3564,9 +3564,9 @@ dependencies = [
 
 [[package]]
 name = "ohttp"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7596cbb2bb1326a1a9459d3b82e479dbb4606bb1d2854c6978284c446000b726"
+checksum = "e482d6d044fb97988130b6719a91c846006030c9424f943c817b81adf3969126"
 dependencies = [
  "aead",
  "aes-gcm",
@@ -3582,7 +3582,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "toml",
 ]
 
