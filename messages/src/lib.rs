@@ -273,14 +273,17 @@ impl TryFrom<SystemTime> for Time {
 // Allow direct comparison between Time and DateTime<Utc>
 impl PartialEq<DateTime<Utc>> for Time {
     fn eq(&self, other: &DateTime<Utc>) -> bool {
-        self.as_seconds_since_epoch() == other.timestamp() as u64
+        let other_timestamp =
+            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
+        self.as_seconds_since_epoch() == other_timestamp
     }
 }
 
 impl PartialOrd<DateTime<Utc>> for Time {
     fn partial_cmp(&self, other: &DateTime<Utc>) -> Option<std::cmp::Ordering> {
-        self.as_seconds_since_epoch()
-            .partial_cmp(&(other.timestamp() as u64))
+        let other_timestamp =
+            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
+        self.as_seconds_since_epoch().partial_cmp(&other_timestamp)
     }
 }
 

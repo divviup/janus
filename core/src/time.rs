@@ -277,8 +277,8 @@ pub trait DateTimeExt {
     where
         Self: Sized;
 
-    /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`].
-    /// `self` must be after `other`.
+    /// Get the difference between this [`DateTime<Utc>`] and the provided `other` [`Time`].
+    /// Returns `self - other`. `self` must be after `other`.
     fn difference_as_time_delta(&self, other: &Time) -> Result<TimeDelta, Error>;
 
     /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`] using
@@ -288,11 +288,19 @@ pub trait DateTimeExt {
 
 impl DateTimeExt for DateTime<Utc> {
     fn to_time(&self) -> Time {
-        Time::from_seconds_since_epoch(self.timestamp() as u64)
+        // Unwrap safety: Negative timestamps only happen during overflow
+        Time::from_seconds_since_epoch(
+            self.timestamp()
+                .try_into()
+                .expect("timestamp must be non-negative"),
+        )
     }
 
     fn as_seconds_since_epoch(&self) -> u64 {
-        self.timestamp() as u64
+        // Unwrap safety: Negative timestamps only happen during overflow
+        self.timestamp()
+            .try_into()
+            .expect("timestamp must be non-negative")
     }
 
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
@@ -359,6 +367,7 @@ impl DateTimeExt for DateTime<Utc> {
 }
 
 /// Extension methods on [`Time`].
+/// Deprecation notice: These methods will be substanially revised as part of #4019.
 pub trait TimeExt: Sized {
     /// Compute the start of the batch interval containing this Time, given the task time precision.
     fn to_batch_interval_start(
