@@ -1241,7 +1241,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     install_test_trace_subscriber();
     initialize_rustls();
     let mut server = mockito::Server::new_async().await;
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ephemeral_datastore = ephemeral_datastore().await;
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     ds.put_hpke_key().await.unwrap();

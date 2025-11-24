@@ -701,7 +701,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let known_ciphersuites_with_active_keys: Vec<_> = config
             .ciphersuites
@@ -735,7 +735,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let to_expire: HashSet<_> = state
             .keypairs
@@ -789,7 +789,7 @@ mod tests {
         if state.keypairs.is_empty() {
             return TestResult::discard();
         }
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let ciphersuites_to_insert: Vec<_> = config
             .ciphersuites
@@ -827,7 +827,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
         let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
             .unwrap()
             .sweep()
@@ -865,7 +865,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
         let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
@@ -911,7 +911,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let to_delete: HashSet<_> = state
             .keypairs

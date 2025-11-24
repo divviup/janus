@@ -689,7 +689,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let report_interval = Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, TIME_PRECISION).unwrap();
     let task = TaskBuilder::new(
@@ -1224,7 +1224,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
 async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1364,7 +1364,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
 async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1682,7 +1682,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
 async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // We use a dummy VDAF & leader-selected task for this test, to better exercise the
@@ -1946,7 +1946,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     install_test_trace_subscriber();
 
     const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     const AGGREGATION_JOB_COUNT: usize = 10;
@@ -2769,7 +2769,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     .into_iter()
     .enumerate()
     {
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
@@ -3049,7 +3049,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
 async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3224,7 +3224,7 @@ async fn create_report_aggregation_from_client_reports_table(
 ) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3450,7 +3450,7 @@ async fn crypter() {
 async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5187,7 +5187,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
 async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let time_precision = TimePrecision::from_seconds(100);
@@ -5571,7 +5571,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5799,7 +5799,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -5983,7 +5983,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -6138,7 +6138,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
 async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let batch_time_window_size = Duration::from_hours(24);
@@ -6725,7 +6725,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
 async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
     let aggregation_param = dummy::AggregationParam(0);
@@ -7220,7 +7220,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // Setup.
@@ -7903,7 +7903,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         .unwrap();
 
     // Reset the clock to "disable" GC-on-read.
-    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
     // Verify.
     assert_eq!((1, 1, 1, 1, 1), deleted_batch_counts);

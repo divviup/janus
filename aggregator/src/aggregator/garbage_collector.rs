@@ -208,7 +208,7 @@ mod tests {
     async fn gc_task_leader_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -320,7 +320,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -377,7 +377,7 @@ mod tests {
     async fn gc_task_helper_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -511,7 +511,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -568,7 +568,7 @@ mod tests {
     async fn gc_task_leader_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -685,7 +685,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -748,7 +748,7 @@ mod tests {
     async fn gc_task_helper_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -889,10 +889,10 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch() as i64);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {

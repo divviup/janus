@@ -50,17 +50,17 @@ impl Debug for RealClock {
 #[non_exhaustive]
 pub struct MockClock {
     /// The time that this clock will return from [`Self::now`].
-    current_time: Arc<Mutex<i64>>,
+    current_time: Arc<Mutex<u64>>,
 }
 
 impl MockClock {
-    pub fn new(when: i64) -> MockClock {
+    pub fn new(when: u64) -> MockClock {
         MockClock {
             current_time: Arc::new(Mutex::new(when)),
         }
     }
 
-    pub fn set(&self, when: i64) {
+    pub fn set(&self, when: u64) {
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = when;
     }
@@ -72,7 +72,7 @@ impl MockClock {
         );
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = current_time
-            .checked_add(dur.num_seconds())
+            .checked_add(dur.num_seconds().try_into().expect("Duration overflow"))
             .expect("MockClock overflow");
     }
 }
@@ -80,7 +80,10 @@ impl MockClock {
 impl Clock for MockClock {
     fn now(&self) -> DateTime<Utc> {
         let current_time = self.current_time.lock().unwrap();
-        DateTime::<Utc>::from_timestamp_secs(*current_time).expect("DateTime Overflow")
+        DateTime::<Utc>::from_timestamp_secs(
+            (*current_time).try_into().expect("MockClock overflow"),
+        )
+        .expect("DateTime Overflow")
     }
 }
 

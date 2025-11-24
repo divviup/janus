@@ -129,7 +129,7 @@ async fn aggregate_continue_sync() {
     );
 
     // report_share_2 falls into a batch that has already been collected.
-    let past_clock = MockClock::new((task.time_precision().as_seconds() / 2) as i64);
+    let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_2 = ReportMetadata::new(
         random(),
         past_clock
@@ -675,7 +675,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             .to_time()
             .add_time_precision(task.time_precision())
             .unwrap()
-            .as_seconds_since_epoch() as i64,
+            .as_seconds_since_epoch(),
     );
 
     let vdaf = dummy::Vdaf::new(2);
