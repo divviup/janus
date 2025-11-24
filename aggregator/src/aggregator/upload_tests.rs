@@ -406,12 +406,13 @@ async fn upload_report_in_the_future_past_clock_skew() {
     let report = create_report(
         &task.leader_view().unwrap(),
         &hpke_keypair,
-        (clock
+        clock
             .now()
             .add_duration(task.tolerable_clock_skew())
             .unwrap()
-            + TimeDelta::seconds(1))
-        .to_time(),
+            .add_timedelta(&TimeDelta::seconds(1))
+            .unwrap()
+            .to_time(),
     );
 
     let upload_result = aggregator

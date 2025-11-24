@@ -232,7 +232,11 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = (clock.now() - TimeDelta::seconds(10)).to_time();
+                    let client_timestamp = clock
+                        .now()
+                        .sub_timedelta(&TimeDelta::seconds(10))
+                        .unwrap()
+                        .to_time();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -590,10 +594,13 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = {
-                        let dt = clock.now() - REPORT_EXPIRY_AGE.to_chrono().unwrap();
-                        (dt - TimeDelta::seconds(10)).to_time()
-                    };
+                    let client_timestamp = clock
+                        .now()
+                        .sub_timedelta(&REPORT_EXPIRY_AGE.to_chrono().unwrap())
+                        .unwrap()
+                        .sub_timedelta(&TimeDelta::seconds(10))
+                        .unwrap()
+                        .to_time();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -768,10 +775,13 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp = {
-                        let dt = clock.now() - REPORT_EXPIRY_AGE.to_chrono().unwrap();
-                        (dt - TimeDelta::seconds(10)).to_time()
-                    };
+                    let client_timestamp = clock
+                        .now()
+                        .sub_timedelta(&REPORT_EXPIRY_AGE.to_chrono().unwrap())
+                        .unwrap()
+                        .sub_timedelta(&TimeDelta::seconds(10))
+                        .unwrap()
+                        .to_time();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
