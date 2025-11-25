@@ -370,6 +370,7 @@ impl DateTimeExt for DateTime<Utc> {
 }
 
 /// Extension methods on [`Time`].
+///
 /// Deprecation notice: These methods will be substanially revised as part of #4019.
 pub trait TimeExt: Sized {
     /// Compute the start of the batch interval containing this Time, given the task time precision.
