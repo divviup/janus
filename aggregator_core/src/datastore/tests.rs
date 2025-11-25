@@ -29,7 +29,7 @@ use futures::future::try_join_all;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     test_util::{install_test_trace_subscriber, run_vdaf},
-    time::{Clock, IntervalExt, MockClock, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
@@ -689,7 +689,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let report_interval = Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, TIME_PRECISION).unwrap();
     let task = TaskBuilder::new(
@@ -890,11 +890,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                 if report_id == *first_unaggregated_report.metadata().id()
                     || report_id == *second_unaggregated_report.metadata().id()
                 {
-                    assert_eq!(
-                        tx.clock.now().as_naive_date_time().unwrap(),
-                        updated_at,
-                        "{report_id:?}"
-                    );
+                    assert_eq!(tx.clock.now().naive_utc(), updated_at, "{report_id:?}");
                 } else {
                     assert_eq!(
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
@@ -1228,7 +1224,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
 async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1368,7 +1364,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
 async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1686,7 +1682,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
 async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // We use a dummy VDAF & leader-selected task for this test, to better exercise the
@@ -1950,7 +1946,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     install_test_trace_subscriber();
 
     const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     const AGGREGATION_JOB_COUNT: usize = 10;
@@ -2200,8 +2196,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         );
     }
 
-    let want_expiry_time = clock.now().as_naive_date_time().unwrap()
-        + chrono::Duration::from_std(LEASE_DURATION).unwrap();
+    let want_expiry_time =
+        clock.now().naive_utc() + chrono::Duration::from_std(LEASE_DURATION).unwrap();
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2415,8 +2411,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         TimeDelta::try_seconds_unsigned(LEASE_DURATION.as_secs() - REACQUIRE_DELAY.as_secs())
             .unwrap(),
     );
-    let want_expiry_time = clock.now().as_naive_date_time().unwrap()
-        + chrono::Duration::from_std(LEASE_DURATION).unwrap();
+    let want_expiry_time =
+        clock.now().naive_utc() + chrono::Duration::from_std(LEASE_DURATION).unwrap();
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2773,7 +2769,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     .into_iter()
     .enumerate()
     {
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
@@ -2846,7 +2842,7 @@ WHERE client_report_id = $1",
                     let updated_at: chrono::NaiveDateTime = row.get("updated_at");
                     let updated_by: &str = row.get("updated_by");
 
-                    assert_eq!(updated_at, tx.clock.now().as_naive_date_time().unwrap());
+                    assert_eq!(updated_at, tx.clock.now().naive_utc());
                     assert_eq!(updated_by, "test-put-report-aggregations");
 
                     Ok(report_aggregation)
@@ -2918,7 +2914,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                 let updated_at: chrono::NaiveDateTime = row.get("updated_at");
                 let updated_by: &str = row.get("updated_by");
 
-                assert_eq!(updated_at, tx.clock.now().as_naive_date_time().unwrap());
+                assert_eq!(updated_at, tx.clock.now().naive_utc());
                 assert_eq!(updated_by, "test-update-report-aggregation");
 
                 Ok(())
@@ -2975,7 +2971,7 @@ SELECT updated_at, updated_by FROM report_aggregations
         // Make a "new" report aggregation with the same ID, but which is not expired. It should get
         // upserted, replacing the effectively GCed report aggregation.
         ds.run_unnamed_tx(|tx| {
-            let unexpired_report_aggregation = report_aggregation.clone().with_time(clock.now());
+            let unexpired_report_aggregation = report_aggregation.clone().with_time(clock.now().to_time());
             Box::pin(async move {
                 tx.put_report_aggregation(&unexpired_report_aggregation)
                     .await
@@ -3053,7 +3049,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
 async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3228,7 +3224,7 @@ async fn create_report_aggregation_from_client_reports_table(
 ) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3270,7 +3266,7 @@ async fn create_report_aggregation_from_client_reports_table(
         *task.id(),
         ReportMetadata::new(
             report_id,
-            clock.now(),
+            clock.now().to_time(),
             Vec::from([Extension::new(
                 ExtensionType::Tbd,
                 "public_extension_tbd".into(),
@@ -3311,7 +3307,7 @@ async fn create_report_aggregation_from_client_reports_table(
         *task.id(),
         *aggregation_job.id(),
         report_id,
-        clock.now(),
+        clock.now().to_time(),
         0,
         state,
     );
@@ -3340,7 +3336,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     *task.id(),
                     *aggregation_job.id(),
                     report_id,
-                    timestamp,
+                    timestamp.to_time(),
                     0,
                     None,
                     expected_report_aggregation_state,
@@ -3374,8 +3370,9 @@ async fn create_report_aggregation_from_client_reports_table(
     clock.advance(doubled);
 
     ds.run_unnamed_tx(|tx| {
-        let unexpired_report_aggregation_metadata =
-            report_aggregation_metadata.clone().with_time(clock.now());
+        let unexpired_report_aggregation_metadata = report_aggregation_metadata
+            .clone()
+            .with_time(clock.now().to_time());
 
         Box::pin(async move {
             // Upsert a new aggregation job with the same ID but unexpired
@@ -3453,7 +3450,7 @@ async fn crypter() {
 async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -4021,8 +4018,7 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
                             c.agg_param.get_encoded().unwrap(),
                             0,
                         ),
-                        clock.now().as_naive_date_time().unwrap()
-                            + chrono::Duration::try_seconds(100).unwrap(),
+                        clock.now().naive_utc() + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();
@@ -4041,7 +4037,7 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
 #[tokio::test]
 async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let clock = MockClock::new(Time::from_seconds_since_epoch(0));
+    let clock = MockClock::new(0);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -4594,7 +4590,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
             tx.check_timestamp_columns_at_create_time(
                 "collection_jobs",
                 "test-reacquire-leases",
-                test_start,
+                test_start.to_time(),
                 true,
             )
             .await;
@@ -5023,8 +5019,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             c.agg_param.get_encoded().unwrap(),
                             0,
                         ),
-                        clock.now().as_naive_date_time().unwrap()
-                            + chrono::Duration::try_seconds(100).unwrap(),
+                        clock.now().naive_utc() + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();
@@ -5192,7 +5187,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
 async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let time_precision = TimePrecision::from_seconds(100);
@@ -5576,7 +5571,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5804,7 +5799,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -5988,7 +5983,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -6143,14 +6138,15 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
 async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let batch_time_window_size = Duration::from_hours(24);
     let time_bucket_start = clock
         .now()
         .to_batch_interval_start(&TimePrecision::from_hours(24))
-        .unwrap();
+        .unwrap()
+        .to_time();
 
     let (task_id_1, batch_id_1, task_id_2, batch_id_2) = ds
         .run_tx("test-put-outstanding-batches", |tx| {
@@ -6293,7 +6289,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_0.id(),
                     report_id_0_1,
-                    clock.now(),
+                    clock.now().to_time(),
                     1,
                     None,
                     // Counted among max_size.
@@ -6308,7 +6304,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_0.id(),
                     random(),
-                    clock.now(),
+                    clock.now().to_time(),
                     2,
                     None,
                     ReportAggregationState::Failed {
@@ -6333,7 +6329,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now(),
+                    clock.now().to_time(),
                     0,
                     None,
                     ReportAggregationState::Finished, // Counted among min_size and max_size.
@@ -6342,7 +6338,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now(),
+                    clock.now().to_time(),
                     1,
                     None,
                     ReportAggregationState::Finished, // Counted among min_size and max_size.
@@ -6351,7 +6347,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now(),
+                    clock.now().to_time(),
                     2,
                     None,
                     ReportAggregationState::Failed {
@@ -6729,7 +6725,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
 async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
     let aggregation_param = dummy::AggregationParam(0);
@@ -7224,7 +7220,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // Setup.
@@ -7907,7 +7903,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         .unwrap();
 
     // Reset the clock to "disable" GC-on-read.
-    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
     // Verify.
     assert_eq!((1, 1, 1, 1, 1), deleted_batch_counts);
@@ -8371,8 +8367,11 @@ async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
                 assert_eq!(tx.get_hpke_keypairs().await.unwrap(), Vec::new());
                 tx.put_hpke_keypair(&keypair).await.unwrap();
 
-                let expected_keypair =
-                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Pending, clock.now());
+                let expected_keypair = HpkeKeypair::new(
+                    keypair.clone(),
+                    HpkeKeyState::Pending,
+                    clock.now().to_time(),
+                );
                 assert_eq!(
                     tx.get_hpke_keypairs().await.unwrap(),
                     Vec::from([expected_keypair.clone()])
@@ -8395,7 +8394,7 @@ async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
                         .await
                         .unwrap()
                         .unwrap(),
-                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now())
+                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now().to_time())
                 );
 
                 clock.advance(TimeDelta::seconds(100));
@@ -8407,7 +8406,11 @@ async fn roundtrip_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
                         .await
                         .unwrap()
                         .unwrap(),
-                    HpkeKeypair::new(keypair.clone(), HpkeKeyState::Expired, clock.now())
+                    HpkeKeypair::new(
+                        keypair.clone(),
+                        HpkeKeyState::Expired,
+                        clock.now().to_time()
+                    )
                 );
 
                 Ok(())
@@ -8605,7 +8608,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
     // Use same ID for each report.
     let report = LeaderStoredReport::<0, dummy::Vdaf>::new(
         *task.id(),
-        ReportMetadata::new(random(), clock.now(), Vec::new()),
+        ReportMetadata::new(random(), clock.now().to_time(), Vec::new()),
         (),
         Vec::new(),
         dummy::InputShare::default(),
@@ -8679,7 +8682,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         .run_unnamed_tx(|tx| {
             let unexpired_report = report.clone().with_report_metadata(ReportMetadata::new(
                 *report.metadata().id(),
-                clock.now(),
+                clock.now().to_time(),
                 Vec::new(),
             ));
             Box::pin(async move {

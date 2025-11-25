@@ -14,7 +14,7 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
     test_util::run_vdaf,
-    time::{Clock as _, TimeExt as _},
+    time::{Clock as _, DateTimeExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -58,7 +58,8 @@ async fn aggregation_job_get_ready() {
         clock
             .now()
             .to_batch_interval_start(&time_precision)
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -177,7 +178,8 @@ async fn aggregation_job_get_unready() {
         clock
             .now()
             .to_batch_interval_start(&time_precision)
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -294,7 +296,8 @@ async fn aggregation_job_get_wrong_step() {
         clock
             .now()
             .to_batch_interval_start(&time_precision)
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -402,6 +405,7 @@ async fn aggregation_job_get_missing_step() {
         random(),
         clock
             .now()
+            .to_time()
             .to_batch_interval_start(task.time_precision())
             .unwrap(),
         Vec::new(),
@@ -506,7 +510,8 @@ async fn aggregation_job_get_sync() {
         clock
             .now()
             .to_batch_interval_start(&time_precision)
-            .unwrap(),
+            .unwrap()
+            .to_time(),
         Vec::new(),
     );
     let transcript = run_vdaf(

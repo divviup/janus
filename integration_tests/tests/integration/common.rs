@@ -4,7 +4,7 @@ use janus_aggregator_core::task::{BatchMode, test_util::TaskBuilder};
 use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::{ExponentialWithTotalDelayBuilder, test_util::test_http_request_exponential_backoff},
-    time::{Clock, RealClock, TimeExt},
+    time::{Clock, DateTimeExt, RealClock, TimeExt},
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_integration_tests::{
@@ -204,13 +204,15 @@ where
         client_implementation
             .upload(
                 measurement,
-                time.to_batch_interval_start(time_precision).unwrap(),
+                time.to_batch_interval_start(time_precision)
+                    .unwrap()
+                    .to_time(),
             )
             .await
             .unwrap();
     }
 
-    time
+    time.to_time()
 }
 
 pub async fn verify_aggregate_generic<V>(

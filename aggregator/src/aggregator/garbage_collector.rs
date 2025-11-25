@@ -188,7 +188,7 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{Clock, MockClock, TimeExt as _},
+        time::{Clock, DateTimeExt, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -208,7 +208,7 @@ mod tests {
     async fn gc_task_leader_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -232,8 +232,11 @@ mod tests {
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
-                    let client_timestamp =
-                        clock.now().sub_timedelta(&TimeDelta::seconds(10)).unwrap();
+                    let client_timestamp = clock
+                        .now()
+                        .sub_timedelta(&TimeDelta::seconds(10))
+                        .unwrap()
+                        .to_time();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -317,7 +320,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -374,7 +377,7 @@ mod tests {
     async fn gc_task_helper_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -508,7 +511,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -565,7 +568,7 @@ mod tests {
     async fn gc_task_leader_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -593,10 +596,11 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub_duration(&REPORT_EXPIRY_AGE)
+                        .sub_timedelta(&REPORT_EXPIRY_AGE.to_chrono().unwrap())
                         .unwrap()
                         .sub_timedelta(&TimeDelta::seconds(10))
-                        .unwrap();
+                        .unwrap()
+                        .to_time();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -681,7 +685,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -744,7 +748,7 @@ mod tests {
     async fn gc_task_helper_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -773,10 +777,11 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now()
-                        .sub_duration(&REPORT_EXPIRY_AGE)
+                        .sub_timedelta(&REPORT_EXPIRY_AGE.to_chrono().unwrap())
                         .unwrap()
                         .sub_timedelta(&TimeDelta::seconds(10))
-                        .unwrap();
+                        .unwrap()
+                        .to_time();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
@@ -884,10 +889,10 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP.as_seconds_since_epoch());
 
         // Verify.
         ds.run_unnamed_tx(|tx| {

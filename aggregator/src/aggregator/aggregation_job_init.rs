@@ -16,7 +16,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
-    time::{Clock, TimeExt as _},
+    time::{Clock, DateTimeExt as _, TimeExt as _},
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
@@ -316,7 +316,7 @@ where
                             .report_share()
                             .metadata()
                             .time()
-                            .difference_as_time_delta(&now)
+                            .difference_as_time_delta(&now.to_time())
                         {
                             metrics
                                 .early_report_clock_skew_histogram
@@ -336,7 +336,7 @@ where
                                 .report_share()
                                 .metadata()
                                 .time()
-                                .is_after(&report_deadline)
+                                .is_after(&report_deadline.to_time())
                             {
                                 return Err(ReportError::ReportTooEarly);
                             }
@@ -487,7 +487,7 @@ pub mod test_util {
     use janus_core::{
         auth_tokens::test_util::WithAuthenticationToken,
         test_util::{VdafTranscript, run_vdaf},
-        time::{Clock, MockClock, TimeExt as _},
+        time::{Clock, DateTimeExt as _, MockClock},
     };
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, Extension, HpkeConfig, MediaType,
@@ -551,7 +551,8 @@ pub mod test_util {
                     self.clock
                         .now()
                         .to_batch_interval_start(self.task.time_precision())
-                        .unwrap(),
+                        .unwrap()
+                        .to_time(),
                     Vec::new(),
                 ),
                 measurement,
@@ -587,7 +588,8 @@ pub mod test_util {
                     self.clock
                         .now()
                         .to_batch_interval_start(self.task.time_precision())
-                        .unwrap(),
+                        .unwrap()
+                        .to_time(),
                     Vec::new(),
                 ),
                 measurement,

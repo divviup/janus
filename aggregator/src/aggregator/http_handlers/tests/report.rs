@@ -19,7 +19,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
+    time::{Clock, DateTimeExt as _, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -351,7 +351,8 @@ async fn upload_handler() {
     .await;
 
     // Reject reports with an undecodeable public share.
-    let mut bad_public_share_report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let mut bad_public_share_report =
+        create_report(&leader_task, &hpke_keypair, clock.now().to_time());
     bad_public_share_report = Report::new(
         bad_public_share_report.metadata().clone(),
         // Some obviously wrong public share.
@@ -382,7 +383,7 @@ async fn upload_handler() {
     // Reject reports which are not decryptable.
     let undecryptable_report = create_report_custom(
         &leader_task,
-        clock.now(),
+        clock.now().to_time(),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
@@ -407,7 +408,8 @@ async fn upload_handler() {
     .await;
 
     // Reject reports whose leader input share is corrupt.
-    let mut bad_leader_input_share_report = create_report(&leader_task, &hpke_keypair, clock.now());
+    let mut bad_leader_input_share_report =
+        create_report(&leader_task, &hpke_keypair, clock.now().to_time());
     bad_leader_input_share_report = Report::new(
         bad_leader_input_share_report.metadata().clone(),
         bad_leader_input_share_report.public_share().to_vec(),
@@ -865,7 +867,7 @@ async fn upload_handler_error_fanout() {
                 let url = url.clone();
                 let hpke_keypair = hpke_keypair.clone();
                 async move {
-                    let report = create_report(&leader_task, &hpke_keypair, clock.now());
+                    let report = create_report(&leader_task, &hpke_keypair, clock.now().to_time());
                     let response = client
                         .post(url)
                         .header("Content-Type", UploadRequest::MEDIA_TYPE)

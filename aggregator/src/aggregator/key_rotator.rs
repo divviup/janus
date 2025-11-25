@@ -10,7 +10,7 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::{
     hpke::{self, HpkeCiphersuite},
-    time::{Clock, TimeExt},
+    time::{Clock, DateTimeExt},
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
 #[cfg(test)]
@@ -347,9 +347,10 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     )
                     .map_err(|e| DatastoreError::User(e.into()))?;
 
-                    let result = self
-                        .keypairs
-                        .insert(id, HpkeKeypair::new(keypair, state, self.clock.now()));
+                    let result = self.keypairs.insert(
+                        id,
+                        HpkeKeypair::new(keypair, state, self.clock.now().to_time()),
+                    );
                     // It is a programmer error to attempt to insert a key where one already exists.
                     assert!(result.is_none());
                 }
@@ -357,7 +358,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     // Unwrap safety: it is a bug to attempt to mutate a non-existent key.
                     let keypair = self.keypairs.get_mut(&id).unwrap();
                     info!(?id, old_state = ?keypair.state(), new_state = ?state, reason, "changing key state");
-                    keypair.set_state(state, self.clock.now());
+                    keypair.set_state(state, self.clock.now().to_time());
                 }
                 HpkeOp::Delete(id, reason) => {
                     // Unwrap safety: it is a bug to delete a non-existent key.
@@ -700,7 +701,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let known_ciphersuites_with_active_keys: Vec<_> = config
             .ciphersuites
@@ -734,7 +735,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let to_expire: HashSet<_> = state
             .keypairs
@@ -788,7 +789,7 @@ mod tests {
         if state.keypairs.is_empty() {
             return TestResult::discard();
         }
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let ciphersuites_to_insert: Vec<_> = config
             .ciphersuites
@@ -826,7 +827,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
         let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
             .unwrap()
             .sweep()
@@ -864,7 +865,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
         let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
@@ -910,7 +911,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(state.start);
+        let clock = MockClock::new(state.start.as_seconds_since_epoch());
 
         let to_delete: HashSet<_> = state
             .keypairs

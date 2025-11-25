@@ -39,7 +39,7 @@ use janus_aggregator_core::{
 use janus_core::{
     http::check_content_type,
     retries::{is_retryable_http_client_error, is_retryable_http_status},
-    time::Clock,
+    time::{Clock, DateTimeExt},
     vdaf::vdaf_application_context,
     vdaf_dispatch,
 };
