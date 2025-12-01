@@ -103,7 +103,7 @@ signal-hook-tokio = "0.3.1"
 sqlx = { version = "0.8.6", default-features = false }
 stopper = "0.2.8"
 tempfile = "3.23.0"
-testcontainers = "0.25.2"
+testcontainers = "0.26.0"
 thiserror = "2.0"
 tracing = "0.1.41"
 tracing-chrome = "0.7.2"
