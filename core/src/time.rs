@@ -12,18 +12,12 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> DateTime<Utc>;
 
-    /// Get the current time, truncated to the provided time precision. The answer will
-    /// be between now and now()-time_precision.
+    /// Get the current time, rounded down to the provided time precision. The answer will
+    /// be between now() and now() - time_precision.
     #[cfg(feature = "test-util")]
     fn now_aligned_to_precision(&self, time_precision: &TimePrecision) -> Time {
         let seconds = self.now().timestamp() as u64;
-        // These unwraps are unsafe, and must only be used for tests.
-        let rem = seconds.checked_rem(time_precision.as_seconds()).unwrap();
-
-        seconds
-            .checked_sub(rem)
-            .map(Time::from_seconds_since_epoch)
-            .unwrap()
+        Time::from_seconds_since_epoch(seconds, time_precision)
     }
 }
 
@@ -99,29 +93,9 @@ impl Default for MockClock {
 /// Number of microseconds per second.
 const USEC_PER_SEC: u64 = 1_000_000;
 
-/// Extension methods on [`Duration`] for working with DAP time precision validation.
-pub trait DurationExt: Sized {
-    /// Confirm that this duration is a multiple of the task time precision.
-    fn validate_precision(self, time_precision: &TimePrecision) -> Result<Self, Error>;
-}
-
-impl DurationExt for Duration {
-    fn validate_precision(self, time_precision: &TimePrecision) -> Result<Self, Error> {
-        let is_multiple_of_time_precision = self
-            .as_seconds()
-            .checked_rem(time_precision.as_seconds())
-            .ok_or(Error::IllegalTimeArithmetic("remainder cannot be zero"))
-            .is_ok_and(|rem| rem == 0);
-
-        if is_multiple_of_time_precision {
-            Ok(self)
-        } else {
-            Err(Error::InvalidParameter(
-                "duration is not a multiple of the time precision",
-            ))
-        }
-    }
-}
+// Note: DurationExt trait with validate_precision has been removed as part of #4019.
+// Duration is now represented as multiples of time_precision, so validation is impossible
+// to fail - the type system enforces correctness.
 
 /// Extension methods on [`chrono::TimeDelta`] for working with DAP durations.
 pub trait TimeDeltaExt: Sized {
@@ -252,13 +226,17 @@ impl TimeDeltaExt for TimeDelta {
 /// Extension methods to bridge between [`chrono::DateTime<Utc>`] and [`Time`].
 pub trait DateTimeExt {
     /// Convert this [`DateTime<Utc>`] into a [`Time`].
-    fn to_time(&self) -> Time;
+    fn to_time(&self, time_precision: &TimePrecision) -> Time;
 
     /// Get the timestamp as seconds since the Unix epoch.
     fn as_seconds_since_epoch(&self) -> u64;
 
     /// Add a [`Duration`] to this [`DateTime<Utc>`].
-    fn add_duration(&self, duration: &Duration) -> Result<Self, Error>
+    fn add_duration(
+        &self,
+        duration: &Duration,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error>
     where
         Self: Sized;
 
@@ -273,7 +251,7 @@ pub trait DateTimeExt {
         Self: Sized;
 
     /// Returns true if and only if this [`DateTime<Utc>`] occurs after the given [`Time`].
-    fn is_after(&self, time: &Time) -> bool;
+    fn is_after(&self, time: &Time, time_precision: &TimePrecision) -> bool;
 
     /// Compute the start of the batch interval containing this DateTime, given the task time precision.
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
@@ -282,20 +260,25 @@ pub trait DateTimeExt {
 
     /// Get the difference between this [`DateTime<Utc>`] and the provided `other` [`Time`].
     /// Returns `self - other`. `self` must be after `other`.
-    fn difference_as_time_delta(&self, other: &Time) -> Result<TimeDelta, Error>;
+    fn difference_as_time_delta(
+        &self,
+        other: &Time,
+        time_precision: &TimePrecision,
+    ) -> Result<TimeDelta, Error>;
 
     /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`] using
     /// saturating arithmetic. If `self` is before `other`, the result is zero.
-    fn saturating_difference(&self, other: &Time) -> Duration;
+    fn saturating_difference(&self, other: &Time, time_precision: &TimePrecision) -> Duration;
 }
 
 impl DateTimeExt for DateTime<Utc> {
-    fn to_time(&self) -> Time {
+    fn to_time(&self, time_precision: &TimePrecision) -> Time {
         // Unwrap safety: Negative timestamps only happen during overflow
         Time::from_seconds_since_epoch(
             self.timestamp()
                 .try_into()
                 .expect("timestamp must be non-negative"),
+            time_precision,
         )
     }
 
@@ -306,8 +289,12 @@ impl DateTimeExt for DateTime<Utc> {
             .expect("timestamp must be non-negative")
     }
 
-    fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
-        let seconds = duration.as_seconds();
+    fn add_duration(
+        &self,
+        duration: &Duration,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
+        let seconds = duration.as_seconds(time_precision);
         let delta = TimeDelta::try_seconds(seconds.try_into().map_err(|_| {
             Error::IllegalTimeArithmetic("duration seconds value too large for i64")
         })?)
@@ -326,8 +313,8 @@ impl DateTimeExt for DateTime<Utc> {
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
-    fn is_after(&self, time: &Time) -> bool {
-        self.as_seconds_since_epoch() > time.as_seconds_since_epoch()
+    fn is_after(&self, time: &Time, time_precision: &TimePrecision) -> bool {
+        self.as_seconds_since_epoch() > time.as_seconds_since_epoch(time_precision)
     }
 
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error> {
@@ -349,10 +336,14 @@ impl DateTimeExt for DateTime<Utc> {
         ))
     }
 
-    fn difference_as_time_delta(&self, other: &Time) -> Result<TimeDelta, Error> {
+    fn difference_as_time_delta(
+        &self,
+        other: &Time,
+        time_precision: &TimePrecision,
+    ) -> Result<TimeDelta, Error> {
         let diff = self
             .as_seconds_since_epoch()
-            .checked_sub(other.as_seconds_since_epoch())
+            .checked_sub(other.as_seconds_since_epoch(time_precision))
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
         let diff_i64: i64 = diff
             .try_into()
@@ -361,47 +352,42 @@ impl DateTimeExt for DateTime<Utc> {
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn saturating_difference(&self, other: &Time) -> Duration {
+    fn saturating_difference(&self, other: &Time, time_precision: &TimePrecision) -> Duration {
         Duration::from_seconds(
             self.as_seconds_since_epoch()
-                .saturating_sub(other.as_seconds_since_epoch()),
+                .saturating_sub(other.as_seconds_since_epoch(time_precision)),
+            time_precision,
         )
     }
 }
 
 /// Extension methods on [`Time`].
-///
-/// Deprecation notice: These methods will be substanially revised as part of #4019.
 pub trait TimeExt: Sized {
-    /// Compute the start of the batch interval containing this Time, given the task time precision.
-    fn to_batch_interval_start(
-        &self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error>;
-
-    /// Confirm that the time is a multiple of the task time precision.
-    fn validate_precision(
-        self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error>;
-
     /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
-    fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error>;
+    fn as_naive_date_time(&self, time_precision: &TimePrecision) -> Result<NaiveDateTime, Error>;
 
     /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
-    fn from_naive_date_time(time: &NaiveDateTime) -> Self;
+    fn from_naive_date_time(time: &NaiveDateTime, time_precision: &TimePrecision) -> Self;
 
-    /// Add the provided duration to this time.
-    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
+    /// Add the provided timedelta to this time.
+    fn add_timedelta(
+        &self,
+        timedelta: &TimeDelta,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error>;
 
     /// Subtract the provided timedelta from this time.
-    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error>;
+    fn sub_timedelta(
+        &self,
+        timedelta: &TimeDelta,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error>;
 
-    /// Add the provided TimePrecision to this time.
-    fn add_time_precision(&self, duration: &TimePrecision) -> Result<Self, Error>;
+    /// Add 1 time_precision unit to this time.
+    fn add_time_precision(&self) -> Result<Self, Error>;
 
-    /// Subtract the provided TimePrecision from this time.
-    fn sub_time_precision(&self, duration: &TimePrecision) -> Result<Self, Error>;
+    /// Subtract 1 time_precision unit from this time.
+    fn sub_time_precision(&self) -> Result<Self, Error>;
 
     /// Add the provided duration to this time.
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
@@ -410,7 +396,11 @@ pub trait TimeExt: Sized {
     fn sub_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
-    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error>;
+    fn difference_as_time_delta(
+        &self,
+        other: &Self,
+        time_precision: &TimePrecision,
+    ) -> Result<TimeDelta, Error>;
 
     /// Get the difference between the provided `other` and `self` using saturating arithmetic. If
     /// `self` is before `other`, the result is zero.
@@ -424,49 +414,10 @@ pub trait TimeExt: Sized {
 }
 
 impl TimeExt for Time {
-    fn to_batch_interval_start(
-        &self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error> {
-        // This function will return an error if and only if `time_precision` is 0.
-        let rem = self
-            .as_seconds_since_epoch()
-            .checked_rem(time_precision.as_seconds())
-            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
-                "remainder would overflow/underflow",
-            ))?;
-        self.as_seconds_since_epoch()
-            .checked_sub(rem)
-            .map(Time::from_seconds_since_epoch)
-            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
-                "operation would underflow",
-            ))
-    }
-
-    fn validate_precision(
-        self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error> {
-        let is_multiple_of_time_precision = self
-            .as_seconds_since_epoch()
-            .checked_rem(time_precision.as_seconds())
-            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
-                "remainder cannot be zero",
-            ))
-            .is_ok_and(|rem| rem == 0);
-
-        if is_multiple_of_time_precision {
-            Ok(self)
-        } else {
-            Err(janus_messages::Error::InvalidParameter(
-                "timestamp is not a multiple of the time precision",
-            ))
-        }
-    }
-
-    fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error> {
+    fn as_naive_date_time(&self, time_precision: &TimePrecision) -> Result<NaiveDateTime, Error> {
+        let seconds = self.as_seconds_since_epoch(time_precision);
         DateTime::<Utc>::from_timestamp(
-            self.as_seconds_since_epoch()
+            seconds
                 .try_into()
                 .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
             0,
@@ -477,70 +428,95 @@ impl TimeExt for Time {
         .map(|dt| dt.naive_utc())
     }
 
-    fn from_naive_date_time(time: &NaiveDateTime) -> Self {
-        Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64)
+    fn from_naive_date_time(time: &NaiveDateTime, time_precision: &TimePrecision) -> Self {
+        Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64, time_precision)
     }
 
-    fn add_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+    fn add_timedelta(
+        &self,
+        timedelta: &TimeDelta,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
         let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
-        self.as_seconds_since_epoch()
-            .checked_add(seconds)
-            .map(Self::from_seconds_since_epoch)
+        // Convert timedelta seconds to time_precision units
+        let precision_secs = time_precision.as_seconds();
+        if precision_secs == 0 {
+            return Err(Error::IllegalTimeArithmetic("time_precision is zero"));
+        }
+        let units = seconds / precision_secs;
+        self.as_time_precision_units()
+            .checked_add(units)
+            .map(Self::from_time_precision_units)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn sub_timedelta(&self, timedelta: &TimeDelta) -> Result<Self, Error> {
+    fn sub_timedelta(
+        &self,
+        timedelta: &TimeDelta,
+        time_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
         let seconds: u64 = timedelta
             .num_seconds()
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
-        self.as_seconds_since_epoch()
-            .checked_sub(seconds)
-            .map(Self::from_seconds_since_epoch)
+        // Convert timedelta seconds to time_precision units
+        let precision_secs = time_precision.as_seconds();
+        if precision_secs == 0 {
+            return Err(Error::IllegalTimeArithmetic("time_precision is zero"));
+        }
+        let units = seconds / precision_secs;
+        self.as_time_precision_units()
+            .checked_sub(units)
+            .map(Self::from_time_precision_units)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    fn add_time_precision(&self) -> Result<Self, Error> {
+        self.as_time_precision_units()
+            .checked_add(1)
+            .map(Self::from_time_precision_units)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn sub_time_precision(&self) -> Result<Self, Error> {
+        self.as_time_precision_units()
+            .checked_sub(1)
+            .map(Self::from_time_precision_units)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error> {
-        let seconds = duration.as_seconds();
-        self.as_seconds_since_epoch()
-            .checked_add(seconds)
-            .map(Self::from_seconds_since_epoch)
+        self.as_time_precision_units()
+            .checked_add(duration.as_time_precision_units())
+            .map(Self::from_time_precision_units)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn add_time_precision(&self, duration: &TimePrecision) -> Result<Self, Error> {
-        let seconds = duration.as_seconds();
-        self.as_seconds_since_epoch()
-            .checked_add(seconds)
-            .map(Self::from_seconds_since_epoch)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn sub_time_precision(&self, duration: &TimePrecision) -> Result<Self, Error> {
-        let seconds = duration.as_seconds();
-        self.as_seconds_since_epoch()
-            .checked_sub(seconds)
-            .map(Self::from_seconds_since_epoch)
-            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
     fn sub_duration(&self, duration: &Duration) -> Result<Self, Error> {
-        let seconds = duration.as_seconds();
-        self.as_seconds_since_epoch()
-            .checked_sub(seconds)
-            .map(Self::from_seconds_since_epoch)
+        self.as_time_precision_units()
+            .checked_sub(duration.as_time_precision_units())
+            .map(Self::from_time_precision_units)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
-    fn difference_as_time_delta(&self, other: &Self) -> Result<TimeDelta, Error> {
-        let diff = self
-            .as_seconds_since_epoch()
-            .checked_sub(other.as_seconds_since_epoch())
+    fn difference_as_time_delta(
+        &self,
+        other: &Self,
+        time_precision: &TimePrecision,
+    ) -> Result<TimeDelta, Error> {
+        // Get difference in time_precision units
+        let diff_units = self
+            .as_time_precision_units()
+            .checked_sub(other.as_time_precision_units())
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
-        let diff_i64: i64 = diff
+        // Convert to seconds
+        let diff_seconds = diff_units
+            .checked_mul(time_precision.as_seconds())
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
+        let diff_i64: i64 = diff_seconds
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("difference too large"))?;
         TimeDelta::try_seconds(diff_i64)
@@ -548,18 +524,19 @@ impl TimeExt for Time {
     }
 
     fn saturating_difference(&self, other: &Self) -> Duration {
-        Duration::from_seconds(
-            self.as_seconds_since_epoch()
-                .saturating_sub(other.as_seconds_since_epoch()),
+        // Difference in time_precision units (time_precision not needed since we work in units)
+        Duration::from_time_precision_units(
+            self.as_time_precision_units()
+                .saturating_sub(other.as_time_precision_units()),
         )
     }
 
     fn is_before(&self, time: &Time) -> bool {
-        self.as_seconds_since_epoch() < time.as_seconds_since_epoch()
+        self.as_time_precision_units() < time.as_time_precision_units()
     }
 
     fn is_after(&self, time: &Time) -> bool {
-        self.as_seconds_since_epoch() > time.as_seconds_since_epoch()
+        self.as_time_precision_units() > time.as_time_precision_units()
     }
 }
 
@@ -571,23 +548,13 @@ pub trait IntervalExt: Sized {
     /// Returns a new minimal [`Interval`] that contains both this interval and `other`.
     fn merge(&self, other: &Self) -> Result<Self, Error>;
 
-    // Returns a new minimal [`Interval`] that contains both this interval and the given time.
+    /// Returns a new minimal [`Interval`] that contains both this interval and the given time.
     fn merged_with(&self, time: &Time) -> Result<Self, Error>;
-
-    /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
-    /// are multiples of `time_precision`.
-    fn align_to_time_precision(&self, time_precision: &TimePrecision) -> Result<Self, Error>;
-
-    /// Confirm that this interval's start and duration are both multiples of the task time precision.
-    fn validate_precision(
-        self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error>;
 }
 
 impl IntervalExt for Interval {
     fn end(&self) -> Time {
-        // Unwrap safety: [`Self::new`] verified that this addition doesn't overflow.
+        // Unwrap safety: [`Self::new_with_duration`] verified that this addition doesn't overflow.
         self.start().add_duration(self.duration()).unwrap()
     }
 
@@ -602,43 +569,17 @@ impl IntervalExt for Interval {
         let max_time = std::cmp::max(self.end(), other.end());
         let min_time = std::cmp::min(self.start(), other.start());
 
-        let diff = max_time.difference_as_time_delta(min_time)?;
-        Self::new_with_duration(*min_time, Duration::from_chrono(diff))
+        // Calculate difference in time_precision units
+        let diff_units = max_time
+            .as_time_precision_units()
+            .checked_sub(min_time.as_time_precision_units())
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
+        Self::new(*min_time, Duration::from_time_precision_units(diff_units))
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        self.merge(&Self::new_with_duration(*time, Duration::from_seconds(1))?)
-    }
-
-    fn align_to_time_precision(&self, time_precision: &TimePrecision) -> Result<Self, Error> {
-        // Round the interval start *down* to the time precision
-        let aligned_start = self.start().to_batch_interval_start(time_precision)?;
-        // Round the interval duration *up* to the time precision
-        let duration_td = self.duration().to_chrono()?;
-        let precision_td = time_precision.to_chrono()?;
-        let aligned_duration_td = duration_td.round_up(&precision_td)?;
-        let aligned_duration = Duration::from_chrono(aligned_duration_td);
-
-        let aligned_interval = Self::new_with_duration(aligned_start, aligned_duration)?;
-
-        // Rounding the start down may have shifted the interval far enough to exclude the previous
-        // interval's end. Extend the duration by time_precision if necessary.
-        if self.end().is_after(&aligned_interval.end()) {
-            let padded_duration_td = aligned_duration_td.add(&precision_td)?;
-            let padded_duration = Duration::from_chrono(padded_duration_td);
-            Self::new_with_duration(aligned_start, padded_duration)
-        } else {
-            Ok(aligned_interval)
-        }
-    }
-
-    fn validate_precision(
-        self,
-        time_precision: &TimePrecision,
-    ) -> Result<Self, janus_messages::Error> {
-        self.start().validate_precision(time_precision)?;
-        self.duration().validate_precision(time_precision)?;
-        Ok(self)
+        // Create an interval of 1 time_precision unit starting at the given time
+        self.merge(&Self::new(*time, Duration::from_time_precision_units(1))?)
     }
 }
 
@@ -647,6 +588,8 @@ mod tests {
     use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
     use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+
+    const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
     #[test]
     fn round_up_duration() {
@@ -670,9 +613,9 @@ mod tests {
     #[test]
     fn merge_interval() {
         fn interval(start: u64, duration: u64) -> Interval {
-            Interval::new_with_duration(
-                Time::from_seconds_since_epoch(start),
-                Duration::from_seconds(duration),
+            Interval::new(
+                Time::from_seconds_since_epoch(start, &TEST_TIME_PRECISION),
+                Duration::from_seconds(duration, &TEST_TIME_PRECISION),
             )
             .unwrap()
         }
@@ -728,23 +671,23 @@ mod tests {
             ("i1 zero duration", 0, 0, 200, 100, Some((200, 100))),
             ("i2 zero duration", 0, 100, 200, 0, Some((0, 100))),
         ] {
-            let i1 = Interval::new_with_duration(
-                Time::from_seconds_since_epoch(i1_start),
-                Duration::from_seconds(i1_dur),
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start, &TEST_TIME_PRECISION),
+                Duration::from_seconds(i1_dur, &TEST_TIME_PRECISION),
             )
             .unwrap();
-            let i2 = Interval::new_with_duration(
-                Time::from_seconds_since_epoch(i2_start),
-                Duration::from_seconds(i2_dur),
+            let i2 = Interval::new(
+                Time::from_seconds_since_epoch(i2_start, &TEST_TIME_PRECISION),
+                Duration::from_seconds(i2_dur, &TEST_TIME_PRECISION),
             )
             .unwrap();
             let result = i1.merge(&i2);
             match expected {
                 Some((expected_start, expected_duration)) => {
                     let result = result.unwrap();
-                    let expected = Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(expected_start),
-                        Duration::from_seconds(expected_duration),
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(expected_duration, &TEST_TIME_PRECISION),
                     )
                     .unwrap();
                     assert_eq!(result, expected, "{label}");
@@ -764,110 +707,23 @@ mod tests {
             ("gap wider unaligned", 0, 100, 1010, Some((0, 1011))),
             ("overlap", 0, 100, 0, Some((0, 100))),
         ] {
-            let i1 = Interval::new_with_duration(
-                Time::from_seconds_since_epoch(i1_start),
-                Duration::from_seconds(i1_dur),
+            let i1 = Interval::new(
+                Time::from_seconds_since_epoch(i1_start, &TEST_TIME_PRECISION),
+                Duration::from_seconds(i1_dur, &TEST_TIME_PRECISION),
             )
             .unwrap();
-            let result = i1.merged_with(&Time::from_seconds_since_epoch(i2));
+            let result = i1.merged_with(&Time::from_seconds_since_epoch(i2, &TEST_TIME_PRECISION));
             match expected {
                 Some((expected_start, expected_duration)) => {
                     let result = result.unwrap();
-                    let expected = Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(expected_start),
-                        Duration::from_seconds(expected_duration),
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(expected_duration, &TEST_TIME_PRECISION),
                     )
                     .unwrap();
                     assert_eq!(result, expected, "{label}");
                 }
                 None => assert!(result.is_err(), "{label}"),
-            }
-        }
-    }
-
-    #[test]
-    fn interval_align_to_time_precision() {
-        for (label, interval_start, interval_duration, time_precision, expected) in [
-            ("already aligned", 0, 100, 100, Some((0, 100))),
-            ("round duration", 0, 75, 100, Some((0, 100))),
-            ("round both", 25, 75, 100, Some((0, 100))),
-            ("round start, pad duration", 25, 100, 100, Some((0, 200))),
-        ] {
-            let interval = Interval::new_with_duration(
-                Time::from_seconds_since_epoch(interval_start),
-                Duration::from_seconds(interval_duration),
-            )
-            .unwrap();
-            let time_precision = TimePrecision::from_seconds(time_precision);
-
-            let result = interval.align_to_time_precision(&time_precision);
-
-            match expected {
-                Some((expected_start, expected_duration)) => {
-                    let result = result.unwrap();
-                    let expected = Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(expected_start),
-                        Duration::from_seconds(expected_duration),
-                    )
-                    .unwrap();
-                    assert_eq!(result, expected, "{label}");
-                    assert!(
-                        result.start().as_seconds_since_epoch()
-                            <= interval.start().as_seconds_since_epoch(),
-                        "{label}"
-                    );
-                    assert!(
-                        result.end().as_seconds_since_epoch()
-                            >= interval.end().as_seconds_since_epoch(),
-                        "{label}"
-                    );
-                    assert!(
-                        result.validate_precision(&time_precision).is_ok(),
-                        "{label} precision is not correct"
-                    );
-                }
-                None => assert!(result.is_err(), "{label}"),
-            }
-        }
-    }
-
-    #[test]
-    fn interval_validate_time_precision() {
-        for (label, interval_start, interval_duration, time_precision, expected) in [
-            ("already aligned", 0, 100, 10, true),
-            ("unaligned durations are bad", 0, 75, 10, false),
-            ("unaligned starts are bad", 25, 100, 10, false),
-            ("unaligned everything is bad", 15, 35, 10, false),
-        ] {
-            let interval = Interval::new_with_duration(
-                Time::from_seconds_since_epoch(interval_start),
-                Duration::from_seconds(interval_duration),
-            )
-            .unwrap();
-            let time_precision = TimePrecision::from_seconds(time_precision);
-            let result = interval.validate_precision(&time_precision);
-
-            assert_eq!(expected, result.is_ok(), "{label}");
-        }
-    }
-
-    #[test]
-    fn validate_time_precision() {
-        for (label, timestamp, timestamp_precision, expected) in [
-            ("aligned", 1533415320, 60, true),
-            ("off by 1", 1533415321, 60, false),
-            ("aligned large", 1533414000, 6000, true),
-            ("off by 100", 1533414100, 6000, false),
-            ("zero time precision", 1533414000, 0, false),
-            ("zero time on a zero timestamp", 0, 0, false),
-        ] {
-            let time = Time::from_seconds_since_epoch(timestamp);
-            let precision = TimePrecision::from_seconds(timestamp_precision);
-
-            let result = time.validate_precision(&precision);
-            match expected {
-                true => assert!(result.is_ok(), "{label}"),
-                false => assert!(result.is_err(), "{label}"),
             }
         }
     }
@@ -885,7 +741,7 @@ mod tests {
 
             let result = clock
                 .now_aligned_to_precision(&precision)
-                .as_seconds_since_epoch();
+                .as_seconds_since_epoch(&precision);
             assert_eq!(expected, result, "{label}");
         }
     }
@@ -899,9 +755,9 @@ mod tests {
             ("in the year 2525", 17514169200, 17514169200),
         ] {
             let dt = DateTime::<Utc>::from_timestamp(timestamp_secs, 0).unwrap();
-            let time = dt.to_time();
+            let time = dt.to_time(&TEST_TIME_PRECISION);
             assert_eq!(
-                time.as_seconds_since_epoch(),
+                time.as_seconds_since_epoch(&TEST_TIME_PRECISION),
                 expected_secs,
                 "{label}: timestamp mismatch"
             );
@@ -911,9 +767,9 @@ mod tests {
     #[test]
     fn add_duration_success() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let duration = Duration::from_seconds(3600);
+        let duration = Duration::from_seconds(3600, &TEST_TIME_PRECISION);
 
-        let result = dt.add_duration(&duration).unwrap();
+        let result = dt.add_duration(&duration, &TEST_TIME_PRECISION).unwrap();
         assert_eq!(result.timestamp(), 1000000000 + 3600);
     }
 
@@ -921,9 +777,9 @@ mod tests {
     fn add_duration_large_value_error() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
         // Duration value too large to convert to i64 for TimeDelta
-        let duration = Duration::from_seconds(i64::MAX as u64 + 1);
+        let duration = Duration::from_seconds(i64::MAX as u64 + 1, &TEST_TIME_PRECISION);
 
-        let result = dt.add_duration(&duration);
+        let result = dt.add_duration(&duration, &TEST_TIME_PRECISION);
         assert!(
             result.is_err(),
             "should error when duration value too large for i64"
@@ -972,24 +828,30 @@ mod tests {
     #[test]
     fn time_comparisons() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(999999999);
-
-        assert!(dt.is_after(&time), "dt should be after time");
-
-        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000001);
-
-        assert!(!dt.is_after(&time), "dt should not be after time");
-
-        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000000);
+        let time = Time::from_seconds_since_epoch(999999999, &TEST_TIME_PRECISION);
 
         assert!(
-            !dt.to_time().is_after(&time),
+            dt.is_after(&time, &TEST_TIME_PRECISION),
+            "dt should be after time"
+        );
+
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000001, &TEST_TIME_PRECISION);
+
+        assert!(
+            !dt.is_after(&time, &TEST_TIME_PRECISION),
+            "dt should not be after time"
+        );
+
+        let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
+        let time = Time::from_seconds_since_epoch(1000000000, &TEST_TIME_PRECISION);
+
+        assert!(
+            !dt.to_time(&TEST_TIME_PRECISION).is_after(&time),
             "dt should not be after an equal time"
         );
         assert!(
-            !dt.to_time().is_before(&time),
+            !dt.to_time(&TEST_TIME_PRECISION).is_before(&time),
             "dt should not be before an equal time"
         );
     }
@@ -997,36 +859,40 @@ mod tests {
     #[test]
     fn difference_as_time_delta_underflow() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000001);
+        let time = Time::from_seconds_since_epoch(1000000001, &TEST_TIME_PRECISION);
 
-        let result = dt.difference_as_time_delta(&time);
+        let result = dt.difference_as_time_delta(&time, &TEST_TIME_PRECISION);
         assert!(result.is_err(), "should error when dt is before time");
     }
 
     #[test]
     fn saturating_difference_positive() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(999999000);
+        let time = Time::from_seconds_since_epoch(999999000, &TEST_TIME_PRECISION);
 
-        let duration = dt.saturating_difference(&time);
-        assert_eq!(duration.as_seconds(), 1000);
+        let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
+        assert_eq!(duration.as_seconds(&TEST_TIME_PRECISION), 1000);
     }
 
     #[test]
     fn saturating_difference_negative_returns_zero() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000100); // time is after dt
+        let time = Time::from_seconds_since_epoch(1000000100, &TEST_TIME_PRECISION); // time is after dt
 
-        let duration = dt.saturating_difference(&time);
-        assert_eq!(duration.as_seconds(), 0, "should saturate to zero");
+        let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
+        assert_eq!(
+            duration.as_seconds(&TEST_TIME_PRECISION),
+            0,
+            "should saturate to zero"
+        );
     }
 
     #[test]
     fn saturating_difference_equal_returns_zero() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000000);
+        let time = Time::from_seconds_since_epoch(1000000000, &TEST_TIME_PRECISION);
 
-        let duration = dt.saturating_difference(&time);
-        assert_eq!(duration.as_seconds(), 0);
+        let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
+        assert_eq!(duration.as_seconds(&TEST_TIME_PRECISION), 0);
     }
 }

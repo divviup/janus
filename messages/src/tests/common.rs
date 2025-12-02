@@ -1,7 +1,12 @@
-use crate::{Duration, Interval, Role, TaskId, Time, Url, roundtrip_encoding};
+use crate::{
+    Duration, Interval, Role, TaskId, Time, Url, roundtrip_encoding, taskprov::TimePrecision,
+};
 use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode, Encode};
 use serde_test::{Token, assert_de_tokens_error, assert_tokens};
+
+// Standard time precision for tests (1 second)
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]
 fn roundtrip_url() {
@@ -37,32 +42,50 @@ fn roundtrip_url() {
 #[test]
 fn roundtrip_duration() {
     roundtrip_encoding(&[
-        (Duration::from_seconds(u64::MIN), "0000000000000000"),
-        (Duration::from_seconds(12345), "0000000000003039"),
-        (Duration::from_seconds(u64::MAX), "FFFFFFFFFFFFFFFF"),
+        (
+            Duration::from_seconds(u64::MIN, &TEST_TIME_PRECISION),
+            "0000000000000000",
+        ),
+        (
+            Duration::from_seconds(12345, &TEST_TIME_PRECISION),
+            "0000000000003039",
+        ),
+        (
+            Duration::from_seconds(u64::MAX, &TEST_TIME_PRECISION),
+            "FFFFFFFFFFFFFFFF",
+        ),
     ])
 }
 
 #[test]
 fn roundtrip_time() {
     roundtrip_encoding(&[
-        (Time::from_seconds_since_epoch(u64::MIN), "0000000000000000"),
-        (Time::from_seconds_since_epoch(12345), "0000000000003039"),
-        (Time::from_seconds_since_epoch(u64::MAX), "FFFFFFFFFFFFFFFF"),
+        (
+            Time::from_seconds_since_epoch(u64::MIN, &TEST_TIME_PRECISION),
+            "0000000000000000",
+        ),
+        (
+            Time::from_seconds_since_epoch(12345, &TEST_TIME_PRECISION),
+            "0000000000003039",
+        ),
+        (
+            Time::from_seconds_since_epoch(u64::MAX, &TEST_TIME_PRECISION),
+            "FFFFFFFFFFFFFFFF",
+        ),
     ])
 }
 
 #[test]
 fn roundtrip_interval() {
-    Interval::new_with_duration(
-        Time::from_seconds_since_epoch(1),
-        Duration::from_seconds(u64::MAX),
+    Interval::new(
+        Time::from_seconds_since_epoch(1, &TEST_TIME_PRECISION),
+        Duration::from_seconds(u64::MAX, &TEST_TIME_PRECISION),
     )
     .unwrap_err();
 
     let encoded = Interval {
-        start: Time::from_seconds_since_epoch(1),
-        duration: Duration::from_seconds(u64::MAX),
+        start: Time::from_seconds_since_epoch(1, &TEST_TIME_PRECISION),
+        duration: Duration::from_seconds(u64::MAX, &TEST_TIME_PRECISION),
     }
     .get_encoded()
     .unwrap();
@@ -80,8 +103,8 @@ fn roundtrip_interval() {
     roundtrip_encoding(&[
         (
             Interval {
-                start: Time::from_seconds_since_epoch(u64::MIN),
-                duration: Duration::from_seconds(u64::MAX),
+                start: Time::from_seconds_since_epoch(u64::MIN, &TEST_TIME_PRECISION),
+                duration: Duration::from_seconds(u64::MAX, &TEST_TIME_PRECISION),
             },
             concat!(
                 "0000000000000000", // start
@@ -90,8 +113,8 @@ fn roundtrip_interval() {
         ),
         (
             Interval {
-                start: Time::from_seconds_since_epoch(54321),
-                duration: Duration::from_seconds(12345),
+                start: Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                duration: Duration::from_seconds(12345, &TEST_TIME_PRECISION),
             },
             concat!(
                 "000000000000D431", // start
@@ -100,8 +123,8 @@ fn roundtrip_interval() {
         ),
         (
             Interval {
-                start: Time::from_seconds_since_epoch(u64::MAX),
-                duration: Duration::from_seconds(u64::MIN),
+                start: Time::from_seconds_since_epoch(u64::MAX, &TEST_TIME_PRECISION),
+                duration: Duration::from_seconds(u64::MIN, &TEST_TIME_PRECISION),
             },
             concat!(
                 "FFFFFFFFFFFFFFFF", // start

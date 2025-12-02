@@ -481,7 +481,9 @@ impl Transaction<'_, MockClock> {
         self.check_timestamp_columns_at_create_time(
             table,
             expected_updated_by,
-            self.clock.now().to_time(),
+            self.clock
+                .now()
+                .to_time(&janus_messages::taskprov::TimePrecision::from_seconds(1)),
             updated_at,
         )
         .await
@@ -511,7 +513,9 @@ impl Transaction<'_, MockClock> {
             .unwrap()
         {
             assert_eq!(
-                expected_created_at.as_naive_date_time().unwrap(),
+                expected_created_at
+                    .as_naive_date_time(&janus_messages::taskprov::TimePrecision::from_seconds(1))
+                    .unwrap(),
                 row.get::<_, NaiveDateTime>("created_at")
             );
             // We check the updated_at value against the transaction clock's current time. This only

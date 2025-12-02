@@ -149,7 +149,7 @@ impl CommonTaskParameters {
             batch_time_window_size: Some(batch_time_window_size),
         } = batch_mode
         {
-            if batch_time_window_size.as_seconds() == 0 {
+            if batch_time_window_size.as_seconds(&time_precision) == 0 {
                 return Err(Error::InvalidParameter("batch_time_window_size is zero"));
             }
         }
@@ -158,18 +158,18 @@ impl CommonTaskParameters {
         // memory as unsigned. Reject values that are too large. (perhaps these should be
         // represented by different types?)
         if let Some(report_expiry_age) = report_expiry_age {
-            if report_expiry_age > Duration::from_seconds(i64::MAX as u64) {
+            if report_expiry_age > Duration::from_seconds(i64::MAX as u64, &time_precision) {
                 return Err(Error::InvalidParameter("report_expiry_age too large"));
             }
         }
         if let Some(task_start) = task_start {
             task_start
-                .as_naive_date_time()
+                .as_naive_date_time(&time_precision)
                 .map_err(|_| Error::InvalidParameter("task_start out of range"))?;
         }
         if let Some(task_end) = task_end {
             task_end
-                .as_naive_date_time()
+                .as_naive_date_time(&time_precision)
                 .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
         }
         if let (Some(task_start), Some(task_end)) = (task_start, task_end) {
@@ -275,7 +275,7 @@ impl AggregatorTask {
                 return Err(Error::InvalidParameter(
                     "batch_time_window_size is not supported for taskprov",
                 ));
-            } else if batch_time_window_size.as_seconds()
+            } else if batch_time_window_size.as_seconds(&common_parameters.time_precision)
                 % common_parameters.time_precision.as_seconds()
                 != 0
             {
@@ -1354,8 +1354,10 @@ pub mod test_util {
         pub fn build(self) -> Task {
             // If the tolerable clock skew is unset, copy the time_precision
             if *self.0.tolerable_clock_skew() == Duration::ZERO {
-                let time_precision = *self.0.time_precision();
-                return self.with_tolerable_clock_skew(time_precision.into()).0;
+                let _time_precision = *self.0.time_precision();
+                return self
+                    .with_tolerable_clock_skew(Duration::from_time_precision_units(1))
+                    .0;
             }
             self.0
         }
@@ -1537,7 +1539,7 @@ mod tests {
                 None,
                 10,
                 TimePrecision::from_seconds(3600),
-                Duration::from_seconds(60),
+                Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                         "YWdncmVnYXRvciB0b2tlbg",
@@ -1679,12 +1681,21 @@ mod tests {
                     dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                Some(Time::from_seconds_since_epoch(1000)),
-                Some(Time::from_seconds_since_epoch(2000)),
-                Some(Duration::from_seconds(1800)),
+                Some(Time::from_seconds_since_epoch(
+                    1000,
+                    &TimePrecision::from_seconds(1),
+                )),
+                Some(Time::from_seconds_since_epoch(
+                    2000,
+                    &TimePrecision::from_seconds(1),
+                )),
+                Some(Duration::from_seconds(
+                    1800,
+                    &TimePrecision::from_seconds(1),
+                )),
                 10,
                 TimePrecision::from_seconds(3600),
-                Duration::from_seconds(60),
+                Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &AuthenticationToken::new_bearer_token_from_string(
@@ -1856,7 +1867,10 @@ mod tests {
         );
         assert_tokens(
             &BatchMode::LeaderSelected {
-                batch_time_window_size: Some(Duration::from_chrono(TimeDelta::hours(1))),
+                batch_time_window_size: Some(Duration::from_chrono(
+                    TimeDelta::hours(1),
+                    &TimePrecision::from_seconds(1),
+                )),
             },
             &[
                 Token::StructVariant {
@@ -1921,7 +1935,7 @@ mod tests {
             ),
             Ok(BatchMode::LeaderSelected {
                 batch_time_window_size: Some(duration),
-            }) => assert_eq!(duration, Duration::from_seconds(3600))
+            }) => assert_eq!(duration, Duration::from_seconds(3600, &TimePrecision::from_seconds(1)))
         );
     }
 }

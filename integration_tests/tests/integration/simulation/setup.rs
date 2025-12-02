@@ -325,6 +325,7 @@ impl Components {
             task.collector_auth_token().clone(),
             task.collector_hpke_keypair().clone(),
             state.vdaf.clone(),
+            *task.time_precision(),
         )
         .with_http_request_backoff(http_request_exponential_backoff())
         .with_collect_poll_backoff(

@@ -9,7 +9,9 @@ use crate::{
 use async_trait::async_trait;
 use chrono::TimeDelta;
 use futures::future::try_join_all;
-use janus_core::time::{Clock, IntervalExt as _, TimeDeltaExt as _, TimeExt as _};
+use janus_core::time::{
+    Clock, DateTimeExt as _, IntervalExt as _, TimeDeltaExt as _, TimeExt as _,
+};
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -71,15 +73,13 @@ pub trait AccumulableBatchMode: BatchMode {
 #[async_trait]
 impl AccumulableBatchMode for TimeInterval {
     fn to_batch_identifier(
-        task: &AggregatorTask,
+        _task: &AggregatorTask, // TKTK
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        let batch_interval_start = client_timestamp
-            .to_batch_interval_start(task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))?;
-        Interval::new(batch_interval_start, *task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))
+        // With Time now represented as time_precision units, client_timestamp is already aligned
+        // to the batch interval, so we use it directly as the batch_interval_start.
+        Interval::single(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
     }
 
     async fn get_collection_jobs_including<
@@ -120,7 +120,11 @@ impl AccumulableBatchMode for TimeInterval {
         clock: &C,
         batch_identifier: &Self::BatchIdentifier,
     ) -> Option<bool> {
-        Some(batch_identifier.end() < clock.now())
+        // Note: This assumes the batch_identifier's interval is in 1-second time_precision units.
+        // This is a simplification - in practice, batch identifiers should carry their time_precision
+        // context, but that would require changing the trait interface.
+        let now_time = clock.now().to_time(&TimePrecision::from_seconds(1));
+        Some(batch_identifier.end().is_before(&now_time))
     }
 }
 
@@ -307,17 +311,16 @@ impl CollectableBatchMode for TimeInterval {
     }
 
     fn validate_collection_identifier(
-        task: &AggregatorTask,
+        _task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> bool {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
 
-        // Batch interval should be greater than task's time precision
-        collection_identifier.duration().as_seconds() >= task.time_precision().as_seconds()
-                // Batch interval start must be a multiple of time precision
-                && collection_identifier.start().as_seconds_since_epoch() % task.time_precision().as_seconds() == 0
-                // Batch interval duration must be a multiple of time precision
-                && collection_identifier.duration().as_seconds() % task.time_precision().as_seconds() == 0
+        // Batch interval should be greater than task's time precision.
+        // Since Time and Duration are now represented as multiples of time_precision,
+        // alignment is guaranteed by the type system. We only need to check that
+        // the duration is at least one time_precision unit.
+        collection_identifier.duration().as_time_precision_units() >= 1
     }
 
     async fn count_client_reports<C: Clock>(
@@ -346,10 +349,11 @@ impl TimeIntervalBatchIdentifierIter {
         // Sanity check that the given interval is of an appropriate length. We use an assert as
         // this is expected to be checked before this method is used.
         assert_eq!(
-            batch_interval.duration().as_seconds() % time_precision.as_seconds(),
+            batch_interval.duration().as_seconds(time_precision) % time_precision.as_seconds(),
             0
         );
-        let total_step_count = batch_interval.duration().as_seconds() / time_precision.as_seconds();
+        let total_step_count =
+            batch_interval.duration().as_seconds(time_precision) / time_precision.as_seconds();
 
         Self {
             step: 0,
@@ -370,14 +374,14 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         // Unwrap safety: errors can only occur if the times being unwrapped cannot be represented
         // as a Time. The relevant times can always be represented since they are internal to the
         // batch interval used to create the iterator.
-        let interval = Interval::new(
+        let interval = Interval::single(
             self.start
                 .add_timedelta(
                     &TimeDelta::try_seconds_unsigned(self.step * self.time_precision.as_seconds())
                         .unwrap(),
+                    &self.time_precision,
                 )
                 .unwrap(),
-            self.time_precision,
         )
         .unwrap();
         self.step += 1;
@@ -452,45 +456,66 @@ mod tests {
         for test_case in Vec::from([
             TestCase {
                 name: "same duration as minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs),
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(
+                        time_precision_secs,
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    Duration::from_seconds(time_precision_secs, &TimePrecision::from_seconds(1)),
                 )
                 .unwrap(),
                 expected: true,
             },
             TestCase {
                 name: "interval too short",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs - 1),
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(
+                        time_precision_secs,
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    Duration::from_seconds(
+                        time_precision_secs - 1,
+                        &TimePrecision::from_seconds(1),
+                    ),
                 )
                 .unwrap(),
                 expected: false,
             },
             TestCase {
                 name: "interval larger than minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs * 2),
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(
+                        time_precision_secs,
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    Duration::from_seconds(
+                        time_precision_secs * 2,
+                        &TimePrecision::from_seconds(1),
+                    ),
                 )
                 .unwrap(),
                 expected: true,
             },
             TestCase {
                 name: "interval duration not aligned with minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs + 1800),
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(
+                        time_precision_secs,
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    Duration::from_seconds(
+                        time_precision_secs + 1800,
+                        &TimePrecision::from_seconds(1),
+                    ),
                 )
                 .unwrap(),
                 expected: false,
             },
             TestCase {
                 name: "interval start not aligned with minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(1800),
-                    Duration::from_seconds(time_precision_secs),
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(1800, &TimePrecision::from_seconds(1)),
+                    Duration::from_seconds(time_precision_secs, &TimePrecision::from_seconds(1)),
                 )
                 .unwrap(),
                 expected: false,

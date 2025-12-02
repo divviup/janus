@@ -34,6 +34,7 @@ use janus_messages::{
     PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
     Role, Time,
     batch_mode::{LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
@@ -284,9 +285,7 @@ async fn aggregate_init_sync() {
         random(),
         past_clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(
@@ -320,9 +319,7 @@ async fn aggregate_init_sync() {
         random(),
         clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_6 = run_vdaf(
@@ -356,9 +353,7 @@ async fn aggregate_init_sync() {
         random(),
         clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
             Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -394,9 +389,7 @@ async fn aggregate_init_sync() {
         random(),
         clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_8 = run_vdaf(
@@ -433,9 +426,7 @@ async fn aggregate_init_sync() {
         random(),
         clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
     );
     let transcript_9 = run_vdaf(
@@ -489,10 +480,10 @@ async fn aggregate_init_sync() {
                     BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::new(
-                            Time::from_seconds_since_epoch(0),
-                            *helper_task.time_precision(),
-                        )
+                        &Interval::single(Time::from_seconds_since_epoch(
+                            0,
+                            helper_task.time_precision(),
+                        ))
                         .unwrap(),
                         &dummy::AggregationParam(0),
                         [],
@@ -899,7 +890,7 @@ async fn aggregate_init_batch_already_collected() {
             let task = task.clone();
             let timestamp = *prepare_init.report_share().metadata().time();
             Box::pin(async move {
-                let interval = Interval::new(timestamp, *task.time_precision()).unwrap();
+                let interval = Interval::single(timestamp).unwrap();
 
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.

@@ -16,6 +16,7 @@ use janus_core::{
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
+    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -33,16 +34,19 @@ use trillium_testing::{
 async fn collection_job_put_request_to_helper() {
     let test_case = setup_collection_job_test_case(Role::Helper, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(
-                Time::from_seconds_since_epoch(0),
-                *test_case.task.time_precision(),
-            )
+            Interval::single(Time::from_seconds_since_epoch(
+                0,
+                test_case.task.time_precision(),
+            ))
             .unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
@@ -68,16 +72,22 @@ async fn collection_job_put_request_to_helper() {
 async fn collection_job_put_request_invalid_batch_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new_with_duration(
-                Time::from_seconds_since_epoch(0),
+            Interval::new(
+                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
                 // Collect request will be rejected because batch interval is too small
-                Duration::from_seconds(test_case.task.time_precision().as_seconds() - 1),
+                Duration::from_seconds(
+                    test_case.task.time_precision().as_seconds() - 1,
+                    &TimePrecision::from_seconds(1),
+                ),
             )
             .unwrap(),
         ),
@@ -104,16 +114,19 @@ async fn collection_job_put_request_invalid_batch_interval() {
 async fn collection_job_put_request_invalid_aggregation_parameter() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(
-                Time::from_seconds_since_epoch(0),
-                *test_case.task.time_precision(),
-            )
+            Interval::single(Time::from_seconds_since_epoch(
+                0,
+                test_case.task.time_precision(),
+            ))
             .unwrap(),
         ),
         // dummy::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
@@ -160,7 +173,7 @@ async fn collection_job_put_request_invalid_batch_size() {
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
+            Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
         ),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
@@ -192,13 +205,16 @@ async fn collection_job_put_request_invalid_batch_size() {
 async fn collection_job_put_request_unauthenticated() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        *test_case.task.time_precision(),
-    )
+    let batch_interval = Interval::single(Time::from_seconds_since_epoch(
+        0,
+        test_case.task.time_precision(),
+    ))
     .unwrap();
     let collection_job_id: CollectionJobId = random();
     let req = CollectionJobReq::new(
@@ -239,13 +255,16 @@ async fn collection_job_put_request_unauthenticated() {
 async fn collection_job_get_request_unauthenticated_collection_jobs() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0),
-        *test_case.task.time_precision(),
-    )
+    let batch_interval = Interval::single(Time::from_seconds_since_epoch(
+        0,
+        test_case.task.time_precision(),
+    ))
     .unwrap();
 
     let collection_job_id: CollectionJobId = random();
@@ -292,13 +311,16 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
 async fn collection_job_success_time_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let batch_interval = TimeInterval::to_batch_identifier(
         &test_case.task.leader_view().unwrap(),
         &(),
-        &Time::from_seconds_since_epoch(0),
+        &Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
     )
     .unwrap();
 
@@ -469,7 +491,10 @@ async fn collection_job_success_time_interval() {
 async fn collection_job_get_request_no_such_collection_job() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let no_such_collection_job_id: CollectionJobId = random();
@@ -488,7 +513,10 @@ async fn collection_job_get_request_no_such_collection_job() {
 async fn collection_job_put_request_batch_queried_multiple_times() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     // Sending this request will consume a query for [0, time_precision).
@@ -527,15 +555,21 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
 async fn collection_job_put_request_batch_overlap() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let interval = test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     // Sending this request will consume a query for [0, 2 * time_precision).
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::new_with_duration(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(2 * test_case.task.time_precision().as_seconds()),
+            Interval::new(
+                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
+                Duration::from_seconds(
+                    2 * test_case.task.time_precision().as_seconds(),
+                    &TimePrecision::from_seconds(1),
+                ),
             )
             .unwrap(),
         ),
@@ -571,7 +605,10 @@ async fn collection_job_put_request_batch_overlap() {
 async fn delete_collection_job() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     let batch_interval = test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(0))
+        .setup_time_interval_batch(Time::from_seconds_since_epoch(
+            0,
+            &TimePrecision::from_seconds(1),
+        ))
         .await;
 
     let collection_job_id: CollectionJobId = random();

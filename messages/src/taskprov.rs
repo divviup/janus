@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url, batch_mode};
+use crate::{Error, Time, Url, batch_mode};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -567,19 +567,10 @@ impl Display for TimePrecision {
     }
 }
 
-/// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<TimePrecision> for Duration {
-    fn from(value: TimePrecision) -> Self {
-        Duration::from_seconds(value.as_seconds())
-    }
-}
-
-/// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<Duration> for TimePrecision {
-    fn from(duration: Duration) -> Self {
-        TimePrecision::from_seconds(duration.as_seconds())
-    }
-}
+// Note: The From<TimePrecision> for Duration and From<Duration> for TimePrecision bridge
+// implementations have been removed as part of #4019. Duration now represents a number of
+// time_precision units, while TimePrecision represents the unit size in seconds. These are
+// fundamentally different types and cannot be directly converted without additional context.
 
 #[cfg(test)]
 mod tests {
@@ -589,6 +580,8 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode as _};
+
+    const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
     #[test]
     fn roundtrip_task_config() {
@@ -601,7 +594,7 @@ mod tests {
                     TimePrecision::from_seconds(3600),
                     10000,
                     batch_mode::Code::TimeInterval,
-                    Time::from_seconds_since_epoch(1000000),
+                    Time::from_seconds_since_epoch(1000000, &TEST_TIME_PRECISION),
                     TimePrecision::from_seconds(100000),
                     VdafConfig::Prio3Count,
                     Vec::new(),
@@ -651,7 +644,7 @@ mod tests {
                     TimePrecision::from_seconds(1000),
                     1000,
                     batch_mode::Code::LeaderSelected,
-                    Time::from_seconds_since_epoch(10000000),
+                    Time::from_seconds_since_epoch(10000000, &TEST_TIME_PRECISION),
                     TimePrecision::from_seconds(50000),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,

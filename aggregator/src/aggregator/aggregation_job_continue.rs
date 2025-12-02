@@ -403,7 +403,7 @@ mod tests {
             VdafInstance::Fake { rounds: 2 },
         )
         .build();
-        let time_precision = *task.time_precision();
+        let _time_precision = *task.time_precision();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -443,9 +443,9 @@ mod tests {
                         aggregation_job_id,
                         aggregation_parameter,
                         (),
-                        Interval::new_with_duration(
+                        Interval::new(
                             *prepare_init.report_share().metadata().time(),
-                            time_precision.into(),
+                            janus_messages::Duration::from_time_precision_units(1),
                         )
                         .unwrap(),
                         AggregationJobState::Active,

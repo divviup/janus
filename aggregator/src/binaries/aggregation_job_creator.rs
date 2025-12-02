@@ -22,7 +22,10 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
         ctx.config.aggregation_job_creation_report_window,
-        janus_messages::Duration::from_seconds(ctx.config.late_report_grace_period_s),
+        janus_messages::Duration::from_seconds(
+            ctx.config.late_report_grace_period_s,
+            &janus_messages::taskprov::TimePrecision::from_seconds(1),
+        ),
     ));
     info!("Running aggregation job creator");
     aggregation_job_creator.run(ctx.stopper).await;

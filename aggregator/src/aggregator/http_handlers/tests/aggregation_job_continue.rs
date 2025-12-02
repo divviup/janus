@@ -71,11 +71,7 @@ async fn aggregate_continue_sync() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -102,11 +98,7 @@ async fn aggregate_continue_sync() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -132,11 +124,7 @@ async fn aggregate_continue_sync() {
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_2 = ReportMetadata::new(
         random(),
-        past_clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        past_clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -203,7 +191,7 @@ async fn aggregate_continue_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -256,10 +244,10 @@ async fn aggregate_continue_sync() {
                     BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::new(
-                            Time::from_seconds_since_epoch(0),
-                            *helper_task.time_precision(),
-                        )
+                        &Interval::single(Time::from_seconds_since_epoch(
+                            0,
+                            helper_task.time_precision(),
+                        ))
                         .unwrap(),
                         &aggregation_param,
                         [],
@@ -338,7 +326,7 @@ async fn aggregate_continue_sync() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -425,11 +413,7 @@ async fn aggregate_continue_async() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -456,11 +440,7 @@ async fn aggregate_continue_async() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -515,7 +495,7 @@ async fn aggregate_continue_async() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -605,7 +585,7 @@ async fn aggregate_continue_async() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
             AggregationJobState::Active,
             AggregationJobStep::from(1),
         )
@@ -672,10 +652,10 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let second_batch_interval_clock = MockClock::new(
         first_batch_interval_clock
             .now()
-            .to_time()
-            .add_time_precision(task.time_precision())
+            .to_time(&TimePrecision::from_seconds(1))
+            .add_time_precision()
             .unwrap()
-            .as_seconds_since_epoch(),
+            .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
     );
 
     let vdaf = dummy::Vdaf::new(2);
@@ -686,9 +666,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // report_share_0 is a "happy path" report.
     let report_time_0 = first_batch_interval_clock
         .now()
-        .to_batch_interval_start(task.time_precision())
-        .unwrap()
-        .to_time();
+        .to_time(&TimePrecision::from_seconds(1));
     let report_metadata_0 = ReportMetadata::new(random(), report_time_0, Vec::new());
     let transcript_0 = run_vdaf(
         &vdaf,
@@ -715,9 +693,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // output shares
     let report_time_1 = first_batch_interval_clock
         .now()
-        .to_batch_interval_start(task.time_precision())
-        .unwrap()
-        .to_time();
+        .to_time(&TimePrecision::from_seconds(1));
     let report_metadata_1 = ReportMetadata::new(random(), report_time_1, Vec::new());
     let transcript_1 = run_vdaf(
         &vdaf,
@@ -746,9 +722,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -772,27 +746,13 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &transcript_2.helper_input_share,
     );
 
-    let first_batch_identifier = Interval::new(
-        report_metadata_0
-            .time()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-        *task.time_precision(),
-    )
-    .unwrap();
-    let first_batch_interval = Interval::new(report_time_0, time_precision)
+    let first_batch_identifier = Interval::single(*report_metadata_0.time()).unwrap();
+    let first_batch_interval = Interval::single(report_time_0)
         .unwrap()
         .merged_with(&report_time_1)
         .unwrap();
 
-    let second_batch_identifier = Interval::new(
-        report_metadata_2
-            .time()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-        *task.time_precision(),
-    )
-    .unwrap();
+    let second_batch_identifier = Interval::single(*report_metadata_2.time()).unwrap();
 
     // Write collected batch aggregations for the interval that report_share_2 falls
     // into, which will cause it to fail to prepare.
@@ -860,7 +820,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_0,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1054,9 +1014,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // report_share_3 gets aggreated into the first batch interval.
     let report_time_3 = first_batch_interval_clock
         .now()
-        .to_batch_interval_start(task.time_precision())
-        .unwrap()
-        .to_time();
+        .to_time(&TimePrecision::from_seconds(1));
     let report_metadata_3 = ReportMetadata::new(random(), report_time_3, Vec::new());
     let transcript_3 = run_vdaf(
         &vdaf,
@@ -1085,9 +1043,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_4 = run_vdaf(
@@ -1117,9 +1073,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(
@@ -1184,7 +1138,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_1,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1387,7 +1341,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-        Time::from_seconds_since_epoch(54320),
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
         Vec::new(),
     );
 
@@ -1413,7 +1367,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1501,8 +1455,11 @@ async fn aggregate_continue_prep_step_fails() {
         &13,
     );
     let aggregation_job_id = random();
-    let report_metadata =
-        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54320), Vec::new());
+    let report_metadata = ReportMetadata::new(
+        report_id,
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
+        Vec::new(),
+    );
     let helper_report_share = generate_helper_report_share::<dummy::Vdaf>(
         *task.id(),
         report_metadata.clone(),
@@ -1534,7 +1491,7 @@ async fn aggregate_continue_prep_step_fails() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1619,7 +1576,7 @@ async fn aggregate_continue_prep_step_fails() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -1681,8 +1638,11 @@ async fn aggregate_continue_unexpected_transition() {
         &13,
     );
     let aggregation_job_id = random();
-    let report_metadata =
-        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54320), Vec::new());
+    let report_metadata = ReportMetadata::new(
+        report_id,
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
+        Vec::new(),
+    );
 
     // Setup datastore.
     datastore
@@ -1705,7 +1665,7 @@ async fn aggregate_continue_unexpected_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1790,7 +1750,7 @@ async fn aggregate_continue_out_of_order_transition() {
     );
     let report_metadata_0 = ReportMetadata::new(
         report_id_0,
-        Time::from_seconds_since_epoch(54320),
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let report_id_1 = random();
@@ -1804,7 +1764,7 @@ async fn aggregate_continue_out_of_order_transition() {
     );
     let report_metadata_1 = ReportMetadata::new(
         report_id_1,
-        Time::from_seconds_since_epoch(54320),
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let aggregation_job_id = random();
@@ -1841,7 +1801,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1938,7 +1898,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     let aggregation_job_id = random();
     let report_metadata = ReportMetadata::new(
         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-        Time::from_seconds_since_epoch(54320),
+        Time::from_seconds_since_epoch(54320, &TimePrecision::from_seconds(1)),
         Vec::new(),
     );
 
@@ -1962,7 +1922,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     aggregation_job_id,
                     dummy::AggregationParam(0),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))

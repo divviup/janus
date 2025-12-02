@@ -300,7 +300,12 @@ impl Command {
                 .await?;
 
                 // Parse flags into proper types.
-                let report_expiry_age = report_expiry_age_secs.map(Duration::from_seconds);
+                let report_expiry_age = report_expiry_age_secs.map(|s| {
+                    Duration::from_seconds(
+                        s,
+                        &janus_messages::taskprov::TimePrecision::from_seconds(1),
+                    )
+                });
 
                 add_taskprov_peer_aggregator(
                     &datastore,
@@ -1031,6 +1036,7 @@ mod tests {
         time::RealClock,
         vdaf::{VdafInstance, vdaf_dp_strategies},
     };
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
         codec::Encode,
@@ -1355,7 +1361,10 @@ mod tests {
         .unwrap()
         .config()
         .clone();
-        let report_expiry_age = Some(Duration::from_seconds(3600));
+        let report_expiry_age = Some(Duration::from_seconds(
+            3600,
+            &TimePrecision::from_seconds(1),
+        ));
         let aggregator_auth_token = random();
         let collector_auth_token = random();
 
@@ -1424,7 +1433,10 @@ mod tests {
             .unwrap()
             .config()
             .clone(),
-            Some(Duration::from_seconds(3600)),
+            Some(Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(1),
+            )),
             &random(),
             Some(&random()),
         )

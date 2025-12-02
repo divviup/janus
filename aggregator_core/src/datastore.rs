@@ -22,7 +22,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, DurationExt, IntervalExt, TimeExt},
+    time::{Clock, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -698,36 +698,13 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
         self.clock
     }
 
-    /// Construct an error type to provide extended issue about unaligned time errors.
-    fn unaligned_time_error(
-        task_id: &TaskId,
-        time_precision: &TimePrecision,
-        inner_error: janus_messages::Error,
-    ) -> Error {
-        Error::TimeUnaligned {
-            task_id: *task_id,
-            time_precision: *time_precision,
-            inner_error,
-        }
-    }
-
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
         let now = self.clock.now().naive_utc();
 
-        if let Some(start) = task.task_start() {
-            start
-                .validate_precision(task.time_precision())
-                .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
-        }
-        if let Some(end) = task.task_end() {
-            end.validate_precision(task.time_precision())
-                .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
-        }
-        task.tolerable_clock_skew()
-            .validate_precision(task.time_precision())
-            .map_err(|e| Self::unaligned_time_error(task.id(), task.time_precision(), e))?;
+        // With Time and Duration now represented as time_precision units, validation is
+        // enforced by the type system, so we can proceed directly to the insert.
 
         // Main task insert.
         let stmt = self
@@ -762,21 +739,27 @@ ON CONFLICT DO NOTHING",
                     /* task_start */
                     &task
                         .task_start()
-                        .map(Time::as_naive_date_time)
+                        .map(|t| t.as_naive_date_time(task.time_precision()))
                         .transpose()?,
                     /* task_end */
-                    &task.task_end().map(Time::as_naive_date_time).transpose()?,
+                    &task
+                        .task_end()
+                        .map(|t| t.as_naive_date_time(task.time_precision()))
+                        .transpose()?,
                     /* report_expiry_age */
                     &task
                         .report_expiry_age()
-                        .map(Duration::as_seconds)
+                        .map(|d| d.as_seconds(task.time_precision()))
                         .map(i64::try_from)
                         .transpose()?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
                     /* time_precision */
                     &i64::try_from(task.time_precision().as_seconds())?,
                     /* tolerable_clock_skew */
-                    &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
+                    &i64::try_from(
+                        task.tolerable_clock_skew()
+                            .as_seconds(task.time_precision()),
+                    )?,
                     /* collector_hpke_config */
                     &task
                         .collector_hpke_config()
@@ -872,17 +855,16 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
 
-        if let Some(end) = task_end {
-            end.validate_precision(&task_info.time_precision)
-                .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
-        }
+        if let Some(_end) = task_end {}
 
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
                     /* task_end */
-                    &task_end.map(Time::as_naive_date_time).transpose()?,
+                    &task_end
+                        .map(|t| t.as_naive_date_time(&task_info.time_precision))
+                        .transpose()?,
                     /* updated_at */ &self.clock.now().naive_utc(),
                     /* updated_by */ &self.name,
                     /* task_id */ &task_id.as_ref(),
@@ -951,22 +933,24 @@ FROM tasks",
         let batch_mode = row.try_get::<_, Json<task::BatchMode>>("batch_mode")?.0;
         let aggregation_mode: Option<AggregationMode> = row.get("aggregation_mode");
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+        let time_precision =
+            TimePrecision::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let task_start = row
             .get::<_, Option<NaiveDateTime>>("task_start")
             .as_ref()
-            .map(Time::from_naive_date_time);
+            .map(|dt| Time::from_naive_date_time(dt, &time_precision));
         let task_end = row
             .get::<_, Option<NaiveDateTime>>("task_end")
             .as_ref()
-            .map(Time::from_naive_date_time);
+            .map(|dt| Time::from_naive_date_time(dt, &time_precision));
         let report_expiry_age = row
             .get_nullable_bigint_and_convert("report_expiry_age")?
-            .map(Duration::from_seconds);
+            .map(|s| Duration::from_seconds(s, &time_precision));
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
-        let time_precision =
-            TimePrecision::from_seconds(row.get_bigint_and_convert("time_precision")?);
-        let tolerable_clock_skew =
-            Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
+        let tolerable_clock_skew = Duration::from_seconds(
+            row.get_bigint_and_convert("tolerable_clock_skew")?,
+            &time_precision,
+        );
         let collector_hpke_config = row
             .get::<_, Option<Vec<u8>>>("collector_hpke_config")
             .map(|config| HpkeConfig::get_decoded(&config))
@@ -1134,7 +1118,9 @@ WHERE client_reports.task_id = $1
             ],
         )
         .await?
-        .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
+        .map(|row| {
+            Self::client_report_from_row(vdaf, *task_id, *report_id, row, &task_info.time_precision)
+        })
         .transpose()
     }
 
@@ -1183,6 +1169,7 @@ WHERE client_reports.task_id = $1
                 *task_id,
                 row.get_bytea_and_convert::<ReportId>("report_id")?,
                 row,
+                &task_info.time_precision,
             )
         })
         .collect()
@@ -1193,8 +1180,9 @@ WHERE client_reports.task_id = $1
         task_id: TaskId,
         report_id: ReportId,
         row: Row,
+        time_precision: &TimePrecision,
     ) -> Result<LeaderStoredReport<SEED_SIZE, A>, Error> {
-        let time = Time::from_naive_date_time(&row.get("client_timestamp"));
+        let time = Time::from_naive_date_time(&row.get("client_timestamp"), time_precision);
 
         let encoded_public_extensions: Vec<u8> = row
             .get::<_, Option<_>>("public_extensions")
@@ -1293,7 +1281,10 @@ RETURNING report_id, client_timestamp",
             .map(|row| {
                 Ok(UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    Time::from_naive_date_time(&row.get("client_timestamp")),
+                    Time::from_naive_date_time(
+                        &row.get("client_timestamp"),
+                        &task_info.time_precision,
+                    ),
                 ))
             })
             .collect::<Result<Vec<_>, Error>>()
@@ -1375,7 +1366,10 @@ FROM unaggregated_client_report_ids",
             .map(|row| {
                 let unaggregated_report = UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    Time::from_naive_date_time(&row.get("client_timestamp")),
+                    Time::from_naive_date_time(
+                        &row.get("client_timestamp"),
+                        &janus_messages::taskprov::TimePrecision::from_seconds(1),
+                    ),
                 );
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
                 Ok((agg_param, unaggregated_report))
@@ -1474,10 +1468,6 @@ WHERE client_reports.task_id = $1
             None => return Ok(false),
         };
 
-        batch_interval
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
-
         let stmt = self
             .prepare_cached(
                 "-- interval_has_unaggregated_reports()
@@ -1518,10 +1508,6 @@ SELECT EXISTS(
             Some(task_info) => task_info,
             None => return Ok(0),
         };
-
-        batch_interval
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
 
         let stmt = self
             .prepare_cached(
@@ -1627,14 +1613,6 @@ WHERE report_aggregations.task_id = $1
             report.leader_private_extensions(),
         )?;
 
-        report
-            .metadata()
-            .time()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(report.task_id(), &task_info.time_precision, e)
-            })?;
-
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
         // report is expired (virtually GCed; would be invisible to other queries that retrieve
         // report rows).
@@ -1671,7 +1649,10 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* task_id */ &task_info.pkey,
                     /* report_id */ report.metadata().id().as_ref(),
                     /* client_timestamp */
-                    &report.metadata().time().as_naive_date_time()?,
+                    &report
+                        .metadata()
+                        .time()
+                        .as_naive_date_time(&task_info.time_precision)?,
                     /* public_extensions */ &encoded_public_extensions,
                     /* public_share */ &encoded_public_share,
                     /* leader_private_extensions */ &encoded_leader_private_extensions,
@@ -1793,9 +1774,6 @@ WHERE task_id = $1
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
 
-        client_timestamp
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
         let now = self.clock.now().naive_utc();
 
         // If there is a conflict, the we upsert the incoming report (excluded) if the existing
@@ -1829,7 +1807,8 @@ WHERE client_reports.client_timestamp < $7",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.as_ref(),
-                    /* client_timestamp */ &client_timestamp.as_naive_date_time()?,
+                    /* client_timestamp */
+                    &client_timestamp.as_naive_date_time(&task_info.time_precision)?,
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
@@ -2106,13 +2085,6 @@ WHERE aggregation_jobs.task_id = $4
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().naive_utc();
 
-        aggregation_job
-            .client_timestamp_interval()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(aggregation_job.task_id(), &task_info.time_precision, e)
-            })?;
-
         // If there is a conflict, the we upsert the incoming aggregation job (excluded) if the
         // existing aggregation job is expired (virtually GCed; would be invisible to other queries
         // that retrieve aggregation job rows).
@@ -2267,6 +2239,7 @@ ORDER BY ord ASC",
                 aggregation_job_id,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
                 &row,
+                &task_info.time_precision,
             )
         })
         .collect()
@@ -2328,6 +2301,7 @@ WHERE report_aggregations.task_id = $1
                 aggregation_job_id,
                 report_id,
                 &row,
+                &task_info.time_precision,
             )
         })
         .transpose()
@@ -2385,6 +2359,7 @@ WHERE report_aggregations.task_id = $1
                 &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
                 &row,
+                &task_info.time_precision,
             )
         })
         .collect()
@@ -2397,9 +2372,10 @@ WHERE report_aggregations.task_id = $1
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
         row: &Row,
+        time_precision: &TimePrecision,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error> {
         let ord: u64 = row.get_bigint_and_convert("ord")?;
-        let time = Time::from_naive_date_time(&row.get("client_timestamp"));
+        let time = Time::from_naive_date_time(&row.get("client_timestamp"), time_precision);
         let state: ReportAggregationStateCode = row.get("state");
         let error_code: Option<i16> = row.get("error_code");
         let last_prep_resp_bytes: Option<Vec<u8>> = row.get("last_prep_resp");
@@ -2657,17 +2633,6 @@ WHERE report_aggregations.task_id = $1
             .map(PrepareResp::get_encoded)
             .transpose()?;
 
-        report_aggregation
-            .time()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(
-                    report_aggregation.task_id(),
-                    &task_info.time_precision,
-                    e,
-                )
-            })?;
-
         // If there is a conflict, the we upsert the incoming report agggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
         // queries that retrieve report rows).
@@ -2722,7 +2687,10 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     &report_aggregation.aggregation_job_id().as_ref(),
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
-                    /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
+                    /* client_timestamp */
+                    &report_aggregation
+                        .time()
+                        .as_naive_date_time(&task_info.time_precision)?,
                     /* last_prep_resp */ &encoded_last_prep_resp,
                     /* state */ &report_aggregation.state().state_code(),
                     /* public_extensions */ &encoded_state_values.public_extensions,
@@ -2764,17 +2732,6 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
         let now = self.clock.now().naive_utc();
-
-        report_aggregation_metadata
-            .time()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(
-                    report_aggregation_metadata.task_id(),
-                    &task_info.time_precision,
-                    e,
-                )
-            })?;
 
         // If there is a conflict, the we upsert the incoming report aggregation (excluded) if the
         // existing report aggregation is expired (virtually GCed; would be invisible to other
@@ -2838,7 +2795,9 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* client_report_id */
                             &report_aggregation_metadata.report_id().as_ref(),
                             /* client_timestamp */
-                            &report_aggregation_metadata.time().as_naive_date_time()?,
+                            &report_aggregation_metadata
+                                .time()
+                                .as_naive_date_time(&task_info.time_precision)?,
                             /* created_at */ &now,
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
@@ -2900,7 +2859,9 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* client_report_id */
                             &report_aggregation_metadata.report_id().as_ref(),
                             /* client_timestamp */
-                            &report_aggregation_metadata.time().as_naive_date_time()?,
+                            &report_aggregation_metadata
+                                .time()
+                                .as_naive_date_time(&task_info.time_precision)?,
                             /* error_code */ &(*report_error as i16),
                             /* created_at */ &now,
                             /* updated_at */ &now,
@@ -2985,7 +2946,10 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                     &report_aggregation.aggregation_job_id().as_ref(),
                     /* task_id */ &task_info.pkey,
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
-                    /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
+                    /* client_timestamp */
+                    &report_aggregation
+                        .time()
+                        .as_naive_date_time(&task_info.time_precision)?,
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* threshold */ &task_info.report_expiry_threshold(&now)?,
                 ],
@@ -3155,7 +3119,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* timestamp */ &timestamp.as_naive_date_time()?,
+                /* timestamp */ &timestamp.as_naive_date_time(&task_info.time_precision)?,
                 /* threshold */
                 &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],
@@ -3188,10 +3152,6 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
-
-        batch_interval
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
 
         let stmt = self
             .prepare_cached(
@@ -4127,17 +4087,6 @@ WHERE task_id = $1
             B::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
-        batch_aggregation
-            .client_timestamp_interval()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(
-                    batch_aggregation.task_id(),
-                    &task_info.time_precision,
-                    e,
-                )
-            })?;
-
         let stmt = self
             .prepare_cached(
                 "-- put_batch_aggregation()
@@ -4218,17 +4167,6 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
         };
         let now = self.clock.now().naive_utc();
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
-
-        batch_aggregation
-            .client_timestamp_interval()
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| {
-                Self::unaligned_time_error(
-                    batch_aggregation.task_id(),
-                    &task_info.time_precision,
-                    e,
-                )
-            })?;
 
         let stmt = self
             .prepare_cached(
@@ -4424,10 +4362,6 @@ WHERE task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
-
-        interval
-            .validate_precision(&task_info.time_precision)
-            .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
 
         let stmt = self
             .prepare_cached(
@@ -4717,12 +4651,6 @@ WHERE task_id = $1
             None => return Err(Error::MutationTargetNotFound),
         };
 
-        if let Some(start) = time_bucket_start {
-            start
-                .validate_precision(&task_info.time_precision)
-                .map_err(|e| Self::unaligned_time_error(task_id, &task_info.time_precision, e))?;
-        }
-
         let now = self.clock.now().naive_utc();
 
         // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
@@ -4768,7 +4696,7 @@ ON CONFLICT(task_id, batch_id) DO UPDATE
                     /* time_bucket_start */
                     &time_bucket_start
                         .as_ref()
-                        .map(Time::as_naive_date_time)
+                        .map(|t| t.as_naive_date_time(&task_info.time_precision))
                         .transpose()?,
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
@@ -4813,7 +4741,8 @@ WHERE task_id = $1
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* time_bucket_start */ &time_bucket_start.as_naive_date_time()?,
+                    /* time_bucket_start */
+                    &time_bucket_start.as_naive_date_time(&task_info.time_precision)?,
                     /* threshold */
                     &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
                 ],
@@ -5251,7 +5180,10 @@ SELECT config_id, config, private_key, state, last_state_change_at FROM hpke_key
         Ok(HpkeKeypair::new(
             hpke::HpkeKeypair::new(config, private_key),
             row.get("state"),
-            Time::from_naive_date_time(&row.get("last_state_change_at")),
+            Time::from_naive_date_time(
+                &row.get("last_state_change_at"),
+                &TimePrecision::from_seconds(1),
+            ),
         ))
     }
 
@@ -5482,7 +5414,7 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         let aggregation_mode: Option<AggregationMode> = peer_aggregator_row.get("aggregation_mode");
         let report_expiry_age = peer_aggregator_row
             .get_nullable_bigint_and_convert("report_expiry_age")?
-            .map(Duration::from_seconds);
+            .map(|s| Duration::from_seconds(s, &TimePrecision::from_seconds(1)));
         let collector_hpke_config =
             HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
 
@@ -5575,7 +5507,11 @@ ON CONFLICT DO NOTHING",
                     /* report_expiry_age */
                     &peer_aggregator
                         .report_expiry_age()
-                        .map(Duration::as_seconds)
+                        .map(|d| {
+                            // PeerAggregator's report_expiry_age is configuration data without a specific
+                            // task context. We assume 1-second time_precision for database storage.
+                            d.as_seconds(&TimePrecision::from_seconds(1))
+                        })
                         .map(i64::try_from)
                         .transpose()?,
                     /* collector_hpke_config */

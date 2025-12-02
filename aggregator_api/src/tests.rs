@@ -204,8 +204,14 @@ async fn post_task_bad_role() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Collector,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_start: Some(Time::from_seconds_since_epoch(12300)),
-        task_end: Some(Time::from_seconds_since_epoch(12360)),
+        task_start: Some(Time::from_seconds_since_epoch(
+            12300,
+            &TimePrecision::from_seconds(1),
+        )),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12360,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -245,7 +251,10 @@ async fn post_task_unauthorized() {
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
         task_start: None,
-        task_end: Some(Time::from_seconds_since_epoch(12300)),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12300,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -373,7 +382,10 @@ async fn post_task_helper_with_aggregator_auth_token() {
         role: Role::Helper,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
         task_start: None,
-        task_end: Some(Time::from_seconds_since_epoch(12360)),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12360,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -414,8 +426,14 @@ async fn post_task_idempotence() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_start: Some(Time::from_seconds_since_epoch(12300)),
-        task_end: Some(Time::from_seconds_since_epoch(12360)),
+        task_start: Some(Time::from_seconds_since_epoch(
+            12300,
+            &TimePrecision::from_seconds(1),
+        )),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12360,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -495,7 +513,10 @@ async fn post_task_leader_all_optional_fields() {
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
         task_start: None,
-        task_end: Some(Time::from_seconds_since_epoch(12360)),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12360,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -579,8 +600,14 @@ async fn post_task_leader_no_aggregator_auth_token() {
         vdaf: VdafInstance::Prio3Count,
         role: Role::Leader,
         vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
-        task_start: Some(Time::from_seconds_since_epoch(12300)),
-        task_end: Some(Time::from_seconds_since_epoch(12360)),
+        task_start: Some(Time::from_seconds_since_epoch(
+            12300,
+            &TimePrecision::from_seconds(1),
+        )),
+        task_end: Some(Time::from_seconds_since_epoch(
+            12360,
+            &TimePrecision::from_seconds(1),
+        )),
         min_batch_size: 223,
         time_precision: TimePrecision::from_seconds(60),
         collector_hpke_config: HpkeKeypair::test().config().clone(),
@@ -752,7 +779,10 @@ async fn patch_task(#[case] role: Role) {
         VdafInstance::Fake { rounds: 1 },
     )
     .with_time_precision(TimePrecision::from_seconds(100))
-    .with_task_end(Some(Time::from_seconds_since_epoch(1000)))
+    .with_task_end(Some(Time::from_seconds_since_epoch(
+        1000,
+        &TimePrecision::from_seconds(1),
+    )))
     .build()
     .view_for_role(role)
     .unwrap();
@@ -785,7 +815,10 @@ async fn patch_task(#[case] role: Role) {
         .unwrap();
     assert_eq!(
         task.unwrap().task_end(),
-        Some(&Time::from_seconds_since_epoch(1000))
+        Some(&Time::from_seconds_since_epoch(
+            1000,
+            &TimePrecision::from_seconds(1)
+        ))
     );
 
     // Verify: patching the task with a null task end time returns the expected result.
@@ -826,7 +859,10 @@ async fn patch_task(#[case] role: Role) {
     );
 
     // Verify: patching the task with a task end time returns the expected result.
-    let expected_time = Some(Time::from_seconds_since_epoch(2000));
+    let expected_time = Some(Time::from_seconds_since_epoch(
+        2000,
+        &TimePrecision::from_seconds(1),
+    ));
     let mut conn = patch(format!("/tasks/{task_id}"))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
@@ -1869,8 +1905,14 @@ fn post_task_req_serialization() {
             },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
-            task_start: Some(Time::from_seconds_since_epoch(500)),
-            task_end: Some(Time::from_seconds_since_epoch(1000)),
+            task_start: Some(Time::from_seconds_since_epoch(
+                500,
+                &TimePrecision::from_seconds(1),
+            )),
+            task_end: Some(Time::from_seconds_since_epoch(
+                1000,
+                &TimePrecision::from_seconds(1),
+            )),
             min_batch_size: 100,
             time_precision: TimePrecision::from_seconds(3600),
             collector_hpke_config: HpkeConfig::new(
@@ -2029,7 +2071,7 @@ fn task_resp_serialization() {
         None,
         100,
         TimePrecision::from_seconds(3600),
-        Duration::from_seconds(60),
+        Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
         AggregatorTaskParameters::Leader {
             aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                 "Y29sbGVjdG9yLWFiY2RlZjAw",

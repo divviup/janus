@@ -843,7 +843,10 @@ impl<C: Clock> Aggregator<C> {
 
         let task_end = task_config
             .task_start()
-            .add_time_precision(task_config.task_duration())?;
+            .add_duration(&Duration::from_seconds(
+                task_config.task_duration().as_seconds(),
+                task_config.time_precision(),
+            ))?;
 
         let task = Arc::new(
             AggregatorTask::new(
@@ -858,7 +861,7 @@ impl<C: Clock> Aggregator<C> {
                 u64::from(*task_config.min_batch_size()),
                 *task_config.time_precision(),
                 /* tolerable clock skew */
-                (*task_config.time_precision()).into(), // Use the time precision as the tolerable skew
+                Duration::from_time_precision_units(1), // Use the time precision as the tolerable skew
                 task::AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {
@@ -1816,19 +1819,21 @@ impl VdafOps {
 
         let now = clock.now();
         let report_deadline = now
-            .add_duration(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
         if let Ok(clock_skew) = report
             .metadata()
             .time()
-            .difference_as_time_delta(&now.to_time())
+            .difference_as_time_delta(&now.to_time(task.time_precision()), task.time_precision())
         {
             metrics
                 .early_report_clock_skew_histogram
                 .record(clock_skew.num_seconds() as u64, &[]);
         }
-        if let Ok(clock_skew) = now.difference_as_time_delta(report.metadata().time()) {
+        if let Ok(clock_skew) =
+            now.difference_as_time_delta(report.metadata().time(), task.time_precision())
+        {
             metrics
                 .past_report_clock_skew_histogram
                 .record(clock_skew.num_seconds() as u64, &[]);
@@ -1839,7 +1844,7 @@ impl VdafOps {
         if report
             .metadata()
             .time()
-            .is_after(&report_deadline.to_time())
+            .is_after(&report_deadline.to_time(task.time_precision()))
         {
             return Err(reject_report(ReportRejectionReason::TooEarly).await?);
         }
@@ -1866,7 +1871,11 @@ impl VdafOps {
                 .time()
                 .add_duration(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
-            if clock.now().is_after(&report_expiry_time) {
+            if clock
+                .now()
+                .to_time(task.time_precision())
+                .is_after(&report_expiry_time)
+            {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
             }
         }
@@ -2172,13 +2181,14 @@ impl VdafOps {
             .map(|prepare_init| *prepare_init.report_share().metadata().time())
             .max()
             .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        let client_timestamp_interval = Interval::new_with_duration(
+        let client_timestamp_interval = Interval::new(
             min_client_timestamp,
             Duration::from_chrono(
                 max_client_timestamp
-                    .difference_as_time_delta(&min_client_timestamp)?
+                    .difference_as_time_delta(&min_client_timestamp, task.time_precision())?
                     .add(&TimeDelta::seconds(1))?
                     .round_up(&task.time_precision().to_chrono()?)?,
+                task.time_precision(),
             ),
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
@@ -3564,7 +3574,11 @@ impl VdafOps {
             {
                 let aggregate_share_expiry_time =
                     batch_interval.end().add_duration(report_expiry_age)?;
-                if clock.now().is_after(&aggregate_share_expiry_time) {
+                if clock
+                    .now()
+                    .to_time(task.time_precision())
+                    .is_after(&aggregate_share_expiry_time)
+                {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),
                         "aggregate share request too late".to_string(),

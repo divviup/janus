@@ -26,7 +26,7 @@ use janus_core::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
     },
-    time::{Clock, DateTimeExt, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -215,9 +215,7 @@ async fn upload_batch() {
             &hpke_keypair,
             clock
                 .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap()
-                .to_time(),
+                .to_time(&TimePrecision::from_seconds(1)),
         )
     })
     .take(BATCH_SIZE)
@@ -349,11 +347,9 @@ async fn upload_report_in_the_future_boundary_condition() {
         &hpke_keypair,
         clock
             .now()
-            .add_duration(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .unwrap()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
     );
 
     aggregator
@@ -408,11 +404,11 @@ async fn upload_report_in_the_future_past_clock_skew() {
         &hpke_keypair,
         clock
             .now()
-            .add_duration(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .unwrap()
             .add_timedelta(&TimeDelta::seconds(1))
             .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
     );
 
     let upload_result = aggregator
@@ -470,15 +466,7 @@ async fn upload_report_for_collected_batch() {
     );
 
     // Insert a collection job for the batch interval including our report.
-    let batch_interval = Interval::new(
-        report
-            .metadata()
-            .time()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-        *task.time_precision(),
-    )
-    .unwrap();
+    let batch_interval = Interval::single(*report.metadata().time()).unwrap();
     datastore
         .run_unnamed_tx(|tx| {
             let task = task.clone();
@@ -563,7 +551,7 @@ async fn upload_report_task_not_started() {
             .now()
             .add_timedelta(&TimeDelta::seconds(3600))
             .unwrap()
-            .to_time(),
+            .to_time(&TimePrecision::from_seconds(1)),
     ))
     .build()
     .leader_view()
@@ -708,7 +696,11 @@ async fn upload_report_unaligned_time() {
     // Ensure the time is unaligned
     clock.advance(TimeDelta::seconds(100));
     // Now don't align the report's clock, just take it as-is
-    let report = create_report(&task, &hpke_keypair, clock.now().to_time());
+    let report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
+    );
 
     // Try to upload the report, verify that we get the expected error.
     let error = aggregator
@@ -745,7 +737,10 @@ async fn upload_report_report_expired() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(TimePrecision::from_seconds(100))
-    .with_report_expiry_age(Some(Duration::from_seconds(60)))
+    .with_report_expiry_age(Some(Duration::from_seconds(
+        60,
+        &TimePrecision::from_seconds(1),
+    )))
     .build()
     .leader_view()
     .unwrap();
@@ -815,7 +810,7 @@ async fn upload_report_faulty_encryption() {
     // Encrypt with the wrong key.
     let report = create_report_custom(
         &task,
-        clock.now().to_time(),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         random(),
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
         Vec::new(),
@@ -875,7 +870,11 @@ async fn upload_report_public_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
+    let mut report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
+    );
     report = Report::new(
         report.metadata().clone(),
         // Some obviously wrong public share.
@@ -936,7 +935,11 @@ async fn upload_report_leader_input_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
+    let mut report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
+    );
     report = Report::new(
         report.metadata().clone(),
         report.public_share().to_vec(),
@@ -1014,7 +1017,10 @@ async fn upload_report_duplicate_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(TimePrecision::from_seconds(100))
-    .with_report_expiry_age(Some(Duration::from_seconds(60)))
+    .with_report_expiry_age(Some(Duration::from_seconds(
+        60,
+        &TimePrecision::from_seconds(1),
+    )))
     .build()
     .leader_view()
     .unwrap();

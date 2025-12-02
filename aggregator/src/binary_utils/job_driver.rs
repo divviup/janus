@@ -228,7 +228,9 @@ where
                         let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
                             lease.remaining_lease_duration(
-                                &this.clock.now().to_time(),
+                                &this.clock.now().to_time(
+                                    &janus_messages::taskprov::TimePrecision::from_seconds(1),
+                                ),
                                 this.worker_lease_clock_skew_allowance.as_secs(),
                             ),
                             (this.job_stepper)(lease),

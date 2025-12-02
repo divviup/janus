@@ -9,7 +9,6 @@ use self::{
 };
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
 use core::slice;
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
@@ -31,9 +30,8 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
     num::TryFromIntError,
-    str,
-    str::FromStr,
-    time::{SystemTime, SystemTimeError},
+    str::{self, FromStr},
+    time::SystemTime,
 };
 
 pub use prio::codec;
@@ -140,29 +138,74 @@ impl TryFrom<&Url> for url::Url {
     }
 }
 
-/// DAP protocol message representing a duration with a resolution of seconds.
+/// DAP protocol message representing a duration as a multiple of the task's time precision.
+/// The value represents the number of time_precision intervals.
+///
+/// To convert between this representation and real-world durations (seconds),
+/// use the conversion methods that take a [`TimePrecision`] parameter.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
 
 impl Duration {
-    pub const ZERO: Duration = Duration::from_seconds(0);
+    pub const ZERO: Duration = Duration::from_time_precision_units(0);
 
-    /// Create a duration representing the provided number of seconds.
-    pub const fn from_seconds(seconds: u64) -> Self {
-        Self(seconds)
+    /// Create a duration representing the provided number of seconds, given the task's time precision.
+    ///
+    /// The duration will be rounded down to the nearest multiple of time_precision.
+    ///
+    /// # Arguments
+    /// * `seconds` - Duration in seconds
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn from_seconds(seconds: u64, time_precision: &TimePrecision) -> Self {
+        let precision_secs = time_precision.as_seconds();
+        assert!(precision_secs > 0);
+        Self(seconds / precision_secs)
     }
 
-    /// Create a duration representing the provided number of hours.
+    /// Create a duration representing the provided number of hours, given the task's time precision.
+    ///
+    /// The duration will be rounded down to the nearest multiple of time_precision.
     ///
     /// This is a convenience method for tests. For production code with time
     /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    ///
+    /// # Arguments
+    /// * `hours` - Duration in hours
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
     #[cfg(any(test, feature = "test-util"))]
-    pub const fn from_hours(hours: u64) -> Self {
-        Self(hours * 3600)
+    pub fn from_hours(hours: u64, time_precision: &TimePrecision) -> Self {
+        Self::from_seconds(hours * 3600, time_precision)
     }
 
     /// Get the number of seconds this duration represents.
-    pub fn as_seconds(&self) -> u64 {
+    ///
+    /// # Arguments
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn as_seconds(&self, time_precision: &TimePrecision) -> u64 {
+        self.0.saturating_mul(time_precision.as_seconds())
+    }
+
+    /// Construct a [`Duration`] from the raw number of time_precision units.
+    /// This is primarily for testing and internal use.
+    pub const fn from_time_precision_units(units: u64) -> Self {
+        Self(units)
+    }
+
+    /// Get the raw number of time_precision units.
+    /// This is primarily for testing and internal use.
+    pub fn as_time_precision_units(&self) -> u64 {
         self.0
     }
 
@@ -170,9 +213,17 @@ impl Duration {
     ///
     /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
     /// seconds is too large for i64 or the resulting milliseconds would overflow).
-    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+    ///
+    /// # Arguments
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn to_chrono(&self, time_precision: &TimePrecision) -> Result<chrono::TimeDelta, Error> {
+        let seconds = self.as_seconds(time_precision);
         chrono::TimeDelta::try_seconds(
-            self.0
+            seconds
                 .try_into()
                 .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
         )
@@ -181,20 +232,28 @@ impl Duration {
         ))
     }
 
-    /// Create a [`Duration`] from a [`chrono::TimeDelta`].
+    /// Create a [`Duration`] from a [`chrono::TimeDelta`], given the task's time precision.
     ///
-    /// The duration will be rounded down to the nearest second.
+    /// The duration will be rounded down to the nearest time_precision unit.
     ///
     /// # Panics
     ///
     /// Panics if the delta is negative, as DAP durations must be non-negative.
-    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
+    ///
+    /// # Arguments
+    /// * `delta` - The chrono TimeDelta to convert
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn from_chrono(delta: chrono::TimeDelta, time_precision: &TimePrecision) -> Self {
         let seconds = delta.num_seconds();
         assert!(
             seconds >= 0,
             "Duration::from_chrono called with negative TimeDelta"
         );
-        Self::from_seconds(seconds as u64)
+        Self::from_seconds(seconds as u64, time_precision)
     }
 }
 
@@ -216,25 +275,83 @@ impl Decode for Duration {
 
 impl Display for Duration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} seconds", self.0)
+        write!(f, "{} time_precision units", self.0)
     }
 }
 
-/// DAP protocol message representing an instant in time with a resolution of seconds.
+/// DAP protocol message representing an instant in time as a multiple of the task's time
+/// precision. The value represents the number of time_precision intervals since the Unix epoch
+/// (January 1st, 1970, at 0:00:00 UTC).
+///
+/// To convert between this representation and real-world timestamps (seconds since epoch),
+/// use the conversion methods that take a [`TimePrecision`] parameter.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Time(u64);
 
 impl Time {
     /// Construct a [`Time`] representing the instant that is a given number of seconds after
     /// January 1st, 1970, at 0:00:00 UTC (i.e., the instant with the Unix timestamp of
-    /// `timestamp`).
-    pub const fn from_seconds_since_epoch(timestamp: u64) -> Self {
-        Self(timestamp)
+    /// `timestamp`), given the task's time precision.
+    ///
+    /// The timestamp will be rounded down to the nearest multiple of time_precision.
+    ///
+    /// # Arguments
+    /// * `timestamp` - Unix timestamp in seconds
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn from_seconds_since_epoch(timestamp: u64, time_precision: &TimePrecision) -> Self {
+        let precision_secs = time_precision.as_seconds();
+        assert!(precision_secs > 0);
+        Self(timestamp / precision_secs)
+    }
+
+    /// Construct a [`Time`] representing the provided [`SystemTime`], given the task's
+    /// time precision.
+    ///
+    /// The time will be rounded down to the nearest multiple of time_precision.
+    ///
+    /// # Arguments
+    /// * `time` - SystemTime
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0, or `time` is before the UNIX Epoch.
+    ///
+    pub fn from_systemtime(time: SystemTime, time_precision: &TimePrecision) -> Self {
+        let precision_secs = time_precision.as_seconds();
+        assert!(precision_secs > 0);
+        let seconds = match time.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n.as_secs(),
+            Err(_) => panic!("SystemTime is before the Epoch"),
+        };
+        Self(seconds / precision_secs)
     }
 
     /// Get the number of seconds from January 1st, 1970, at 0:00:00 UTC to the instant represented
     /// by this [`Time`] (i.e., the Unix timestamp for the instant it represents).
-    pub fn as_seconds_since_epoch(&self) -> u64 {
+    ///
+    /// # Arguments
+    /// * `time_precision` - The task's time precision
+    ///
+    /// # Panics
+    /// Panics if `time_precision.as_seconds()` is 0.
+    ///
+    pub fn as_seconds_since_epoch(&self, time_precision: &TimePrecision) -> u64 {
+        self.0.saturating_mul(time_precision.as_seconds())
+    }
+
+    /// Construct a [`Time`] from the raw number of time_precision units since the Unix epoch.
+    /// This is primarily for testing and internal use.
+    pub const fn from_time_precision_units(units: u64) -> Self {
+        Self(units)
+    }
+
+    /// Get the raw number of time_precision units since the Unix epoch.
+    /// This is primarily for testing and internal use.
+    pub fn as_time_precision_units(&self) -> u64 {
         self.0
     }
 }
@@ -261,31 +378,12 @@ impl Decode for Time {
     }
 }
 
-impl TryFrom<SystemTime> for Time {
-    type Error = SystemTimeError;
+// Note: TryFrom<SystemTime> for Time has been removed because it requires a TimePrecision
+// context. Use Time::from_seconds_since_epoch(time.duration_since(UNIX_EPOCH)?.as_secs(), &time_precision)
+// instead.
 
-    fn try_from(time: SystemTime) -> Result<Self, Self::Error> {
-        let duration = time.duration_since(SystemTime::UNIX_EPOCH)?;
-        Ok(Time::from_seconds_since_epoch(duration.as_secs()))
-    }
-}
-
-// Allow direct comparison between Time and DateTime<Utc>
-impl PartialEq<DateTime<Utc>> for Time {
-    fn eq(&self, other: &DateTime<Utc>) -> bool {
-        let other_timestamp =
-            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
-        self.as_seconds_since_epoch() == other_timestamp
-    }
-}
-
-impl PartialOrd<DateTime<Utc>> for Time {
-    fn partial_cmp(&self, other: &DateTime<Utc>) -> Option<std::cmp::Ordering> {
-        let other_timestamp =
-            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
-        self.as_seconds_since_epoch().partial_cmp(&other_timestamp)
-    }
-}
+// Note: PartialEq and PartialOrd between Time and DateTime<Utc> have been removed because
+// they require a TimePrecision context. Convert to a common representation first.
 
 /// DAP protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
@@ -299,31 +397,34 @@ pub struct Interval {
 
 impl Interval {
     pub const EMPTY: Self = Self {
-        start: Time::from_seconds_since_epoch(0),
+        start: Time::from_time_precision_units(0),
         duration: Duration::ZERO,
     };
 
-    /// Create a new [`Interval`] from the provided start and time precision.
+    /// Create a new [`Interval`] from the provided start with a duration of 1 time_precision unit.
     /// Returns an error if the end of the interval cannot be represented as a [`Time`].
     ///
-    /// This is the preferred constructor for intervals based on task time precision.
+    /// This is the preferred constructor for batch bucket intervals.
     /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
-    pub fn new(start: Time, time_precision: TimePrecision) -> Result<Self, Error> {
-        let duration = Duration::from_seconds(time_precision.as_seconds());
+    pub fn single(start: Time) -> Result<Self, Error> {
+        // TKTK change to single
         start
             .0
-            .checked_add(time_precision.as_seconds())
+            .checked_add(1)
             .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
 
-        Ok(Self { start, duration })
+        Ok(Self {
+            start,
+            duration: Duration::from_time_precision_units(1),
+        })
     }
 
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
     /// of the interval cannot be represented as a [`Time`].
     ///
-    /// This constructor is for intervals with arbitrary durations. For intervals based on
-    /// task time precision, prefer [`Interval::new`].
-    pub fn new_with_duration(start: Time, duration: Duration) -> Result<Self, Error> {
+    /// This constructor is for intervals with arbitrary durations (in time_precision units).
+    /// For single-precision intervals, prefer [`Interval::new`].
+    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
         start
             .0
             .checked_add(duration.0)
@@ -359,7 +460,7 @@ impl Decode for Interval {
         let start = Time::decode(bytes)?;
         let duration = Duration::decode(bytes)?;
 
-        Self::new_with_duration(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
+        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
     }
 }
 

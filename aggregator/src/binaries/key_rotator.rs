@@ -93,6 +93,7 @@ mod tests {
 
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
@@ -127,9 +128,18 @@ mod tests {
             },
             key_rotator: KeyRotatorConfig {
                 hpke: HpkeKeyRotatorConfig {
-                    pending_duration: Duration::from_seconds(random()),
-                    active_duration: Duration::from_seconds(random()),
-                    expired_duration: Duration::from_seconds(random()),
+                    pending_duration: Duration::from_seconds(
+                        random(),
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    active_duration: Duration::from_seconds(
+                        random(),
+                        &TimePrecision::from_seconds(1),
+                    ),
+                    expired_duration: Duration::from_seconds(
+                        random(),
+                        &TimePrecision::from_seconds(1),
+                    ),
                     ciphersuites: HashSet::from([
                         HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,

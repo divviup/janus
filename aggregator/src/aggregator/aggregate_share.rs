@@ -155,9 +155,9 @@ where
             .clone()
             .ok_or_else(|| Error::InvalidBatchSize(*self.task.id(), self.total_report_count))?;
 
-        let client_timestamp_interval = self
-            .client_timestamp_interval
-            .align_to_time_precision(self.task.time_precision())?;
+        // Since Time and Duration are now represented as time_precision units, intervals are
+        // automatically aligned, so we use client_timestamp_interval directly.
+        let client_timestamp_interval = self.client_timestamp_interval;
 
         // Validate batch size per
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6

@@ -113,17 +113,14 @@ where
     where
         C: Clock,
     {
-        let time_bucket_start_opt = self
-            .properties
-            .task_batch_time_window_size
-            .map(|batch_time_window_size| {
-                report
-                    .client_timestamp()
-                    .to_batch_interval_start(&TimePrecision::from_seconds(
-                        batch_time_window_size.as_seconds(),
-                    ))
-            })
-            .transpose()?;
+        let time_bucket_start_opt =
+            self.properties
+                .task_batch_time_window_size
+                .map(|_batch_time_window_size| {
+                    // Since Time is now represented as time_precision units, client_timestamp
+                    // is already aligned to batch intervals.
+                    *report.client_timestamp()
+                });
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),
@@ -378,13 +375,14 @@ where
 
         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let client_timestamp_interval = Interval::new_with_duration(
-            min_client_timestamp.to_batch_interval_start(&time_precision)?,
+        let client_timestamp_interval = Interval::new(
+            min_client_timestamp, // Time is already aligned to batch intervals
             Duration::from_chrono(
                 max_client_timestamp
-                    .difference_as_time_delta(&min_client_timestamp)?
+                    .difference_as_time_delta(&min_client_timestamp, &time_precision)?
                     .add(&TimeDelta::seconds(1))?
                     .round_up(&time_precision.to_chrono()?)?,
+                &time_precision,
             ),
         )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(

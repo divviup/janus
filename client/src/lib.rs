@@ -53,7 +53,7 @@ use janus_core::{
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
-    time::{Clock, DateTimeExt, RealClock, TimeExt},
+    time::{Clock, DateTimeExt, RealClock},
     url_ensure_trailing_slash,
     vdaf::vdaf_application_context,
 };
@@ -506,12 +506,10 @@ impl<V: vdaf::Client<16>> Client<V> {
         )?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
-        let time = time
-            .to_batch_interval_start(&self.parameters.time_precision)
-            .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
+        // Since Time is now represented as time_precision units, it's already aligned to batch intervals.
         let report_metadata = ReportMetadata::new(
             report_id,
-            time,
+            *time,
             Vec::new(), // No extensions supported yet.
         );
         let encoded_public_share = public_share.get_encoded()?;
@@ -557,8 +555,11 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: V::Measurement) -> Result<(), Error> {
-        self.upload_with_time(&[(measurement, Clock::now(&RealClock::default()).to_time())])
-            .await
+        self.upload_with_time(&[(
+            measurement,
+            Clock::now(&RealClock::default()).to_time(&self.parameters.time_precision),
+        )])
+        .await
     }
 
     /// Upload a [`Report`] to the leader, per the [DAP specification][1], and override the report's
@@ -577,11 +578,12 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// # let measurement1 = true;
     /// # let measurement2 = false;
     /// # let vdaf = Prio3::new_count(2).unwrap();
+    /// let time_precision = TimePrecision::from_seconds(3600);
     /// let client = Client::new(
     ///     random(),
     ///     "https://example.com/".parse().unwrap(),
     ///     "https://example.net/".parse().unwrap(),
-    ///     TimePrecision::from_seconds(3600),
+    ///     time_precision,
     ///     vdaf,
     /// ).await?;
     ///
@@ -590,15 +592,10 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// let now = std::time::SystemTime::now();
     /// let earlier = now - std::time::Duration::from_secs(3600);
     /// client.upload_with_time(&[
-    ///     (measurement1, earlier),
-    ///     (measurement2, now),
+    ///     (measurement1, Time::from_systemtime(earlier, &time_precision)),
+    ///     (measurement2, Time::from_systemtime(now, &time_precision)),
     /// ]).await?;
     ///
-    /// // Or use janus_messages::Time for specific timestamps:
-    /// client.upload_with_time(&[
-    ///     (measurement1, Time::from_seconds_since_epoch(1_700_000_000)),
-    ///     (measurement2, Time::from_seconds_since_epoch(1_700_003_600)),
-    /// ]).await?;
     /// # Ok(())
     /// # }
     /// ```

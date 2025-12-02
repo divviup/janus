@@ -22,11 +22,17 @@ fn successful_collection_time_interval() {
             time_precision: TimePrecision::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(7200)),
+            report_expiry_age: Some(Duration::from_seconds(
+                7200,
+                &TimePrecision::from_seconds(3600),
+            )),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -53,9 +59,12 @@ fn successful_collection_time_interval() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(1_699_999_200),
-                        Duration::from_seconds(3600),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(
+                            1_699_999_200,
+                            &TimePrecision::from_seconds(3600),
+                        ),
+                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
                     )
                     .unwrap(),
                 ),
@@ -71,9 +80,12 @@ fn successful_collection_time_interval() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(1_699_999_200),
-                        Duration::from_seconds(3600),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(
+                            1_699_999_200,
+                            &TimePrecision::from_seconds(3600),
+                        ),
+                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
                     )
                     .unwrap(),
                 ),
@@ -97,11 +109,17 @@ fn successful_collection_leader_selected() {
             time_precision: TimePrecision::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(7200)),
+            report_expiry_age: Some(Duration::from_seconds(
+                7200,
+                &TimePrecision::from_seconds(3600),
+            )),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -160,11 +178,17 @@ fn successful_collection_asynchronous() {
             time_precision: TimePrecision::from_seconds(3600),
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(7200)),
+            report_expiry_age: Some(Duration::from_seconds(
+                7200,
+                &TimePrecision::from_seconds(3600),
+            )),
             aggregation_mode: AggregationMode::Asynchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -206,9 +230,12 @@ fn successful_collection_asynchronous() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(1_699_999_200),
-                        Duration::from_seconds(3600),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(
+                            1_699_999_200,
+                            &TimePrecision::from_seconds(3600),
+                        ),
+                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
                     )
                     .unwrap(),
                 ),
@@ -229,9 +256,12 @@ fn successful_collection_asynchronous() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(1_699_999_200),
-                        Duration::from_seconds(3600),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(
+                            1_699_999_200,
+                            &TimePrecision::from_seconds(3600),
+                        ),
+                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
                     )
                     .unwrap(),
                 ),
@@ -255,11 +285,17 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
             time_precision: TimePrecision::from_seconds(3600),
             min_batch_size: 1,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(7200)),
+            report_expiry_age: Some(Duration::from_seconds(
+                7200,
+                &TimePrecision::from_seconds(3600),
+            )),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -270,7 +306,12 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
                 amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(3600)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(
+                        &TimeDelta::seconds(3600),
+                        &TimePrecision::from_seconds(3600),
+                    )
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -297,11 +338,17 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
             time_precision: TimePrecision::from_seconds(3600),
             min_batch_size: 1,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(7200)),
+            report_expiry_age: Some(Duration::from_seconds(
+                7200,
+                &TimePrecision::from_seconds(3600),
+            )),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -312,7 +359,12 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
                 amount: TimeDelta::seconds(3600),
             },
             Op::Upload {
-                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(3600)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(
+                        &TimeDelta::seconds(3600),
+                        &TimePrecision::from_seconds(3600),
+                    )
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -339,11 +391,17 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             time_precision: TimePrecision::from_seconds(1000),
             min_batch_size: 100,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(4000)),
+            report_expiry_age: Some(Duration::from_seconds(
+                4000,
+                &TimePrecision::from_seconds(1000),
+            )),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(1000),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -354,7 +412,12 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
                 amount: TimeDelta::seconds(2000),
             },
             Op::Upload {
-                report_time: START_TIME.add_timedelta(&TimeDelta::seconds(2000)).unwrap(),
+                report_time: START_TIME
+                    .add_timedelta(
+                        &TimeDelta::seconds(2000),
+                        &TimePrecision::from_seconds(1000),
+                    )
+                    .unwrap(),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -384,7 +447,10 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -410,7 +476,11 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             Op::CollectorStart {
                 collection_job_id,
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(START_TIME, Duration::from_seconds(1000)).unwrap(),
+                    Interval::new(
+                        START_TIME,
+                        Duration::from_seconds(1000, &TimePrecision::from_seconds(1000)),
+                    )
+                    .unwrap(),
                 ),
             },
             Op::CollectionJobDriver,
@@ -435,7 +505,10 @@ fn repro_helper_accumulate_on_retried_request() {
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
-            late_report_grace_period: Duration::from_seconds(3600),
+            late_report_grace_period: Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(3600),
+            ),
         },
         ops: Vec::from([
             Op::Upload {
@@ -451,7 +524,11 @@ fn repro_helper_accumulate_on_retried_request() {
             Op::CollectorStart {
                 collection_job_id: random(),
                 query: Query::TimeInterval(
-                    Interval::new_with_duration(START_TIME, Duration::from_seconds(1000)).unwrap(),
+                    Interval::new(
+                        START_TIME,
+                        Duration::from_seconds(1000, &TimePrecision::from_seconds(1000)),
+                    )
+                    .unwrap(),
                 ),
             },
             Op::CollectionJobDriver,

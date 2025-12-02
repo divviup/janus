@@ -342,7 +342,7 @@ where
                         "helper": inner.helper,
                         "vdaf": json_encode_vdaf(&inner.vdaf_instance),
                         "measurement": inner.vdaf.json_encode_measurement(measurement),
-                        "time": time.as_seconds_since_epoch(),
+                        "time": time.as_seconds_since_epoch(&inner.time_precision),
                         "time_precision": inner.time_precision.as_seconds(),
                     }))
                     .send()

@@ -156,7 +156,7 @@ where
             time_precision,
             min_batch_size,
             batch_mode::Code::LeaderSelected,
-            task_start.to_time(),
+            task_start.to_time(&TimePrecision::from_seconds(1)),
             task_duration,
             vdaf_config,
             Vec::new(),
@@ -180,17 +180,17 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_start(Some(task_start.to_time()))
+        .with_task_start(Some(task_start.to_time(&TimePrecision::from_seconds(1))))
         .with_task_end(Some(
             task_start
-                .to_time()
-                .add_time_precision(&task_duration)
+                .to_time(&TimePrecision::from_seconds(1))
+                .add_time_precision()
                 .unwrap(),
         ))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(TimePrecision::from_seconds(1))
-        .with_tolerable_clock_skew(Duration::from_seconds(1))
+        .with_tolerable_clock_skew(Duration::from_seconds(1, &TimePrecision::from_seconds(1)))
         .with_taskprov_task_info(task_config.task_info().to_vec())
         .build();
 
@@ -633,7 +633,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(),
+        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
@@ -700,7 +700,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(),
+        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
@@ -765,7 +765,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         TimePrecision::from_seconds(1),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(),
+        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
         TimePrecision::from_hours(24),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
@@ -834,9 +834,9 @@ async fn taskprov_aggregate_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     batch_id,
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_seconds(1),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
+                        Duration::from_seconds(1, &TimePrecision::from_seconds(1)),
                     )
                     .unwrap(),
                     AggregationJobState::Active,
@@ -955,7 +955,7 @@ async fn taskprov_aggregate_share() {
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
             let interval =
-                Interval::new(Time::from_seconds_since_epoch(6000), *task.time_precision())
+                Interval::single(Time::from_seconds_since_epoch(6000, task.time_precision()))
                     .unwrap();
             let transcript = transcript.clone();
 

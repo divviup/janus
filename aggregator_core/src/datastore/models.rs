@@ -620,10 +620,14 @@ impl<T> Lease<T> {
     /// The math saturates, because we want to timeout immediately if any of these
     /// subtractions would underflow.
     pub fn remaining_lease_duration(&self, current_time: &Time, skew_seconds: u64) -> StdDuration {
+        // Lease expiry times are SQL timestamps (seconds since Unix epoch), so we use
+        // 1-second time_precision for conversion.
         StdDuration::from_secs(
             u64::try_from(self.lease_expiry_time.and_utc().timestamp())
                 .unwrap_or_default()
-                .saturating_sub(current_time.as_seconds_since_epoch())
+                .saturating_sub(
+                    current_time.as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
+                )
                 .saturating_sub(skew_seconds),
         )
     }
@@ -2120,7 +2124,14 @@ impl OutstandingBatch {
 }
 
 /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
-const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
+/// This represents the Unix epoch seconds (946_684_800) as a raw Time value.
+/// When working with SQL timestamps, they are always in microseconds relative to this epoch,
+/// regardless of any task's time_precision.
+const SQL_EPOCH_TIME: Time = Time::from_time_precision_units(946_684_800);
+
+/// A "unit" time precision representing 1 second, used for SQL timestamp conversions.
+/// SQL timestamps are stored as microseconds but we convert them to/from seconds.
+const UNIT_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 /// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2178,8 +2189,10 @@ impl<'a> FromSql<'a> for SqlInterval {
                 // Convert from SQL timestamp representation to the internal representation.
                 let negative = start_timestamp < 0;
                 let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration =
-                    Duration::from_chrono(chrono::TimeDelta::microseconds(abs_start_us as i64));
+                let abs_start_duration = Duration::from_chrono(
+                    chrono::TimeDelta::microseconds(abs_start_us as i64),
+                    &UNIT_TIME_PRECISION,
+                );
                 let time = if negative {
                     SQL_EPOCH_TIME
                         .sub_duration(&abs_start_duration)
@@ -2197,10 +2210,12 @@ impl<'a> FromSql<'a> for SqlInterval {
                     return Err("timestamp range ends before it starts".into());
                 }
                 let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration =
-                    Duration::from_chrono(chrono::TimeDelta::microseconds(duration_us as i64));
+                let duration = Duration::from_chrono(
+                    chrono::TimeDelta::microseconds(duration_us as i64),
+                    &UNIT_TIME_PRECISION,
+                );
 
-                Ok(SqlInterval(Interval::new_with_duration(time, duration)?))
+                Ok(SqlInterval(Interval::new(time, duration)?))
             }
         }
     }
@@ -2211,12 +2226,12 @@ impl<'a> FromSql<'a> for SqlInterval {
 fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
     if time.is_after(&SQL_EPOCH_TIME) {
         let absolute_difference_us = time
-            .difference_as_time_delta(&SQL_EPOCH_TIME)?
+            .difference_as_time_delta(&SQL_EPOCH_TIME, &UNIT_TIME_PRECISION)?
             .as_microseconds()?;
         Ok(absolute_difference_us.try_into()?)
     } else {
         let absolute_difference_us = SQL_EPOCH_TIME
-            .difference_as_time_delta(&time)?
+            .difference_as_time_delta(&time, &UNIT_TIME_PRECISION)?
             .as_microseconds()?;
         Ok(-i64::try_from(absolute_difference_us)?)
     }
