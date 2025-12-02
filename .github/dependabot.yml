@@ -31,12 +31,16 @@ updates:
       tracing:
         patterns:
           - tracing
-          - tracing-*
+          - tracing-chrome
+          - tracing-log
+          - tracing-stackdriver
+          - tracing-subscriber
       opentelemetry:
         patterns:
           - opentelemetry
           - opentelemetry-*
           - opentelemetry_*
+          - tracing-opentelemetry
       trillium:
         patterns:
           - trillium
@@ -112,12 +116,16 @@ updates:
       tracing:
         patterns:
           - tracing
-          - tracing-*
+          - tracing-chrome
+          - tracing-log
+          - tracing-stackdriver
+          - tracing-subscriber
       opentelemetry:
         patterns:
           - opentelemetry
           - opentelemetry-*
           - opentelemetry_*
+          - tracing-opentelemetry
       trillium:
         patterns:
           - trillium
