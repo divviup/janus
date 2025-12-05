@@ -1004,9 +1004,7 @@ mod tests {
                         .unwrap();
 
                     let aggregation_job_id = random();
-                    let report_timestamp = clock
-                        .now()
-                        .to_time(&TimePrecision::from_seconds(1));
+                    let report_timestamp = clock.now().to_time(&TimePrecision::from_seconds(1));
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
@@ -1149,9 +1147,7 @@ mod tests {
         )
         .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
-        let report_timestamp = clock
-            .now()
-            .to_time(&TimePrecision::from_seconds(1));
+        let report_timestamp = clock.now().to_time(&TimePrecision::from_seconds(1));
         let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
         let (collection_job_id, expected_aggregate_share_id, lease) = ds

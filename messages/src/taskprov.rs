@@ -508,10 +508,13 @@ impl Decode for TaskbindExtensionType {
 pub struct TimePrecision(u64);
 
 impl TimePrecision {
-    pub const ZERO: TimePrecision = TimePrecision::from_seconds(0);
-
     /// Create a duration representing the provided number of seconds.
+    ///
+    /// # Panics
+    /// Panics if `seconds` is 0.
+    ///
     pub const fn from_seconds(seconds: u64) -> Self {
+        assert!(seconds > 0);
         Self(seconds)
     }
 

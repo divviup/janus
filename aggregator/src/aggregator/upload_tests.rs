@@ -213,9 +213,7 @@ async fn upload_batch() {
         create_report(
             &task.leader_view().unwrap(),
             &hpke_keypair,
-            clock
-                .now()
-                .to_time(&TimePrecision::from_seconds(1)),
+            clock.now().to_time(&TimePrecision::from_seconds(1)),
         )
     })
     .take(BATCH_SIZE)

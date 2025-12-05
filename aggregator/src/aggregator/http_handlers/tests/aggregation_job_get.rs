@@ -55,9 +55,7 @@ async fn aggregation_job_get_ready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -172,9 +170,7 @@ async fn aggregation_job_get_unready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -287,9 +283,7 @@ async fn aggregation_job_get_wrong_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -493,9 +487,7 @@ async fn aggregation_job_get_sync() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+        clock.now().to_time(&TimePrecision::from_seconds(1)),
         Vec::new(),
     );
     let transcript = run_vdaf(
