@@ -579,7 +579,7 @@ impl IntervalExt for Interval {
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
         // Create an interval of 1 time_precision unit starting at the given time
-        self.merge(&Self::new(*time, Duration::from_time_precision_units(1))?)
+        self.merge(&Self::new(*time, Duration::ONE)?)
     }
 }
 

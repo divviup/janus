@@ -114,7 +114,7 @@ async fn handle_add_task(
         request.min_batch_size,
         time_precision,
         /* tolerable clock skew */
-        Duration::from_time_precision_units(1), // Since the clock skew must be a multiple of the precision, start at 1x
+        Duration::ONE, // Since the clock skew must be a multiple of the precision, start at 1x
         aggregator_parameters,
     )
     .context("error constructing task")?;

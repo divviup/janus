@@ -651,7 +651,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 let Ok(aggressive_aggregation_time) =
                                     oldest_report.client_timestamp().add_duration(&max(
                                         this.late_report_grace_period,
-                                        janus_messages::Duration::from_time_precision_units(1),
+                                        janus_messages::Duration::ONE,
                                     ))
                                 else {
                                     break;
@@ -1669,7 +1669,7 @@ mod tests {
             2,
             100,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))

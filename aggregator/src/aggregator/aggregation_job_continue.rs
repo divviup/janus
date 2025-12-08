@@ -445,7 +445,7 @@ mod tests {
                         (),
                         Interval::new(
                             *prepare_init.report_share().metadata().time(),
-                            janus_messages::Duration::from_time_precision_units(1),
+                            janus_messages::Duration::ONE,
                         )
                         .unwrap(),
                         AggregationJobState::Active,

@@ -145,10 +145,10 @@ where
         .build()
         .unwrap();
 
-        let time_precision = TimePrecision::from_seconds(1);
         let min_batch_size = 1;
         let task_start = clock.now();
-        let task_duration = TimePrecision::from_hours(24);
+        let time_precision = TimePrecision::from_seconds(60); // TKTK was 1?
+        let task_duration = Duration::from_hours(24, &time_precision);
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
             "https://leader.example.com/".as_bytes().try_into().unwrap(),
@@ -156,7 +156,7 @@ where
             time_precision,
             min_batch_size,
             batch_mode::Code::LeaderSelected,
-            task_start.to_time(&TimePrecision::from_seconds(1)),
+            task_start.to_time(&time_precision),
             task_duration,
             vdaf_config,
             Vec::new(),
@@ -180,17 +180,17 @@ where
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
         .with_vdaf_verify_key(vdaf_verify_key)
-        .with_task_start(Some(task_start.to_time(&TimePrecision::from_seconds(1))))
+        .with_task_start(Some(task_start.to_time(&time_precision)))
         .with_task_end(Some(
             task_start
-                .to_time(&TimePrecision::from_seconds(1))
+                .to_time(&time_precision)
                 .add_time_precision()
                 .unwrap(),
         ))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
-        .with_time_precision(TimePrecision::from_seconds(1))
-        .with_tolerable_clock_skew(Duration::from_seconds(1, &TimePrecision::from_seconds(1)))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(1, &time_precision))
         .with_taskprov_task_info(task_config.task_info().to_vec())
         .build();
 
@@ -630,11 +630,11 @@ async fn taskprov_opt_out_mismatched_task_id() {
         Vec::from("foobar".as_bytes()),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
-        TimePrecision::from_seconds(1),
+        *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
-        TimePrecision::from_hours(24),
+        test.clock.now().to_time(test.task.time_precision()),
+        Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -697,11 +697,11 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         // Attempt to configure leader as a helper.
         "https://helper.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        TimePrecision::from_seconds(1),
+        *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
-        TimePrecision::from_hours(24),
+        test.clock.now().to_time(test.task.time_precision()),
+        Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -762,11 +762,11 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         // Some non-existent aggregator.
         "https://foobar.example.com/".as_bytes().try_into().unwrap(),
         "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        TimePrecision::from_seconds(1),
+        *test.task.time_precision(),
         100,
         batch_mode::Code::LeaderSelected,
-        test.clock.now().to_time(&TimePrecision::from_seconds(1)),
-        TimePrecision::from_hours(24),
+        test.clock.now().to_time(test.task.time_precision()),
+        Duration::from_hours(24, test.task.time_precision()),
         VdafConfig::Fake { rounds: 2 },
         Vec::new(),
     )
@@ -835,8 +835,8 @@ async fn taskprov_aggregate_continue() {
                     aggregation_param,
                     batch_id,
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(1, &TimePrecision::from_seconds(1)),
+                        Time::from_seconds_since_epoch(0, task.time_precision()),
+                        Duration::from_seconds(1, task.time_precision()),
                     )
                     .unwrap(),
                     AggregationJobState::Active,

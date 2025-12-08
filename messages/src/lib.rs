@@ -148,6 +148,7 @@ pub struct Duration(u64);
 
 impl Duration {
     pub const ZERO: Duration = Duration::from_time_precision_units(0);
+    pub const ONE: Duration = Duration::from_time_precision_units(1);
 
     /// Create a duration representing the provided number of seconds, given the task's time precision.
     ///
@@ -415,7 +416,7 @@ impl Interval {
 
         Ok(Self {
             start,
-            duration: Duration::from_time_precision_units(1),
+            duration: Duration::ONE,
         })
     }
 

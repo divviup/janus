@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Error, Time, Url, batch_mode};
+use crate::{Duration, Error, Time, Url, batch_mode};
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -34,7 +34,7 @@ pub struct TaskConfig {
     /// The earliest timestamp that will be accepted for this task.
     task_start: Time,
     /// The duration of the task.
-    task_duration: TimePrecision,
+    task_duration: Duration,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
     /// Taskbind extensions.
@@ -51,7 +51,7 @@ impl TaskConfig {
         min_batch_size: u32,
         batch_mode: batch_mode::Code,
         task_start: Time,
-        task_duration: TimePrecision,
+        task_duration: Duration,
         vdaf_config: VdafConfig,
         extensions: Vec<TaskbindExtension>,
     ) -> Result<Self, Error> {
@@ -101,7 +101,7 @@ impl TaskConfig {
         &self.task_start
     }
 
-    pub fn task_duration(&self) -> &TimePrecision {
+    pub fn task_duration(&self) -> &Duration {
         &self.task_duration
     }
 
@@ -171,7 +171,7 @@ impl Decode for TaskConfig {
             ));
         };
         let task_start = Time::decode(bytes)?;
-        let task_duration = TimePrecision::decode(bytes)?;
+        let task_duration = Duration::decode(bytes)?;
         let vdaf_config = VdafConfig::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
@@ -578,13 +578,11 @@ impl Display for TimePrecision {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Time, TimePrecision, Url, batch_mode, roundtrip_encoding,
+        Duration, Time, TimePrecision, Url, batch_mode, roundtrip_encoding,
         taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode as _};
-
-    const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
     #[test]
     fn roundtrip_task_config() {
@@ -597,8 +595,8 @@ mod tests {
                     TimePrecision::from_seconds(3600),
                     10000,
                     batch_mode::Code::TimeInterval,
-                    Time::from_seconds_since_epoch(1000000, &TEST_TIME_PRECISION),
-                    TimePrecision::from_seconds(100000),
+                    Time::from_seconds_since_epoch(1000000, &TimePrecision::from_seconds(3600)),
+                    Duration::from_time_precision_units(27),
                     VdafConfig::Prio3Count,
                     Vec::new(),
                 )
@@ -647,8 +645,8 @@ mod tests {
                     TimePrecision::from_seconds(1000),
                     1000,
                     batch_mode::Code::LeaderSelected,
-                    Time::from_seconds_since_epoch(10000000, &TEST_TIME_PRECISION),
-                    TimePrecision::from_seconds(50000),
+                    Time::from_seconds_since_epoch(10000000, &TimePrecision::from_seconds(1000)),
+                    Duration::from_time_precision_units(50),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,
                     },
