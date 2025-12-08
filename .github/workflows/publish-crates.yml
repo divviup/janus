@@ -5,21 +5,31 @@ on:
     types: [published]
   workflow_dispatch:
 
-env:
-  CARGO_REGISTRY_TOKEN: ${{ secrets.DIVVIUP_GITHUB_AUTOMATION_CRATES_IO_API_TOKEN }}
-
 jobs:
   crate:
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
     steps:
     - uses: actions/checkout@v6
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+    - id: auth
+      uses: rust-lang/crates-io-auth-action@v1
     - name: "Publish janus_messages"
       run: cargo publish --package janus_messages
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
     - name: "Publish janus_core"
       run: cargo publish --package janus_core
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
     - name: "Publish janus_client"
       run: cargo publish --package janus_client
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
     - name: "Publish janus_collector"
       run: cargo publish --package janus_collector
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
