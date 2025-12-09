@@ -443,6 +443,24 @@ impl Interval {
     pub fn duration(&self) -> &Duration {
         &self.duration
     }
+
+    /// Convert this interval from one time precision to another.
+    /// This is used when storing intervals in SQL, which uses 1-second precision,
+    /// but the interval may be in a task's specific time precision.
+    pub fn to_time_precision(
+        &self,
+        from_precision: &TimePrecision,
+        to_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
+        // Convert start and duration from source precision to target precision
+        let start_seconds = self.start.as_seconds_since_epoch(from_precision);
+        let duration_seconds = self.duration.as_seconds(from_precision);
+
+        let new_start = Time::from_seconds_since_epoch(start_seconds, to_precision);
+        let new_duration = Duration::from_seconds(duration_seconds, to_precision);
+
+        Self::new(new_start, new_duration)
+    }
 }
 
 impl Encode for Interval {

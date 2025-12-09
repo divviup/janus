@@ -700,10 +700,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                             min_client_timestamp,
                                             task.time_precision(),
                                         )?
-                                        .add(
-                                            &DurationMsg::ONE
-                                                .to_chrono(task.time_precision())?,
-                                        )?
+                                        .add(&DurationMsg::ONE.to_chrono(task.time_precision())?)?
                                         .round_up(&task.time_precision().to_chrono()?)?,
                                     task.time_precision(),
                                 ),
@@ -852,10 +849,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                             min_client_timestamp,
                                             task.time_precision(),
                                         )?
-                                        .add(
-                                            &DurationMsg::ONE
-                                                .to_chrono(task.time_precision())?,
-                                        )?
+                                        .add(&DurationMsg::ONE.to_chrono(task.time_precision())?)?
                                         .round_up(&task.time_precision().to_chrono()?)?,
                                     task.time_precision(),
                                 ),

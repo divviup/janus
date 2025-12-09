@@ -1,6 +1,10 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{AsyncAggregator, datastore::Error, task};
+use crate::{
+    AsyncAggregator,
+    datastore::{Error, SQL_UNIT_TIME_PRECISION},
+    task,
+};
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::ValueEnum;
@@ -9,7 +13,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{self, HpkeCiphersuite},
     report_id::ReportIdChecksumExt,
-    time::{IntervalExt, TimeDeltaExt, TimeExt},
+    time::{IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -2125,10 +2129,6 @@ impl OutstandingBatch {
     }
 }
 
-/// A "unit" time precision representing 1 second, used for SQL timestamp conversions.
-/// SQL timestamps are stored as microseconds but we convert them to/from seconds.
-const SQL_UNIT_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
-
 /// The SQL timestamp epoch is midnight UTC on 2000-01-01. This const represents
 /// the Unix epoch seconds (946_684_800) in the context of SQL_UNIT_TIME_PRECISION.
 const SQL_EPOCH_TIME: Time = Time::from_time_precision_units(946_684_800);
@@ -2223,17 +2223,29 @@ impl<'a> FromSql<'a> for SqlInterval {
     accepts!(TS_RANGE);
 }
 
-fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
-    if time.is_after(&SQL_EPOCH_TIME) {
-        let absolute_difference_us = time
-            .difference_as_time_delta(&SQL_EPOCH_TIME, &SQL_UNIT_TIME_PRECISION)?
-            .as_microseconds()?;
-        Ok(absolute_difference_us.try_into()?)
+fn time_to_sql_timestamp(time: Time, time_precision: &TimePrecision) -> Result<i64, Error> {
+    // Convert time from time_precision units to absolute seconds since Unix epoch
+    let time_seconds = time.as_seconds_since_epoch(time_precision);
+
+    // SQL epoch is 946_684_800 seconds since Unix epoch (2000-01-01 00:00:00 UTC)
+    let sql_epoch_seconds = 946_684_800u64;
+
+    if time_seconds >= sql_epoch_seconds {
+        let diff_seconds = time_seconds - sql_epoch_seconds;
+        let diff_microseconds = diff_seconds
+            .checked_mul(1_000_000)
+            .ok_or(Error::TimeOverflow(
+                "overflow converting time to microseconds",
+            ))?;
+        Ok(diff_microseconds.try_into()?)
     } else {
-        let absolute_difference_us = SQL_EPOCH_TIME
-            .difference_as_time_delta(&time, &SQL_UNIT_TIME_PRECISION)?
-            .as_microseconds()?;
-        Ok(-i64::try_from(absolute_difference_us)?)
+        let diff_seconds = sql_epoch_seconds - time_seconds;
+        let diff_microseconds = diff_seconds
+            .checked_mul(1_000_000)
+            .ok_or(Error::TimeOverflow(
+                "overflow converting time to microseconds",
+            ))?;
+        Ok(-i64::try_from(diff_microseconds)?)
     }
 }
 
@@ -2244,9 +2256,12 @@ impl ToSql for SqlInterval {
         out: &mut bytes::BytesMut,
     ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         // Convert the interval start and end to SQL timestamps.
-        let start_sql_usec = time_to_sql_timestamp(*self.0.start())
+        // Note: The interval should already be in SQL_UNIT_TIME_PRECISION (1 second) units,
+        // and if it isn't, badness ensues. This will stop being an problem as part of
+        // Issue #4206.
+        let start_sql_usec = time_to_sql_timestamp(*self.0.start(), &SQL_UNIT_TIME_PRECISION)
             .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
-        let end_sql_usec = time_to_sql_timestamp(self.0.end())
+        let end_sql_usec = time_to_sql_timestamp(self.0.end(), &SQL_UNIT_TIME_PRECISION)
             .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
 
         range_to_sql(
