@@ -2303,14 +2303,14 @@ pub enum HpkeKeyState {
 pub struct HpkeKeypair {
     hpke_keypair: hpke::HpkeKeypair,
     state: HpkeKeyState,
-    last_state_change_at: Time,
+    last_state_change_at: DateTime<Utc>,
 }
 
 impl HpkeKeypair {
     pub fn new(
         hpke_keypair: hpke::HpkeKeypair,
         state: HpkeKeyState,
-        last_state_change_at: Time,
+        last_state_change_at: DateTime<Utc>,
     ) -> Self {
         Self {
             hpke_keypair,
@@ -2327,7 +2327,7 @@ impl HpkeKeypair {
         &self.state
     }
 
-    pub fn set_state(&mut self, state: HpkeKeyState, time: Time) {
+    pub fn set_state(&mut self, state: HpkeKeyState, time: DateTime<Utc>) {
         self.state = state;
         self.last_state_change_at = time;
     }
@@ -2344,7 +2344,7 @@ impl HpkeKeypair {
         self.state == HpkeKeyState::Expired
     }
 
-    pub fn last_state_change_at(&self) -> &Time {
+    pub fn last_state_change_at(&self) -> &DateTime<Utc> {
         &self.last_state_change_at
     }
 

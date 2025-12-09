@@ -266,9 +266,9 @@ pub trait DateTimeExt {
         time_precision: &TimePrecision,
     ) -> Result<TimeDelta, Error>;
 
-    /// Get the difference between the provided `other` [`Time`] and this [`DateTime<Utc>`] using
+    /// Get the difference between the provided `other` [`DateTime<Utc>`] and this [`DateTime<Utc>`] using
     /// saturating arithmetic. If `self` is before `other`, the result is zero.
-    fn saturating_difference(&self, other: &Time, time_precision: &TimePrecision) -> Duration;
+    fn saturating_difference(&self, other: &Self, time_precision: &TimePrecision) -> Duration;
 }
 
 impl DateTimeExt for DateTime<Utc> {
@@ -352,10 +352,10 @@ impl DateTimeExt for DateTime<Utc> {
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    fn saturating_difference(&self, other: &Time, time_precision: &TimePrecision) -> Duration {
+    fn saturating_difference(&self, other: &Self, time_precision: &TimePrecision) -> Duration {
         Duration::from_seconds(
             self.as_seconds_since_epoch()
-                .saturating_sub(other.as_seconds_since_epoch(time_precision)),
+                .saturating_sub(other.timestamp().try_into().expect("TKTK")),
             time_precision,
         )
     }
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn saturating_difference_positive() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(999999000, &TEST_TIME_PRECISION);
+        let time = DateTime::<Utc>::from_timestamp(999999000, 0).unwrap();
 
         let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
         assert_eq!(duration.as_seconds(&TEST_TIME_PRECISION), 1000);
@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn saturating_difference_negative_returns_zero() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000100, &TEST_TIME_PRECISION); // time is after dt
+        let time = DateTime::<Utc>::from_timestamp(1000000100, 0).unwrap(); // time is after dt
 
         let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
         assert_eq!(
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn saturating_difference_equal_returns_zero() {
         let dt = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
-        let time = Time::from_seconds_since_epoch(1000000000, &TEST_TIME_PRECISION);
+        let time = DateTime::<Utc>::from_timestamp(1000000000, 0).unwrap();
 
         let duration = dt.saturating_difference(&time, &TEST_TIME_PRECISION);
         assert_eq!(duration.as_seconds(&TEST_TIME_PRECISION), 0);

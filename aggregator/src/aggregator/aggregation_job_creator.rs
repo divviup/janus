@@ -701,7 +701,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                             task.time_precision(),
                                         )?
                                         .add(
-                                            &DurationMsg::from_seconds(1, task.time_precision())
+                                            &DurationMsg::ONE
                                                 .to_chrono(task.time_precision())?,
                                         )?
                                         .round_up(&task.time_precision().to_chrono()?)?,
@@ -853,7 +853,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                             task.time_precision(),
                                         )?
                                         .add(
-                                            &DurationMsg::from_seconds(1, task.time_precision())
+                                            &DurationMsg::ONE
                                                 .to_chrono(task.time_precision())?,
                                         )?
                                         .round_up(&task.time_precision().to_chrono()?)?,
@@ -3106,6 +3106,7 @@ mod tests {
         // and there is no reason to wait for more reports between receipt of a collection job and
         // performing the collection.
 
+        let time_precision = TimePrecision::from_seconds(30);
         let vdaf = Arc::new(dummy::Vdaf::new(1));
         let task = Arc::new(
             TaskBuilder::new(
@@ -3113,6 +3114,7 @@ mod tests {
                 AggregationMode::Synchronous,
                 VdafInstance::Fake { rounds: 1 },
             )
+            .with_time_precision(time_precision)
             .build()
             .leader_view()
             .unwrap(),

@@ -1315,6 +1315,11 @@ RETURNING report_id, client_timestamp",
         A: AsyncAggregator<SEED_SIZE> + VdafHasAggregationParameter,
     {
         // TODO(#224): lock retrieved client_reports rows
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok(Vec::new()),
+        };
+
         // TODO(#225): use get_task_primary_key_and_expiry_threshold as in
         // get_unaggregated_client_reports_for_task
         let stmt = self
@@ -1368,7 +1373,7 @@ FROM unaggregated_client_report_ids",
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
                     Time::from_naive_date_time(
                         &row.get("client_timestamp"),
-                        &janus_messages::taskprov::TimePrecision::from_seconds(1),
+                        &task_info.time_precision,
                     ),
                 );
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
@@ -5180,10 +5185,8 @@ SELECT config_id, config, private_key, state, last_state_change_at FROM hpke_key
         Ok(HpkeKeypair::new(
             hpke::HpkeKeypair::new(config, private_key),
             row.get("state"),
-            Time::from_naive_date_time(
-                &row.get("last_state_change_at"),
-                &TimePrecision::from_seconds(1),
-            ),
+            row.get::<_, NaiveDateTime>("last_state_change_at")
+                .and_utc(),
         ))
     }
 

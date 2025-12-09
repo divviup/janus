@@ -2,6 +2,7 @@
 use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
 use crate::cache::HpkeKeypairCache;
 use anyhow::{Error, anyhow};
+use chrono::{DateTime, Utc};
 use educe::Educe;
 use futures::{FutureExt, future::try_join_all};
 use janus_aggregator_core::datastore::{
@@ -13,7 +14,7 @@ use janus_core::{
     time::{Clock, DateTimeExt},
 };
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time, taskprov::TimePrecision,
+    Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision,
 };
 #[cfg(test)]
 use quickcheck::{Arbitrary, Gen};
@@ -147,14 +148,13 @@ impl<C: Clock> KeyRotator<C> {
     }
 }
 
-fn duration_since<C: Clock>(clock: &C, time: &Time) -> Duration {
+fn duration_since<C: Clock>(clock: &C, time: &DateTime<Utc>) -> Duration {
     // Use saturating difference to account for time skew between key rotator runners. Since
     // key rotators are synchronized by an exclusive lock on the table, it's possible that
     // time skew between concurrently running replicas result in underflows.
-    // HPKE key timestamps use 1-second time_precision.
     clock
         .now()
-        .saturating_difference(time, &TimePrecision::from_seconds(1))
+        .saturating_difference(time, &TimePrecision::from_seconds(1)) // TKTK: All TimePrecisions in this file have got to go. Maybe this whole system change to chrono types?
 }
 
 /// In-memory representation of the `hpke_keys` table.
@@ -352,14 +352,9 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     )
                     .map_err(|e| DatastoreError::User(e.into()))?;
 
-                    let result = self.keypairs.insert(
-                        id,
-                        HpkeKeypair::new(
-                            keypair,
-                            state,
-                            self.clock.now().to_time(&TimePrecision::from_seconds(1)),
-                        ),
-                    );
+                    let result = self
+                        .keypairs
+                        .insert(id, HpkeKeypair::new(keypair, state, self.clock.now()));
                     // It is a programmer error to attempt to insert a key where one already exists.
                     assert!(result.is_none());
                 }
@@ -367,10 +362,7 @@ impl<'a, C: Clock> HpkeKeyRotator<'a, C> {
                     // Unwrap safety: it is a bug to attempt to mutate a non-existent key.
                     let keypair = self.keypairs.get_mut(&id).unwrap();
                     info!(?id, old_state = ?keypair.state(), new_state = ?state, reason, "changing key state");
-                    keypair.set_state(
-                        state,
-                        self.clock.now().to_time(&TimePrecision::from_seconds(1)),
-                    );
+                    keypair.set_state(state, self.clock.now());
                 }
                 HpkeOp::Delete(id, reason) => {
                     // Unwrap safety: it is a bug to delete a non-existent key.
@@ -524,7 +516,7 @@ impl Arbitrary for HpkeKeyRotatorConfig {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeDelta;
+    use chrono::{DateTime, TimeDelta};
     use itertools::Itertools;
     use janus_aggregator_core::datastore::{
         Datastore,
@@ -705,10 +697,14 @@ mod tests {
                                 HpkeKeyState::Expired,
                             ])
                             .unwrap(),
-                            Time::from_seconds_since_epoch(
-                                (start + offset).saturating_sub(u32::arbitrary(g) as u64),
-                                &TimePrecision::from_seconds(1),
-                            ),
+                            DateTime::from_timestamp(
+                                (start + offset)
+                                    .saturating_sub(u32::arbitrary(g) as u64)
+                                    .try_into()
+                                    .unwrap(),
+                                0,
+                            )
+                            .unwrap(),
                         ),
                     )
                 })
