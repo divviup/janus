@@ -988,7 +988,7 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskId, Time,
+        ReportMetadata, Role, TaskId,
         batch_mode::{LeaderSelected, TimeInterval},
         taskprov::TimePrecision,
     };
@@ -1025,13 +1025,15 @@ mod tests {
         // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
         // even if the main test loops on calling yield_now().
 
-        let report_time = Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1));
+        let time_precision = TimePrecision::from_seconds(30);
+        let report_time = clock.now_aligned_to_precision(&time_precision);
         let leader_task = Arc::new(
             TaskBuilder::new(
                 TaskBatchMode::TimeInterval,
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .build()
             .leader_view()
             .unwrap(),
@@ -1063,6 +1065,7 @@ mod tests {
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .build()
             .helper_view()
             .unwrap(),
@@ -1102,7 +1105,7 @@ mod tests {
             1,
             100,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_hours(1, &time_precision),
         ));
         let stopper = Stopper::new();
         let task_handle = task::spawn(Arc::clone(&job_creator).run(stopper.clone()));
@@ -1291,7 +1294,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1483,7 +1486,7 @@ mod tests {
             2,
             100,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1864,7 +1867,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2033,7 +2036,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2228,7 +2231,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2398,7 +2401,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2662,7 +2665,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2861,7 +2864,7 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
         const MIN_BATCH_SIZE: usize = 200;
-        let time_precision = TimePrecision::from_seconds(1);
+        let time_precision = TimePrecision::from_seconds(3600);
         let batch_time_window_size = janus_messages::Duration::from_hours(24, &time_precision);
 
         let task = Arc::new(
@@ -2872,6 +2875,7 @@ mod tests {
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
             .build()
             .leader_view()
@@ -2879,12 +2883,10 @@ mod tests {
         );
 
         // Create 2 * MIN_BATCH_SIZE reports in two different time buckets.
-        let batch_window_units = batch_time_window_size.as_time_precision_units();
         let now_time = clock.now().to_time(&time_precision);
-        let report_time_2 = janus_messages::Time::from_time_precision_units(
-            (now_time.as_time_precision_units() / batch_window_units) * batch_window_units,
-        );
-        let report_time_1 = report_time_2.sub_time_precision().unwrap();
+
+        let report_time_2 = now_time.sub_duration(&batch_time_window_size).unwrap();
+        let report_time_1 = report_time_2.sub_duration(&batch_time_window_size).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -2963,7 +2965,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_time_precision_units(1),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2971,18 +2973,6 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let time_bucket_start_1 = {
-            let batch_window_units = batch_time_window_size.as_time_precision_units();
-            Time::from_time_precision_units(
-                (report_time_1.as_time_precision_units() / batch_window_units) * batch_window_units,
-            )
-        };
-        let time_bucket_start_2 = {
-            let batch_window_units = batch_time_window_size.as_time_precision_units();
-            Time::from_time_precision_units(
-                (report_time_2.as_time_precision_units() / batch_window_units) * batch_window_units,
-            )
-        };
         let want_ra_states: Arc<HashMap<_, _>> = Arc::new(
             reports
                 .iter()
@@ -3010,10 +3000,10 @@ mod tests {
 
                 Box::pin(async move {
                     Ok((
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_1))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(report_time_1))
                             .await
                             .unwrap(),
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_2))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(report_time_2))
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
@@ -3207,7 +3197,7 @@ mod tests {
             1,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            janus_messages::Duration::from_seconds(3600, task.time_precision()),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
@@ -3263,20 +3253,14 @@ mod tests {
                         Query::new_time_interval(
                             Interval::new(
                                 report_time,
-                                janus_messages::Duration::from_seconds(
-                                    task.time_precision().as_seconds() * 2,
-                                    &janus_messages::taskprov::TimePrecision::from_seconds(1),
-                                ),
+                                janus_messages::Duration::from_time_precision_units(2),
                             )
                             .unwrap(),
                         ),
                         first_aggregation_param,
                         Interval::new(
                             report_time,
-                            janus_messages::Duration::from_seconds(
-                                task.time_precision().as_seconds() * 2,
-                                task.time_precision(),
-                            ),
+                            janus_messages::Duration::from_time_precision_units(2),
                         )
                         .unwrap(),
                         CollectionJobState::Start,

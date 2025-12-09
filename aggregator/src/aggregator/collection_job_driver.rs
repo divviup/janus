@@ -23,7 +23,7 @@ use janus_core::{
         ExponentialWithTotalDelayBuilder, HttpResponse, is_retryable_http_client_error,
         is_retryable_http_status,
     },
-    time::{Clock, DateTimeExt as _},
+    time::Clock,
     vdaf_dispatch,
 };
 use janus_messages::{
@@ -384,14 +384,8 @@ impl CollectionJobDriver {
         // Send an aggregate share request to the helper.
         let http_response = send_request_to_helper(
             &self.http_client,
-            self.backoff.with_max_delay(
-                lease.remaining_lease_duration(
-                    &clock
-                        .now()
-                        .to_time(&janus_messages::taskprov::TimePrecision::from_seconds(1)),
-                    0,
-                ),
-            ),
+            self.backoff
+                .with_max_delay(lease.remaining_lease_duration(&clock.now(), 0)),
             method,
             task.aggregate_shares_uri(collection_job.aggregate_share_id())?
                 .ok_or_else(|| {
@@ -2104,12 +2098,8 @@ mod tests {
 
         // Simulate helper indicating asynchronous operation; e.g., for the first request,
         // the share isn't yet ready, and it won't be until after the leader's lease ends.
-        let remaining_time = Arc::new(lease.clone().unwrap()).remaining_lease_duration(
-            &clock
-                .now()
-                .to_time(&janus_messages::taskprov::TimePrecision::from_seconds(1)),
-            0,
-        );
+        let remaining_time =
+            Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
         let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
 
         let (header, value) = agg_auth_token.request_authentication();
