@@ -184,7 +184,7 @@ where
         .with_task_end(Some(
             task_start
                 .to_time(&time_precision)
-                .add_time_precision()
+                .add_duration(&task_duration)
                 .unwrap(),
         ))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
@@ -834,11 +834,8 @@ async fn taskprov_aggregate_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     batch_id,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0, task.time_precision()),
-                        Duration::from_seconds(1, task.time_precision()),
-                    )
-                    .unwrap(),
+                    Interval::single(Time::from_seconds_since_epoch(0, task.time_precision()))
+                        .unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
