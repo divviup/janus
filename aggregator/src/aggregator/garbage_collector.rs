@@ -193,29 +193,23 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+        ReportIdChecksum, ReportMetadata, ReportShare, Role,
         batch_mode::{LeaderSelected, TimeInterval},
         taskprov::TimePrecision,
     };
     use prio::vdaf::dummy;
     use rand::random;
+
     use std::sync::Arc;
 
-    fn oldest_allowed_report_timestamp() -> Time {
-        Time::from_seconds_since_epoch(1000, &TimePrecision::from_seconds(1))
-    }
-    fn report_expiry_age() -> Duration {
-        Duration::from_seconds(500, &TimePrecision::from_seconds(1))
-    }
+    const OLDEST_ALLOWED_REPORT_TIMESTAMP: u64 = 1000;
+    const REPORT_EXPIRY_AGE: u64 = 500;
 
     #[tokio::test]
     async fn gc_task_leader_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -226,13 +220,17 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
+                    let time_precision = TimePrecision::from_seconds(10);
                     let task = TaskBuilder::new(
                         task::BatchMode::TimeInterval,
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
-                    .with_report_expiry_age(Some(report_expiry_age()))
-                    .with_time_precision(TimePrecision::from_seconds(10))
+                    .with_report_expiry_age(Some(Duration::from_seconds(
+                        REPORT_EXPIRY_AGE,
+                        &time_precision,
+                    )))
+                    .with_time_precision(time_precision)
                     .build()
                     .leader_view()
                     .unwrap();
@@ -243,7 +241,7 @@ mod tests {
                         .now()
                         .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap()
-                        .to_time(&TimePrecision::from_seconds(1));
+                        .to_time(&task.time_precision());
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -307,11 +305,7 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(
-            report_expiry_age()
-                .to_chrono(&TimePrecision::from_seconds(1))
-                .unwrap(),
-        );
+        clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
@@ -330,10 +324,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -390,10 +381,7 @@ mod tests {
     async fn gc_task_helper_time_interval() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -405,13 +393,17 @@ mod tests {
                 let clock = clock.clone();
 
                 Box::pin(async move {
+                    let time_precision = TimePrecision::from_seconds(10);
                     let task = TaskBuilder::new(
                         task::BatchMode::TimeInterval,
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
-                    .with_report_expiry_age(Some(report_expiry_age()))
-                    .with_time_precision(TimePrecision::from_seconds(10))
+                    .with_report_expiry_age(Some(Duration::from_seconds(
+                        REPORT_EXPIRY_AGE,
+                        &time_precision,
+                    )))
+                    .with_time_precision(time_precision)
                     .build()
                     .helper_view()
                     .unwrap();
@@ -420,7 +412,7 @@ mod tests {
                     // Client report artifacts.
                     let client_timestamp = clock
                         .now_aligned_to_precision(task.time_precision())
-                        .sub_duration(&Duration::from_seconds(1, &TimePrecision::from_seconds(1)))
+                        .sub_time_precision()
                         .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
@@ -507,11 +499,7 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(
-            report_expiry_age()
-                .to_chrono(&TimePrecision::from_seconds(1))
-                .unwrap(),
-        );
+        clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
@@ -530,10 +518,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -590,10 +575,7 @@ mod tests {
     async fn gc_task_leader_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -603,6 +585,7 @@ mod tests {
         let task = ds
             .run_unnamed_tx(|tx| {
                 let clock = clock.clone();
+                let time_precision = TimePrecision::from_seconds(10);
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::BatchMode::LeaderSelected {
@@ -611,8 +594,11 @@ mod tests {
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
-                    .with_report_expiry_age(Some(report_expiry_age()))
-                    .with_time_precision(TimePrecision::from_seconds(10))
+                    .with_report_expiry_age(Some(Duration::from_seconds(
+                        REPORT_EXPIRY_AGE,
+                        &time_precision,
+                    )))
+                    .with_time_precision(time_precision)
                     .build()
                     .leader_view()
                     .unwrap();
@@ -622,14 +608,13 @@ mod tests {
                     let client_timestamp = clock
                         .now()
                         .sub_timedelta(
-                            &report_expiry_age()
-                                .to_chrono(&TimePrecision::from_seconds(1))
+                            &chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0)
                                 .unwrap(),
                         )
                         .unwrap()
                         .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap()
-                        .to_time(&TimePrecision::from_seconds(1));
+                        .to_time(&time_precision);
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -695,11 +680,7 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(
-            report_expiry_age()
-                .to_chrono(&TimePrecision::from_seconds(1))
-                .unwrap(),
-        );
+        clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
@@ -718,10 +699,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
@@ -784,10 +762,7 @@ mod tests {
     async fn gc_task_helper_leader_selected() {
         install_test_trace_subscriber();
 
-        let clock = MockClock::new(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy::Vdaf::new(1);
@@ -799,6 +774,7 @@ mod tests {
                 let clock = clock.clone();
 
                 Box::pin(async move {
+                    let time_precision = TimePrecision::from_seconds(10);
                     let task = TaskBuilder::new(
                         task::BatchMode::LeaderSelected {
                             batch_time_window_size: None,
@@ -806,8 +782,11 @@ mod tests {
                         AggregationMode::Synchronous,
                         VdafInstance::Fake { rounds: 1 },
                     )
-                    .with_time_precision(TimePrecision::from_seconds(10))
-                    .with_report_expiry_age(Some(report_expiry_age()))
+                    .with_time_precision(time_precision)
+                    .with_report_expiry_age(Some(Duration::from_seconds(
+                        REPORT_EXPIRY_AGE,
+                        &time_precision,
+                    )))
                     .build()
                     .helper_view()
                     .unwrap();
@@ -817,14 +796,13 @@ mod tests {
                     let client_timestamp = clock
                         .now()
                         .sub_timedelta(
-                            &report_expiry_age()
-                                .to_chrono(&TimePrecision::from_seconds(1))
+                            &chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0)
                                 .unwrap(),
                         )
                         .unwrap()
                         .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap()
-                        .to_time(&TimePrecision::from_seconds(1));
+                        .to_time(&task.time_precision());
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
@@ -913,11 +891,7 @@ mod tests {
             .unwrap();
 
         // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
-        clock.advance(
-            report_expiry_age()
-                .to_chrono(&TimePrecision::from_seconds(1))
-                .unwrap(),
-        );
+        clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
         // Run.
@@ -936,16 +910,7 @@ mod tests {
         .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
-        clock.set(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
-
-        // Reset the clock to "undo" read-based expiry.
-        clock.set(
-            oldest_allowed_report_timestamp()
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
         ds.run_unnamed_tx(|tx| {
