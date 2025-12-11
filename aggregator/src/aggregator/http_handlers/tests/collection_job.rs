@@ -565,10 +565,7 @@ async fn collection_job_put_request_batch_overlap() {
         Query::new_time_interval(
             Interval::new(
                 Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
-                Duration::from_seconds(
-                    2 * test_case.task.time_precision().as_seconds(),
-                    test_case.task.time_precision(),
-                ),
+                Duration::from_time_precision_units(2),
             )
             .unwrap(),
         ),

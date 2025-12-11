@@ -1340,10 +1340,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_start_time
-                                .add_duration(&Duration::from_seconds(
-                                    helper_task.time_precision().as_seconds(),
-                                    helper_task.time_precision(),
-                                ))
+                                .add_duration(&Duration::from_time_precision_units(1))
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1356,10 +1353,7 @@ mod tests {
                         ReportMetadata::new(
                             random(),
                             task_start_time
-                                .sub_duration(&Duration::from_seconds(
-                                    helper_task.time_precision().as_seconds(),
-                                    helper_task.time_precision(),
-                                ))
+                                .sub_duration(&Duration::from_time_precision_units(1))
                                 .unwrap(),
                             Vec::new(),
                         ),

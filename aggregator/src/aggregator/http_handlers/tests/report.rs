@@ -277,10 +277,7 @@ async fn upload_handler() {
     // Reports from the future should be rejected.
     let bad_report_time = clock
         .now_aligned_to_precision(task.time_precision())
-        .add_duration(&Duration::from_seconds(
-            task.time_precision().as_seconds() * 2,
-            task.time_precision(),
-        ))
+        .add_duration(&Duration::from_time_precision_units(2))
         .unwrap();
     let bad_report = Report::new(
         ReportMetadata::new(
@@ -316,10 +313,7 @@ async fn upload_handler() {
     )
     // Since HttpHandlerTest's clock instance is a copy of ours, we can't simply
     // advance it, and we have to instead tolerate skew.
-    .with_tolerable_clock_skew(Duration::from_seconds(
-        task.time_precision().as_seconds() * 2,
-        task.time_precision(),
-    ))
+    .with_tolerable_clock_skew(Duration::from_time_precision_units(2))
     .with_time_precision(*task.time_precision())
     .with_task_end(Some(
         clock
