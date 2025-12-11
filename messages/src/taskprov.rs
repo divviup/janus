@@ -528,7 +528,7 @@ impl TimePrecision {
     }
 
     /// Get the number of seconds this duration represents.
-    pub fn as_seconds(&self) -> u64 {
+    pub const fn as_seconds(&self) -> u64 {
         self.0
     }
 

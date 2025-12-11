@@ -340,7 +340,7 @@ impl Time {
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
     ///
-    pub fn as_seconds_since_epoch(&self, time_precision: &TimePrecision) -> u64 {
+    pub const fn as_seconds_since_epoch(&self, time_precision: &TimePrecision) -> u64 {
         self.0.saturating_mul(time_precision.as_seconds())
     }
 
