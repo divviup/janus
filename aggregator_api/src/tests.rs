@@ -819,25 +819,12 @@ async fn patch_task(#[case] role: Role) {
         .unwrap();
     assert_eq!(task.unwrap().task_end(), None);
 
-    // Verify: patching the task with a task end time that isn't a multiple of the time precision
-    // returns BadRequest.
-    assert_response!(
-        patch(format!("/tasks/{task_id}"))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_body(r#"{"task_end": 1337}"#)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest,
-        "time is unaligned (precision = 100 seconds, inner error = timestamp is not a multiple of the time precision)"
-    );
-
     // Verify: patching the task with a task end time returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000, &time_precision));
     let mut conn = patch(format!("/tasks/{task_id}"))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body(r#"{"task_end": 2000}"#)
+        .with_request_body(r#"{"task_end": 20}"#)
         .run_async(&handler)
         .await;
     assert_status!(conn, Status::Ok);
@@ -1877,8 +1864,8 @@ fn post_task_req_serialization() {
             },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
-            task_start: Some(Time::from_seconds_since_epoch(500, &time_precision)),
-            task_end: Some(Time::from_seconds_since_epoch(1000, &time_precision)),
+            task_start: Some(Time::from_time_precision_units(42)),
+            task_end: Some(Time::from_time_precision_units(67)),
             min_batch_size: 100,
             time_precision,
             collector_hpke_config: HpkeConfig::new(
@@ -1944,11 +1931,11 @@ fn post_task_req_serialization() {
             Token::Str("task_start"),
             Token::Some,
             Token::NewtypeStruct { name: "Time" },
-            Token::U64(500),
+            Token::U64(42),
             Token::Str("task_end"),
             Token::Some,
             Token::NewtypeStruct { name: "Time" },
-            Token::U64(1000),
+            Token::U64(67),
             Token::Str("min_batch_size"),
             Token::U64(100),
             Token::Str("time_precision"),
@@ -2038,7 +2025,7 @@ fn task_resp_serialization() {
         None,
         100,
         time_precision,
-        Duration::from_seconds(60, &time_precision),
+        Duration::from_time_precision_units(11),
         AggregatorTaskParameters::Leader {
             aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                 "Y29sbGVjdG9yLWFiY2RlZjAw",
@@ -2121,7 +2108,7 @@ fn task_resp_serialization() {
             Token::U64(3600),
             Token::Str("tolerable_clock_skew"),
             Token::NewtypeStruct { name: "Duration" },
-            Token::U64(60),
+            Token::U64(11),
             Token::Str("aggregator_auth_token"),
             Token::None,
             Token::Str("collector_hpke_config"),
