@@ -969,7 +969,7 @@ mod tests {
         let leader_task = task.leader_view().unwrap();
         let batch_interval = Interval::new(
             clock.now().to_time(&time_precision),
-            Duration::from_seconds(2000, &task.time_precision()),
+            Duration::from_seconds(2000, task.time_precision()),
         )
         .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
@@ -996,7 +996,7 @@ mod tests {
                         .unwrap();
 
                     let aggregation_job_id = random();
-                    let report_timestamp = clock.now().to_time(&task.time_precision());
+                    let report_timestamp = clock.now().to_time(task.time_precision());
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2047,8 +2047,8 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let batch_interval = Interval::new(
-            clock.now().to_time(&task.time_precision()),
-            Duration::from_seconds(2000, &task.time_precision()),
+            clock.now().to_time(task.time_precision()),
+            Duration::from_seconds(2000, task.time_precision()),
         )
         .unwrap();
         let aggregation_param = dummy::AggregationParam(0);
@@ -2156,8 +2156,8 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let batch_interval = Interval::new(
-            clock.now().to_time(&task.time_precision()),
-            Duration::from_seconds(2000, &task.time_precision()),
+            clock.now().to_time(task.time_precision()),
+            Duration::from_seconds(2000, task.time_precision()),
         )
         .unwrap();
         let aggregation_param = dummy::AggregationParam(0);

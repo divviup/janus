@@ -241,7 +241,7 @@ mod tests {
                         .now()
                         .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap()
-                        .to_time(&task.time_precision());
+                        .to_time(task.time_precision());
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&report).await.unwrap();
 
@@ -802,7 +802,7 @@ mod tests {
                         .unwrap()
                         .sub_timedelta(&TimeDelta::seconds(10))
                         .unwrap()
-                        .to_time(&task.time_precision());
+                        .to_time(task.time_precision());
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),

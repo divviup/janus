@@ -54,6 +54,7 @@ struct AddTaskRequest {
     collector_authentication_token: String,
     #[serde(rename = "batch_mode")]
     _batch_mode: u8,
+    time_precision: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +135,7 @@ struct TaskState {
     leader_url: Url,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
+    time_precision: TimePrecision,
 }
 
 /// A collection job handle.
@@ -181,6 +183,7 @@ async fn handle_add_task(
         leader_url: request.leader,
         vdaf: request.vdaf,
         auth_token,
+        time_precision: TimePrecision::from_seconds(request.time_precision),
     });
 
     Ok(hpke_config)
@@ -200,8 +203,7 @@ where
     V::AggregationParam: Send + Sync + 'static,
     B: BatchMode,
 {
-    // Use canonical 1-second time_precision for interop tests
-    let time_precision = TimePrecision::from_seconds(1);
+    let time_precision = task_state.time_precision;
     let collector = Collector::builder(
         task_state.task_id,
         task_state.leader_url.clone(),
@@ -268,8 +270,7 @@ async fn handle_collection_start(
 
     let query = match request.query.batch_mode {
         1 => {
-            // Use canonical 1-second time_precision for interop tests
-            let time_precision = TimePrecision::from_seconds(1);
+            let time_precision = task_state.time_precision;
             let start = Time::from_seconds_since_epoch(
                 request
                     .query
