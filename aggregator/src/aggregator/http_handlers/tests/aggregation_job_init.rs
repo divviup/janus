@@ -25,7 +25,7 @@ use janus_core::{
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     test_util::run_vdaf,
-    time::{Clock, DateTimeExt, MockClock},
+    time::{Clock, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -34,7 +34,6 @@ use janus_messages::{
     PrepareInit, PrepareStepResult, ReportError, ReportIdChecksum, ReportMetadata, ReportShare,
     Role, Time,
     batch_mode::{LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
@@ -283,7 +282,7 @@ async fn aggregate_init_sync() {
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_5 = ReportMetadata::new(
         random(),
-        past_clock.now().to_time(&TimePrecision::from_seconds(1)),
+        past_clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(
@@ -315,7 +314,7 @@ async fn aggregate_init_sync() {
     let public_share_6 = Vec::from([0]);
     let report_metadata_6 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_6 = run_vdaf(
@@ -347,7 +346,7 @@ async fn aggregate_init_sync() {
     // prepare_init_7 fails due to having repeated public extensions.
     let report_metadata_7 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
             Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -381,7 +380,7 @@ async fn aggregate_init_sync() {
     // prepare_init_8 fails due to having repeated private extensions.
     let report_metadata_8 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_8 = run_vdaf(
@@ -416,7 +415,7 @@ async fn aggregate_init_sync() {
     // extensions.
     let report_metadata_9 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
     );
     let transcript_9 = run_vdaf(

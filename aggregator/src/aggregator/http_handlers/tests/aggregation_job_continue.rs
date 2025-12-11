@@ -71,7 +71,7 @@ async fn aggregate_continue_sync() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -98,7 +98,7 @@ async fn aggregate_continue_sync() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -124,7 +124,7 @@ async fn aggregate_continue_sync() {
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_2 = ReportMetadata::new(
         random(),
-        past_clock.now().to_time(&TimePrecision::from_seconds(1)),
+        past_clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -413,7 +413,7 @@ async fn aggregate_continue_async() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -440,7 +440,7 @@ async fn aggregate_continue_async() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -652,7 +652,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let second_batch_interval_clock = MockClock::new(
         first_batch_interval_clock
             .now()
-            .to_time(&TimePrecision::from_seconds(1))
+            .to_time(task.time_precision())
             .add_time_precision()
             .unwrap()
             .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
@@ -666,7 +666,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // report_share_0 is a "happy path" report.
     let report_time_0 = first_batch_interval_clock
         .now()
-        .to_time(&TimePrecision::from_seconds(1));
+        .to_time(task.time_precision());
     let report_metadata_0 = ReportMetadata::new(random(), report_time_0, Vec::new());
     let transcript_0 = run_vdaf(
         &vdaf,
@@ -693,7 +693,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // output shares
     let report_time_1 = first_batch_interval_clock
         .now()
-        .to_time(&TimePrecision::from_seconds(1));
+        .to_time(task.time_precision());
     let report_metadata_1 = ReportMetadata::new(random(), report_time_1, Vec::new());
     let transcript_1 = run_vdaf(
         &vdaf,
@@ -722,7 +722,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+            .to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -1014,7 +1014,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     // report_share_3 gets aggreated into the first batch interval.
     let report_time_3 = first_batch_interval_clock
         .now()
-        .to_time(&TimePrecision::from_seconds(1));
+        .to_time(task.time_precision());
     let report_metadata_3 = ReportMetadata::new(random(), report_time_3, Vec::new());
     let transcript_3 = run_vdaf(
         &vdaf,
@@ -1043,7 +1043,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+            .to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_4 = run_vdaf(
@@ -1073,7 +1073,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         random(),
         second_batch_interval_clock
             .now()
-            .to_time(&TimePrecision::from_seconds(1)),
+            .to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(

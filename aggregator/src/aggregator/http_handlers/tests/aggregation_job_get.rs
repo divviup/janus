@@ -12,15 +12,12 @@ use janus_aggregator_core::{
     },
 };
 use janus_core::{
-    auth_tokens::test_util::WithAuthenticationToken,
-    test_util::run_vdaf,
-    time::{Clock as _, DateTimeExt as _},
+    auth_tokens::test_util::WithAuthenticationToken, test_util::run_vdaf, time::Clock as _,
     vdaf::VdafInstance,
 };
 use janus_messages::{
     AggregationJobId, AggregationJobResp, AggregationJobStep, Interval, MediaType, PrepareInit,
     PrepareResp, PrepareStepResult, ReportMetadata, batch_mode::TimeInterval,
-    taskprov::TimePrecision,
 };
 use prio::vdaf::dummy;
 use rand::random;
@@ -55,7 +52,7 @@ async fn aggregation_job_get_ready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -170,7 +167,7 @@ async fn aggregation_job_get_unready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -283,7 +280,7 @@ async fn aggregation_job_get_wrong_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -388,7 +385,7 @@ async fn aggregation_job_get_missing_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -487,7 +484,7 @@ async fn aggregation_job_get_sync() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(

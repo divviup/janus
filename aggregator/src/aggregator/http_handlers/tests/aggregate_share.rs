@@ -115,15 +115,13 @@ async fn aggregate_share_request_invalid_batch_interval() {
     } = HttpHandlerTest::new().await;
 
     // Prepare parameters.
-    fn report_expiry_age() -> Duration {
-        Duration::from_seconds(3600, &TimePrecision::from_seconds(1))
-    }
+    let time_precision = TimePrecision::from_hours(8);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_report_expiry_age(Some(report_expiry_age()))
+    .with_report_expiry_age(Some(Duration::from_seconds(3600, &time_precision)))
     .build();
     let helper_task = task.helper_view().unwrap();
     datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -133,10 +131,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
             Interval::new(
                 clock.now_aligned_to_precision(task.time_precision()),
                 // Collect request will be rejected because batch interval is too small
-                Duration::from_seconds(
-                    task.time_precision().as_seconds() - 1,
-                    &TimePrecision::from_seconds(1),
-                ),
+                Duration::from_seconds(task.time_precision().as_seconds() - 1, &time_precision),
             )
             .unwrap(),
         ),
@@ -346,8 +341,8 @@ async fn aggregate_share_request() {
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                Duration::from_seconds(1000, &TimePrecision::from_seconds(1)),
+                Time::from_seconds_since_epoch(0, task.time_precision()),
+                Duration::from_seconds(1000, task.time_precision()),
             )
             .unwrap(),
         ),
@@ -387,8 +382,8 @@ async fn aggregate_share_request() {
             request: AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                        Time::from_seconds_since_epoch(0, task.time_precision()),
+                        Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
                 ),
@@ -404,8 +399,8 @@ async fn aggregate_share_request() {
             request: AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(2000, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                        Time::from_seconds_since_epoch(2000, task.time_precision()),
+                        Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
                 ),
@@ -461,8 +456,8 @@ async fn aggregate_share_request() {
             AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                        Time::from_seconds_since_epoch(0, task.time_precision()),
+                        Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
                 ),
@@ -477,8 +472,8 @@ async fn aggregate_share_request() {
             AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(2000, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                        Time::from_seconds_since_epoch(2000, task.time_precision()),
+                        Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
                 ),
@@ -588,8 +583,8 @@ async fn aggregate_share_request() {
     let all_batch_request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                Duration::from_seconds(4000, &TimePrecision::from_seconds(1)),
+                Time::from_seconds_since_epoch(0, task.time_precision()),
+                Duration::from_seconds(4000, task.time_precision()),
             )
             .unwrap(),
         ),
@@ -621,8 +616,8 @@ async fn aggregate_share_request() {
         AggregateShareReq::new(
             BatchSelector::new_time_interval(
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                    Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                    Time::from_seconds_since_epoch(0, task.time_precision()),
+                    Duration::from_seconds(2000, task.time_precision()),
                 )
                 .unwrap(),
             ),
@@ -633,8 +628,8 @@ async fn aggregate_share_request() {
         AggregateShareReq::new(
             BatchSelector::new_time_interval(
                 Interval::new(
-                    Time::from_seconds_since_epoch(2000, &TimePrecision::from_seconds(1)),
-                    Duration::from_seconds(2000, &TimePrecision::from_seconds(1)),
+                    Time::from_seconds_since_epoch(2000, task.time_precision()),
+                    Duration::from_seconds(2000, task.time_precision()),
                 )
                 .unwrap(),
             ),

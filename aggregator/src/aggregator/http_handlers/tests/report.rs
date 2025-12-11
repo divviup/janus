@@ -19,7 +19,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, DateTimeExt as _, MockClock, TimeDeltaExt as _, TimeExt as _},
+    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -87,15 +87,16 @@ async fn upload_handler() {
     } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(1000);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(1000))
+    .with_time_precision(time_precision)
     .with_report_expiry_age(Some(Duration::from_seconds(
         REPORT_EXPIRY_AGE,
-        &TimePrecision::from_seconds(1),
+        &time_precision,
     )))
     .build();
 
@@ -363,7 +364,7 @@ async fn upload_handler() {
     let mut bad_public_share_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
     bad_public_share_report = Report::new(
         bad_public_share_report.metadata().clone(),
@@ -395,7 +396,7 @@ async fn upload_handler() {
     // Reject reports which are not decryptable.
     let undecryptable_report = create_report_custom(
         &leader_task,
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
@@ -423,7 +424,7 @@ async fn upload_handler() {
     let mut bad_leader_input_share_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now().to_time(&TimePrecision::from_seconds(1)),
+        clock.now_aligned_to_precision(task.time_precision()),
     );
     bad_leader_input_share_report = Report::new(
         bad_leader_input_share_report.metadata().clone(),
@@ -539,15 +540,16 @@ async fn upload_handler_mixed_success_failure() {
     } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(1000);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(1000))
+    .with_time_precision(time_precision)
     .with_report_expiry_age(Some(Duration::from_seconds(
         REPORT_EXPIRY_AGE,
-        &TimePrecision::from_seconds(1),
+        &time_precision,
     )))
     .build();
 
@@ -566,15 +568,9 @@ async fn upload_handler_mixed_success_failure() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub_duration(&Duration::from_seconds(
-                    REPORT_EXPIRY_AGE,
-                    &TimePrecision::from_seconds(1),
-                ))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
                 .unwrap()
-                .sub_duration(&Duration::from_seconds(
-                    REPORT_EXPIRY_AGE,
-                    &TimePrecision::from_seconds(1),
-                ))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
                 .unwrap(),
             Vec::new(),
         ),
@@ -694,7 +690,7 @@ async fn upload_handler_task_not_started() {
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
     .with_tolerable_clock_skew(Duration::from_seconds(
         time_precision.as_seconds() * 10,
-        &TimePrecision::from_seconds(1),
+        &time_precision,
     ))
     .build();
 
@@ -818,15 +814,16 @@ async fn upload_handler_error_fanout() {
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(100);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(100))
+    .with_time_precision(time_precision)
     .with_report_expiry_age(Some(Duration::from_seconds(
         REPORT_EXPIRY_AGE,
-        &TimePrecision::from_seconds(1),
+        &time_precision,
     )))
     .build();
 
@@ -900,7 +897,7 @@ async fn upload_handler_error_fanout() {
                     let report = create_report(
                         &leader_task,
                         &hpke_keypair,
-                        clock.now().to_time(&TimePrecision::from_seconds(1)),
+                        clock.now_aligned_to_precision(&time_precision),
                     );
                     let response = client
                         .post(url)

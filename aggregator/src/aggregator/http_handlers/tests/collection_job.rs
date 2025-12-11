@@ -16,7 +16,6 @@ use janus_core::{
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, Interval, MediaType, Query, Role, Time, batch_mode::TimeInterval,
-    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -36,7 +35,7 @@ async fn collection_job_put_request_to_helper() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -74,7 +73,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -82,11 +81,11 @@ async fn collection_job_put_request_invalid_batch_interval() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
+                Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(
                     test_case.task.time_precision().as_seconds() - 1,
-                    &TimePrecision::from_seconds(1),
+                    test_case.task.time_precision(),
                 ),
             )
             .unwrap(),
@@ -116,7 +115,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -207,7 +206,7 @@ async fn collection_job_put_request_unauthenticated() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -257,7 +256,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -313,14 +312,14 @@ async fn collection_job_success_time_interval() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
     let batch_interval = TimeInterval::to_batch_identifier(
         &test_case.task.leader_view().unwrap(),
         &(),
-        &Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
+        &Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
     )
     .unwrap();
 
@@ -493,7 +492,7 @@ async fn collection_job_get_request_no_such_collection_job() {
     test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -515,7 +514,7 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -557,7 +556,7 @@ async fn collection_job_put_request_batch_overlap() {
     let interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 
@@ -565,10 +564,10 @@ async fn collection_job_put_request_batch_overlap() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
+                Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
                 Duration::from_seconds(
                     2 * test_case.task.time_precision().as_seconds(),
-                    &TimePrecision::from_seconds(1),
+                    test_case.task.time_precision(),
                 ),
             )
             .unwrap(),
@@ -607,7 +606,7 @@ async fn delete_collection_job() {
     let batch_interval = test_case
         .setup_time_interval_batch(Time::from_seconds_since_epoch(
             0,
-            &TimePrecision::from_seconds(1),
+            test_case.task.time_precision(),
         ))
         .await;
 

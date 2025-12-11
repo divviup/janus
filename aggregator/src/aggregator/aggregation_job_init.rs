@@ -1282,9 +1282,9 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let time_precision = TimePrecision::from_seconds(1);
+        let time_precision = TimePrecision::from_seconds(100);
         let task_start_time = clock
-            .now_aligned_to_precision(&TimePrecision::from_seconds(100))
+            .now_aligned_to_precision(&time_precision)
             .sub_duration(&Duration::from_seconds(1000, &time_precision))
             .unwrap();
 
@@ -1293,8 +1293,8 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &TimePrecision::from_seconds(1)))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_start(Some(task_start_time))
         .build();
@@ -1341,7 +1341,7 @@ mod tests {
                             random(),
                             task_start_time
                                 .add_duration(&Duration::from_seconds(
-                                    1,
+                                    helper_task.time_precision().as_seconds(),
                                     helper_task.time_precision(),
                                 ))
                                 .unwrap(),
@@ -1357,7 +1357,7 @@ mod tests {
                             random(),
                             task_start_time
                                 .sub_duration(&Duration::from_seconds(
-                                    1,
+                                    helper_task.time_precision().as_seconds(),
                                     helper_task.time_precision(),
                                 ))
                                 .unwrap(),
