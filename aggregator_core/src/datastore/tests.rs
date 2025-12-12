@@ -81,6 +81,11 @@ const REPORT_EXPIRY_AGE: TimeDelta = TimeDelta::new(
     0,
 )
 .unwrap();
+const REPORT_EXPIRY_AGE_PLUS_ONE: TimeDelta = TimeDelta::new(
+    (REPORT_EXPIRY_AGE_UNITS + 1) as i64 * TIME_PRECISION_SECONDS as i64,
+    0,
+)
+.unwrap();
 
 #[test]
 fn check_supported_versions() {
@@ -805,7 +810,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Verify that we can acquire both unaggregated reports.
     let got_reports_ids: HashSet<_> = ds
@@ -1369,7 +1374,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let (report_count, no_reports_task_report_count) = ds
         .run_unnamed_tx(|tx| {
@@ -1548,7 +1553,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let report_count = ds
         .run_unnamed_tx(|tx| {
@@ -1792,7 +1797,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
         .run_unnamed_tx(|tx| {
@@ -2223,7 +2228,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Run: run several transactions that all call acquire_incomplete_aggregation_jobs
     // concurrently. (We do things concurrently in an attempt to make sure the
@@ -2903,7 +2908,7 @@ WHERE client_report_id = $1",
             .unwrap();
 
         // Advance the clock to "enable" report expiry.
-        clock.advance(REPORT_EXPIRY_AGE);
+        clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
@@ -2996,7 +3001,7 @@ SELECT updated_at, updated_by FROM report_aggregations
         assert_eq!(Some(want_report_aggregation), got_report_aggregation);
 
         // Advance the clock again to expire relevant datastore items.
-        clock.advance(REPORT_EXPIRY_AGE);
+        clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
@@ -3203,7 +3208,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let got_report_aggregations = ds
         .run_unnamed_tx(|tx| {
@@ -3223,7 +3228,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     assert_eq!(want_report_aggregations, got_report_aggregations);
 
     // Advance the clock again to expire relevant datastore entities.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let got_report_aggregations = ds
         .run_unnamed_tx(|tx| {
@@ -3572,7 +3577,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -3698,7 +3703,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock again to expire everything that has been written.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5496,7 +5501,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5600,7 +5605,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     .unwrap();
 
     // Advance the clock again to expire all written entities.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5766,7 +5771,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5826,7 +5831,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
     .unwrap();
 
     // Advance the clock again to expire all written entities.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5935,7 +5940,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -5996,7 +6001,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     .unwrap();
 
     // Advance the clock to expire all written entities.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -6112,7 +6117,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -6162,7 +6167,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
     .unwrap();
 
     // Advance the clock to expire all written entities.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
@@ -6207,8 +6212,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-    let batch_time_window_size = Duration::from_hours(24, &TimePrecision::from_seconds(1));
-    let time_bucket_start = clock.now().to_time(&TimePrecision::from_hours(24));
+    let batch_time_window_size = Duration::from_hours(24, &TIME_PRECISION);
+    let time_bucket_start = clock.now().to_time(&TIME_PRECISION);
 
     let (task_id_1, batch_id_1, task_id_2, batch_id_2) = ds
         .run_tx("test-put-outstanding-batches", |tx| {
@@ -6221,10 +6226,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(TimePrecision::from_seconds(1))
+                .with_time_precision(TIME_PRECISION)
                 .with_report_expiry_age(Some(Duration::from_chrono(
                     REPORT_EXPIRY_AGE,
-                    &TimePrecision::from_seconds(1),
+                    &TIME_PRECISION,
                 )))
                 .build()
                 .leader_view()
@@ -6239,14 +6244,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_seconds(
-                            task_1.time_precision().as_seconds(),
-                            task_1.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6262,14 +6260,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     dummy::AggregationParam(0),
                     1,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_seconds(
-                            task_1.time_precision().as_seconds(),
-                            task_1.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6291,11 +6282,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     AggregationMode::Synchronous,
                     VdafInstance::Fake { rounds: 1 },
                 )
-                .with_time_precision(TimePrecision::from_seconds(1))
-                .with_report_expiry_age(Some(Duration::from_chrono(
-                    REPORT_EXPIRY_AGE,
-                    &TimePrecision::from_seconds(1),
-                )))
+                .with_time_precision(TIME_PRECISION)
+                .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6309,14 +6297,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_2,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_seconds(
-                            task_2.time_precision().as_seconds(),
-                            task_2.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         // Let report_count be 1 without an accompanying report_aggregation in a
@@ -6341,14 +6322,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(
-                            task_1.time_precision().as_seconds(),
-                            task_1.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6369,7 +6343,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_0.id(),
                     report_id_0_1,
-                    clock.now().to_time(&TimePrecision::from_seconds(1)),
+                    clock.now().to_time(&TIME_PRECISION),
                     1,
                     None,
                     // Counted among max_size.
@@ -6384,7 +6358,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_0.id(),
                     random(),
-                    clock.now().to_time(&TimePrecision::from_seconds(1)),
+                    clock.now().to_time(&TIME_PRECISION),
                     2,
                     None,
                     ReportAggregationState::Failed {
@@ -6397,14 +6371,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_1,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(
-                            task_1.time_precision().as_seconds(),
-                            task_1.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6412,7 +6379,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now().to_time(&TimePrecision::from_seconds(1)),
+                    clock.now().to_time(&TIME_PRECISION),
                     0,
                     None,
                     ReportAggregationState::Finished, // Counted among min_size and max_size.
@@ -6421,7 +6388,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now().to_time(&TimePrecision::from_seconds(1)),
+                    clock.now().to_time(&TIME_PRECISION),
                     1,
                     None,
                     ReportAggregationState::Finished, // Counted among min_size and max_size.
@@ -6430,7 +6397,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
-                    clock.now().to_time(&TimePrecision::from_seconds(1)),
+                    clock.now().to_time(&TIME_PRECISION),
                     2,
                     None,
                     ReportAggregationState::Failed {
@@ -6443,14 +6410,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     random(),
                     dummy::AggregationParam(0),
                     batch_id_2,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                        Duration::from_seconds(
-                            task_2.time_precision().as_seconds(),
-                            task_2.time_precision(),
-                        ),
-                    )
-                    .unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
@@ -6505,7 +6465,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     let (
         outstanding_batches_task_1,
@@ -6561,10 +6521,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         &task_id_2,
                         &Some(
                             time_bucket_start
-                                .add_timedelta(
-                                    &TimeDelta::hours(24),
-                                    &TimePrecision::from_seconds(1),
-                                )
+                                .add_timedelta(&TimeDelta::hours(24), &TIME_PRECISION)
                                 .unwrap(),
                         ),
                     )
@@ -6608,7 +6565,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     assert_eq!(outstanding_batches_empty_time_bucket, Vec::new());
 
     // Advance the clock further to trigger expiration of the written batches.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Verify that the batch is no longer available.
     let outstanding_batches = ds
@@ -7224,7 +7181,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Run.
     let deleted_aggregation_job_counts = ds
@@ -7961,7 +7918,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
     clock.advance(TIME_PRECISION.to_chrono().unwrap());
 
     // Run.
@@ -8729,8 +8686,8 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock well past the report expiry age.
-    clock.advance(REPORT_EXPIRY_AGE);
-    clock.advance(REPORT_EXPIRY_AGE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Validate that the report can't be read, that it can be written, and that even after writing
     // it still can't be read.
