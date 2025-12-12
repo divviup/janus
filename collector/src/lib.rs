@@ -816,7 +816,7 @@ mod tests {
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
-        let time_precision = TimePrecision::from_seconds(1);
+        let time_precision = TimePrecision::from_seconds(1); // TKTK use a constant in this file for tests
         Collector::builder(
             random(),
             server_url,

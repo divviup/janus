@@ -709,7 +709,8 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
-    let report_interval = Interval::single(OLDEST_ALLOWED_REPORT_TIME).unwrap();
+    let unexpired_time = OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap();
+    let report_interval = Interval::single(unexpired_time).unwrap();
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -731,18 +732,18 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .unwrap();
 
     let first_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+        LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
     let second_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+        LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
     let expired_report = LeaderStoredReport::new_dummy(
         *task.id(),
         OLDEST_ALLOWED_REPORT_TIME
             .sub_duration(&Duration::ONE)
             .unwrap(),
     );
-    let aggregated_report = LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+    let aggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
     let unrelated_report =
-        LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIME);
+        LeaderStoredReport::new_dummy(*unrelated_task.id(), unexpired_time);
 
     // Set up state.
     ds.run_tx("test-unaggregated-reports", |tx| {
@@ -3483,9 +3484,9 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .build()
     .leader_view()
     .unwrap();
-    let first_batch_interval = Interval::single(OLDEST_ALLOWED_REPORT_TIME).unwrap();
+    let first_batch_interval = Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap()).unwrap();
     let second_batch_interval =
-        Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap()).unwrap();
+        Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap().add_time_precision().unwrap()).unwrap();
     let aggregation_param = dummy::AggregationParam(13);
 
     let (first_collection_job, second_collection_job) = ds
@@ -6470,15 +6471,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::default();
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
 
-    // Setup.
-    let report_expiry_age = clock
-        .now()
-        .difference_as_time_delta(&OLDEST_ALLOWED_REPORT_TIME, &TIME_PRECISION)
-        .unwrap();
     let (task_id, new_report_id, other_task_id, other_task_report_id) = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
@@ -6488,10 +6484,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     VdafInstance::Fake { rounds: 1 },
                 )
                 .with_time_precision(TIME_PRECISION)
-                .with_report_expiry_age(Some(Duration::from_chrono(
-                    report_expiry_age,
-                    &TIME_PRECISION,
-                )))
+                .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
                 .build()
                 .leader_view()
                 .unwrap();
@@ -6509,17 +6502,13 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
 
                 let old_report = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_timedelta(&TimeDelta::seconds(1), &TIME_PRECISION)
-                        .unwrap(),
+                    OLDEST_ALLOWED_REPORT_TIME.sub_time_precision().unwrap(),
                 );
                 let new_report =
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap());
                 let other_task_report = LeaderStoredReport::new_dummy(
                     *other_task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_timedelta(&TimeDelta::seconds(1), &TIME_PRECISION)
-                        .unwrap(),
+                    OLDEST_ALLOWED_REPORT_TIME.sub_time_precision().unwrap(),
                 );
                 tx.put_client_report::<0, dummy::Vdaf>(&old_report)
                     .await
@@ -6538,7 +6527,8 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
         .await
         .unwrap();
 
-    // Run.
+    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+
     let deleted_report_count = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
@@ -6973,8 +6963,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         .await
         .unwrap();
 
-    // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
     clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
 
     // Run.
