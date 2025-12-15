@@ -596,7 +596,7 @@ mod tests {
                     10000,
                     batch_mode::Code::TimeInterval,
                     Time::from_seconds_since_epoch(1000000, &TimePrecision::from_seconds(3600)),
-                    Duration::from_time_precision_units(27),
+                    Duration::from_time_precision_units(28),
                     VdafConfig::Prio3Count,
                     Vec::new(),
                 )
@@ -624,8 +624,8 @@ mod tests {
                         // batch_config
                         "0000", // length
                     ),
-                    "00000000000F4240", // task_start
-                    "00000000000186A0", // task_duration
+                    "0000000000000115", // task_start
+                    "000000000000001C", // task_duration
                     "00000001",         // vdaf_type
                     concat!(
                         // vdaf_config
@@ -646,7 +646,7 @@ mod tests {
                     1000,
                     batch_mode::Code::LeaderSelected,
                     Time::from_seconds_since_epoch(10000000, &TimePrecision::from_seconds(1000)),
-                    Duration::from_time_precision_units(50),
+                    Duration::from_time_precision_units(605),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,
                     },
@@ -679,8 +679,8 @@ mod tests {
                         // batch_config
                         "0000", // length
                     ),
-                    "0000000000989680", // task_start
-                    "000000000000C350", // task_duration
+                    "0000000000002710", // task_start
+                    "000000000000025D", // task_duration
                     "00000002",         // vdaf_type
                     concat!(
                         // vdaf_config
@@ -727,7 +727,7 @@ mod tests {
                         "0000", // length
                     ),
                     "00000000000F4240", // task_start
-                    "00000000000186A0", // task_duration
+                    "000000000000001B", // task_duration
                     "00000001",         // vdaf_type
                     concat!(
                         // vdaf_config
