@@ -731,10 +731,8 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .leader_view()
     .unwrap();
 
-    let first_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
-    let second_unaggregated_report =
-        LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
+    let first_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
+    let second_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
     let expired_report = LeaderStoredReport::new_dummy(
         *task.id(),
         OLDEST_ALLOWED_REPORT_TIME
@@ -742,8 +740,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             .unwrap(),
     );
     let aggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
-    let unrelated_report =
-        LeaderStoredReport::new_dummy(*unrelated_task.id(), unexpired_time);
+    let unrelated_report = LeaderStoredReport::new_dummy(*unrelated_task.id(), unexpired_time);
 
     // Set up state.
     ds.run_tx("test-unaggregated-reports", |tx| {
@@ -3484,9 +3481,16 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .build()
     .leader_view()
     .unwrap();
-    let first_batch_interval = Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap()).unwrap();
-    let second_batch_interval =
-        Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap().add_time_precision().unwrap()).unwrap();
+    let first_batch_interval =
+        Interval::single(OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap()).unwrap();
+    let second_batch_interval = Interval::single(
+        OLDEST_ALLOWED_REPORT_TIME
+            .add_time_precision()
+            .unwrap()
+            .add_time_precision()
+            .unwrap(),
+    )
+    .unwrap();
     let aggregation_param = dummy::AggregationParam(13);
 
     let (first_collection_job, second_collection_job) = ds
@@ -3861,13 +3865,11 @@ impl TestBatchModeExt for TimeInterval {
     }
 
     fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier {
-        let min_client_timestamp = *client_timestamps.iter().min().unwrap();
-        let max_client_timestamp = *client_timestamps.iter().max().unwrap();
-        Interval::new(
-            min_client_timestamp,
-            max_client_timestamp.saturating_difference(&min_client_timestamp),
-        )
-        .unwrap()
+        client_timestamps
+            .iter()
+            .fold(Interval::EMPTY, |left, right| {
+                left.merged_with(right).unwrap()
+            })
     }
 
     async fn write_outstanding_batch(
@@ -6504,8 +6506,10 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
                     *task.id(),
                     OLDEST_ALLOWED_REPORT_TIME.sub_time_precision().unwrap(),
                 );
-                let new_report =
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap());
+                let new_report = LeaderStoredReport::new_dummy(
+                    *task.id(),
+                    OLDEST_ALLOWED_REPORT_TIME.add_time_precision().unwrap(),
+                );
                 let other_task_report = LeaderStoredReport::new_dummy(
                     *other_task.id(),
                     OLDEST_ALLOWED_REPORT_TIME.sub_time_precision().unwrap(),
@@ -6675,13 +6679,11 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
             reports.push(report);
         }
 
-        let min_client_timestamp = client_timestamps.iter().min().unwrap();
-        let max_client_timestamp = client_timestamps.iter().max().unwrap();
-        let client_timestamp_interval = Interval::new(
-            *min_client_timestamp,
-            max_client_timestamp.saturating_difference(min_client_timestamp),
-        )
-        .unwrap();
+        let client_timestamp_interval = client_timestamps
+            .iter()
+            .fold(Interval::EMPTY, |left, right| {
+                left.merged_with(right).unwrap()
+            });
 
         let aggregation_job = AggregationJob::<0, B, dummy::Vdaf>::new(
             *task_id,
