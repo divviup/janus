@@ -813,17 +813,18 @@ mod tests {
     };
     use retry_after::RetryAfter;
 
+    const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
+
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = HpkeKeypair::test();
-        let time_precision = TimePrecision::from_seconds(1); // TKTK use a constant in this file for tests
         Collector::builder(
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
             vdaf,
-            time_precision,
+            TEST_TIME_PRECISION,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
@@ -893,11 +894,7 @@ mod tests {
         CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
             report_count: 1,
-            interval: Interval::new(
-                Time::from_seconds_since_epoch(0, &TimePrecision::from_seconds(1)),
-                Duration::from_seconds(1, &TimePrecision::from_seconds(1)),
-            )
-            .unwrap(),
+            interval: Interval::single(Time::from_time_precision_units(0)).unwrap(),
             leader_encrypted_agg_share: hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
@@ -926,7 +923,7 @@ mod tests {
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.clone(),
             dummy::Vdaf::new(1),
-            TimePrecision::from_seconds(1),
+            TEST_TIME_PRECISION,
         )
         .unwrap();
 
@@ -941,7 +938,7 @@ mod tests {
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
             dummy::Vdaf::new(1),
-            TimePrecision::from_seconds(1),
+            TEST_TIME_PRECISION,
         )
         .unwrap();
 
@@ -958,8 +955,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =
@@ -1059,8 +1056,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =
@@ -1128,8 +1125,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =
@@ -1208,8 +1205,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =
@@ -1323,7 +1320,7 @@ mod tests {
                 1,
                 (
                     DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
-                    chrono::Duration::try_seconds(1).unwrap(),
+                    TEST_TIME_PRECISION.to_chrono().unwrap(),
                 ),
                 1
             )
@@ -1347,7 +1344,7 @@ mod tests {
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair,
             vdaf,
-            TimePrecision::from_seconds(1),
+            TEST_TIME_PRECISION,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff())
@@ -1355,8 +1352,8 @@ mod tests {
         .unwrap();
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =
@@ -1438,8 +1435,8 @@ mod tests {
             .await;
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let error = collector
@@ -1536,8 +1533,8 @@ mod tests {
             .await;
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let job = collector
@@ -1783,8 +1780,8 @@ mod tests {
             .create_async()
             .await;
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let job = collector
@@ -1860,8 +1857,8 @@ mod tests {
         );
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let job = CollectionJob::new(
@@ -2033,8 +2030,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TimePrecision::from_seconds(1)),
-            Duration::from_seconds(3600, &TimePrecision::from_seconds(1)),
+            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
+            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
         )
         .unwrap();
         let collect_resp =

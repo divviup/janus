@@ -5605,7 +5605,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     0,
                     Interval::new(
                         OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_time_precision_units(10), // TKTK was 1, should be 10?
+                        Duration::from_time_precision_units(10),
                     )
                     .unwrap(),
                     BatchAggregationState::Aggregating {
@@ -5903,7 +5903,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     .unwrap();
 
     // Advance the clock to expire all written entities.
-    clock.advance(REPORT_EXPIRY_AGE); // TKTK is this right or should it be _PLUS_ONE?
+    clock.advance(REPORT_EXPIRY_AGE);
 
     ds.run_unnamed_tx(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();

@@ -408,16 +408,7 @@ impl Interval {
     /// This is the preferred constructor for batch bucket intervals.
     /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
     pub fn single(start: Time) -> Result<Self, Error> {
-        // TKTK change to single
-        start
-            .0
-            .checked_add(1)
-            .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
-
-        Ok(Self {
-            start,
-            duration: Duration::ONE,
-        })
+        Self::new(start, Duration::ONE)
     }
 
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end

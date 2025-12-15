@@ -631,10 +631,14 @@ impl<T> Lease<T> {
         // Lease expiry times are SQL timestamps (seconds since Unix epoch), so we use
         // 1-second time_precision for conversion.
         StdDuration::from_secs(
-            u64::try_from(self.lease_expiry_time.and_utc().timestamp())
-                .unwrap_or_default()
-                .saturating_sub(current_time.timestamp().try_into().expect("TKTK"))
-                .saturating_sub(skew_seconds),
+            u64::try_from(
+                self.lease_expiry_time
+                    .and_utc()
+                    .timestamp()
+                    .saturating_sub(current_time.timestamp()),
+            )
+            .unwrap_or_default()
+            .saturating_sub(skew_seconds),
         )
     }
 }

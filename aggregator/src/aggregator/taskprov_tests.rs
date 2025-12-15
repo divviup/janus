@@ -147,7 +147,7 @@ where
 
         let min_batch_size = 1;
         let task_start = clock.now();
-        let time_precision = TimePrecision::from_seconds(60); // TKTK was 1?
+        let time_precision = TimePrecision::from_seconds(60);
         let task_duration = Duration::from_hours(24, &time_precision);
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),

@@ -73,7 +73,7 @@ pub trait AccumulableBatchMode: BatchMode {
 #[async_trait]
 impl AccumulableBatchMode for TimeInterval {
     fn to_batch_identifier(
-        _task: &AggregatorTask, // TKTK
+        _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {

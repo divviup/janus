@@ -355,7 +355,7 @@ impl DateTimeExt for DateTime<Utc> {
     fn saturating_difference(&self, other: &Self, time_precision: &TimePrecision) -> Duration {
         Duration::from_seconds(
             self.as_seconds_since_epoch()
-                .saturating_sub(other.timestamp().try_into().expect("TKTK")),
+                .saturating_sub(u64::try_from(other.timestamp()).unwrap_or_default()),
             time_precision,
         )
     }
