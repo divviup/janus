@@ -148,13 +148,14 @@ impl<C: Clock> KeyRotator<C> {
     }
 }
 
+// In Issue #4216, all types here will become chrono types and this goes away
+const KR_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
+
 fn duration_since<C: Clock>(clock: &C, time: &DateTime<Utc>) -> Duration {
     // Use saturating difference to account for time skew between key rotator runners. Since
     // key rotators are synchronized by an exclusive lock on the table, it's possible that
     // time skew between concurrently running replicas result in underflows.
-    clock
-        .now()
-        .saturating_difference(time, &TimePrecision::from_seconds(1)) // TKTK: All TimePrecisions in this file have got to go. Maybe this whole system change to chrono types?
+    clock.now().saturating_difference(time, &KR_TIME_PRECISION)
 }
 
 /// In-memory representation of the `hpke_keys` table.
@@ -465,19 +466,19 @@ where
 pub fn default_pending_duration() -> Duration {
     Duration::from_seconds(
         HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL.as_secs() * 2,
-        &TimePrecision::from_seconds(1),
+        &KR_TIME_PRECISION,
     )
 }
 
 /// 12 weeks. This is long enough not to be unnecessary churn, but short enough that misbehaving
 /// clients reveal themselves somewhat imminently.
 pub fn default_active_duration() -> Duration {
-    Duration::from_seconds(60 * 60 * 24 * 7 * 12, &TimePrecision::from_seconds(1))
+    Duration::from_seconds(60 * 60 * 24 * 7 * 12, &KR_TIME_PRECISION)
 }
 
 /// 1 week.
 pub fn default_expired_duration() -> Duration {
-    Duration::from_seconds(60 * 60 * 24 * 7, &TimePrecision::from_seconds(1))
+    Duration::from_seconds(60 * 60 * 24 * 7, &KR_TIME_PRECISION)
 }
 
 pub fn default_hpke_ciphersuites() -> HashSet<HpkeCiphersuite> {
@@ -497,18 +498,9 @@ impl Arbitrary for HpkeKeyRotatorConfig {
 
         Self {
             // Use u32 cast to u64 to avoid overflowing time.
-            pending_duration: Duration::from_seconds(
-                u32::arbitrary(g).into(),
-                &TimePrecision::from_seconds(1),
-            ),
-            active_duration: Duration::from_seconds(
-                u32::arbitrary(g).into(),
-                &TimePrecision::from_seconds(1),
-            ),
-            expired_duration: Duration::from_seconds(
-                u32::arbitrary(g).into(),
-                &TimePrecision::from_seconds(1),
-            ),
+            pending_duration: Duration::from_seconds(u32::arbitrary(g).into(), &KR_TIME_PRECISION),
+            active_duration: Duration::from_seconds(u32::arbitrary(g).into(), &KR_TIME_PRECISION),
+            expired_duration: Duration::from_seconds(u32::arbitrary(g).into(), &KR_TIME_PRECISION),
             ciphersuites,
         }
     }
@@ -516,6 +508,7 @@ impl Arbitrary for HpkeKeyRotatorConfig {
 
 #[cfg(test)]
 mod tests {
+    use crate::aggregator::key_rotator::KR_TIME_PRECISION;
     use chrono::{DateTime, TimeDelta};
     use itertools::Itertools;
     use janus_aggregator_core::datastore::{
@@ -528,7 +521,6 @@ mod tests {
         test_util::install_test_trace_subscriber,
         time::{Clock, MockClock, TimeDeltaExt},
     };
-    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
     use quickcheck::{Arbitrary, Gen, TestResult};
     use quickcheck_macros::quickcheck;
@@ -555,9 +547,9 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let pending_duration = Duration::from_seconds(60, &TimePrecision::from_seconds(1));
-        let active_duration = Duration::from_seconds(300, &TimePrecision::from_seconds(1));
-        let expired_duration = Duration::from_seconds(120, &TimePrecision::from_seconds(1));
+        let pending_duration = Duration::from_seconds(60, &KR_TIME_PRECISION);
+        let active_duration = Duration::from_seconds(300, &KR_TIME_PRECISION);
+        let expired_duration = Duration::from_seconds(120, &KR_TIME_PRECISION);
         let ciphersuite_0 = HpkeCiphersuite::new(
             HpkeKemId::P256HkdfSha256,
             HpkeKdfId::HkdfSha256,
@@ -607,7 +599,7 @@ mod tests {
             // Age out the keys. We should insert a couple of pending keys.
             clock.advance(
                 active_duration
-                    .to_chrono(&TimePrecision::from_seconds(1))
+                    .to_chrono(&KR_TIME_PRECISION)
                     .unwrap()
                     .add(&TimeDelta::seconds(1))
                     .unwrap(),
@@ -630,7 +622,7 @@ mod tests {
             // old ones to expired.
             clock.advance(
                 pending_duration
-                    .to_chrono(&TimePrecision::from_seconds(1))
+                    .to_chrono(&KR_TIME_PRECISION)
                     .unwrap()
                     .add(&TimeDelta::seconds(1))
                     .unwrap(),
@@ -652,7 +644,7 @@ mod tests {
             // Move past the expiration duration, we should remove the old keys.
             clock.advance(
                 expired_duration
-                    .to_chrono(&TimePrecision::from_seconds(1))
+                    .to_chrono(&KR_TIME_PRECISION)
                     .unwrap()
                     .add(&TimeDelta::seconds(1))
                     .unwrap(),
@@ -710,7 +702,7 @@ mod tests {
                 })
                 .collect();
             Self {
-                start: Time::from_seconds_since_epoch(start, &TimePrecision::from_seconds(1)),
+                start: Time::from_seconds_since_epoch(start, &KR_TIME_PRECISION),
                 keypairs,
             }
         }
@@ -723,11 +715,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
 
         let known_ciphersuites_with_active_keys: Vec<_> = config
             .ciphersuites
@@ -761,11 +749,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
 
         let to_expire: HashSet<_> = state
             .keypairs
@@ -819,11 +803,7 @@ mod tests {
         if state.keypairs.is_empty() {
             return TestResult::discard();
         }
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
 
         let ciphersuites_to_insert: Vec<_> = config
             .ciphersuites
@@ -861,11 +841,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
         let key_rotator = HpkeKeyRotator::new(clock.clone(), state.keypairs, &config)
             .unwrap()
             .sweep()
@@ -903,11 +879,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
         let key_rotator = HpkeKeyRotator::new(clock, state.keypairs.clone(), &config)
             .unwrap()
             .sweep()
@@ -953,11 +925,7 @@ mod tests {
         config: HpkeKeyRotatorConfig,
         state: InitialHpkeKeysState,
     ) -> TestResult {
-        let clock = MockClock::new(
-            state
-                .start
-                .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
-        );
+        let clock = MockClock::new(state.start.as_seconds_since_epoch(&KR_TIME_PRECISION));
 
         let to_delete: HashSet<_> = state
             .keypairs
