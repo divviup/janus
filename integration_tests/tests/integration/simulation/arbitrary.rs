@@ -768,8 +768,8 @@ fn coalesce_ops_correct() {
         )
         .next();
         assert_eq!(opt.is_some(), expected_ops.is_some());
-        if opt.is_some() {
-            assert_eq!(opt.unwrap().ops, expected_ops.unwrap());
+        if let Some(opt_item) = opt {
+            assert_eq!(opt_item.ops, expected_ops.unwrap());
         }
     }
 }
