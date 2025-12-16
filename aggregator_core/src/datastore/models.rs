@@ -24,7 +24,8 @@ use janus_messages::{
     taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
-    Range, RangeBound, range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
+    Range, RangeBound, empty_range_to_sql, range_from_sql, range_to_sql, timestamp_from_sql,
+    timestamp_to_sql,
 };
 use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
@@ -2190,6 +2191,8 @@ impl<'a> FromSql<'a> for SqlInterval {
                 let end_timestamp = timestamp_from_sql(end_raw)?;
 
                 // Convert from SQL timestamp representation to the internal representation.
+                // Note well that this truncates to SQL_UNIT_TIME_PRECISION, despite the
+                // database storing in microsecond precision.
                 let negative = start_timestamp < 0;
                 let abs_start_us = start_timestamp.unsigned_abs();
                 let abs_start_duration = Duration::from_chrono(
@@ -2258,13 +2261,18 @@ impl ToSql for SqlInterval {
         out: &mut bytes::BytesMut,
     ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         // Convert the interval start and end to SQL timestamps.
+        if self.0 == Interval::EMPTY {
+            empty_range_to_sql(out);
+            return Ok(postgres_types::IsNull::No);
+        }
+
         // Note: The interval should already be in SQL_UNIT_TIME_PRECISION (1 second) units,
         // and if it isn't, badness ensues. This will stop being an problem as part of
         // Issue #4206.
         let start_sql_usec = time_to_sql_timestamp(*self.0.start(), &SQL_UNIT_TIME_PRECISION)
-            .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
+            .map_err(|_| "microsecond timestamp of Interval start overflowed")?;
         let end_sql_usec = time_to_sql_timestamp(self.0.end(), &SQL_UNIT_TIME_PRECISION)
-            .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
+            .map_err(|_| "microsecond timestamp of Interval end overflowed")?;
 
         range_to_sql(
             |out| {
