@@ -29,16 +29,14 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
     },
 };
-use janus_messages::{
-    AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId, batch_mode::TimeInterval,
-};
+use janus_messages::{AggregationJobStep, Interval, Role, TaskId, batch_mode::TimeInterval};
 use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
@@ -1249,7 +1247,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1441,7 +1439,7 @@ mod tests {
             2,
             100,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1822,7 +1820,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1991,7 +1989,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2186,7 +2184,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2356,7 +2354,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2620,7 +2618,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2920,7 +2918,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_time_precision_units(1),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))

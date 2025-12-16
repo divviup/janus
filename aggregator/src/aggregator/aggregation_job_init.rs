@@ -1339,9 +1339,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time
-                                .add_duration(&Duration::from_time_precision_units(1))
-                                .unwrap(),
+                            task_start_time.add_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1352,9 +1350,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time
-                                .sub_duration(&Duration::from_time_precision_units(1))
-                                .unwrap(),
+                            task_start_time.sub_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,
