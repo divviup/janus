@@ -1004,14 +1004,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 Query::<TimeInterval>::new(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                        Time::from_time_precision_units(0),
                         Duration::from_hours(8, &TIME_PRECISION),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(255),
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                    Time::from_time_precision_units(0),
                     Duration::from_hours(8, &TIME_PRECISION),
                 )
                 .unwrap(),
@@ -1050,14 +1050,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 Query::<TimeInterval>::new(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                        Time::from_time_precision_units(0),
                         Duration::from_hours(8, &TIME_PRECISION),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(0),
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                    Time::from_time_precision_units(0),
                     Duration::from_hours(8, &TIME_PRECISION),
                 )
                 .unwrap(),
@@ -1070,14 +1070,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 Query::<TimeInterval>::new(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                        Time::from_time_precision_units(0),
                         Duration::from_hours(8, &TIME_PRECISION),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(1),
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                    Time::from_time_precision_units(0),
                     Duration::from_hours(8, &TIME_PRECISION),
                 )
                 .unwrap(),
@@ -1183,14 +1183,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 Query::<TimeInterval>::new(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                        Time::from_time_precision_units(0),
                         Duration::from_hours(16, &TIME_PRECISION),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(0),
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                    Time::from_time_precision_units(0),
                     Duration::from_hours(16, &TIME_PRECISION),
                 )
                 .unwrap(),
@@ -1203,14 +1203,14 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 random(),
                 Query::<TimeInterval>::new(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                        Time::from_time_precision_units(0),
                         Duration::from_hours(16, &TIME_PRECISION),
                     )
                     .unwrap(),
                 ),
                 dummy::AggregationParam(1),
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                    Time::from_time_precision_units(0),
                     Duration::from_hours(16, &TIME_PRECISION),
                 )
                 .unwrap(),
@@ -2105,7 +2105,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     random(),
                     (),
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -2545,8 +2545,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
                         random(),
                         (),
                         (),
-                        Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION))
-                            .unwrap(),
+                        Interval::single(Time::from_time_precision_units(0)).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ),
@@ -4068,20 +4067,16 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
         .collect();
     let reports = Vec::from([
         // First collection job
-        LeaderStoredReport::new_dummy(task_id, Time::from_seconds_since_epoch(0, &TIME_PRECISION)),
+        LeaderStoredReport::new_dummy(task_id, Time::from_time_precision_units(0)),
         // Second collection job
         LeaderStoredReport::new_dummy(
             task_id,
             Time::from_seconds_since_epoch(300, &TIME_PRECISION),
         ),
         // Other task collection job
-        LeaderStoredReport::new_dummy(
-            other_task_id,
-            Time::from_seconds_since_epoch(0, &TIME_PRECISION),
-        ),
+        LeaderStoredReport::new_dummy(other_task_id, Time::from_time_precision_units(0)),
     ]);
-    let batch_interval =
-        Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap();
+    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
     let second_batch_interval =
         Interval::single(Time::from_seconds_since_epoch(300, &TIME_PRECISION)).unwrap();
     let aggregation_jobs = Vec::from([
@@ -4091,7 +4086,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4111,7 +4106,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4467,10 +4462,10 @@ async fn time_interval_collection_job_acquire_release_happy_path(
     let task_id = random();
     let reports = Vec::from([LeaderStoredReport::new_dummy(
         task_id,
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
     )]);
     let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
         Duration::from_hours(8, &TIME_PRECISION),
     )
     .unwrap();
@@ -4481,7 +4476,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         dummy::AggregationParam(0),
         (),
         Interval::new(
-            Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+            Time::from_time_precision_units(0),
             Duration::from_hours(8, &TIME_PRECISION),
         )
         .unwrap(),
@@ -4659,7 +4654,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
     let task_id = random();
     let reports = Vec::from([LeaderStoredReport::new_dummy(
         task_id,
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
     )]);
     let batch_id = random();
     let aggregation_job_id = random();
@@ -4668,7 +4663,7 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
         aggregation_job_id,
         dummy::AggregationParam(0),
         batch_id,
-        Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     )]);
@@ -4826,7 +4821,6 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn collection_job_acquire_release_job_finished(ephemeral_datastore: EphemeralDatastore) {
-    const TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(28800);
     install_test_trace_subscriber();
     let clock = MockClock::default();
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
@@ -4834,17 +4828,16 @@ async fn collection_job_acquire_release_job_finished(ephemeral_datastore: Epheme
     let task_id = random();
     let reports = Vec::from([LeaderStoredReport::new_dummy(
         task_id,
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
     )]);
     let aggregation_job_id = random();
-    let batch_interval =
-        Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap();
+    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
     let aggregation_jobs = Vec::from([AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
         task_id,
         aggregation_job_id,
         dummy::AggregationParam(0),
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &TIME_PRECISION)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     )]);
@@ -4894,11 +4887,11 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
     let task_id = random();
     let reports = Vec::from([LeaderStoredReport::new_dummy(
         task_id,
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
     )]);
     let aggregation_job_ids: [_; 2] = random();
     let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
         Duration::from_hours(8, &TIME_PRECISION),
     )
     .unwrap();
@@ -4909,7 +4902,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             dummy::AggregationParam(0),
             (),
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                Time::from_time_precision_units(0),
                 Duration::from_hours(8, &TIME_PRECISION),
             )
             .unwrap(),
@@ -4922,7 +4915,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             dummy::AggregationParam(1),
             (),
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                Time::from_time_precision_units(0),
                 Duration::from_hours(8, &TIME_PRECISION),
             )
             .unwrap(),
@@ -5052,11 +5045,11 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
     let task_id = random();
     let reports = Vec::from([LeaderStoredReport::new_dummy(
         task_id,
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
     )]);
     let aggregation_job_ids: [_; 3] = random();
     let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+        Time::from_time_precision_units(0),
         Duration::from_seconds(28800, &TIME_PRECISION),
     )
     .unwrap();
@@ -5067,7 +5060,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             dummy::AggregationParam(0),
             (),
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                Time::from_time_precision_units(0),
                 Duration::from_seconds(28800, &TIME_PRECISION),
             )
             .unwrap(),
@@ -5080,7 +5073,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             dummy::AggregationParam(1),
             (),
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                Time::from_time_precision_units(0),
                 Duration::from_seconds(28800, &TIME_PRECISION),
             )
             .unwrap(),
@@ -5093,7 +5086,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             dummy::AggregationParam(2),
             (),
             Interval::new(
-                Time::from_seconds_since_epoch(0, &TIME_PRECISION),
+                Time::from_time_precision_units(0),
                 Duration::from_seconds(28800, &TIME_PRECISION),
             )
             .unwrap(),

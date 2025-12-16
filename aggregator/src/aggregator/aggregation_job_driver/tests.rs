@@ -91,7 +91,6 @@ async fn aggregation_job_driver() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
@@ -191,7 +190,7 @@ async fn aggregation_job_driver() {
                 aggregation_job_id,
                 aggregation_param,
                 (),
-                Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                Interval::single(Time::from_time_precision_units(0)).unwrap(),
                 AggregationJobState::Active,
                 AggregationJobStep::from(0),
             ))
@@ -359,7 +358,7 @@ async fn aggregation_job_driver() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(2),
         );
@@ -1245,7 +1244,6 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     .with_report_expiry_age(Some(report_expiry_age))
     .with_time_precision(time_precision_const)
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let gc_eligible_time = oldest_allowed_report_timestamp
@@ -1345,9 +1343,9 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                             gc_ineligible_time
                                 .difference_as_time_delta(&gc_eligible_time, &time_precision_const)
                                 .unwrap()
-                                .round_up(&time_precision.to_chrono().unwrap())
+                                .round_up(&time_precision_const.to_chrono().unwrap())
                                 .unwrap(),
-                            &time_precision,
+                            &time_precision_const,
                         ),
                     )
                     .unwrap(),
@@ -1421,7 +1419,7 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
     assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(report_expiry_age.to_chrono(&time_precision).unwrap());
+    clock.advance(report_expiry_age.to_chrono(&time_precision_const).unwrap());
 
     // Setup: prepare mocked HTTP response.
     let leader_request = AggregationJobInitializeReq::new(
@@ -1531,9 +1529,9 @@ async fn leader_sync_time_interval_aggregation_job_init_partially_garbage_collec
                     gc_ineligible_time
                         .difference_as_time_delta(&gc_eligible_time, task.time_precision())
                         .unwrap()
-                        .round_up(&time_precision.to_chrono().unwrap())
+                        .round_up(&task.time_precision().to_chrono().unwrap())
                         .unwrap(),
-                    &time_precision,
+                    task.time_precision(),
                 ),
             )
             .unwrap(),
@@ -3389,7 +3387,6 @@ async fn leader_async_aggregation_job_continue_to_pending() {
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
-    let time_precision = *task.time_precision();
     let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
     let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -3437,7 +3434,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -3541,7 +3538,7 @@ async fn leader_async_aggregation_job_continue_to_pending() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(1),
     );
@@ -3644,7 +3641,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
@@ -3692,7 +3688,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -3785,7 +3781,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -3885,7 +3881,6 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
@@ -3933,7 +3928,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -4026,7 +4021,7 @@ async fn leader_async_aggregation_job_init_poll_to_pending_two_step() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -4126,7 +4121,6 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
@@ -4174,7 +4168,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -4281,7 +4275,7 @@ async fn leader_async_aggregation_job_init_poll_to_finished() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Finished,
         AggregationJobStep::from(1),
     );
@@ -4384,7 +4378,6 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
 
     let time = clock.now().to_time(task.time_precision());
@@ -4432,7 +4425,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -4539,7 +4532,7 @@ async fn leader_async_aggregation_job_init_poll_to_continue() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(1),
     );
@@ -4643,7 +4636,6 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let time = clock.now().to_time(task.time_precision());
     let active_batch_identifier =
@@ -4696,7 +4688,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -4791,7 +4783,7 @@ async fn leader_async_aggregation_job_continue_poll_to_pending() {
         aggregation_job_id,
         aggregation_param,
         (),
-        Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(1),
     );
@@ -5151,7 +5143,6 @@ async fn helper_async_init_processing_to_finished() {
     .build();
     let helper_task = task.helper_view().unwrap();
     let time = clock.now().to_time(task.time_precision());
-    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5200,7 +5191,7 @@ async fn helper_async_init_processing_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -5392,7 +5383,6 @@ async fn helper_async_init_processing_to_continue() {
     .build();
     let helper_task = task.helper_view().unwrap();
     let time = clock.now().to_time(task.time_precision());
-    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5441,7 +5431,7 @@ async fn helper_async_init_processing_to_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -5630,7 +5620,6 @@ async fn helper_async_continue_processing_to_finished() {
     .build();
     let helper_task = task.helper_view().unwrap();
     let time = clock.now().to_time(task.time_precision());
-    let time_precision = *task.time_precision();
     let active_batch_identifier =
         TimeInterval::to_batch_identifier(&helper_task, &(), &time).unwrap();
     let report_metadata = ReportMetadata::new(random(), time, Vec::new());
@@ -5680,7 +5669,7 @@ async fn helper_async_continue_processing_to_finished() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(1),
                 ))
@@ -6149,7 +6138,6 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let agg_auth_token = task.aggregator_auth_token();
     let aggregation_job_id = random();
@@ -6354,7 +6342,7 @@ async fn abandon_failing_aggregation_job_with_retryable_error() {
             aggregation_job_id,
             (),
             (),
-            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Abandoned,
             AggregationJobStep::from(0),
         ),
@@ -6397,7 +6385,6 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
     )
     .with_helper_aggregator_endpoint(server.url().parse().unwrap())
     .build();
-    let time_precision = *task.time_precision();
     let leader_task = task.leader_view().unwrap();
     let agg_auth_token = task.aggregator_auth_token();
     let aggregation_job_id = random();
@@ -6596,7 +6583,7 @@ async fn abandon_failing_aggregation_job_with_fatal_error() {
             aggregation_job_id,
             (),
             (),
-            Interval::single(Time::from_seconds_since_epoch(0, &time_precision)).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Abandoned,
             AggregationJobStep::from(0),
         ),

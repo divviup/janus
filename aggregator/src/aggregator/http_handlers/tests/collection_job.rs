@@ -81,7 +81,7 @@ async fn collection_job_put_request_invalid_batch_interval() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
+                Time::from_time_precision_units(0),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(
                     test_case.task.time_precision().as_seconds() - 1,
@@ -317,7 +317,7 @@ async fn collection_job_success_time_interval() {
     let batch_interval = TimeInterval::to_batch_identifier(
         &test_case.task.leader_view().unwrap(),
         &(),
-        &Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
+        &Time::from_time_precision_units(0),
     )
     .unwrap();
 
@@ -562,7 +562,7 @@ async fn collection_job_put_request_batch_overlap() {
     let request = CollectionJobReq::new(
         Query::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, test_case.task.time_precision()),
+                Time::from_time_precision_units(0),
                 Duration::from_time_precision_units(2),
             )
             .unwrap(),
