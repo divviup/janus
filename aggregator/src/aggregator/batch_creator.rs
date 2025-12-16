@@ -109,10 +109,18 @@ where
     where
         C: Clock,
     {
-        let time_bucket_start_opt = self
-            .properties
-            .task_batch_time_window_size
-            .map(|_batch_time_window_size| *report.client_timestamp()); // TKTK
+        let time_bucket_start_opt =
+            self.properties
+                .task_batch_time_window_size
+                .map(|batch_time_window_size| {
+                    // While everything is in units of the time precision, we still have to
+                    // bucket things by the batch_time_window_size.
+                    let batch_window_units = batch_time_window_size.as_time_precision_units();
+                    Time::from_time_precision_units(
+                        (report.client_timestamp().as_time_precision_units() / batch_window_units)
+                            * batch_window_units,
+                    )
+                });
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),

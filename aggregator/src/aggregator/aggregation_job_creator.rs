@@ -940,7 +940,7 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskId,
+        ReportMetadata, Role, TaskId, Time,
         batch_mode::{LeaderSelected, TimeInterval},
         taskprov::TimePrecision,
     };
@@ -2839,6 +2839,15 @@ mod tests {
 
         let report_time_2 = now_time.sub_duration(&batch_time_window_size).unwrap();
         let report_time_1 = report_time_2.sub_duration(&batch_time_window_size).unwrap();
+
+        // Compute the bucketed time bucket starts for querying outstanding batches
+        let batch_window_units = batch_time_window_size.as_time_precision_units();
+        let bucket_time_1 = Time::from_time_precision_units(
+            (report_time_1.as_time_precision_units() / batch_window_units) * batch_window_units,
+        );
+        let bucket_time_2 = Time::from_time_precision_units(
+            (report_time_2.as_time_precision_units() / batch_window_units) * batch_window_units,
+        );
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -2952,10 +2961,10 @@ mod tests {
 
                 Box::pin(async move {
                     Ok((
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(report_time_1))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(bucket_time_1))
                             .await
                             .unwrap(),
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(report_time_2))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(bucket_time_2))
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
