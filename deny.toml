@@ -25,6 +25,7 @@ ignore = [
     "RUSTSEC-2025-0052",
 
     # We have migrated from `rustls-pemfile` but not everything else has.
+    # See <https://github.com/fussybeaver/bollard/issues/612>.
     "RUSTSEC-2025-0134",
 ]
 
