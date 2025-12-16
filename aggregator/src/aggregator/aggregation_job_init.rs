@@ -768,13 +768,14 @@ mod tests {
     ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
         install_test_trace_subscriber();
 
+        let time_precision = TimePrecision::from_seconds(100);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
             vdaf_instance,
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &TimePrecision::from_seconds(1)))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(auth_token)
         .build();
         let helper_task = task.helper_view().unwrap();
@@ -1087,10 +1088,7 @@ mod tests {
                                 .now_aligned_to_precision(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap()
-                                .add_duration(&Duration::from_seconds(
-                                    1,
-                                    &TimePrecision::from_seconds(1),
-                                ))
+                                .add_duration(&Duration::ONE)
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1133,15 +1131,16 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let task_end_time = clock.now_aligned_to_precision(&TimePrecision::from_seconds(100));
+        let time_precision = TimePrecision::from_seconds(100);
+        let task_end_time = clock.now_aligned_to_precision(&time_precision);
 
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500, &TimePrecision::from_seconds(1)))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_end(Some(task_end_time))
         .build();
@@ -1186,12 +1185,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time
-                                .sub_duration(&Duration::from_seconds(
-                                    1,
-                                    &TimePrecision::from_seconds(1),
-                                ))
-                                .unwrap(),
+                            task_end_time.sub_time_precision().unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1202,12 +1196,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time
-                                .add_duration(&Duration::from_seconds(
-                                    1,
-                                    &TimePrecision::from_seconds(1),
-                                ))
-                                .unwrap(),
+                            task_end_time.add_time_precision().unwrap(),
                             Vec::new(),
                         ),
                         &0,
