@@ -418,19 +418,24 @@ impl<C: Clock> Aggregator<C> {
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
-                if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-                    self.taskprov_authorize_request(
-                        &Role::Leader,
-                        task_id,
-                        taskprov_task_config.unwrap(),
-                        auth_token.as_ref(),
-                    )
-                    .await?;
-                } else if !task_aggregator
-                    .task
-                    .check_aggregator_auth_token(auth_token.as_ref())
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
+                match taskprov_task_config {
+                    Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
+                        self.taskprov_authorize_request(
+                            &Role::Leader,
+                            task_id,
+                            taskprov_task_config,
+                            auth_token.as_ref(),
+                        )
+                        .await?;
+                    }
+                    Some(_) | None
+                        if !task_aggregator
+                            .task
+                            .check_aggregator_auth_token(auth_token.as_ref()) =>
+                    {
+                        return Err(Error::UnauthorizedRequest(*task_id));
+                    }
+                    _ => {}
                 }
                 task_aggregator
             }
@@ -491,19 +496,24 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-            self.taskprov_authorize_request(
-                &Role::Leader,
-                task_id,
-                taskprov_task_config.unwrap(),
-                auth_token.as_ref(),
-            )
-            .await?;
-        } else if !task_aggregator
-            .task
-            .check_aggregator_auth_token(auth_token.as_ref())
-        {
-            return Err(Error::UnauthorizedRequest(*task_id));
+        match taskprov_task_config {
+            Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
+                self.taskprov_authorize_request(
+                    &Role::Leader,
+                    task_id,
+                    taskprov_task_config,
+                    auth_token.as_ref(),
+                )
+                .await?;
+            }
+            Some(_) | None
+                if !task_aggregator
+                    .task
+                    .check_aggregator_auth_token(auth_token.as_ref()) =>
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
+            _ => {}
         }
 
         let req =
@@ -546,19 +556,24 @@ impl<C: Clock> Aggregator<C> {
             ));
         }
 
-        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-            self.taskprov_authorize_request(
-                &Role::Leader,
-                task_id,
-                taskprov_task_config.unwrap(),
-                auth_token.as_ref(),
-            )
-            .await?;
-        } else if !task_aggregator
-            .task
-            .check_aggregator_auth_token(auth_token.as_ref())
-        {
-            return Err(Error::UnauthorizedRequest(*task_id));
+        match taskprov_task_config {
+            Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
+                self.taskprov_authorize_request(
+                    &Role::Leader,
+                    task_id,
+                    taskprov_task_config,
+                    auth_token.as_ref(),
+                )
+                .await?;
+            }
+            Some(_) | None
+                if !task_aggregator
+                    .task
+                    .check_aggregator_auth_token(auth_token.as_ref()) =>
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
+            _ => {}
         }
 
         task_aggregator
@@ -582,19 +597,24 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-            self.taskprov_authorize_request(
-                &Role::Leader,
-                task_id,
-                taskprov_task_config.unwrap(),
-                auth_token.as_ref(),
-            )
-            .await?;
-        } else if !task_aggregator
-            .task
-            .check_aggregator_auth_token(auth_token.as_ref())
-        {
-            return Err(Error::UnauthorizedRequest(*task_id));
+        match taskprov_task_config {
+            Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
+                self.taskprov_authorize_request(
+                    &Role::Leader,
+                    task_id,
+                    taskprov_task_config,
+                    auth_token.as_ref(),
+                )
+                .await?;
+            }
+            Some(_) | None
+                if !task_aggregator
+                    .task
+                    .check_aggregator_auth_token(auth_token.as_ref()) =>
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
+            _ => {}
         }
 
         task_aggregator
@@ -703,26 +723,28 @@ impl<C: Clock> Aggregator<C> {
         }
         // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
         // have to use the peer aggregator's collector config rather than the main task.
-        let collector_hpke_config = if self.cfg.taskprov_config.enabled
-            && taskprov_task_config.is_some()
-        {
-            let (peer_aggregator, _, _) = self
-                .taskprov_authorize_request(
-                    &Role::Leader,
-                    task.id(),
-                    taskprov_task_config.unwrap(),
-                    auth_token.as_ref(),
-                )
-                .await?;
+        let collector_hpke_config = match taskprov_task_config {
+            Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
+                let (peer_aggregator, _, _) = self
+                    .taskprov_authorize_request(
+                        &Role::Leader,
+                        task.id(),
+                        taskprov_task_config,
+                        auth_token.as_ref(),
+                    )
+                    .await?;
 
-            peer_aggregator.collector_hpke_config()
-        } else {
-            if !task.check_aggregator_auth_token(auth_token.as_ref()) {
-                return Err(Error::UnauthorizedRequest(*task.id()));
+                peer_aggregator.collector_hpke_config()
             }
+            _ => {
+                if !task.check_aggregator_auth_token(auth_token.as_ref()) {
+                    return Err(Error::UnauthorizedRequest(*task.id()));
+                }
 
-            task.collector_hpke_config()
-                .ok_or_else(|| Error::Internal("task is missing collector_hpke_config".into()))?
+                task.collector_hpke_config().ok_or_else(|| {
+                    Error::Internal("task is missing collector_hpke_config".into())
+                })?
+            }
         };
 
         Ok(collector_hpke_config.clone())

@@ -8,10 +8,6 @@ all-features = true
 [advisories]
 version = 2
 ignore = [
-    # `instant` is unmaintained, but it is feature-complete and small, so it is unlikely to have
-    # bugs or security vulnerabilities.
-    "RUSTSEC-2024-0384",
-
     # Janus never uses the protobuf format for exposing metrics, and in any case we would not be
     # handling untrusted input.
     "RUSTSEC-2024-0437",
@@ -19,6 +15,10 @@ ignore = [
     # `async-std` is only in our tree as the `opentelemetry_sdk/rt-async-std` feature, which we do
     # not enable.
     "RUSTSEC-2025-0052",
+
+    # We have migrated from `rustls-pemfile` but not everything else has.
+    # See <https://github.com/fussybeaver/bollard/issues/612>.
+    "RUSTSEC-2025-0134",
 ]
 
 [bans]
