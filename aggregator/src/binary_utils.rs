@@ -21,7 +21,7 @@ use janus_core::time::Clock;
 use opentelemetry::metrics::{Meter, MetricsError};
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use rustls::RootCertStore;
-use rustls_pki_types::{CertificateDer, pem::PemObject};
+use rustls_pki_types::{pem::PemObject, CertificateDer} ;
 use std::{
     fmt::{self, Debug, Formatter},
     fs,
