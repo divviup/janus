@@ -198,11 +198,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     ) -> Self::Iter;
 
     /// Validates a collection identifier, per the boundary checks in
-    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
-    fn validate_collection_identifier(
-        task: &AggregatorTask,
-        collection_identifier: &Self::BatchIdentifier,
-    ) -> bool;
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-16.html#section-4.7.1>.
+    fn validate_collection_identifier(collection_identifier: &Self::BatchIdentifier) -> bool;
 
     /// Returns the number of client reports included in the given collection identifier, whether
     /// they have been aggregated or not.
@@ -309,11 +306,8 @@ impl CollectableBatchMode for TimeInterval {
         TimeIntervalBatchIdentifierIter::new(time_precision, batch_interval)
     }
 
-    fn validate_collection_identifier(
-        _task: &AggregatorTask,
-        collection_identifier: &Self::BatchIdentifier,
-    ) -> bool {
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+    fn validate_collection_identifier(collection_identifier: &Self::BatchIdentifier) -> bool {
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-16.html#section-4.7.1
 
         // Batch interval should be greater than task's time precision.
         collection_identifier.duration().as_time_precision_units() >= 1
@@ -405,7 +399,7 @@ impl CollectableBatchMode for LeaderSelected {
         iter::once(*batch_id)
     }
 
-    fn validate_collection_identifier(_: &AggregatorTask, _: &Self::BatchIdentifier) -> bool {
+    fn validate_collection_identifier(_: &Self::BatchIdentifier) -> bool {
         true
     }
 

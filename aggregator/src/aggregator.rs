@@ -3067,8 +3067,8 @@ impl VdafOps {
                             })?;
 
                     // Check that the batch interval is valid for the task
-                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-                    if !B::validate_collection_identifier(&task, &collection_identifier) {
+                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-16.html#section-4.7.1
+                    if !B::validate_collection_identifier(&collection_identifier) {
                         return Err(datastore::Error::User(
                             Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
                                 .into(),
@@ -3535,7 +3535,6 @@ impl VdafOps {
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !B::validate_collection_identifier(
-            &task,
             aggregate_share_req.batch_selector().batch_identifier(),
         ) {
             return Err(Error::BatchInvalid(
