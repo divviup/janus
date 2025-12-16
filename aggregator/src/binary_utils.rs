@@ -27,7 +27,6 @@ use std::{
     fmt::{self, Debug, Formatter},
     fs,
     future::Future,
-    io,
     net::SocketAddr,
     panic,
     path::{Path, PathBuf},
@@ -189,16 +188,9 @@ pub async fn datastore<C: Clock>(
 }
 
 /// Loads a series of certificates from a PEM file into a rustls [`RootCertStore`].
-fn load_pem_trust_store(path: impl AsRef<Path>) -> Result<RootCertStore, io::Error> {
+fn load_pem_trust_store(path: impl AsRef<Path>) -> Result<RootCertStore, anyhow::Error> {
     let pem_data = fs::read(path)?;
-    let der_certs = CertificateDer::pem_slice_iter(&pem_data)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to parse PEM certificates: {err}"),
-            )
-        })?;
+    let der_certs = CertificateDer::pem_slice_iter(&pem_data).collect::<Result<Vec<_>, _>>()?;
     let mut root_cert_store = RootCertStore::empty();
     let (added, ignored) = root_cert_store.add_parsable_certificates(der_certs);
     info!("loaded {added} root certificates for database connections, ignored {ignored}");
