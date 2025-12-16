@@ -399,7 +399,7 @@ impl Interval {
     /// Returns an error if the end of the interval cannot be represented as a [`Time`].
     ///
     /// This is the preferred constructor for batch bucket intervals.
-    /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
+    /// For intervals with arbitrary durations, use [`Interval::new`].
     pub fn single(start: Time) -> Result<Self, Error> {
         Self::new(start, Duration::ONE)
     }
@@ -408,7 +408,7 @@ impl Interval {
     /// of the interval cannot be represented as a [`Time`].
     ///
     /// This constructor is for intervals with arbitrary durations (in time_precision units).
-    /// For single-precision intervals, prefer [`Interval::new`].
+    /// For single-precision intervals, prefer [`Interval::single`].
     pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
         start
             .0
