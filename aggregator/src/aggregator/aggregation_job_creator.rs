@@ -29,7 +29,7 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, DateTimeExt, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
@@ -680,30 +680,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 "Creating aggregation job"
                             );
 
-                            let min_client_timestamp = agg_job_reports
+                            let client_timestamp_interval = agg_job_reports
                                 .iter()
                                 .map(UnaggregatedReport::client_timestamp)
-                                .min()
-                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let max_client_timestamp = agg_job_reports
-                                .iter()
-                                .map(UnaggregatedReport::client_timestamp)
-                                .max()
-                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let client_timestamp_interval = Interval::new(
-                                *min_client_timestamp,
-                                DurationMsg::from_chrono(
-                                    max_client_timestamp
-                                        .difference_as_time_delta(
-                                            min_client_timestamp,
-                                            task.time_precision(),
-                                        )?
-                                        .add(&DurationMsg::ONE.to_chrono(task.time_precision())?)?
-                                        .round_up(&task.time_precision().to_chrono()?)?,
-                                    task.time_precision(),
-                                ),
-                            )?;
-
+                                .fold(Interval::EMPTY, |left, right| {
+                                    left.merged_with(right).unwrap()
+                                });
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
@@ -827,31 +809,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 "Creating aggregation job"
                             );
 
-                            // unwrap safety: agg_job_reports is non-empty
-                            let min_client_timestamp = agg_job_reports
+                            let client_timestamp_interval = agg_job_reports
                                 .iter()
                                 .map(UnaggregatedReport::client_timestamp)
-                                .min()
-                                .unwrap();
-                            // unwrap safety: agg_job_reports is non-empty
-                            let max_client_timestamp = agg_job_reports
-                                .iter()
-                                .map(UnaggregatedReport::client_timestamp)
-                                .max()
-                                .unwrap();
-                            let client_timestamp_interval = Interval::new(
-                                *min_client_timestamp,
-                                DurationMsg::from_chrono(
-                                    max_client_timestamp
-                                        .difference_as_time_delta(
-                                            min_client_timestamp,
-                                            task.time_precision(),
-                                        )?
-                                        .add(&DurationMsg::ONE.to_chrono(task.time_precision())?)?
-                                        .round_up(&task.time_precision().to_chrono()?)?,
-                                    task.time_precision(),
-                                ),
-                            )?;
+                                .fold(Interval::EMPTY, |left, right| {
+                                    left.merged_with(right).unwrap()
+                                });
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                                 *task.id(),

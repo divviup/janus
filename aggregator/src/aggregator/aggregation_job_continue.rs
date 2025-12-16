@@ -403,7 +403,6 @@ mod tests {
             VdafInstance::Fake { rounds: 2 },
         )
         .build();
-        let _time_precision = *task.time_precision();
         let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
