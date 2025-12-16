@@ -30,7 +30,7 @@ use janus_core::{
     hpke::HpkeCiphersuite, initialize_rustls, test_util::install_test_trace_subscriber,
     time::RealClock, vdaf::VdafInstance,
 };
-use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
+use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
 use reqwest::Url;
 use serde::Serialize;
 use std::{
@@ -290,15 +290,10 @@ async fn aggregator_shutdown() {
         key_rotator: Some(KeyRotatorConfig {
             frequency_s: 60 * 60 * 6,
             hpke: HpkeKeyRotatorConfig {
-                pending_duration: Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
-                active_duration: Duration::from_seconds(
-                    60 * 60 * 24,
-                    &TimePrecision::from_seconds(1),
-                ),
-                expired_duration: Duration::from_seconds(
-                    60 * 60 * 24,
-                    &TimePrecision::from_seconds(1),
-                ),
+                // All of these change to Chrono types in #4216, so this mess is temporary
+                pending_duration: Duration::from_time_precision_units(60),
+                active_duration: Duration::from_time_precision_units(60 * 60 * 24),
+                expired_duration: Duration::from_time_precision_units(60 * 60 * 24),
                 ciphersuites: HashSet::from([
                     HpkeCiphersuite::new(
                         HpkeKemId::P256HkdfSha256,

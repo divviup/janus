@@ -117,6 +117,7 @@ mod tests {
 
     #[test]
     fn roundtrip_config() {
+        let time_precision = TimePrecision::from_seconds(random());
         roundtrip_encoding(Config {
             common_config: CommonConfig {
                 database: generate_db_config(),
@@ -128,18 +129,9 @@ mod tests {
             },
             key_rotator: KeyRotatorConfig {
                 hpke: HpkeKeyRotatorConfig {
-                    pending_duration: Duration::from_seconds(
-                        random(),
-                        &TimePrecision::from_seconds(1),
-                    ),
-                    active_duration: Duration::from_seconds(
-                        random(),
-                        &TimePrecision::from_seconds(1),
-                    ),
-                    expired_duration: Duration::from_seconds(
-                        random(),
-                        &TimePrecision::from_seconds(1),
-                    ),
+                    pending_duration: Duration::from_seconds(random(), &time_precision),
+                    active_duration: Duration::from_seconds(random(), &time_precision),
+                    expired_duration: Duration::from_seconds(random(), &time_precision),
                     ciphersuites: HashSet::from([
                         HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,
