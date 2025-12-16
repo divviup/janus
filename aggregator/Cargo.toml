@@ -76,7 +76,7 @@ rayon.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
+rustls-pki-types = { workspace = true }
 retry-after.workspace = true
 sec1.workspace = true
 serde.workspace = true
