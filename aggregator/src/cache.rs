@@ -372,7 +372,7 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_end = Time::from_seconds_since_epoch(100, &task.time_precision());
+        let new_end = Time::from_seconds_since_epoch(100, task.time_precision());
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(task_aggregator.task.id(), task.id());
 
         // Modify the task.
-        let new_end = Time::from_seconds_since_epoch(100, &task.time_precision());
+        let new_end = Time::from_seconds_since_epoch(100, task.time_precision());
         datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
