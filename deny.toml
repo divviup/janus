@@ -8,10 +8,6 @@ all-features = true
 [advisories]
 version = 2
 ignore = [
-    # `instant` is unmaintained, but it is feature-complete and small, so it is unlikely to have
-    # bugs or security vulnerabilities.
-    "RUSTSEC-2024-0384",
-
     # Janus never uses the protobuf format for exposing metrics, and in any case we would not be
     # handling untrusted input.
     "RUSTSEC-2024-0437",
