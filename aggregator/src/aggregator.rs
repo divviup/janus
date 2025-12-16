@@ -36,7 +36,6 @@ use aws_lc_rs::{
 };
 use backon::BackoffBuilder;
 use bytes::Bytes;
-use chrono::TimeDelta;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     FixedI16, FixedI32,
@@ -69,7 +68,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::ReqwestAuthenticationToken,
     retries::{HttpResponse, retry_http_request_notify},
-    time::{Clock, DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
@@ -2166,28 +2165,13 @@ impl VdafOps {
         }
 
         // Build initial aggregation job & report aggregations.
-        let min_client_timestamp = req
+        let client_timestamp_interval = req
             .prepare_inits()
             .iter()
             .map(|prepare_init| *prepare_init.report_share().metadata().time())
-            .min()
-            .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        let max_client_timestamp = req
-            .prepare_inits()
-            .iter()
-            .map(|prepare_init| *prepare_init.report_share().metadata().time())
-            .max()
-            .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        let client_timestamp_interval = Interval::new(
-            min_client_timestamp,
-            Duration::from_chrono(
-                max_client_timestamp
-                    .difference_as_time_delta(&min_client_timestamp, task.time_precision())?
-                    .add(&TimeDelta::seconds(1))?
-                    .round_up(&task.time_precision().to_chrono()?)?,
-                task.time_precision(),
-            ),
-        )?;
+            .fold(Interval::EMPTY, |interval, timestamp| {
+                interval.merged_with(&timestamp).unwrap()
+            });
         let aggregation_job = AggregationJob::<SEED_SIZE, B, A>::new(
             *task.id(),
             *aggregation_job_id,

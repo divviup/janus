@@ -895,7 +895,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         *task.id(),
                         task_min_batch_size,
                         task_batch_time_window_size,
-                        task.time_precision().to_owned(),
                         &mut aggregation_job_writer,
                         this.aggregation_job_size_histogram.clone(),
                     );
