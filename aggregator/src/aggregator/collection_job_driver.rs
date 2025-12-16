@@ -791,10 +791,7 @@ impl RetryStrategy {
 
         let min_retry_delay_secs = self.min_retry_delay.as_secs_f64();
         let max_retry_delay_secs = self.max_retry_delay.as_secs_f64();
-        let step_attempt = match i32::try_from(step_attempt).ok() {
-            Some(step_attempt) => step_attempt,
-            None => i32::MAX, // this will surely overflow, but this is handled by the clamp below.
-        };
+        let step_attempt = i32::try_from(step_attempt).ok().unwrap_or(i32::MAX); // this will surely overflow, but this is handled by the clamp below.
 
         let delay = min_retry_delay_secs * self.exponential_factor.powi(step_attempt);
         // Panic safety: min > max guarded against above.
