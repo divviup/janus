@@ -15,6 +15,9 @@ ignore = [
     # `async-std` is only in our tree as the `opentelemetry_sdk/rt-async-std` feature, which we do
     # not enable.
     "RUSTSEC-2025-0052",
+
+    # We have migrated from `rustls-pemfile` but not everything else has.
+    "RUSTSEC-2025-0134",
 ]
 
 [bans]
