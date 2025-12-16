@@ -628,8 +628,6 @@ impl<T> Lease<T> {
         current_time: &DateTime<Utc>,
         skew_seconds: u64,
     ) -> StdDuration {
-        // Lease expiry times are SQL timestamps (seconds since Unix epoch), so we use
-        // 1-second time_precision for conversion.
         StdDuration::from_secs(
             u64::try_from(
                 self.lease_expiry_time
@@ -2134,7 +2132,8 @@ impl OutstandingBatch {
 }
 
 /// The SQL timestamp epoch is midnight UTC on 2000-01-01. This const represents
-/// the Unix epoch seconds (946_684_800) in the context of SQL_UNIT_TIME_PRECISION.
+/// the Unix epoch seconds (946_684_800) in the context of SQL_UNIT_TIME_PRECISION
+/// and should not be necessary after Issue #4206.
 const SQL_EPOCH_TIME: Time = Time::from_time_precision_units(946_684_800);
 
 /// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
@@ -2231,8 +2230,7 @@ fn time_to_sql_timestamp(time: Time, time_precision: &TimePrecision) -> Result<i
     // Convert time from time_precision units to absolute seconds since Unix epoch
     let time_seconds = time.as_seconds_since_epoch(time_precision);
 
-    // SQL epoch is 946_684_800 seconds since Unix epoch (2000-01-01 00:00:00 UTC)
-    let sql_epoch_seconds = 946_684_800u64;
+    let sql_epoch_seconds = SQL_EPOCH_TIME.as_seconds_since_epoch(&SQL_UNIT_TIME_PRECISION);
 
     if time_seconds >= sql_epoch_seconds {
         let diff_seconds = time_seconds - sql_epoch_seconds;

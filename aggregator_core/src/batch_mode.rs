@@ -77,8 +77,6 @@ impl AccumulableBatchMode for TimeInterval {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        // With Time now represented as time_precision units, client_timestamp is already aligned
-        // to the batch interval, so we use it directly as the batch_interval_start.
         Interval::single(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
     }
 
@@ -122,7 +120,8 @@ impl AccumulableBatchMode for TimeInterval {
     ) -> Option<bool> {
         // Note: This assumes the batch_identifier's interval is in 1-second time_precision units.
         // This is a simplification - in practice, batch identifiers should carry their time_precision
-        // context, but that would require changing the trait interface.
+        // context, but that would require changing the trait interface. This will be fixed in
+        // Issue #4217.
         let now_time = clock.now().to_time(&TimePrecision::from_seconds(1));
         Some(batch_identifier.end().is_before(&now_time))
     }
@@ -317,9 +316,6 @@ impl CollectableBatchMode for TimeInterval {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
 
         // Batch interval should be greater than task's time precision.
-        // Since Time and Duration are now represented as multiples of time_precision,
-        // alignment is guaranteed by the type system. We only need to check that
-        // the duration is at least one time_precision unit.
         collection_identifier.duration().as_time_precision_units() >= 1
     }
 

@@ -5,7 +5,6 @@ use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode, Encode};
 use serde_test::{Token, assert_de_tokens_error, assert_tokens};
 
-// Standard time precision for tests (1 second)
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]

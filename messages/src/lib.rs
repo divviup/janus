@@ -379,13 +379,6 @@ impl Decode for Time {
     }
 }
 
-// Note: TryFrom<SystemTime> for Time has been removed because it requires a TimePrecision
-// context. Use Time::from_seconds_since_epoch(time.duration_since(UNIX_EPOCH)?.as_secs(), &time_precision)
-// instead.
-
-// Note: PartialEq and PartialOrd between Time and DateTime<Utc> have been removed because
-// they require a TimePrecision context. Convert to a common representation first.
-
 /// DAP protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]

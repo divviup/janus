@@ -506,7 +506,6 @@ impl<V: vdaf::Client<16>> Client<V> {
         )?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
-        // Since Time is now represented as time_precision units, it's already aligned to batch intervals.
         let report_metadata = ReportMetadata::new(
             report_id,
             *time,

@@ -113,14 +113,10 @@ where
     where
         C: Clock,
     {
-        let time_bucket_start_opt =
-            self.properties
-                .task_batch_time_window_size
-                .map(|_batch_time_window_size| {
-                    // Since Time is now represented as time_precision units, client_timestamp
-                    // is already aligned to batch intervals.
-                    *report.client_timestamp()
-                });
+        let time_bucket_start_opt = self
+            .properties
+            .task_batch_time_window_size
+            .map(|_batch_time_window_size| *report.client_timestamp());
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),
@@ -376,7 +372,7 @@ where
         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let client_timestamp_interval = Interval::new(
-            min_client_timestamp, // Time is already aligned to batch intervals
+            min_client_timestamp,
             Duration::from_chrono(
                 max_client_timestamp
                     .difference_as_time_delta(&min_client_timestamp, &time_precision)?

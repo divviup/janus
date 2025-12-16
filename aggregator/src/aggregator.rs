@@ -858,7 +858,7 @@ impl<C: Clock> Aggregator<C> {
                 u64::from(*task_config.min_batch_size()),
                 *task_config.time_precision(),
                 /* tolerable clock skew */
-                Duration::ONE, // Use the time precision as the tolerable skew
+                Duration::ONE,
                 task::AggregatorTaskParameters::TaskprovHelper {
                     aggregation_mode: peer_aggregator.aggregation_mode().copied().ok_or_else(
                         || {

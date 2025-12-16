@@ -436,7 +436,7 @@ macro_rules! options_query_dispatch {
             &$options.query.batch_interval_duration,
         ) {
             (Some(batch_interval_start), Some(batch_interval_duration)) => {
-                // Use canonical 1-second time_precision for CLI tool since we don't have task context
+                // Time Precision needs to be provided somehow, fix in #4218.
                 let time_precision = &janus_messages::taskprov::TimePrecision::from_seconds(1);
                 let $query = Query::new_time_interval(
                     Interval::new(
@@ -629,7 +629,7 @@ fn new_collector<V: vdaf::Collector>(
     let (authentication, hpke_keypair) = options.credential()?;
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
-    // Use canonical 1-second time_precision for CLI tool since we don't have task context
+    // Time Precision needs to be provided somehow, fix in #4218.
     let time_precision = janus_messages::taskprov::TimePrecision::from_seconds(1);
     let collector = Collector::builder(
         task_id,

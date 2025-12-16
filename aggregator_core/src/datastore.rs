@@ -709,9 +709,6 @@ WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
         let now = self.clock.now().naive_utc();
 
-        // With Time and Duration now represented as time_precision units, validation is
-        // enforced by the type system, so we can proceed directly to the insert.
-
         // Main task insert.
         let stmt = self
             .prepare_cached(
@@ -5617,11 +5614,7 @@ ON CONFLICT DO NOTHING",
                     /* report_expiry_age */
                     &peer_aggregator
                         .report_expiry_age()
-                        .map(|d| {
-                            // PeerAggregator's report_expiry_age is configuration data without a specific
-                            // task context. We assume 1-second time_precision for database storage.
-                            d.as_seconds(&SQL_UNIT_TIME_PRECISION)
-                        })
+                        .map(|d| d.as_seconds(&SQL_UNIT_TIME_PRECISION))
                         .map(i64::try_from)
                         .transpose()?,
                     /* collector_hpke_config */

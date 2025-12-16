@@ -607,11 +607,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
                         // point.
-                        let reports_by_batch = reports.into_iter().chunk_by(|report| {
-                            // Since Time is now represented as time_precision units, client_timestamp
-                            // is already aligned to batch intervals.
-                            *report.client_timestamp()
-                        });
+                        let reports_by_batch = reports
+                            .into_iter()
+                            .chunk_by(|report| *report.client_timestamp());
                         let mut reports_by_batch = reports_by_batch.into_iter();
 
                         // Each iteration of this loop will generate at most a single aggregation

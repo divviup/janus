@@ -26,7 +26,7 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
         random(),
         server_url.clone(),
         server_url,
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
@@ -43,7 +43,7 @@ fn aggregator_endpoints_end_in_slash() {
         random(),
         "http://leader_endpoint/foo/bar".parse().unwrap(),
         "http://helper_endpoint".parse().unwrap(),
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
     );
 
     assert_eq!(
@@ -227,7 +227,7 @@ async fn unsupported_hpke_algorithms() {
         random(),
         server_url.clone(),
         server_url,
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
     );
     client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 

@@ -1525,6 +1525,7 @@ mod tests {
 
     #[test]
     fn aggregator_task_serde() {
+        let time_precision = TimePrecision::from_seconds(60);
         assert_tokens(
             &AggregatorTask::new(
                 TaskId::from([0; 32]),
@@ -1536,8 +1537,8 @@ mod tests {
                 None,
                 None,
                 10,
-                TimePrecision::from_seconds(3600),
-                Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
+                time_precision,
+                Duration::from_seconds(60, &time_precision),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
                         "YWdncmVnYXRvciB0b2tlbg",
@@ -1599,10 +1600,10 @@ mod tests {
                 Token::NewtypeStruct {
                     name: "TimePrecision",
                 },
-                Token::U64(3600),
+                Token::U64(60),
                 Token::Str("tolerable_clock_skew"),
                 Token::NewtypeStruct { name: "Duration" },
-                Token::U64(60),
+                Token::U64(1),
                 Token::Str("collector_hpke_config"),
                 Token::Struct {
                     name: "HpkeConfig",
@@ -1679,21 +1680,12 @@ mod tests {
                     dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
                 },
                 SecretBytes::new(b"1234567812345678".to_vec()),
-                Some(Time::from_seconds_since_epoch(
-                    1000,
-                    &TimePrecision::from_seconds(1),
-                )),
-                Some(Time::from_seconds_since_epoch(
-                    2000,
-                    &TimePrecision::from_seconds(1),
-                )),
-                Some(Duration::from_seconds(
-                    1800,
-                    &TimePrecision::from_seconds(1),
-                )),
+                Some(Time::from_seconds_since_epoch(1000, &time_precision)),
+                Some(Time::from_seconds_since_epoch(2000, &time_precision)),
+                Some(Duration::from_seconds(1800, &time_precision)),
                 10,
-                TimePrecision::from_seconds(3600),
-                Duration::from_seconds(60, &TimePrecision::from_seconds(1)),
+                time_precision,
+                Duration::from_seconds(60, &time_precision),
                 AggregatorTaskParameters::Helper {
                     aggregator_auth_token_hash: AuthenticationTokenHash::from(
                         &AuthenticationToken::new_bearer_token_from_string(
@@ -1769,25 +1761,25 @@ mod tests {
                 Token::Str("task_start"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Time" },
-                Token::U64(1000),
+                Token::U64(16),
                 Token::Str("task_end"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Time" },
-                Token::U64(2000),
+                Token::U64(33),
                 Token::Str("report_expiry_age"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Duration" },
-                Token::U64(1800),
+                Token::U64(30),
                 Token::Str("min_batch_size"),
                 Token::U64(10),
                 Token::Str("time_precision"),
                 Token::NewtypeStruct {
                     name: "TimePrecision",
                 },
-                Token::U64(3600),
+                Token::U64(60),
                 Token::Str("tolerable_clock_skew"),
                 Token::NewtypeStruct { name: "Duration" },
-                Token::U64(60),
+                Token::U64(1),
                 Token::Str("collector_hpke_config"),
                 Token::Struct {
                     name: "HpkeConfig",

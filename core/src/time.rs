@@ -93,10 +93,6 @@ impl Default for MockClock {
 /// Number of microseconds per second.
 const USEC_PER_SEC: u64 = 1_000_000;
 
-// Note: DurationExt trait with validate_precision has been removed as part of #4019.
-// Duration is now represented as multiples of time_precision, so validation is impossible
-// to fail - the type system enforces correctness.
-
 /// Extension methods on [`chrono::TimeDelta`] for working with DAP durations.
 pub trait TimeDeltaExt: Sized {
     /// Add two [`chrono::TimeDelta`] values.
@@ -441,7 +437,6 @@ impl TimeExt for Time {
             .num_seconds()
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
-        // Convert timedelta seconds to time_precision units
         let precision_secs = time_precision.as_seconds();
         if precision_secs == 0 {
             return Err(Error::IllegalTimeArithmetic("time_precision is zero"));
@@ -462,7 +457,6 @@ impl TimeExt for Time {
             .num_seconds()
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("timedelta is negative or too large"))?;
-        // Convert timedelta seconds to time_precision units
         let precision_secs = time_precision.as_seconds();
         if precision_secs == 0 {
             return Err(Error::IllegalTimeArithmetic("time_precision is zero"));
@@ -507,12 +501,10 @@ impl TimeExt for Time {
         other: &Self,
         time_precision: &TimePrecision,
     ) -> Result<TimeDelta, Error> {
-        // Get difference in time_precision units
         let diff_units = self
             .as_time_precision_units()
             .checked_sub(other.as_time_precision_units())
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
-        // Convert to seconds
         let diff_seconds = diff_units
             .checked_mul(time_precision.as_seconds())
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))?;
@@ -524,7 +516,6 @@ impl TimeExt for Time {
     }
 
     fn saturating_difference(&self, other: &Self) -> Duration {
-        // Difference in time_precision units (time_precision not needed since we work in units)
         Duration::from_time_precision_units(
             self.as_time_precision_units()
                 .saturating_sub(other.as_time_precision_units()),
@@ -569,7 +560,6 @@ impl IntervalExt for Interval {
         let max_time = std::cmp::max(self.end(), other.end());
         let min_time = std::cmp::min(self.start(), other.start());
 
-        // Calculate difference in time_precision units
         let diff_units = max_time
             .as_time_precision_units()
             .checked_sub(min_time.as_time_precision_units())
@@ -578,7 +568,6 @@ impl IntervalExt for Interval {
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {
-        // Create an interval of 1 time_precision unit starting at the given time
         self.merge(&Self::new(*time, Duration::ONE)?)
     }
 }

@@ -648,7 +648,7 @@ async fn in_cluster_time_bucketed_leader_selected() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(1),
+                &TimePrecision::from_seconds(100),
             )),
         },
     )
@@ -949,7 +949,7 @@ async fn in_cluster_histogram_dp_noise() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(1),
+                &TimePrecision::from_seconds(100),
             )),
         },
     )
@@ -1025,7 +1025,7 @@ async fn in_cluster_sumvec_dp_noise() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(1),
+                &TimePrecision::from_seconds(100),
             )),
         },
     )

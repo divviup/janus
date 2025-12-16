@@ -655,7 +655,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
             .to_time(task.time_precision())
             .add_time_precision()
             .unwrap()
-            .as_seconds_since_epoch(&TimePrecision::from_seconds(1)),
+            .as_seconds_since_epoch(&time_precision),
     );
 
     let vdaf = dummy::Vdaf::new(2);
