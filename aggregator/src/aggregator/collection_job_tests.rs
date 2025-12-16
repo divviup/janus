@@ -131,14 +131,14 @@ impl CollectionJobTestCase {
             .run_unnamed_tx(|tx| {
                 let task = self.task.clone();
                 Box::pin(async move {
-                    let batch_interval = Interval::single(time).unwrap();
+                    let client_timestamp_interval = Interval::single(time).unwrap();
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         dummy::AggregationParam::default(),
                         batch_id,
-                        batch_interval,
+                        client_timestamp_interval,
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -167,7 +167,7 @@ impl CollectionJobTestCase {
                         batch_id,
                         dummy::AggregationParam::default(),
                         0,
-                        batch_interval,
+                        client_timestamp_interval,
                         BatchAggregationState::Aggregating {
                             aggregate_share: Some(dummy::AggregateShare(0)),
                             report_count,
@@ -196,7 +196,9 @@ impl CollectionJobTestCase {
                 let task = self.task.clone();
                 Box::pin(async move {
                     let report = LeaderStoredReport::new_dummy(*task.id(), time);
-                    let batch_interval = Interval::single(*report.metadata().time()).unwrap();
+                    let client_timestamp_interval =
+                        Interval::single(*report.metadata().time()).unwrap();
+                    let batch_interval = client_timestamp_interval;
                     let aggregation_job_id = random();
                     tx.put_client_report(&report).await.unwrap();
                     tx.scrub_client_report(report.task_id(), report.metadata().id())
@@ -207,7 +209,7 @@ impl CollectionJobTestCase {
                         aggregation_job_id,
                         dummy::AggregationParam::default(),
                         (),
-                        batch_interval,
+                        client_timestamp_interval,
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -229,7 +231,7 @@ impl CollectionJobTestCase {
                         batch_interval,
                         dummy::AggregationParam::default(),
                         0,
-                        batch_interval,
+                        client_timestamp_interval,
                         BatchAggregationState::Aggregating {
                             aggregate_share: Some(dummy::AggregateShare(0)),
                             report_count: 1,
@@ -312,9 +314,9 @@ async fn setup_leader_selected_current_batch_collection_job_test_case()
     let batch_id_2 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;
-    let batch_interval = Interval::single(time).unwrap();
+    let client_timestamp_interval = Interval::single(time).unwrap();
 
-    (test_case, batch_id_1, batch_id_2, batch_interval)
+    (test_case, batch_id_1, batch_id_2, client_timestamp_interval)
 }
 
 #[tokio::test]
@@ -617,21 +619,12 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
 async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(
-            0,
-            &TimePrecision::from_seconds(1),
-        ))
+        .setup_time_interval_batch(Time::from_time_precision_units(0))
         .await;
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
-                0,
-                test_case.task.time_precision(),
-            ))
-            .unwrap(),
-        ),
+        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
@@ -661,21 +654,12 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
 async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param() {
     let test_case = setup_collection_job_test_case(Role::Leader, BatchMode::TimeInterval).await;
     test_case
-        .setup_time_interval_batch(Time::from_seconds_since_epoch(
-            0,
-            test_case.task.time_precision(),
-        ))
+        .setup_time_interval_batch(Time::from_time_precision_units(0))
         .await;
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
-                0,
-                test_case.task.time_precision(),
-            ))
-            .unwrap(),
-        ),
+        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
@@ -685,13 +669,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionJobReq::new(
-        Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
-                0,
-                test_case.task.time_precision(),
-            ))
-            .unwrap(),
-        ),
+        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
