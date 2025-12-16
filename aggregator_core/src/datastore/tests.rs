@@ -1113,7 +1113,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
                 aggregation_job_id,
                 dummy::AggregationParam(0),
                 (),
-                Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+                Interval::single(Time::from_time_precision_units(0)).unwrap(),
                 AggregationJobState::Active,
                 AggregationJobStep::from(0),
             ))
@@ -2582,7 +2582,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         dummy::AggregationParam(23),
         random(),
-        Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -2591,7 +2591,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         dummy::AggregationParam(42),
         random(),
-        Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -2600,7 +2600,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         random(),
         dummy::AggregationParam(42),
         random(),
-        Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+        Interval::single(Time::from_time_precision_units(0)).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     )
@@ -2639,7 +2639,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
                 random(),
                 dummy::AggregationParam(82),
                 random(),
-                Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+                Interval::single(Time::from_time_precision_units(0)).unwrap(),
                 AggregationJobState::Active,
                 AggregationJobStep::from(0),
             ))

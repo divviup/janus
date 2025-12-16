@@ -834,8 +834,7 @@ async fn taskprov_aggregate_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     batch_id,
-                    Interval::single(Time::from_seconds_since_epoch(0, task.time_precision()))
-                        .unwrap(),
+                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))

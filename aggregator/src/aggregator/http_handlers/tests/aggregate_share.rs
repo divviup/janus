@@ -77,7 +77,7 @@ async fn aggregate_share_request_to_leader() {
 
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
         ),
         Vec::new(),
         0,
@@ -166,7 +166,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
         &task,
         &AggregateShareReq::new(
             BatchSelector::new_time_interval(
-                Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+                Interval::single(Time::from_time_precision_units(0)).unwrap(),
             ),
             Vec::new(),
             0,
@@ -203,7 +203,7 @@ async fn aggregate_share_request() {
     // There are no batch aggregations in the datastore yet
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap(),
+            Interval::single(Time::from_time_precision_units(0)).unwrap(),
         ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
         0,
@@ -341,7 +341,7 @@ async fn aggregate_share_request() {
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, task.time_precision()),
+                Time::from_time_precision_units(0),
                 Duration::from_seconds(1000, task.time_precision()),
             )
             .unwrap(),
@@ -382,7 +382,7 @@ async fn aggregate_share_request() {
             request: AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, task.time_precision()),
+                        Time::from_time_precision_units(0),
                         Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
@@ -456,7 +456,7 @@ async fn aggregate_share_request() {
             AggregateShareReq::new(
                 BatchSelector::new_time_interval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(0, task.time_precision()),
+                        Time::from_time_precision_units(0),
                         Duration::from_seconds(2000, task.time_precision()),
                     )
                     .unwrap(),
@@ -583,7 +583,7 @@ async fn aggregate_share_request() {
     let all_batch_request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                Time::from_seconds_since_epoch(0, task.time_precision()),
+                Time::from_time_precision_units(0),
                 Duration::from_seconds(4000, task.time_precision()),
             )
             .unwrap(),
@@ -616,7 +616,7 @@ async fn aggregate_share_request() {
         AggregateShareReq::new(
             BatchSelector::new_time_interval(
                 Interval::new(
-                    Time::from_seconds_since_epoch(0, task.time_precision()),
+                    Time::from_time_precision_units(0),
                     Duration::from_seconds(2000, task.time_precision()),
                 )
                 .unwrap(),
@@ -681,8 +681,7 @@ async fn aggregate_share_request_duplicate_with_different_id() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     // Set up batch aggregations that will be used for the duplicate requests
-    let batch_interval =
-        Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap();
+    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
 
     let aggregation_param = dummy::AggregationParam(0);
     let report_count = 5;
@@ -761,8 +760,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     // Set up batch aggregations that will be used for the duplicate requests
-    let batch_interval =
-        Interval::single(Time::from_seconds_since_epoch(0, task.time_precision())).unwrap();
+    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
 
     let aggregation_param = dummy::AggregationParam(0);
     let report_count = 5;
