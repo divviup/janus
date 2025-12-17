@@ -29,9 +29,9 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Interval, PrepareContinue,
-    PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum, ReportMetadata, Role,
-    Time, batch_mode::TimeInterval, taskprov::TimePrecision,
+    AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Duration, Interval,
+    PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum,
+    ReportMetadata, Role, Time, batch_mode::TimeInterval, taskprov::TimePrecision,
 };
 use prio::{
     topology::ping_pong::PingPongMessage,
@@ -653,7 +653,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         first_batch_interval_clock
             .now()
             .to_time(task.time_precision())
-            .add_time_precision()
+            .add_duration(&Duration::ONE)
             .unwrap()
             .as_seconds_since_epoch(&time_precision),
     );

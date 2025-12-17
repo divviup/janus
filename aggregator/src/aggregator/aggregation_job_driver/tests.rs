@@ -2238,7 +2238,7 @@ async fn leader_sync_time_interval_aggregation_job_continue() {
     let other_batch_identifier = Interval::minimal(
         active_batch_identifier
             .start()
-            .add_time_precision()
+            .add_duration(&Duration::ONE)
             .unwrap(),
     )
     .unwrap();

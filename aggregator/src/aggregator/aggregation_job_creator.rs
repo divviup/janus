@@ -1188,7 +1188,9 @@ mod tests {
         let helper_hpke_keypair = HpkeKeypair::test();
 
         let first_report_time = clock.now_aligned_to_precision(task.time_precision());
-        let second_report_time = first_report_time.add_time_precision().unwrap();
+        let second_report_time = first_report_time
+            .add_duration(&janus_messages::Duration::ONE)
+            .unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_n(
                 first_report_time,
@@ -3103,7 +3105,9 @@ mod tests {
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
         // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
-        let report_time = report_time.sub_time_precision().unwrap();
+        let report_time = report_time
+            .sub_duration(&janus_messages::Duration::ONE)
+            .unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)

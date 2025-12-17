@@ -379,12 +379,6 @@ pub trait TimeExt: Sized {
         time_precision: &TimePrecision,
     ) -> Result<Self, Error>;
 
-    /// Add 1 time_precision unit to this time.
-    fn add_time_precision(&self) -> Result<Self, Error>;
-
-    /// Subtract 1 time_precision unit from this time.
-    fn sub_time_precision(&self) -> Result<Self, Error>;
-
     /// Add the provided duration to this time.
     fn add_duration(&self, duration: &Duration) -> Result<Self, Error>;
 
@@ -464,20 +458,6 @@ impl TimeExt for Time {
         let units = seconds / precision_secs;
         self.as_time_precision_units()
             .checked_sub(units)
-            .map(Self::from_time_precision_units)
-            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
-    }
-
-    fn add_time_precision(&self) -> Result<Self, Error> {
-        self.as_time_precision_units()
-            .checked_add(1)
-            .map(Self::from_time_precision_units)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    fn sub_time_precision(&self) -> Result<Self, Error> {
-        self.as_time_precision_units()
-            .checked_sub(1)
             .map(Self::from_time_precision_units)
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }

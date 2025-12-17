@@ -318,7 +318,7 @@ async fn upload_handler() {
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add_time_precision()
+            .add_duration(&Duration::ONE)
             .unwrap(),
     ))
     .build();
@@ -676,9 +676,9 @@ async fn upload_handler_task_not_started() {
     .with_task_start(Some(
         clock
             .now_aligned_to_precision(&time_precision)
-            .add_time_precision() // Add one time precision interval
+            .add_duration(&Duration::ONE) // Add one time precision interval
             .unwrap()
-            .add_time_precision() // Add another to be clearly in the future
+            .add_duration(&Duration::ONE) // Add another to be clearly in the future
             .unwrap(),
     ))
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
