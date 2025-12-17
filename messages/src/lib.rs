@@ -155,12 +155,13 @@ impl Duration {
     /// The duration will be rounded down to the nearest multiple of time_precision.
     ///
     /// # Arguments
+    ///
     /// * `seconds` - Duration in seconds
     /// * `time_precision` - The task's time precision
     ///
     /// # Panics
-    /// Panics if `time_precision.as_seconds()` is 0.
     ///
+    /// Panics if `time_precision.as_seconds()` is 0.
     pub fn from_seconds(seconds: u64, time_precision: &TimePrecision) -> Self {
         let precision_secs = time_precision.as_seconds();
         assert!(precision_secs > 0);
