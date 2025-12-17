@@ -131,7 +131,7 @@ impl CollectionJobTestCase {
             .run_unnamed_tx(|tx| {
                 let task = self.task.clone();
                 Box::pin(async move {
-                    let client_timestamp_interval = Interval::single(time).unwrap();
+                    let client_timestamp_interval = Interval::minimal(time).unwrap();
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(&AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
                         *task.id(),
@@ -197,7 +197,7 @@ impl CollectionJobTestCase {
                 Box::pin(async move {
                     let report = LeaderStoredReport::new_dummy(*task.id(), time);
                     let client_timestamp_interval =
-                        Interval::single(*report.metadata().time()).unwrap();
+                        Interval::minimal(*report.metadata().time()).unwrap();
                     let batch_interval = client_timestamp_interval;
                     let aggregation_job_id = random();
                     tx.put_client_report(&report).await.unwrap();
@@ -314,7 +314,7 @@ async fn setup_leader_selected_current_batch_collection_job_test_case()
     let batch_id_2 = test_case
         .setup_leader_selected_batch(time, test_case.task.min_batch_size() + 1)
         .await;
-    let client_timestamp_interval = Interval::single(time).unwrap();
+    let client_timestamp_interval = Interval::minimal(time).unwrap();
 
     (test_case, batch_id_1, batch_id_2, client_timestamp_interval)
 }
@@ -513,7 +513,7 @@ async fn collection_job_put_idempotence_time_interval() {
     let collection_job_id = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
+            Interval::minimal(Time::from_seconds_since_epoch(
                 0,
                 test_case.task.time_precision(),
             ))
@@ -568,7 +568,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
     let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
+            Interval::minimal(Time::from_seconds_since_epoch(
                 0,
                 test_case.task.time_precision(),
             ))
@@ -624,7 +624,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
+        Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
@@ -635,7 +635,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
 
     let mutated_request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
+            Interval::minimal(Time::from_seconds_since_epoch(
                 test_case.task.time_precision().as_seconds(),
                 test_case.task.time_precision(),
             ))
@@ -659,7 +659,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
 
     let collection_job_id = random();
     let request = CollectionJobReq::new(
-        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
+        Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
@@ -669,7 +669,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionJobReq::new(
-        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
+        Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 

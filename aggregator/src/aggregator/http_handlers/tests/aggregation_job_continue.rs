@@ -191,7 +191,7 @@ async fn aggregate_continue_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -244,7 +244,7 @@ async fn aggregate_continue_sync() {
                     BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::single(Time::from_seconds_since_epoch(
+                        &Interval::minimal(Time::from_seconds_since_epoch(
                             0,
                             helper_task.time_precision(),
                         ))
@@ -326,7 +326,7 @@ async fn aggregate_continue_sync() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -495,7 +495,7 @@ async fn aggregate_continue_async() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -585,7 +585,7 @@ async fn aggregate_continue_async() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Active,
             AggregationJobStep::from(1),
         )
@@ -746,13 +746,13 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
         &transcript_2.helper_input_share,
     );
 
-    let first_batch_identifier = Interval::single(*report_metadata_0.time()).unwrap();
-    let first_batch_interval = Interval::single(report_time_0)
+    let first_batch_identifier = Interval::minimal(*report_metadata_0.time()).unwrap();
+    let first_batch_interval = Interval::minimal(report_time_0)
         .unwrap()
         .merged_with(&report_time_1)
         .unwrap();
 
-    let second_batch_identifier = Interval::single(*report_metadata_2.time()).unwrap();
+    let second_batch_identifier = Interval::minimal(*report_metadata_2.time()).unwrap();
 
     // Write collected batch aggregations for the interval that report_share_2 falls
     // into, which will cause it to fail to prepare.
@@ -820,7 +820,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_0,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1138,7 +1138,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     aggregation_job_id_1,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1367,7 +1367,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1491,7 +1491,7 @@ async fn aggregate_continue_prep_step_fails() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1576,7 +1576,7 @@ async fn aggregate_continue_prep_step_fails() {
             aggregation_job_id,
             aggregation_param,
             (),
-            Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         )
@@ -1665,7 +1665,7 @@ async fn aggregate_continue_unexpected_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1801,7 +1801,7 @@ async fn aggregate_continue_out_of_order_transition() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -1922,7 +1922,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
                     aggregation_job_id,
                     dummy::AggregationParam(0),
                     (),
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))

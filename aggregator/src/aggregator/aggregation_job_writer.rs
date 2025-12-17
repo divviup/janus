@@ -639,7 +639,7 @@ where
                         batch_identifier.clone(),
                         aggregation_parameter.clone(),
                         self.batch_aggregation_ord,
-                        Interval::single(*report_aggregation.time())?,
+                        Interval::minimal(*report_aggregation.time())?,
                         if let Some(output_share) = report_aggregation.is_finished() {
                             is_finished = true;
                             BatchAggregationState::Aggregating {

@@ -87,7 +87,7 @@ async fn aggregation_job_get_ready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(*report_metadata.time()).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -211,7 +211,7 @@ async fn aggregation_job_get_unready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(*report_metadata.time()).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -315,7 +315,7 @@ async fn aggregation_job_get_wrong_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(*report_metadata.time()).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -420,7 +420,7 @@ async fn aggregation_job_get_missing_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(*report_metadata.time()).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -519,7 +519,7 @@ async fn aggregation_job_get_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::single(*report_metadata.time()).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))

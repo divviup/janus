@@ -1143,7 +1143,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::single(report_time).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1327,7 +1327,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&(), &first_report_time).unwrap(),
                     (),
                     0,
-                    Interval::single(first_report_time).unwrap(),
+                    Interval::minimal(first_report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1341,7 +1341,7 @@ mod tests {
                     TimeInterval::to_batch_identifier(&(), &second_report_time).unwrap(),
                     (),
                     0,
-                    Interval::single(second_report_time).unwrap(),
+                    Interval::minimal(second_report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1543,7 +1543,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::single(report_time).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1705,7 +1705,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::single(report_time).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1788,7 +1788,7 @@ mod tests {
                     batch_identifier,
                     (),
                     0,
-                    Interval::single(report_time).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -1887,7 +1887,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::single(report_time).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Collected {
                     aggregate_share: None,
                     report_count: 0,
@@ -2083,7 +2083,7 @@ mod tests {
                     *batch_id,
                     (),
                     0,
-                    Interval::single(report_time).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -3031,7 +3031,7 @@ mod tests {
                     *outstanding_batch.id(),
                     (),
                     0,
-                    Interval::single(report_time).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -3198,9 +3198,9 @@ mod tests {
                         *task.id(),
                         random(),
                         random(),
-                        Query::new_time_interval(Interval::single(report_time).unwrap()),
+                        Query::new_time_interval(Interval::minimal(report_time).unwrap()),
                         second_aggregation_param,
-                        Interval::single(report_time).unwrap(),
+                        Interval::minimal(report_time).unwrap(),
                         CollectionJobState::Start,
                     ))
                     .await?;

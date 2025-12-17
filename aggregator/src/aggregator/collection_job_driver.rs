@@ -999,7 +999,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::single(report_timestamp).unwrap(),
+                        Interval::minimal(report_timestamp).unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -1028,10 +1028,10 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1046,7 +1046,7 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
@@ -1056,7 +1056,7 @@ mod tests {
                             .unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
@@ -1156,7 +1156,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::single(report_timestamp).unwrap(),
+                        Interval::minimal(report_timestamp).unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -1180,10 +1180,10 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1199,7 +1199,7 @@ mod tests {
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
@@ -1209,7 +1209,7 @@ mod tests {
                             .unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
@@ -1304,10 +1304,10 @@ mod tests {
                     tx.update_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(clock.now().to_time(&time_precision)).unwrap(),
+                            Interval::minimal(clock.now().to_time(&time_precision)).unwrap(),
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 5,
@@ -1323,7 +1323,7 @@ mod tests {
                     tx.update_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))
@@ -1333,7 +1333,7 @@ mod tests {
                             .unwrap(),
                             aggregation_param,
                             0,
-                            Interval::single(
+                            Interval::minimal(
                                 clock
                                     .now()
                                     .add_timedelta(&TimeDelta::seconds(1000))

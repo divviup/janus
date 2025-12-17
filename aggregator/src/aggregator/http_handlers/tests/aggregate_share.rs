@@ -77,7 +77,7 @@ async fn aggregate_share_request_to_leader() {
 
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
         ),
         Vec::new(),
         0,
@@ -166,7 +166,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
         &task,
         &AggregateShareReq::new(
             BatchSelector::new_time_interval(
-                Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             ),
             Vec::new(),
             0,
@@ -203,7 +203,7 @@ async fn aggregate_share_request() {
     // There are no batch aggregations in the datastore yet
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
-            Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
         ),
         dummy::AggregationParam(0).get_encoded().unwrap(),
         0,
@@ -231,22 +231,22 @@ async fn aggregate_share_request() {
 
     // Put some batch aggregations in the DB.
     let interval_1 =
-        Interval::single(Time::from_seconds_since_epoch(500, task.time_precision())).unwrap();
+        Interval::minimal(Time::from_seconds_since_epoch(500, task.time_precision())).unwrap();
     let interval_1_report_count = 5;
     let interval_1_checksum = ReportIdChecksum::get_decoded(&[3; 32]).unwrap();
 
     let interval_2 =
-        Interval::single(Time::from_seconds_since_epoch(1500, task.time_precision())).unwrap();
+        Interval::minimal(Time::from_seconds_since_epoch(1500, task.time_precision())).unwrap();
     let interval_2_report_count = 5;
     let interval_2_checksum = ReportIdChecksum::get_decoded(&[2; 32]).unwrap();
 
     let interval_3 =
-        Interval::single(Time::from_seconds_since_epoch(2000, task.time_precision())).unwrap();
+        Interval::minimal(Time::from_seconds_since_epoch(2000, task.time_precision())).unwrap();
     let interval_3_report_count = 5;
     let interval_3_checksum = ReportIdChecksum::get_decoded(&[4; 32]).unwrap();
 
     let interval_4 =
-        Interval::single(Time::from_seconds_since_epoch(2500, task.time_precision())).unwrap();
+        Interval::minimal(Time::from_seconds_since_epoch(2500, task.time_precision())).unwrap();
     let interval_4_report_count = 5;
     let interval_4_checksum = ReportIdChecksum::get_decoded(&[8; 32]).unwrap();
     datastore
@@ -681,7 +681,7 @@ async fn aggregate_share_request_duplicate_with_different_id() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     // Set up batch aggregations that will be used for the duplicate requests
-    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
+    let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
 
     let aggregation_param = dummy::AggregationParam(0);
     let report_count = 5;
@@ -760,7 +760,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     // Set up batch aggregations that will be used for the duplicate requests
-    let batch_interval = Interval::single(Time::from_time_precision_units(0)).unwrap();
+    let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
 
     let aggregation_param = dummy::AggregationParam(0);
     let report_count = 5;

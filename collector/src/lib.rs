@@ -894,7 +894,7 @@ mod tests {
         CollectionJobResp {
             partial_batch_selector: PartialBatchSelector::new_leader_selected(batch_id),
             report_count: 1,
-            interval: Interval::single(Time::from_time_precision_units(0)).unwrap(),
+            interval: Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
             leader_encrypted_agg_share: hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),

@@ -469,7 +469,7 @@ async fn aggregate_init_sync() {
                     BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::single(Time::from_seconds_since_epoch(
+                        &Interval::minimal(Time::from_seconds_since_epoch(
                             0,
                             helper_task.time_precision(),
                         ))
@@ -879,7 +879,7 @@ async fn aggregate_init_batch_already_collected() {
             let task = task.clone();
             let timestamp = *prepare_init.report_share().metadata().time();
             Box::pin(async move {
-                let interval = Interval::single(timestamp).unwrap();
+                let interval = Interval::minimal(timestamp).unwrap();
 
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.

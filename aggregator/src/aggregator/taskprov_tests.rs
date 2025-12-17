@@ -834,7 +834,7 @@ async fn taskprov_aggregate_continue() {
                     aggregation_job_id,
                     aggregation_param,
                     batch_id,
-                    Interval::single(Time::from_time_precision_units(0)).unwrap(),
+                    Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -951,7 +951,7 @@ async fn taskprov_aggregate_share() {
         .run_unnamed_tx(|tx| {
             let task = test.task.clone();
             let interval =
-                Interval::single(Time::from_seconds_since_epoch(6000, task.time_precision()))
+                Interval::minimal(Time::from_seconds_since_epoch(6000, task.time_precision()))
                     .unwrap();
             let transcript = transcript.clone();
 

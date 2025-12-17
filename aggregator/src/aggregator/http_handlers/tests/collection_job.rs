@@ -42,7 +42,7 @@ async fn collection_job_put_request_to_helper() {
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
+            Interval::minimal(Time::from_seconds_since_epoch(
                 0,
                 test_case.task.time_precision(),
             ))
@@ -122,7 +122,7 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
         Query::new_time_interval(
-            Interval::single(Time::from_seconds_since_epoch(
+            Interval::minimal(Time::from_seconds_since_epoch(
                 0,
                 test_case.task.time_precision(),
             ))
@@ -171,7 +171,7 @@ async fn collection_job_put_request_invalid_batch_size() {
 
     let collection_job_id: CollectionJobId = random();
     let request = CollectionJobReq::new(
-        Query::new_time_interval(Interval::single(Time::from_time_precision_units(0)).unwrap()),
+        Query::new_time_interval(Interval::minimal(Time::from_time_precision_units(0)).unwrap()),
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
@@ -208,7 +208,7 @@ async fn collection_job_put_request_unauthenticated() {
         ))
         .await;
 
-    let batch_interval = Interval::single(Time::from_seconds_since_epoch(
+    let batch_interval = Interval::minimal(Time::from_seconds_since_epoch(
         0,
         test_case.task.time_precision(),
     ))
@@ -258,7 +258,7 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
         ))
         .await;
 
-    let batch_interval = Interval::single(Time::from_seconds_since_epoch(
+    let batch_interval = Interval::minimal(Time::from_seconds_since_epoch(
         0,
         test_case.task.time_precision(),
     ))

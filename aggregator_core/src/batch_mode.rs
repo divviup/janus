@@ -75,7 +75,7 @@ impl AccumulableBatchMode for TimeInterval {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        Interval::single(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
+        Interval::minimal(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
     }
 
     async fn get_collection_jobs_including<
@@ -352,7 +352,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         // Unwrap safety: errors can only occur if the times being unwrapped cannot be represented
         // as a Time. The relevant times can always be represented since they are internal to the
         // batch interval used to create the iterator.
-        let interval = Interval::single(
+        let interval = Interval::minimal(
             self.start
                 .add_timedelta(
                     &TimeDelta::try_seconds_unsigned(self.step * self.time_precision.as_seconds())

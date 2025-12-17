@@ -463,7 +463,7 @@ async fn upload_report_for_collected_batch() {
     );
 
     // Insert a collection job for the batch interval including our report.
-    let batch_interval = Interval::single(*report.metadata().time()).unwrap();
+    let batch_interval = Interval::minimal(*report.metadata().time()).unwrap();
     datastore
         .run_unnamed_tx(|tx| {
             let task = task.clone();
