@@ -60,15 +60,13 @@ pub(super) async fn upload_replay_report(
         &measurement,
         report_id.as_ref(),
     )?;
-    let rounded_time = *report_time;
-
     let report = prepare_report(
         http_client,
         task,
         public_share,
         input_shares,
         report_id,
-        rounded_time,
+        *report_time,
     )
     .await?;
     upload_report(http_client, task, report).await

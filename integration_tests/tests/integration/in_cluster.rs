@@ -42,6 +42,8 @@ use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
 
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
+
 /// Options for running tests.
 #[derive(Debug, Parser)]
 #[clap(
@@ -648,7 +650,7 @@ async fn in_cluster_time_bucketed_leader_selected() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(100),
+                &TEST_TIME_PRECISION,
             )),
         },
     )
@@ -949,7 +951,7 @@ async fn in_cluster_histogram_dp_noise() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(100),
+                &TEST_TIME_PRECISION,
             )),
         },
     )
@@ -1025,7 +1027,7 @@ async fn in_cluster_sumvec_dp_noise() {
         BatchMode::LeaderSelected {
             batch_time_window_size: Some(JanusDuration::from_chrono(
                 TimeDelta::hours(8),
-                &TimePrecision::from_seconds(100),
+                &TEST_TIME_PRECISION,
             )),
         },
     )

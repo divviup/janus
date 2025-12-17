@@ -25,7 +25,6 @@ pub trait AccumulableBatchMode: BatchMode {
     /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
     /// necessary functionality to be implemented for all batch modes.
     fn to_batch_identifier(
-        _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
@@ -73,7 +72,6 @@ pub trait AccumulableBatchMode: BatchMode {
 #[async_trait]
 impl AccumulableBatchMode for TimeInterval {
     fn to_batch_identifier(
-        _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
@@ -130,7 +128,6 @@ impl AccumulableBatchMode for TimeInterval {
 #[async_trait]
 impl AccumulableBatchMode for LeaderSelected {
     fn to_batch_identifier(
-        _: &AggregatorTask,
         batch_id: &Self::PartialBatchIdentifier,
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
@@ -336,18 +333,9 @@ pub struct TimeIntervalBatchIdentifierIter {
 
 impl TimeIntervalBatchIdentifierIter {
     fn new(time_precision: &TimePrecision, batch_interval: &Interval) -> Self {
-        // Sanity check that the given interval is of an appropriate length. We use an assert as
-        // this is expected to be checked before this method is used.
-        assert_eq!(
-            batch_interval.duration().as_seconds(time_precision) % time_precision.as_seconds(),
-            0
-        );
-        let total_step_count =
-            batch_interval.duration().as_seconds(time_precision) / time_precision.as_seconds();
-
         Self {
             step: 0,
-            total_step_count,
+            total_step_count: batch_interval.duration().as_time_precision_units(),
             start: *batch_interval.start(),
             time_precision: *time_precision,
         }

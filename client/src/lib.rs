@@ -572,6 +572,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// # use janus_messages::{taskprov::TimePrecision, Time};
     /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
+    /// # use std::time::SystemTime;
     /// #
     /// # async fn test() -> Result<(), Error> {
     /// # let measurement1 = true;
@@ -588,11 +589,12 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// // Upload multiple measurements with explicit timestamps.
     /// // Can use SystemTime for wall clock times:
-    /// let now = std::time::SystemTime::now();
-    /// let earlier = now - std::time::Duration::from_secs(3600);
+    /// let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+    /// let earlier = now - 3600;
+    ///
     /// client.upload_with_time(&[
-    ///     (measurement1, Time::from_systemtime(earlier, &time_precision)),
-    ///     (measurement2, Time::from_systemtime(now, &time_precision)),
+    ///     (measurement1, Time::from_seconds_since_epoch(earlier, &time_precision)),
+    ///     (measurement2, Time::from_seconds_since_epoch(now, &time_precision)),
     /// ]).await?;
     ///
     /// # Ok(())

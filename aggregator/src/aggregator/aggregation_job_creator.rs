@@ -990,8 +990,7 @@ mod tests {
             .leader_view()
             .unwrap(),
         );
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let leader_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
@@ -1308,10 +1307,7 @@ mod tests {
             assert_eq!(
                 report_aggs
                     .iter()
-                    .map(
-                        |ra| TimeInterval::to_batch_identifier(task.as_ref(), &(), ra.time())
-                            .unwrap()
-                    )
+                    .map(|ra| TimeInterval::to_batch_identifier(&(), ra.time()).unwrap())
                     .collect::<HashSet<_>>()
                     .len(),
                 1
@@ -1328,7 +1324,7 @@ mod tests {
             Vec::from([
                 BatchAggregation::new(
                     *task.id(),
-                    TimeInterval::to_batch_identifier(&task, &(), &first_report_time).unwrap(),
+                    TimeInterval::to_batch_identifier(&(), &first_report_time).unwrap(),
                     (),
                     0,
                     Interval::single(first_report_time).unwrap(),
@@ -1342,7 +1338,7 @@ mod tests {
                 ),
                 BatchAggregation::new(
                     *task.id(),
-                    TimeInterval::to_batch_identifier(&task, &(), &second_report_time).unwrap(),
+                    TimeInterval::to_batch_identifier(&(), &second_report_time).unwrap(),
                     (),
                     0,
                     Interval::single(second_report_time).unwrap(),
@@ -1377,7 +1373,7 @@ mod tests {
         );
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -1580,7 +1576,7 @@ mod tests {
         assert!(late_report_grace_period >= *task.time_precision());
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -1746,7 +1742,7 @@ mod tests {
         let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());

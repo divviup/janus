@@ -314,12 +314,8 @@ async fn collection_job_success_time_interval() {
         ))
         .await;
 
-    let batch_interval = TimeInterval::to_batch_identifier(
-        &test_case.task.leader_view().unwrap(),
-        &(),
-        &Time::from_time_precision_units(0),
-    )
-    .unwrap();
+    let batch_interval =
+        TimeInterval::to_batch_identifier(&(), &Time::from_time_precision_units(0)).unwrap();
 
     let aggregation_param = dummy::AggregationParam::default();
     let leader_aggregate_share = dummy::AggregateShare(0);

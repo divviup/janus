@@ -149,7 +149,7 @@ impl CommonTaskParameters {
             batch_time_window_size: Some(batch_time_window_size),
         } = batch_mode
         {
-            if batch_time_window_size.as_seconds(&time_precision) == 0 {
+            if batch_time_window_size == Duration::ZERO {
                 return Err(Error::InvalidParameter("batch_time_window_size is zero"));
             }
         }
@@ -275,11 +275,8 @@ impl AggregatorTask {
                 return Err(Error::InvalidParameter(
                     "batch_time_window_size is not supported for taskprov",
                 ));
-            } else if batch_time_window_size.as_seconds(&common_parameters.time_precision)
-                % common_parameters.time_precision.as_seconds()
-                != 0
-            {
-                return Err(Error::InvalidParameter("batch_time_window_size"));
+            } else if batch_time_window_size == Duration::ZERO {
+                return Err(Error::InvalidParameter("batch_time_window_size is zero"));
             }
         }
 

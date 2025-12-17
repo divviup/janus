@@ -31,7 +31,6 @@ use std::{
     io::{Cursor, Read},
     num::TryFromIntError,
     str::{self, FromStr},
-    time::SystemTime,
 };
 
 pub use prio::codec;
@@ -138,7 +137,7 @@ impl TryFrom<&Url> for url::Url {
     }
 }
 
-/// DAP protocol message representing a duration as a multiple of the task's time precision.
+/// DAP protocol message representing a duration in terms of the task's time precision.
 /// The value represents the number of time_precision intervals.
 ///
 /// To convert between this representation and real-world durations (seconds),
@@ -147,10 +146,14 @@ impl TryFrom<&Url> for url::Url {
 pub struct Duration(u64);
 
 impl Duration {
+    /// A zero-length duration.
     pub const ZERO: Duration = Duration::from_time_precision_units(0);
+
+    /// A duration that lasts for one of a task's time precision intervals.
     pub const ONE: Duration = Duration::from_time_precision_units(1);
 
-    /// Create a duration representing the provided number of seconds, given the task's time precision.
+    /// Create a duration representing the provided number of seconds, given the task's time
+    /// precision.
     ///
     /// The duration will be rounded down to the nearest multiple of time_precision.
     ///
@@ -168,7 +171,8 @@ impl Duration {
         Self(seconds / precision_secs)
     }
 
-    /// Create a duration representing the provided number of hours, given the task's time precision.
+    /// Create a duration representing the provided number of hours, given the task's time
+    /// precision.
     ///
     /// The duration will be rounded down to the nearest multiple of time_precision.
     ///
@@ -200,13 +204,11 @@ impl Duration {
     }
 
     /// Construct a [`Duration`] from the raw number of time_precision units.
-    /// This is primarily for testing and internal use.
     pub const fn from_time_precision_units(units: u64) -> Self {
         Self(units)
     }
 
     /// Get the raw number of time_precision units.
-    /// This is primarily for testing and internal use.
     pub fn as_time_precision_units(&self) -> u64 {
         self.0
     }
@@ -281,8 +283,8 @@ impl Display for Duration {
     }
 }
 
-/// DAP protocol message representing an instant in time as a multiple of the task's time
-/// precision. The value represents the number of time_precision intervals since the Unix epoch
+/// DAP protocol message representing an instant in time in terms of of the task's time precision
+/// The value represents the number of time_precision intervals since the Unix epoch
 /// (January 1st, 1970, at 0:00:00 UTC).
 ///
 /// To convert between this representation and real-world timestamps (seconds since epoch),
@@ -308,28 +310,6 @@ impl Time {
         let precision_secs = time_precision.as_seconds();
         assert!(precision_secs > 0);
         Self(timestamp / precision_secs)
-    }
-
-    /// Construct a [`Time`] representing the provided [`SystemTime`], given the task's
-    /// time precision.
-    ///
-    /// The time will be rounded down to the nearest multiple of time_precision.
-    ///
-    /// # Arguments
-    /// * `time` - SystemTime
-    /// * `time_precision` - The task's time precision
-    ///
-    /// # Panics
-    /// Panics if `time_precision.as_seconds()` is 0, or `time` is before the UNIX Epoch.
-    ///
-    pub fn from_systemtime(time: SystemTime, time_precision: &TimePrecision) -> Self {
-        let precision_secs = time_precision.as_seconds();
-        assert!(precision_secs > 0);
-        let seconds = match time.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(n) => n.as_secs(),
-            Err(_) => panic!("SystemTime is before the Epoch"),
-        };
-        Self(seconds / precision_secs)
     }
 
     /// Get the number of seconds from January 1st, 1970, at 0:00:00 UTC to the instant represented
@@ -380,8 +360,8 @@ impl Decode for Time {
     }
 }
 
-/// DAP protocol message representing a half-open interval of time with a resolution of seconds;
-/// the start of the interval is included while the end of the interval is excluded.
+/// DAP protocol message representing a half-open interval of time in terms of the task's time
+//  precision. The start of the interval is included while the end of the interval is excluded.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     /// The start of the interval.
