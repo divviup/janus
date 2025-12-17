@@ -1495,12 +1495,7 @@ SELECT EXISTS(
                 &[
                     /* task_id */ &task_info.pkey,
                     /* batch_interval */
-                    &SqlInterval::from(
-                        batch_interval.to_time_precision(
-                            &task_info.time_precision,
-                            &SQL_UNIT_TIME_PRECISION,
-                        )?,
-                    ),
+                    &SqlInterval::from_task_interval(batch_interval, &task_info.time_precision)?,
                     /* threshold */
                     &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
                 ],
@@ -1540,12 +1535,7 @@ WHERE client_reports.task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* batch_interval */
-                    &SqlInterval::from(
-                        batch_interval.to_time_precision(
-                            &task_info.time_precision,
-                            &SQL_UNIT_TIME_PRECISION,
-                        )?,
-                    ),
+                    &SqlInterval::from_task_interval(batch_interval, &task_info.time_precision)?,
                     /* threshold */
                     &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
                 ],
@@ -1948,8 +1938,7 @@ WHERE aggregation_jobs.task_id = $1
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error> {
         let client_timestamp_interval = row
             .get::<_, SqlInterval>("client_timestamp_interval")
-            .as_interval()
-            .to_time_precision(&SQL_UNIT_TIME_PRECISION, time_precision)?;
+            .to_task_interval(time_precision)?;
 
         let mut job = AggregationJob::new(
             *task_id,
@@ -2154,14 +2143,10 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
                     /* batch_id */
                     &aggregation_job.partial_batch_identifier().get_encoded()?,
                     /* client_timestamp_interval */
-                    &SqlInterval::from(
-                        aggregation_job
-                            .client_timestamp_interval()
-                            .to_time_precision(
-                                &task_info.time_precision,
-                                &SQL_UNIT_TIME_PRECISION,
-                            )?,
-                    ),
+                    &SqlInterval::from_task_interval(
+                        aggregation_job.client_timestamp_interval(),
+                        &task_info.time_precision,
+                    )?,
                     /* state */ &aggregation_job.state(),
                     /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */ &aggregation_job.last_request_hash(),
@@ -3220,10 +3205,7 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* batch_interval */
-                &SqlInterval::from(
-                    batch_interval
-                        .to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)?,
-                ),
+                &SqlInterval::from_task_interval(batch_interval, &task_info.time_precision)?,
                 /* threshold */
                 &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],
@@ -3405,8 +3387,7 @@ WHERE task_id = $1
                     .ok_or_else(|| Error::DbState(
                         "collection job in state FINISHED but client_timestamp_interval is NULL".to_string())
                     )?
-                    .as_interval()
-                    .to_time_precision(&SQL_UNIT_TIME_PRECISION, time_precision)?;
+                    .to_task_interval(time_precision)?;
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -3466,11 +3447,8 @@ WHERE task_id = $1
         let now = self.clock.now().naive_utc();
 
         let batch_interval = B::to_batch_interval(collection_job.batch_identifier())
-            .map(|interval| {
-                interval.to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)
-            })
-            .transpose()?
-            .map(SqlInterval::from);
+            .map(|interval| SqlInterval::from_task_interval(interval, &task_info.time_precision))
+            .transpose()?;
 
         let stmt = self
             .prepare_cached(
@@ -3709,10 +3687,10 @@ WHERE task_id = $4
                 leader_aggregate_share,
             } => {
                 let report_count = Some(i64::try_from(*report_count)?);
-                let client_timestamp_interval = Some(SqlInterval::from(
-                    client_timestamp_interval
-                        .to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)?,
-                ));
+                let client_timestamp_interval = Some(SqlInterval::from_task_interval(
+                    client_timestamp_interval,
+                    &task_info.time_precision,
+                )?);
                 let leader_aggregate_share = Some(leader_aggregate_share.get_encoded()?);
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
@@ -4101,8 +4079,7 @@ WHERE task_id = $1
 
         let client_timestamp_interval = row
             .get::<_, SqlInterval>("client_timestamp_interval")
-            .as_interval()
-            .to_time_precision(&SQL_UNIT_TIME_PRECISION, time_precision)?;
+            .to_task_interval(time_precision)?;
         let state: BatchAggregationStateCode = row.get("state");
         let state = match state {
             BatchAggregationStateCode::Aggregating => {
@@ -4167,11 +4144,8 @@ WHERE task_id = $1
         let now = self.clock.now().naive_utc();
 
         let batch_interval = B::to_batch_interval(batch_aggregation.batch_identifier())
-            .map(|interval| {
-                interval.to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)
-            })
-            .transpose()?
-            .map(SqlInterval::from);
+            .map(|interval| SqlInterval::from_task_interval(interval, &task_info.time_precision))
+            .transpose()?;
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
         let stmt = self
@@ -4218,14 +4192,10 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                     &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     /* client_timestamp_interval */
-                    &SqlInterval::from(
-                        batch_aggregation
-                            .client_timestamp_interval()
-                            .to_time_precision(
-                                &task_info.time_precision,
-                                &SQL_UNIT_TIME_PRECISION,
-                            )?,
-                    ),
+                    &SqlInterval::from_task_interval(
+                        batch_aggregation.client_timestamp_interval(),
+                        &task_info.time_precision,
+                    )?,
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4294,14 +4264,10 @@ WHERE task_id = $10
                 &stmt,
                 &[
                     /* client_timestamp_interval */
-                    &SqlInterval::from(
-                        batch_aggregation
-                            .client_timestamp_interval()
-                            .to_time_precision(
-                                &task_info.time_precision,
-                                &SQL_UNIT_TIME_PRECISION,
-                            )?,
-                    ),
+                    &SqlInterval::from_task_interval(
+                        batch_aggregation.client_timestamp_interval(),
+                        &task_info.time_precision,
+                    )?,
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4481,10 +4447,7 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* interval */
-                &SqlInterval::from(
-                    interval
-                        .to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)?,
-                ),
+                &SqlInterval::from_task_interval(interval, &task_info.time_precision)?,
                 /* threshold */
                 &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],
@@ -4656,11 +4619,8 @@ WHERE task_id = $1
         };
         let now = self.clock.now().naive_utc();
         let batch_interval = B::to_batch_interval(aggregate_share_job.batch_identifier())
-            .map(|interval| {
-                interval.to_time_precision(&task_info.time_precision, &SQL_UNIT_TIME_PRECISION)
-            })
-            .transpose()?
-            .map(SqlInterval::from);
+            .map(|interval| SqlInterval::from_task_interval(interval, &task_info.time_precision))
+            .transpose()?;
 
         let stmt = self
             .prepare_cached(

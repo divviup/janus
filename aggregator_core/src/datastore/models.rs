@@ -2145,6 +2145,44 @@ impl SqlInterval {
     pub fn as_interval(&self) -> Interval {
         self.0
     }
+
+    /// Convert an interval from task time precision to SQL time precision.
+    pub fn from_task_interval(
+        interval: &Interval,
+        task_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
+        Ok(Self(Self::convert_time_precision(
+            interval,
+            task_precision,
+            &SQL_UNIT_TIME_PRECISION,
+        )?))
+    }
+
+    /// Convert this SQL interval to task time precision.
+    pub fn to_task_interval(&self, task_precision: &TimePrecision) -> Result<Interval, Error> {
+        Ok(Self::convert_time_precision(
+            &self.0,
+            &SQL_UNIT_TIME_PRECISION,
+            task_precision,
+        )?)
+    }
+
+    /// Convert an interval from one time precision to another. This is deliberately
+    /// private as this is a dangerous conversion.
+    fn convert_time_precision(
+        interval: &Interval,
+        from_precision: &TimePrecision,
+        to_precision: &TimePrecision,
+    ) -> Result<Interval, janus_messages::Error> {
+        // Convert start and duration from source precision to target precision
+        let start_seconds = interval.start().as_seconds_since_epoch(from_precision);
+        let duration_seconds = interval.duration().as_seconds(from_precision);
+
+        let new_start = Time::from_seconds_since_epoch(start_seconds, to_precision);
+        let new_duration = Duration::from_seconds(duration_seconds, to_precision);
+
+        Interval::new(new_start, new_duration)
+    }
 }
 
 impl From<Interval> for SqlInterval {
