@@ -578,8 +578,10 @@ impl Display for TimePrecision {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Duration, Time, TimePrecision, Url, batch_mode, roundtrip_encoding,
-        taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
+        Duration, Time, Url, batch_mode, roundtrip_encoding,
+        taskprov::{
+            TaskConfig, TaskbindExtension, TaskbindExtensionType, TimePrecision, VdafConfig,
+        },
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode as _};
