@@ -3,7 +3,6 @@ use crate::aggregator::{
     test_util::{create_report, create_report_custom, default_aggregator_config},
 };
 use assert_matches::assert_matches;
-use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
@@ -691,7 +690,7 @@ async fn upload_report_report_expired() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
-    .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
+    .with_report_expiry_age(Some(Duration::from_time_precision_units(1)))
     .build()
     .leader_view()
     .unwrap();
@@ -704,12 +703,13 @@ async fn upload_report_report_expired() {
     );
 
     // Advance the clock to expire the report.
-    // We need to advance past the expiry age (60s) plus enough to move to the next time precision
-    // bucket (100s precision means we need >100s total time).
-    clock.advance(TimeDelta::seconds(200));
+    // We need to advance past the expiry age plus enough to move to the next time precision
+    // bucket, so 2x time precision.
+    clock.advance(time_precision.to_chrono().unwrap().checked_mul(2).unwrap());
 
-    // Try to upload the report. For expired reports, the upload may succeed but the report
-    // won't be stored (it's dropped asynchronously during batch write).
+    // Try to upload the report. For expired reports, the upload must succeed but the report
+    // won't be stored (it's dropped asynchronously during batch write), and we want to see
+    // the ReportDropped status returned.
     let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await

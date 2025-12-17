@@ -400,3 +400,24 @@ impl CollectableBatchMode for LeaderSelected {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::batch_mode::CollectableBatchMode;
+    use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
+
+    #[test]
+    fn reject_null_collection_intervals() {
+        assert!(!TimeInterval::validate_collection_identifier(
+            &Interval::new(Time::from_time_precision_units(0), Duration::ZERO).unwrap()
+        ));
+
+        assert!(TimeInterval::validate_collection_identifier(
+            &Interval::new(
+                Time::from_time_precision_units(0),
+                Duration::from_time_precision_units(1)
+            )
+            .unwrap()
+        ));
+    }
+}

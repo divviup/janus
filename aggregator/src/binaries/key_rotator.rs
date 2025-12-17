@@ -129,6 +129,7 @@ mod tests {
             },
             key_rotator: KeyRotatorConfig {
                 hpke: HpkeKeyRotatorConfig {
+                    // This terribleness will get revisited in Issue #4216.
                     pending_duration: Duration::from_seconds(random(), &time_precision),
                     active_duration: Duration::from_seconds(random(), &time_precision),
                     expired_duration: Duration::from_seconds(random(), &time_precision),
