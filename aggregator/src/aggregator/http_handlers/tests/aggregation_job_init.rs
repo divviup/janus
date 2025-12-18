@@ -25,7 +25,7 @@ use janus_core::{
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     test_util::run_vdaf,
-    time::{Clock, DateTimeExt, MockClock},
+    time::{Clock, MockClock},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -282,11 +282,7 @@ async fn aggregate_init_sync() {
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_5 = ReportMetadata::new(
         random(),
-        past_clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        past_clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_5 = run_vdaf(
@@ -318,11 +314,7 @@ async fn aggregate_init_sync() {
     let public_share_6 = Vec::from([0]);
     let report_metadata_6 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_6 = run_vdaf(
@@ -354,11 +346,7 @@ async fn aggregate_init_sync() {
     // prepare_init_7 fails due to having repeated public extensions.
     let report_metadata_7 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::from([
             Extension::new(ExtensionType::Tbd, Vec::new()),
             Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -392,11 +380,7 @@ async fn aggregate_init_sync() {
     // prepare_init_8 fails due to having repeated private extensions.
     let report_metadata_8 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript_8 = run_vdaf(
@@ -431,11 +415,7 @@ async fn aggregate_init_sync() {
     // extensions.
     let report_metadata_9 = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
     );
     let transcript_9 = run_vdaf(
@@ -489,10 +469,10 @@ async fn aggregate_init_sync() {
                     BatchAggregationsIterator::<0, TimeInterval, dummy::Vdaf>::new(
                         &helper_task,
                         BATCH_AGGREGATION_SHARD_COUNT,
-                        &Interval::new(
-                            Time::from_seconds_since_epoch(0),
-                            *helper_task.time_precision(),
-                        )
+                        &Interval::minimal(Time::from_seconds_since_epoch(
+                            0,
+                            helper_task.time_precision(),
+                        ))
                         .unwrap(),
                         &dummy::AggregationParam(0),
                         [],
@@ -899,7 +879,7 @@ async fn aggregate_init_batch_already_collected() {
             let task = task.clone();
             let timestamp = *prepare_init.report_share().metadata().time();
             Box::pin(async move {
-                let interval = Interval::new(timestamp, *task.time_precision()).unwrap();
+                let interval = Interval::minimal(timestamp).unwrap();
 
                 // Insert for all possible shards, since we non-deterministically assign shards
                 // to batches on insertion.

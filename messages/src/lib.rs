@@ -3,13 +3,9 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::{
-    batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
-};
+use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
 use core::slice;
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
@@ -31,9 +27,7 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
     num::TryFromIntError,
-    str,
-    str::FromStr,
-    time::{SystemTime, SystemTimeError},
+    str::{self, FromStr},
 };
 
 pub use prio::codec;
@@ -43,6 +37,9 @@ pub mod problem_type;
 pub mod taskprov;
 #[cfg(test)]
 mod tests;
+pub mod time;
+
+pub use time::{Duration, Interval, Time};
 
 /// Messages which have an HTTP media type associated with them.
 pub trait MediaType {
@@ -137,235 +134,6 @@ impl TryFrom<&Url> for url::Url {
         // Unwrap safety: this type can't be constructed without being validated
         // as consisting only of ASCII.
         url::Url::parse(str::from_utf8(&value.0).unwrap())
-    }
-}
-
-/// DAP protocol message representing a duration with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Duration(u64);
-
-impl Duration {
-    pub const ZERO: Duration = Duration::from_seconds(0);
-
-    /// Create a duration representing the provided number of seconds.
-    pub const fn from_seconds(seconds: u64) -> Self {
-        Self(seconds)
-    }
-
-    /// Create a duration representing the provided number of hours.
-    ///
-    /// This is a convenience method for tests. For production code with time
-    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
-    #[cfg(any(test, feature = "test-util"))]
-    pub const fn from_hours(hours: u64) -> Self {
-        Self(hours * 3600)
-    }
-
-    /// Get the number of seconds this duration represents.
-    pub fn as_seconds(&self) -> u64 {
-        self.0
-    }
-
-    /// Convert this [`Duration`] into a [`chrono::TimeDelta`].
-    ///
-    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
-    /// seconds is too large for i64 or the resulting milliseconds would overflow).
-    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
-        chrono::TimeDelta::try_seconds(
-            self.0
-                .try_into()
-                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
-        )
-        .ok_or(Error::IllegalTimeArithmetic(
-            "number of milliseconds too big for i64",
-        ))
-    }
-
-    /// Create a [`Duration`] from a [`chrono::TimeDelta`].
-    ///
-    /// The duration will be rounded down to the nearest second.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the delta is negative, as DAP durations must be non-negative.
-    pub fn from_chrono(delta: chrono::TimeDelta) -> Self {
-        let seconds = delta.num_seconds();
-        assert!(
-            seconds >= 0,
-            "Duration::from_chrono called with negative TimeDelta"
-        );
-        Self::from_seconds(seconds as u64)
-    }
-}
-
-impl Encode for Duration {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.0.encode(bytes)
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
-    }
-}
-
-impl Decode for Duration {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u64::decode(bytes)?))
-    }
-}
-
-impl Display for Duration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} seconds", self.0)
-    }
-}
-
-/// DAP protocol message representing an instant in time with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Time(u64);
-
-impl Time {
-    /// Construct a [`Time`] representing the instant that is a given number of seconds after
-    /// January 1st, 1970, at 0:00:00 UTC (i.e., the instant with the Unix timestamp of
-    /// `timestamp`).
-    pub const fn from_seconds_since_epoch(timestamp: u64) -> Self {
-        Self(timestamp)
-    }
-
-    /// Get the number of seconds from January 1st, 1970, at 0:00:00 UTC to the instant represented
-    /// by this [`Time`] (i.e., the Unix timestamp for the instant it represents).
-    pub fn as_seconds_since_epoch(&self) -> u64 {
-        self.0
-    }
-}
-
-impl Display for Time {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Encode for Time {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.0.encode(bytes)
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
-    }
-}
-
-impl Decode for Time {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u64::decode(bytes)?))
-    }
-}
-
-impl TryFrom<SystemTime> for Time {
-    type Error = SystemTimeError;
-
-    fn try_from(time: SystemTime) -> Result<Self, Self::Error> {
-        let duration = time.duration_since(SystemTime::UNIX_EPOCH)?;
-        Ok(Time::from_seconds_since_epoch(duration.as_secs()))
-    }
-}
-
-// Allow direct comparison between Time and DateTime<Utc>
-impl PartialEq<DateTime<Utc>> for Time {
-    fn eq(&self, other: &DateTime<Utc>) -> bool {
-        let other_timestamp =
-            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
-        self.as_seconds_since_epoch() == other_timestamp
-    }
-}
-
-impl PartialOrd<DateTime<Utc>> for Time {
-    fn partial_cmp(&self, other: &DateTime<Utc>) -> Option<std::cmp::Ordering> {
-        let other_timestamp =
-            u64::try_from(other.timestamp()).expect("timestamps must be non-negative");
-        self.as_seconds_since_epoch().partial_cmp(&other_timestamp)
-    }
-}
-
-/// DAP protocol message representing a half-open interval of time with a resolution of seconds;
-/// the start of the interval is included while the end of the interval is excluded.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Interval {
-    /// The start of the interval.
-    start: Time,
-    /// The length of the interval.
-    duration: Duration,
-}
-
-impl Interval {
-    pub const EMPTY: Self = Self {
-        start: Time::from_seconds_since_epoch(0),
-        duration: Duration::ZERO,
-    };
-
-    /// Create a new [`Interval`] from the provided start and time precision.
-    /// Returns an error if the end of the interval cannot be represented as a [`Time`].
-    ///
-    /// This is the preferred constructor for intervals based on task time precision.
-    /// For intervals with arbitrary durations, use [`Interval::new_with_duration`].
-    pub fn new(start: Time, time_precision: TimePrecision) -> Result<Self, Error> {
-        let duration = Duration::from_seconds(time_precision.as_seconds());
-        start
-            .0
-            .checked_add(time_precision.as_seconds())
-            .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
-
-        Ok(Self { start, duration })
-    }
-
-    /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
-    /// of the interval cannot be represented as a [`Time`].
-    ///
-    /// This constructor is for intervals with arbitrary durations. For intervals based on
-    /// task time precision, prefer [`Interval::new`].
-    pub fn new_with_duration(start: Time, duration: Duration) -> Result<Self, Error> {
-        start
-            .0
-            .checked_add(duration.0)
-            .ok_or(Error::IllegalTimeArithmetic("duration overflows time"))?;
-
-        Ok(Self { start, duration })
-    }
-
-    /// Returns a [`Time`] representing the included start of this interval.
-    pub fn start(&self) -> &Time {
-        &self.start
-    }
-
-    /// Get the duration of this interval.
-    pub fn duration(&self) -> &Duration {
-        &self.duration
-    }
-}
-
-impl Encode for Interval {
-    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.start.encode(bytes)?;
-        self.duration.encode(bytes)
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(self.start.encoded_len()? + self.duration.encoded_len()?)
-    }
-}
-
-impl Decode for Interval {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let start = Time::decode(bytes)?;
-        let duration = Duration::decode(bytes)?;
-
-        Self::new_with_duration(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
-    }
-}
-
-impl Display for Interval {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "start: {} duration: {}", self.start, self.duration)
     }
 }
 

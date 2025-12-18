@@ -24,28 +24,28 @@
   # determined by the task's VDAF.
   vdaf_verify_key: "1CmuYNtBLYIoXN8bU0T_XA"
 
-  # The task's end time, as a number of seconds after the Unix epoch.
-  task_end: 1704088800
-
-  # Time in seconds after which reports expire and may be garbage collected.
-  # This is a Janus-specific parameter. Garbage collection for a task may
-  # be disabled by setting this to `null`.
-  report_expiry_age: 7776000
-
-  # Minimum number of reports that a batch must contain before the batch may be
-  # collected.
-  min_batch_size: 100
-
   # The DAP task's time precision. This determines how clients round report
   # timestamps, and sets the minimum duration of any batch interval for time
   # interval queries.
   time_precision: 1800
 
+  # The task's end time, as a number of time_precision units since the UNIX epoch
+  task_end: 946716
+
+  # Time in time_precision units after which reports expire and may be garbage collected.
+  # This is a Janus-specific parameter. Garbage collection for a task may
+  # be disabled by setting this to `null`.
+  report_expiry_age: 4320
+
+  # Minimum number of reports that a batch must contain before the batch may be
+  # collected.
+  min_batch_size: 100
+
   # This determines the maximum allowable clock skew between clients and the
-  # aggregator, in seconds. If a report is received that has a timestamp further
-  # in the future than this amount, it will be rejected. This is a
-  # Janus-specific parameter.
-  tolerable_clock_skew: 60
+  # aggregator, in time_precision units. If a report is received that has a
+  # timestamp further in the future than this amount, it will be rejected. This
+  # is a Janus-specific parameter.
+  tolerable_clock_skew: 1
 
   # The collector's HPKE configuration. The public key is encoded in base64url.
   collector_hpke_config:
@@ -100,11 +100,11 @@
   vdaf: Prio3Count
   role: Helper
   vdaf_verify_key: "ZXtE4kLqtsCOr8h_pNUeoQ"
-  task_end: 1704088800
+  task_end: 5680296
   report_expiry_age: null
   min_batch_size: 100
   time_precision: 300
-  tolerable_clock_skew: 60
+  tolerable_clock_skew: 1
   collector_hpke_config:
     id: 80
     kem_id: X25519HkdfSha256

@@ -1,9 +1,11 @@
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
     Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, UploadRequest,
-    UploadResponse, roundtrip_encoding, roundtrip_encoding_parameterized,
+    UploadResponse, roundtrip_encoding, roundtrip_encoding_parameterized, taskprov::TimePrecision,
 };
 use prio::codec::Encode;
+
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]
 fn roundtrip_report_id() {
@@ -61,7 +63,7 @@ fn roundtrip_report_metadata() {
         (
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                Time::from_seconds_since_epoch(12345),
+                Time::from_seconds_since_epoch(12345, &TEST_TIME_PRECISION),
                 Vec::new(),
             ),
             concat!(
@@ -76,7 +78,7 @@ fn roundtrip_report_metadata() {
         (
             ReportMetadata::new(
                 ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                Time::from_seconds_since_epoch(54321),
+                Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                 Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
             ),
             concat!(
@@ -151,7 +153,7 @@ fn roundtrip_report() {
             Report::new(
                 ReportMetadata::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                    Time::from_seconds_since_epoch(12345),
+                    Time::from_seconds_since_epoch(12345, &TEST_TIME_PRECISION),
                     Vec::new(),
                 ),
                 Vec::new(),
@@ -210,7 +212,7 @@ fn roundtrip_report() {
             Report::new(
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                    Time::from_seconds_since_epoch(54321),
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 Vec::from("3210"),
@@ -284,7 +286,7 @@ fn roundtrip_input_share_aad() {
             task_id: TaskId::from([12u8; 32]),
             metadata: ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                Time::from_seconds_since_epoch(54321),
+                Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                 Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
             ),
             public_share: Vec::from("0123"),
@@ -334,7 +336,7 @@ fn roundtrip_upload_request() {
             let val = UploadRequest::new(vec![Report::new(
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                    Time::from_seconds_since_epoch(54321),
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 Vec::from("3210"),
@@ -404,7 +406,7 @@ fn roundtrip_upload_request() {
                 Report::new(
                     ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                        Time::from_seconds_since_epoch(12345),
+                        Time::from_seconds_since_epoch(12345, &TEST_TIME_PRECISION),
                         Vec::new(),
                     ),
                     Vec::new(),
@@ -414,7 +416,7 @@ fn roundtrip_upload_request() {
                 Report::new(
                     ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                        Time::from_seconds_since_epoch(54321),
+                        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                         Vec::new(),
                     ),
                     Vec::new(),

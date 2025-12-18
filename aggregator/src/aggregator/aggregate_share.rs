@@ -155,10 +155,6 @@ where
             .clone()
             .ok_or_else(|| Error::InvalidBatchSize(*self.task.id(), self.total_report_count))?;
 
-        let client_timestamp_interval = self
-            .client_timestamp_interval
-            .align_to_time_precision(self.task.time_precision())?;
-
         // Validate batch size per
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         if !self.task.validate_batch_size(self.total_report_count) {
@@ -170,7 +166,7 @@ where
 
         Ok(AggregateShareComputerResult {
             report_count: self.total_report_count,
-            client_timestamp_interval,
+            client_timestamp_interval: self.client_timestamp_interval,
             checksum: self.total_checksum,
             aggregate_share,
         })

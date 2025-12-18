@@ -8,7 +8,7 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_messages::{
-    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
     batch_mode::{BatchMode as _, LeaderSelected, TimeInterval},
 };
 use prio::codec::Encode;
@@ -336,8 +336,12 @@ impl AggregatorAddTaskRequest {
                     .get_encoded()
                     .unwrap(),
             ),
-            task_start: task.task_start().map(Time::as_seconds_since_epoch),
-            task_end: task.task_end().map(Time::as_seconds_since_epoch),
+            task_start: task
+                .task_start()
+                .map(|t| t.as_seconds_since_epoch(task.time_precision())),
+            task_end: task
+                .task_end()
+                .map(|t| t.as_seconds_since_epoch(task.time_precision())),
         }
     }
 }

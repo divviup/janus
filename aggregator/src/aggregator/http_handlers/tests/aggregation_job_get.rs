@@ -12,9 +12,7 @@ use janus_aggregator_core::{
     },
 };
 use janus_core::{
-    auth_tokens::test_util::WithAuthenticationToken,
-    test_util::run_vdaf,
-    time::{Clock as _, DateTimeExt as _, TimeExt as _},
+    auth_tokens::test_util::WithAuthenticationToken, test_util::run_vdaf, time::Clock as _,
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -45,7 +43,6 @@ async fn aggregation_job_get_ready() {
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
-    let time_precision = *task.time_precision();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(dummy::Vdaf::new(1));
@@ -55,11 +52,7 @@ async fn aggregation_job_get_ready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(&time_precision)
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -94,7 +87,7 @@ async fn aggregation_job_get_ready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -165,7 +158,6 @@ async fn aggregation_job_get_unready() {
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
-    let time_precision = *task.time_precision();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(dummy::Vdaf::new(1));
@@ -175,11 +167,7 @@ async fn aggregation_job_get_unready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(&time_precision)
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -223,7 +211,7 @@ async fn aggregation_job_get_unready() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -283,7 +271,6 @@ async fn aggregation_job_get_wrong_step() {
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
-    let time_precision = *task.time_precision();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(dummy::Vdaf::new(1));
@@ -293,11 +280,7 @@ async fn aggregation_job_get_wrong_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(&time_precision)
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -332,7 +315,7 @@ async fn aggregation_job_get_wrong_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -393,7 +376,6 @@ async fn aggregation_job_get_missing_step() {
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
-    let time_precision = *task.time_precision();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(dummy::Vdaf::new(1));
@@ -403,11 +385,7 @@ async fn aggregation_job_get_missing_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_time()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -442,7 +420,7 @@ async fn aggregation_job_get_missing_step() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))
@@ -497,7 +475,6 @@ async fn aggregation_job_get_sync() {
         VdafInstance::Fake { rounds: 1 },
     )
     .build();
-    let time_precision = *task.time_precision();
     let helper_task = task.helper_view().unwrap();
 
     let vdaf = Arc::new(dummy::Vdaf::new(1));
@@ -507,11 +484,7 @@ async fn aggregation_job_get_sync() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock
-            .now()
-            .to_batch_interval_start(&time_precision)
-            .unwrap()
-            .to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -546,7 +519,7 @@ async fn aggregation_job_get_sync() {
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::new(*report_metadata.time(), time_precision).unwrap(),
+                    Interval::minimal(*report_metadata.time()).unwrap(),
                     AggregationJobState::AwaitingRequest,
                     AggregationJobStep::from(0),
                 ))

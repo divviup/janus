@@ -136,13 +136,7 @@ where
         // it's nicer to not have to unwind state modifications if we encounter an error.
         let batch_identifiers = report_aggregations
             .iter()
-            .map(|ra| {
-                B::to_batch_identifier(
-                    &self.task,
-                    aggregation_job.partial_batch_identifier(),
-                    ra.time(),
-                )
-            })
+            .map(|ra| B::to_batch_identifier(aggregation_job.partial_batch_identifier(), ra.time()))
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(batch_identifiers.len(), report_aggregations.len());
 
@@ -645,10 +639,7 @@ where
                         batch_identifier.clone(),
                         aggregation_parameter.clone(),
                         self.batch_aggregation_ord,
-                        Interval::new(
-                            *report_aggregation.time(),
-                            *self.writer.task.time_precision(),
-                        )?,
+                        Interval::minimal(*report_aggregation.time())?,
                         if let Some(output_share) = report_aggregation.is_finished() {
                             is_finished = true;
                             BatchAggregationState::Aggregating {

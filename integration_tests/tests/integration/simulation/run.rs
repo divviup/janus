@@ -553,7 +553,7 @@ impl State {
         let chunk_length = optimal_chunk_length(MAX_REPORTS);
         Self {
             stopper: Stopper::new(),
-            clock: MockClock::new(START_TIME.as_seconds_since_epoch()),
+            clock: MockClock::new(START_TIME.as_time_precision_units()),
             meter: noop_meter(),
             runtime_manager: TestRuntimeManager::new(),
             vdaf_instance: VdafInstance::Prio3Histogram {

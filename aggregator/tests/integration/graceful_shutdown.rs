@@ -290,9 +290,10 @@ async fn aggregator_shutdown() {
         key_rotator: Some(KeyRotatorConfig {
             frequency_s: 60 * 60 * 6,
             hpke: HpkeKeyRotatorConfig {
-                pending_duration: Duration::from_seconds(60),
-                active_duration: Duration::from_seconds(60 * 60 * 24),
-                expired_duration: Duration::from_seconds(60 * 60 * 24),
+                // All of these change to Chrono types in #4216, so this mess is temporary
+                pending_duration: Duration::from_time_precision_units(60),
+                active_duration: Duration::from_time_precision_units(60 * 60 * 24),
+                expired_duration: Duration::from_time_precision_units(60 * 60 * 24),
                 ciphersuites: HashSet::from([
                     HpkeCiphersuite::new(
                         HpkeKemId::P256HkdfSha256,
@@ -383,7 +384,7 @@ async fn aggregation_job_creator_shutdown() {
         min_aggregation_job_size: 100,
         max_aggregation_job_size: 100,
         aggregation_job_creation_report_window: 5000,
-        late_report_grace_period_s: 3600,
+        late_report_grace_period_units: 10,
     };
 
     graceful_shutdown("aggregation_job_creator", config).await;
