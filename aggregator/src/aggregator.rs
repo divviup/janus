@@ -1891,8 +1891,7 @@ impl VdafOps {
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock
                 .now()
-                .to_time(task.time_precision())
-                .is_after(&report_expiry_time)
+                .is_after(&report_expiry_time, task.time_precision())
             {
                 return Err(reject_report(ReportRejectionReason::Expired).await?);
             }
@@ -3578,8 +3577,7 @@ impl VdafOps {
                     batch_interval.end().add_duration(report_expiry_age)?;
                 if clock
                     .now()
-                    .to_time(task.time_precision())
-                    .is_after(&aggregate_share_expiry_time)
+                    .is_after(&aggregate_share_expiry_time, task.time_precision())
                 {
                     return Err(Error::AggregateShareRequestRejected(
                         *task.id(),

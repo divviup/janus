@@ -249,6 +249,9 @@ pub trait DateTimeExt {
     /// Returns true if and only if this [`DateTime<Utc>`] occurs after the given [`Time`].
     fn is_after(&self, time: &Time, time_precision: &TimePrecision) -> bool;
 
+    /// Returns true if and only if this [`DateTime<Utc>`] occurs before the given [`Time`].
+    fn is_before(&self, time: &Time, time_precision: &TimePrecision) -> bool;
+
     /// Compute the start of the batch interval containing this DateTime, given the task time precision.
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
     where
@@ -311,6 +314,10 @@ impl DateTimeExt for DateTime<Utc> {
 
     fn is_after(&self, time: &Time, time_precision: &TimePrecision) -> bool {
         self.as_seconds_since_epoch() > time.as_seconds_since_epoch(time_precision)
+    }
+
+    fn is_before(&self, time: &Time, time_precision: &TimePrecision) -> bool {
+        self.as_seconds_since_epoch() < time.as_seconds_since_epoch(time_precision)
     }
 
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error> {
@@ -554,7 +561,7 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
+    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt};
     use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 
@@ -816,11 +823,11 @@ mod tests {
         let time = Time::from_seconds_since_epoch(1000000000, &TEST_TIME_PRECISION);
 
         assert!(
-            !dt.to_time(&TEST_TIME_PRECISION).is_after(&time),
+            !dt.is_after(&time, &TEST_TIME_PRECISION),
             "dt should not be after an equal time"
         );
         assert!(
-            !dt.to_time(&TEST_TIME_PRECISION).is_before(&time),
+            !dt.is_before(&time, &TEST_TIME_PRECISION),
             "dt should not be before an equal time"
         );
     }

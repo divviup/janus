@@ -652,8 +652,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 else {
                                     break;
                                 };
-                                if tx.clock().now().to_time(task.time_precision())
-                                    < aggressive_aggregation_time
+                                if tx
+                                    .clock()
+                                    .now()
+                                    .is_before(&aggressive_aggregation_time, task.time_precision())
                                 {
                                     // Report is not old enough to merit a below-minimum size aggregation job.
                                     break;
