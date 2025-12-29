@@ -96,7 +96,7 @@ serde_json = "1.0.146"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
 serde_yaml = "0.9.34"
-signal-hook = "0.3.18"
+signal-hook = "0.4.1"
 signal-hook-tokio = "0.3.1"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
 # sqlx-mysql which pulls in the vulnerable rsa crate
