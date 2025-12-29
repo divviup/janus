@@ -76,7 +76,7 @@ use std::time::Duration;
 use janus_core::retries::ExponentialWithTotalDelayBuilder;
 use janus_messages::Time;
 
-const START_TIME: Time = Time::from_seconds_since_epoch(1_700_000_000);
+const START_TIME: Time = Time::from_time_precision_units(1_700_000_000);
 
 mod arbitrary;
 mod bad_client;

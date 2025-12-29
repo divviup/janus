@@ -18,7 +18,7 @@ use janus_core::{
     initialize_rustls,
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, RealClock, TimeExt},
+    time::{Clock, RealClock},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_application_context, vdaf_dp_strategies},
 };
 use janus_messages::{
@@ -60,17 +60,13 @@ pub(super) async fn upload_replay_report(
         &measurement,
         report_id.as_ref(),
     )?;
-    let rounded_time = report_time
-        .to_batch_interval_start(task.time_precision())
-        .unwrap();
-
     let report = prepare_report(
         http_client,
         task,
         public_share,
         input_shares,
         report_id,
-        rounded_time,
+        *report_time,
     )
     .await?;
     upload_report(http_client, task, report).await

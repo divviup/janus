@@ -250,6 +250,7 @@ async fn run(
             "vdaf": vdaf_object,
             "collector_authentication_token": collector_auth_token,
             "batch_mode": batch_mode_json,
+            "time_precision": TIME_PRECISION,
         }))
         .send()
         .await

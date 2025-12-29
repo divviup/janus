@@ -100,7 +100,7 @@ max_aggregation_job_size: 100
 aggregation_job_creation_report_window: 5000
 
 # Maximum expected time difference between a report's timestamp and when it is
-# uploaded. For time interval tasks, this is used to decide when to create an
-# aggregation job with fewer than `min_aggregation_job_size` reports. (optional,
-# defaults to 3600)
-late_report_grace_period_s: 3600
+# uploaded, represented in task time precision units. For time interval tasks,
+# this is used to decide when to create an aggregation job with fewer than
+# `min_aggregation_job_size` reports. (optional, defaults to 10)
+late_report_grace_period_units: 10

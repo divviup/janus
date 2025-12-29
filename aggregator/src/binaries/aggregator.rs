@@ -538,6 +538,7 @@ mod tests {
     };
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
     use std::{
@@ -565,6 +566,7 @@ mod tests {
     })]
     #[test]
     fn roundtrip_config(#[case] aggregator_api: AggregatorApi) {
+        let time_precision = TimePrecision::from_seconds(random());
         roundtrip_encoding(Config {
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             garbage_collection: Some(GarbageCollectorConfig {
@@ -578,9 +580,10 @@ mod tests {
             key_rotator: Some(KeyRotatorConfig {
                 frequency_s: random(),
                 hpke: HpkeKeyRotatorConfig {
-                    pending_duration: Duration::from_seconds(random()),
-                    active_duration: Duration::from_seconds(random()),
-                    expired_duration: Duration::from_seconds(random()),
+                    // This gets revisited in Issue #4216.
+                    pending_duration: Duration::from_seconds(random(), &time_precision),
+                    active_duration: Duration::from_seconds(random(), &time_precision),
+                    expired_duration: Duration::from_seconds(random(), &time_precision),
                     ciphersuites: HashSet::from([
                         HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,

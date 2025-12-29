@@ -1,9 +1,8 @@
 use crate::aggregator::{
-    Aggregator, Config, Error,
+    Aggregator, Config,
     test_util::{create_report, create_report_custom, default_aggregator_config},
 };
 use assert_matches::assert_matches;
-use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
@@ -26,7 +25,7 @@ use janus_core::{
         install_test_trace_subscriber,
         runtime::{TestRuntime, TestRuntimeManager},
     },
-    time::{Clock, DateTimeExt, MockClock, TimeExt},
+    time::{Clock, DateTimeExt, MockClock},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance},
 };
 use janus_messages::{
@@ -213,11 +212,7 @@ async fn upload_batch() {
         create_report(
             &task.leader_view().unwrap(),
             &hpke_keypair,
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap()
-                .to_time(),
+            clock.now_aligned_to_precision(task.time_precision()),
         )
     })
     .take(BATCH_SIZE)
@@ -349,11 +344,9 @@ async fn upload_report_in_the_future_boundary_condition() {
         &hpke_keypair,
         clock
             .now()
-            .add_duration(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .unwrap()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap()
-            .to_time(),
+            .to_time(task.time_precision()),
     );
 
     aggregator
@@ -408,11 +401,11 @@ async fn upload_report_in_the_future_past_clock_skew() {
         &hpke_keypair,
         clock
             .now()
-            .add_duration(task.tolerable_clock_skew())
+            .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .unwrap()
-            .add_timedelta(&TimeDelta::seconds(1))
+            .add_duration(&Duration::ONE, task.time_precision())
             .unwrap()
-            .to_time(),
+            .to_time(task.time_precision()),
     );
 
     let upload_result = aggregator
@@ -470,15 +463,7 @@ async fn upload_report_for_collected_batch() {
     );
 
     // Insert a collection job for the batch interval including our report.
-    let batch_interval = Interval::new(
-        report
-            .metadata()
-            .time()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap(),
-        *task.time_precision(),
-    )
-    .unwrap();
+    let batch_interval = Interval::minimal(*report.metadata().time()).unwrap();
     datastore
         .run_unnamed_tx(|tx| {
             let task = task.clone();
@@ -552,18 +537,22 @@ async fn upload_report_task_not_started() {
     .await;
 
     // Set the task start time to the future, and generate & upload a report from before that time.
+    let time_precision = TimePrecision::from_seconds(100);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(100))
+    .with_time_precision(time_precision)
     .with_task_start(Some(
         clock
             .now()
-            .add_timedelta(&TimeDelta::seconds(3600))
+            .add_duration(
+                &Duration::from_seconds(3600, &time_precision),
+                &time_precision,
+            )
             .unwrap()
-            .to_time(),
+            .to_time(&time_precision),
     ))
     .build()
     .leader_view()
@@ -679,51 +668,6 @@ async fn upload_report_task_ended() {
 }
 
 #[tokio::test]
-async fn upload_report_unaligned_time() {
-    let mut runtime_manager = TestRuntimeManager::new();
-    let UploadTest {
-        aggregator,
-        clock,
-        datastore,
-        ephemeral_datastore: _ephemeral_datastore,
-        hpke_keypair,
-        ..
-    } = UploadTest::new_with_runtime(
-        default_aggregator_config(),
-        runtime_manager.with_label("aggregator"),
-    )
-    .await;
-
-    let task = TaskBuilder::new(
-        BatchMode::TimeInterval,
-        AggregationMode::Synchronous,
-        VdafInstance::Prio3Count,
-    )
-    .with_time_precision(TimePrecision::from_seconds(42))
-    .build()
-    .leader_view()
-    .unwrap();
-    datastore.put_aggregator_task(&task).await.unwrap();
-
-    // Ensure the time is unaligned
-    clock.advance(TimeDelta::seconds(100));
-    // Now don't align the report's clock, just take it as-is
-    let report = create_report(&task, &hpke_keypair, clock.now().to_time());
-
-    // Try to upload the report, verify that we get the expected error.
-    let error = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
-        .await
-        .unwrap_err();
-    assert_matches!(
-        error.as_ref(),
-        Error::Datastore(x) => {
-            assert_eq!(x.to_string(), "time is unaligned (precision = 42 seconds, inner error = timestamp is not a multiple of the time precision)");
-        }
-    );
-}
-
-#[tokio::test]
 async fn upload_report_report_expired() {
     let mut runtime_manager = TestRuntimeManager::new();
     let UploadTest {
@@ -739,13 +683,14 @@ async fn upload_report_report_expired() {
     )
     .await;
 
+    let time_precision = TimePrecision::from_seconds(100);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(100))
-    .with_report_expiry_age(Some(Duration::from_seconds(60)))
+    .with_time_precision(time_precision)
+    .with_report_expiry_age(Some(Duration::from_time_precision_units(1)))
     .build()
     .leader_view()
     .unwrap();
@@ -758,9 +703,13 @@ async fn upload_report_report_expired() {
     );
 
     // Advance the clock to expire the report.
-    clock.advance(TimeDelta::seconds(61));
+    // We need to advance past the expiry age plus enough to move to the next time precision
+    // bucket, so 2x time precision.
+    clock.advance(time_precision.to_chrono().unwrap().checked_mul(2).unwrap());
 
-    // Try to upload the report, verify that we get the expected error.
+    // Try to upload the report. For expired reports, the upload must succeed but the report
+    // won't be stored (it's dropped asynchronously during batch write), and we want to see
+    // the ReportDropped status returned.
     let upload_result = aggregator
         .handle_upload(task.id(), &report.get_encoded().unwrap())
         .await
@@ -777,6 +726,21 @@ async fn upload_report_report_expired() {
     runtime_manager
         .wait_for_completed_tasks("aggregator", 1)
         .await;
+
+    // The expired report should not have been stored in the database.
+    let stored_report = datastore
+        .run_unnamed_tx(|tx| {
+            let vdaf = Prio3Count::new_count(2).unwrap();
+            let task_id = *task.id();
+            let report_id = *report.metadata().id();
+            Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+        })
+        .await
+        .unwrap();
+    assert!(
+        stored_report.is_none(),
+        "Expired report should not be stored"
+    );
 
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
@@ -815,7 +779,7 @@ async fn upload_report_faulty_encryption() {
     // Encrypt with the wrong key.
     let report = create_report_custom(
         &task,
-        clock.now().to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         random(),
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
         Vec::new(),
@@ -875,7 +839,11 @@ async fn upload_report_public_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
+    let mut report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     report = Report::new(
         report.metadata().clone(),
         // Some obviously wrong public share.
@@ -936,7 +904,11 @@ async fn upload_report_leader_input_share_decode_failure() {
 
     let task = task.leader_view().unwrap();
 
-    let mut report = create_report(&task, &hpke_keypair, clock.now().to_time());
+    let mut report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     report = Report::new(
         report.metadata().clone(),
         report.public_share().to_vec(),
@@ -1008,13 +980,14 @@ async fn upload_report_duplicate_extensions() {
     )
     .await;
 
+    let time_precision = TimePrecision::from_seconds(100);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(100))
-    .with_report_expiry_age(Some(Duration::from_seconds(60)))
+    .with_time_precision(time_precision)
+    .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
     .unwrap();

@@ -9,7 +9,9 @@ use crate::{
 use async_trait::async_trait;
 use chrono::TimeDelta;
 use futures::future::try_join_all;
-use janus_core::time::{Clock, IntervalExt as _, TimeDeltaExt as _, TimeExt as _};
+use janus_core::time::{
+    Clock, DateTimeExt as _, IntervalExt as _, TimeDeltaExt as _, TimeExt as _,
+};
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -23,7 +25,6 @@ pub trait AccumulableBatchMode: BatchMode {
     /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
     /// necessary functionality to be implemented for all batch modes.
     fn to_batch_identifier(
-        _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
@@ -71,15 +72,10 @@ pub trait AccumulableBatchMode: BatchMode {
 #[async_trait]
 impl AccumulableBatchMode for TimeInterval {
     fn to_batch_identifier(
-        task: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        let batch_interval_start = client_timestamp
-            .to_batch_interval_start(task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))?;
-        Interval::new(batch_interval_start, *task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))
+        Interval::minimal(*client_timestamp).map_err(|e| datastore::Error::User(e.into()))
     }
 
     async fn get_collection_jobs_including<
@@ -120,14 +116,18 @@ impl AccumulableBatchMode for TimeInterval {
         clock: &C,
         batch_identifier: &Self::BatchIdentifier,
     ) -> Option<bool> {
-        Some(batch_identifier.end() < clock.now())
+        // Note: This assumes the batch_identifier's interval is in 1-second time_precision units.
+        // This is a simplification - in practice, batch identifiers should carry their time_precision
+        // context, but that would require changing the trait interface. This will be fixed in
+        // Issue #4217.
+        let now_time = clock.now().to_time(&TimePrecision::from_seconds(1));
+        Some(batch_identifier.end().is_before(&now_time))
     }
 }
 
 #[async_trait]
 impl AccumulableBatchMode for LeaderSelected {
     fn to_batch_identifier(
-        _: &AggregatorTask,
         batch_id: &Self::PartialBatchIdentifier,
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
@@ -195,11 +195,8 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     ) -> Self::Iter;
 
     /// Validates a collection identifier, per the boundary checks in
-    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
-    fn validate_collection_identifier(
-        task: &AggregatorTask,
-        collection_identifier: &Self::BatchIdentifier,
-    ) -> bool;
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-16.html#section-4.7.1>.
+    fn validate_collection_identifier(collection_identifier: &Self::BatchIdentifier) -> bool;
 
     /// Returns the number of client reports included in the given collection identifier, whether
     /// they have been aggregated or not.
@@ -306,18 +303,11 @@ impl CollectableBatchMode for TimeInterval {
         TimeIntervalBatchIdentifierIter::new(time_precision, batch_interval)
     }
 
-    fn validate_collection_identifier(
-        task: &AggregatorTask,
-        collection_identifier: &Self::BatchIdentifier,
-    ) -> bool {
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+    fn validate_collection_identifier(collection_identifier: &Self::BatchIdentifier) -> bool {
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-16.html#section-4.7.1
 
-        // Batch interval should be greater than task's time precision
-        collection_identifier.duration().as_seconds() >= task.time_precision().as_seconds()
-                // Batch interval start must be a multiple of time precision
-                && collection_identifier.start().as_seconds_since_epoch() % task.time_precision().as_seconds() == 0
-                // Batch interval duration must be a multiple of time precision
-                && collection_identifier.duration().as_seconds() % task.time_precision().as_seconds() == 0
+        // Batch interval should be greater than task's time precision.
+        collection_identifier.duration().as_time_precision_units() >= 1
     }
 
     async fn count_client_reports<C: Clock>(
@@ -343,17 +333,9 @@ pub struct TimeIntervalBatchIdentifierIter {
 
 impl TimeIntervalBatchIdentifierIter {
     fn new(time_precision: &TimePrecision, batch_interval: &Interval) -> Self {
-        // Sanity check that the given interval is of an appropriate length. We use an assert as
-        // this is expected to be checked before this method is used.
-        assert_eq!(
-            batch_interval.duration().as_seconds() % time_precision.as_seconds(),
-            0
-        );
-        let total_step_count = batch_interval.duration().as_seconds() / time_precision.as_seconds();
-
         Self {
             step: 0,
-            total_step_count,
+            total_step_count: batch_interval.duration().as_time_precision_units(),
             start: *batch_interval.start(),
             time_precision: *time_precision,
         }
@@ -370,14 +352,14 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         // Unwrap safety: errors can only occur if the times being unwrapped cannot be represented
         // as a Time. The relevant times can always be represented since they are internal to the
         // batch interval used to create the iterator.
-        let interval = Interval::new(
+        let interval = Interval::minimal(
             self.start
                 .add_timedelta(
                     &TimeDelta::try_seconds_unsigned(self.step * self.time_precision.as_seconds())
                         .unwrap(),
+                    &self.time_precision,
                 )
                 .unwrap(),
-            self.time_precision,
         )
         .unwrap();
         self.step += 1;
@@ -405,7 +387,7 @@ impl CollectableBatchMode for LeaderSelected {
         iter::once(*batch_id)
     }
 
-    fn validate_collection_identifier(_: &AggregatorTask, _: &Self::BatchIdentifier) -> bool {
+    fn validate_collection_identifier(_: &Self::BatchIdentifier) -> bool {
         true
     }
 
@@ -421,87 +403,21 @@ impl CollectableBatchMode for LeaderSelected {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        batch_mode::CollectableBatchMode,
-        task::{AggregationMode, BatchMode, test_util::TaskBuilder},
-    };
-    use janus_core::vdaf::VdafInstance;
-    use janus_messages::{
-        Duration, Interval, Time, batch_mode::TimeInterval, taskprov::TimePrecision,
-    };
+    use crate::batch_mode::CollectableBatchMode;
+    use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
 
     #[test]
-    fn validate_collect_identifier() {
-        let time_precision_secs = 3600;
-        let task = TaskBuilder::new(
-            BatchMode::TimeInterval,
-            AggregationMode::Synchronous,
-            VdafInstance::Fake { rounds: 1 },
-        )
-        .with_time_precision(TimePrecision::from_seconds(time_precision_secs))
-        .build()
-        .leader_view()
-        .unwrap();
+    fn reject_null_collection_intervals() {
+        assert!(!TimeInterval::validate_collection_identifier(
+            &Interval::new(Time::from_time_precision_units(0), Duration::ZERO).unwrap()
+        ));
 
-        struct TestCase {
-            name: &'static str,
-            input: Interval,
-            expected: bool,
-        }
-
-        for test_case in Vec::from([
-            TestCase {
-                name: "same duration as minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs),
-                )
-                .unwrap(),
-                expected: true,
-            },
-            TestCase {
-                name: "interval too short",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs - 1),
-                )
-                .unwrap(),
-                expected: false,
-            },
-            TestCase {
-                name: "interval larger than minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs * 2),
-                )
-                .unwrap(),
-                expected: true,
-            },
-            TestCase {
-                name: "interval duration not aligned with minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs + 1800),
-                )
-                .unwrap(),
-                expected: false,
-            },
-            TestCase {
-                name: "interval start not aligned with minimum",
-                input: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(1800),
-                    Duration::from_seconds(time_precision_secs),
-                )
-                .unwrap(),
-                expected: false,
-            },
-        ]) {
-            assert_eq!(
-                test_case.expected,
-                TimeInterval::validate_collection_identifier(&task, &test_case.input),
-                "test case: {}",
-                test_case.name
-            );
-        }
+        assert!(TimeInterval::validate_collection_identifier(
+            &Interval::new(
+                Time::from_time_precision_units(0),
+                Duration::from_time_precision_units(1)
+            )
+            .unwrap()
+        ));
     }
 }

@@ -189,11 +189,14 @@ pub(super) async fn post_task<C: Clock>(
             /* task_start */ req.task_start,
             /* task_end */ req.task_end,
             /* report_expiry_age */
-            Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
+            Some(Duration::from_seconds(
+                3600 * 24 * 7 * 2,
+                &req.time_precision,
+            )), // 2 weeks
             /* min_batch_size */ req.min_batch_size,
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
-            req.time_precision.into(), // Must be a multiple of the precision
+            Duration::ONE,
             aggregator_parameters,
         )
         .context("Error constructing task")

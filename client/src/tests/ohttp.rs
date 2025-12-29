@@ -35,7 +35,7 @@ async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count
         task_id,
         server_url.clone(),
         server_url.clone(),
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
         Prio3::new_count(2).unwrap(),
     )
     .with_backoff(test_http_request_exponential_backoff())
