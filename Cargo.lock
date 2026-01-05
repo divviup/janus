@@ -2656,7 +2656,7 @@ dependencies = [
  "serde_urlencoded",
  "serde_yaml",
  "signal-hook 0.4.1",
- "signal-hook-tokio",
+ "signal-hook-tokio 0.4.0",
  "tempfile",
  "testcontainers",
  "thiserror 2.0.17",
@@ -5072,6 +5072,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-tokio"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e513e435a8898a0002270f29d0a708b7879708fb5c4d00e46983ca2d2d378cf0"
+dependencies = [
+ "futures-core",
+ "libc",
+ "signal-hook 0.4.1",
+ "tokio",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6391,7 +6403,7 @@ dependencies = [
  "async-compat",
  "log",
  "signal-hook 0.3.18",
- "signal-hook-tokio",
+ "signal-hook-tokio 0.3.1",
  "tokio",
  "tokio-stream",
  "trillium",
