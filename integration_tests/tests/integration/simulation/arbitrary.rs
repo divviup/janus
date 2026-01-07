@@ -280,22 +280,18 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
         .unwrap();
     let random_range = start_to_now.num_seconds() as u64 / context.time_precision.as_seconds() + 10;
     let start = START_TIME
-        .add_duration(&Duration::from_seconds(
-            u64::arbitrary(g) % random_range * context.time_precision.as_seconds(),
-            &context.time_precision,
+        .add_duration(&Duration::from_time_precision_units(
+            u64::arbitrary(g) % random_range,
         ))
         .unwrap();
 
     let duration_fn = g
         .choose(&[
-            (|_g: &mut Gen, context: &Context| -> Duration {
-                Duration::from_seconds(1, &context.time_precision)
+            (|_g: &mut Gen, _context: &Context| -> Duration {
+                Duration::from_time_precision_units(1)
             }) as fn(&mut Gen, &Context) -> Duration,
-            (|g: &mut Gen, context: &Context| -> Duration {
-                Duration::from_seconds(
-                    1 + u64::from(u8::arbitrary(g) & 0x1f),
-                    &context.time_precision,
-                )
+            (|g: &mut Gen, _context: &Context| -> Duration {
+                Duration::from_time_precision_units(u64::from(u8::arbitrary(g) & 0x1f))
             }) as fn(&mut Gen, &Context) -> Duration,
         ])
         .unwrap();

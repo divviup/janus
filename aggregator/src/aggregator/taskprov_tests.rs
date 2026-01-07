@@ -190,7 +190,6 @@ where
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(time_precision)
-        .with_tolerable_clock_skew(Duration::from_seconds(1, &time_precision))
         .with_taskprov_task_info(task_config.task_info().to_vec())
         .build();
 
