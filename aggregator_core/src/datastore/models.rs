@@ -2307,7 +2307,7 @@ impl ToSql for SqlInterval {
         // Note: The interval should already be in SQL_UNIT_TIME_PRECISION (1 second) units,
         // and if it isn't, badness ensues. This will stop being an problem as part of
         // Issue #4206.
-        let start_sql_usec = time_to_sql_timestamp(*self.0.start(), &SQL_UNIT_TIME_PRECISION)
+        let start_sql_usec = time_to_sql_timestamp(self.0.start(), &SQL_UNIT_TIME_PRECISION)
             .map_err(|_| "microsecond timestamp of Interval start overflowed")?;
         let end_sql_usec = time_to_sql_timestamp(self.0.end(), &SQL_UNIT_TIME_PRECISION)
             .map_err(|_| "microsecond timestamp of Interval end overflowed")?;

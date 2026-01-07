@@ -533,14 +533,14 @@ pub trait IntervalExt: Sized {
 impl IntervalExt for Interval {
     fn end(&self) -> Time {
         // Unwrap safety: [`Self::new_with_duration`] verified that this addition doesn't overflow.
-        self.start().add_duration(self.duration()).unwrap()
+        self.start().add_duration(&self.duration()).unwrap()
     }
 
     fn merge(&self, other: &Self) -> Result<Self, Error> {
-        if self.duration() == &Duration::ZERO {
+        if self.duration() == Duration::ZERO {
             return Ok(*other);
         }
-        if other.duration() == &Duration::ZERO {
+        if other.duration() == Duration::ZERO {
             return Ok(*self);
         }
 
@@ -551,7 +551,7 @@ impl IntervalExt for Interval {
             .as_time_precision_units()
             .checked_sub(min_time.as_time_precision_units())
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
-        Self::new(*min_time, Duration::from_time_precision_units(diff_units))
+        Self::new(min_time, Duration::from_time_precision_units(diff_units))
     }
 
     fn merged_with(&self, time: &Time) -> Result<Self, Error> {

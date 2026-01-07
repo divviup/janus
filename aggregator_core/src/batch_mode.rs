@@ -336,7 +336,7 @@ impl TimeIntervalBatchIdentifierIter {
         Self {
             step: 0,
             total_step_count: batch_interval.duration().as_time_precision_units(),
-            start: *batch_interval.start(),
+            start: batch_interval.start(),
             time_precision: *time_precision,
         }
     }

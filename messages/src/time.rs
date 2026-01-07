@@ -271,13 +271,13 @@ impl Interval {
     }
 
     /// Returns a [`Time`] representing the included start of this interval.
-    pub fn start(&self) -> &Time {
-        &self.start
+    pub fn start(&self) -> Time {
+        self.start
     }
 
     /// Get the duration of this interval.
-    pub fn duration(&self) -> &Duration {
-        &self.duration
+    pub fn duration(&self) -> Duration {
+        self.duration
     }
 }
 
