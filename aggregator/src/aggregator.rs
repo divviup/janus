@@ -1840,28 +1840,26 @@ impl VdafOps {
             .add_duration(task.tolerable_clock_skew(), task.time_precision())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
-        // Record clock skew for early reports (report time > now)
-        if let Some(diff_units) = report
+        if let Ok(report_time_dt) = report
             .metadata()
             .time()
-            .as_time_precision_units()
-            .checked_sub(now.to_time(task.time_precision()).as_time_precision_units())
+            .as_naive_date_time(task.time_precision())
+            .map(|ndt| ndt.and_utc())
         {
-            metrics.early_report_clock_skew_histogram.record(
-                diff_units.saturating_mul(task.time_precision().as_seconds()),
-                &[],
-            );
-        }
-        // Record clock skew for past reports (now > report time)
-        if let Some(diff_units) = now
-            .to_time(task.time_precision())
-            .as_time_precision_units()
-            .checked_sub(report.metadata().time().as_time_precision_units())
-        {
-            metrics.past_report_clock_skew_histogram.record(
-                diff_units.saturating_mul(task.time_precision().as_seconds()),
-                &[],
-            );
+            let clock_skew = report_time_dt.signed_duration_since(now);
+            let skew_seconds = clock_skew.num_seconds();
+
+            if skew_seconds > 0 {
+                // Early report: report time > now
+                metrics
+                    .early_report_clock_skew_histogram
+                    .record(skew_seconds as u64, &[]);
+            } else if skew_seconds < 0 {
+                // Past report: now > report time
+                metrics
+                    .past_report_clock_skew_histogram
+                    .record((skew_seconds) as u64, &[]);
+            }
         }
 
         // Reject reports from too far in the future.

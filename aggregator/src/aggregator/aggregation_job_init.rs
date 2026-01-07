@@ -312,22 +312,27 @@ where
                         let shares =
                             input_share.and_then(|input_share| Ok((public_share?, input_share)));
 
-                        if let Ok(clock_skew) = prepare_init
+                        if let Ok(report_time_dt) = prepare_init
                             .report_share()
                             .metadata()
                             .time()
-                            .difference_as_time_delta(&now.to_time(task.time_precision()), task.time_precision())
+                            .as_naive_date_time(task.time_precision())
+                            .map(|ndt| ndt.and_utc())
                         {
-                            metrics
-                                .early_report_clock_skew_histogram
-                                .record(clock_skew.num_seconds() as u64, &[]);
-                        }
-                        if let Ok(clock_skew) =
-                            now.difference_as_time_delta(prepare_init.report_share().metadata().time(), task.time_precision())
-                        {
-                            metrics
-                                .past_report_clock_skew_histogram
-                                .record(clock_skew.num_seconds() as u64, &[]);
+                            let clock_skew = report_time_dt.signed_duration_since(now);
+                            let skew_seconds = clock_skew.num_seconds();
+
+                            if skew_seconds > 0 {
+                                // Early report: report time > now
+                                metrics
+                                    .early_report_clock_skew_histogram
+                                    .record(skew_seconds as u64, &[]);
+                            } else if skew_seconds < 0 {
+                                // Past report: now > report time
+                                metrics
+                                    .past_report_clock_skew_histogram
+                                    .record((-skew_seconds) as u64, &[]);
+                            }
                         }
 
                         // Reject reports from too far in the future.
