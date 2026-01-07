@@ -1847,12 +1847,10 @@ impl VdafOps {
             .as_time_precision_units()
             .checked_sub(now.to_time(task.time_precision()).as_time_precision_units())
         {
-            metrics
-                .early_report_clock_skew_histogram
-                .record(
-                    diff_units.saturating_mul(task.time_precision().as_seconds()),
-                    &[],
-                );
+            metrics.early_report_clock_skew_histogram.record(
+                diff_units.saturating_mul(task.time_precision().as_seconds()),
+                &[],
+            );
         }
         // Record clock skew for past reports (now > report time)
         if let Some(diff_units) = now
@@ -1860,12 +1858,10 @@ impl VdafOps {
             .as_time_precision_units()
             .checked_sub(report.metadata().time().as_time_precision_units())
         {
-            metrics
-                .past_report_clock_skew_histogram
-                .record(
-                    diff_units.saturating_mul(task.time_precision().as_seconds()),
-                    &[],
-                );
+            metrics.past_report_clock_skew_histogram.record(
+                diff_units.saturating_mul(task.time_precision().as_seconds()),
+                &[],
+            );
         }
 
         // Reject reports from too far in the future.
