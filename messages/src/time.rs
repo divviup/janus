@@ -193,7 +193,9 @@ impl Time {
     /// Panics if `time_precision.as_seconds()` is 0.
     ///
     pub const fn as_seconds_since_epoch(&self, time_precision: &TimePrecision) -> u64 {
-        self.0.saturating_mul(time_precision.as_seconds())
+        let precision_secs = time_precision.as_seconds();
+        assert!(precision_secs > 0);
+        self.0.saturating_mul(precision_secs)
     }
 
     /// Construct a [`Time`] from the raw number of time_precision units since the Unix epoch.
@@ -211,7 +213,7 @@ impl Time {
 
 impl Display for Time {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{} time_precision units since the Epoch", self.0)
     }
 }
 
@@ -232,7 +234,7 @@ impl Decode for Time {
 }
 
 /// DAP protocol message representing a half-open interval of time in terms of the task's time
-//  precision. The start of the interval is included while the end of the interval is excluded.
+/// precision. The start of the interval is included while the end of the interval is excluded.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     /// The start of the interval.
