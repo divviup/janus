@@ -35,7 +35,7 @@ images with versions `x.y.z` are released from a corresponding `release/x.y`
 branch.
 
 | Git branch | Draft version | TaskProv version | Conforms to protocol? | Status |
-| ---------- | ------------- | --------------------- | ------ |
+| ---------- | ------------- | ---------------- | --------------------- | ------ |
 | `release/0.1` | [`draft-ietf-ppm-dap-01`][dap-01] | ? | Yes | Unmaintained as of December 7, 2022 |
 | `release/0.2` | [`draft-ietf-ppm-dap-02`][dap-02] | ? | Yes | Unmaintained as of July 13, 2023 |
 | `release/0.3` | [`draft-ietf-ppm-dap-03`][dap-03] | ? | Yes | Unmaintained as of February 6, 2023 |
