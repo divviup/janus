@@ -2,8 +2,11 @@ use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector, CollectionJobReq,
     CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected,
     PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval, roundtrip_encoding,
+    taskprov::TimePrecision,
 };
 use prio::codec::Decode;
+
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]
 fn roundtrip_collection_job_req() {
@@ -12,9 +15,9 @@ fn roundtrip_collection_job_req() {
         (
             CollectionJobReq::<TimeInterval> {
                 query: Query {
-                    query_body: Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(54321),
-                        Duration::from_seconds(12345),
+                    query_body: Interval::new(
+                        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(12345, &TEST_TIME_PRECISION),
                     )
                     .unwrap(),
                 },
@@ -41,9 +44,9 @@ fn roundtrip_collection_job_req() {
         (
             CollectionJobReq::<TimeInterval> {
                 query: Query {
-                    query_body: Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(48913),
-                        Duration::from_seconds(44721),
+                    query_body: Interval::new(
+                        Time::from_seconds_since_epoch(48913, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(44721, &TEST_TIME_PRECISION),
                     )
                     .unwrap(),
                 },
@@ -146,8 +149,8 @@ fn roundtrip_partial_batch_selector() {
 #[test]
 fn roundtrip_collection_job_resp() {
     let interval = Interval {
-        start: Time::from_seconds_since_epoch(54321),
-        duration: Duration::from_seconds(12345),
+        start: Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+        duration: Duration::from_seconds(12345, &TEST_TIME_PRECISION),
     };
 
     // TimeInterval.
@@ -405,9 +408,9 @@ fn roundtrip_batch_selector() {
     roundtrip_encoding(&[
         (
             BatchSelector::<TimeInterval> {
-                batch_identifier: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(54321),
-                    Duration::from_seconds(12345),
+                batch_identifier: Interval::new(
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                    Duration::from_seconds(12345, &TEST_TIME_PRECISION),
                 )
                 .unwrap(),
             },
@@ -423,9 +426,9 @@ fn roundtrip_batch_selector() {
         ),
         (
             BatchSelector::<TimeInterval> {
-                batch_identifier: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(50821),
-                    Duration::from_seconds(84354),
+                batch_identifier: Interval::new(
+                    Time::from_seconds_since_epoch(50821, &TEST_TIME_PRECISION),
+                    Duration::from_seconds(84354, &TEST_TIME_PRECISION),
                 )
                 .unwrap(),
             },
@@ -474,9 +477,9 @@ fn roundtrip_aggregate_share_req() {
         (
             AggregateShareReq::<TimeInterval> {
                 batch_selector: BatchSelector {
-                    batch_identifier: Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(54321),
-                        Duration::from_seconds(12345),
+                    batch_identifier: Interval::new(
+                        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(12345, &TEST_TIME_PRECISION),
                     )
                     .unwrap(),
                 },
@@ -507,9 +510,9 @@ fn roundtrip_aggregate_share_req() {
         (
             AggregateShareReq::<TimeInterval> {
                 batch_selector: BatchSelector {
-                    batch_identifier: Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(50821),
-                        Duration::from_seconds(84354),
+                    batch_identifier: Interval::new(
+                        Time::from_seconds_since_epoch(50821, &TEST_TIME_PRECISION),
+                        Duration::from_seconds(84354, &TEST_TIME_PRECISION),
                     )
                     .unwrap(),
                 },
@@ -653,9 +656,9 @@ fn roundtrip_aggregate_share_aad() {
             task_id: TaskId::from([12u8; 32]),
             aggregation_parameter: Vec::from([0, 1, 2, 3]),
             batch_selector: BatchSelector {
-                batch_identifier: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(54321),
-                    Duration::from_seconds(12345),
+                batch_identifier: Interval::new(
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                    Duration::from_seconds(12345, &TEST_TIME_PRECISION),
                 )
                 .unwrap(),
             },

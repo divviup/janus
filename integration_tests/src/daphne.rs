@@ -117,7 +117,10 @@ impl Daphne {
         // arbitrary, far-future task end time, instead.
         let task = if task.task_end().is_none() {
             TaskBuilder::from(task.clone())
-                .with_task_end(Some(Time::from_seconds_since_epoch(2000000000)))
+                .with_task_end(Some(Time::from_seconds_since_epoch(
+                    2000000000,
+                    task.time_precision(),
+                )))
                 .build()
         } else {
             task.clone()

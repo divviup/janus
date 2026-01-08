@@ -29,16 +29,14 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, DateTimeExt, TimeDeltaExt, TimeExt},
+    time::{Clock, DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
         Prio3SumVecField64MultiproofHmacSha256Aes128, VERIFY_KEY_LENGTH_PRIO3,
         VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128, VdafInstance,
         new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
     },
 };
-use janus_messages::{
-    AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId, batch_mode::TimeInterval,
-};
+use janus_messages::{AggregationJobStep, Interval, Role, TaskId, batch_mode::TimeInterval};
 use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
@@ -607,14 +605,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
                         // point.
-                        let reports_by_batch = reports.into_iter().chunk_by(|report| {
-                            // Unwrap safety: task.time_precision() is nonzero, so
-                            // `to_batch_interval_start` will never return an error.
-                            report
-                                .client_timestamp()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap()
-                        });
+                        let reports_by_batch = reports
+                            .into_iter()
+                            .chunk_by(|report| *report.client_timestamp());
                         let mut reports_by_batch = reports_by_batch.into_iter();
 
                         // Each iteration of this loop will generate at most a single aggregation
@@ -654,12 +647,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 let Ok(aggressive_aggregation_time) =
                                     oldest_report.client_timestamp().add_duration(&max(
                                         this.late_report_grace_period,
-                                        (*task.time_precision()).into(),
+                                        janus_messages::Duration::ONE,
                                     ))
                                 else {
                                     break;
                                 };
-                                if tx.clock().now().to_time() < aggressive_aggregation_time {
+                                if tx
+                                    .clock()
+                                    .now()
+                                    .is_before(&aggressive_aggregation_time, task.time_precision())
+                                {
                                     // Report is not old enough to merit a below-minimum size aggregation job.
                                     break;
                                 }
@@ -683,26 +680,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 "Creating aggregation job"
                             );
 
-                            let min_client_timestamp = agg_job_reports
+                            let client_timestamp_interval = agg_job_reports
                                 .iter()
                                 .map(UnaggregatedReport::client_timestamp)
-                                .min()
-                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let max_client_timestamp = agg_job_reports
-                                .iter()
-                                .map(UnaggregatedReport::client_timestamp)
-                                .max()
-                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let client_timestamp_interval = Interval::new_with_duration(
-                                *min_client_timestamp,
-                                DurationMsg::from_chrono(
-                                    max_client_timestamp
-                                        .difference_as_time_delta(min_client_timestamp)?
-                                        .add(&DurationMsg::from_seconds(1).to_chrono()?)?
-                                        .round_up(&task.time_precision().to_chrono()?)?,
-                                ),
-                            )?;
-
+                                .fold(Interval::EMPTY, |left, right| {
+                                    left.merged_with(right).unwrap()
+                                });
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
@@ -826,27 +809,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 "Creating aggregation job"
                             );
 
-                            // unwrap safety: agg_job_reports is non-empty
-                            let min_client_timestamp = agg_job_reports
+                            let client_timestamp_interval = agg_job_reports
                                 .iter()
                                 .map(UnaggregatedReport::client_timestamp)
-                                .min()
-                                .unwrap();
-                            // unwrap safety: agg_job_reports is non-empty
-                            let max_client_timestamp = agg_job_reports
-                                .iter()
-                                .map(UnaggregatedReport::client_timestamp)
-                                .max()
-                                .unwrap();
-                            let client_timestamp_interval = Interval::new_with_duration(
-                                *min_client_timestamp,
-                                DurationMsg::from_chrono(
-                                    max_client_timestamp
-                                        .difference_as_time_delta(min_client_timestamp)?
-                                        .add(&DurationMsg::from_seconds(1).to_chrono()?)?
-                                        .round_up(&task.time_precision().to_chrono()?)?,
-                                ),
-                            )?;
+                                .fold(Interval::EMPTY, |left, right| {
+                                    left.merged_with(right).unwrap()
+                                });
 
                             let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                                 *task.id(),
@@ -929,7 +897,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         *task.id(),
                         task_min_batch_size,
                         task_batch_time_window_size,
-                        task.time_precision().to_owned(),
                         &mut aggregation_job_writer,
                         this.aggregation_job_size_histogram.clone(),
                     );
@@ -1012,19 +979,20 @@ mod tests {
         // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
         // even if the main test loops on calling yield_now().
 
-        let report_time = Time::from_seconds_since_epoch(0);
+        let time_precision = TimePrecision::from_seconds(30);
+        let report_time = clock.now_aligned_to_precision(&time_precision);
         let leader_task = Arc::new(
             TaskBuilder::new(
                 TaskBatchMode::TimeInterval,
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .build()
             .leader_view()
             .unwrap(),
         );
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
         let leader_report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
@@ -1050,6 +1018,7 @@ mod tests {
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .build()
             .helper_view()
             .unwrap(),
@@ -1089,7 +1058,7 @@ mod tests {
             1,
             100,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::from_hours(1, &time_precision),
         ));
         let stopper = Stopper::new();
         let task_handle = task::spawn(Arc::clone(&job_creator).run(stopper.clone()));
@@ -1176,7 +1145,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::new(report_time, *leader_task.time_precision()).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1222,7 +1191,7 @@ mod tests {
 
         let first_report_time = clock.now_aligned_to_precision(task.time_precision());
         let second_report_time = first_report_time
-            .add_time_precision(task.time_precision())
+            .add_duration(&janus_messages::Duration::ONE)
             .unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_n(
@@ -1280,7 +1249,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1342,10 +1311,7 @@ mod tests {
             assert_eq!(
                 report_aggs
                     .iter()
-                    .map(|ra| ra
-                        .time()
-                        .to_batch_interval_start(task.time_precision())
-                        .unwrap())
+                    .map(|ra| TimeInterval::to_batch_identifier(&(), ra.time()).unwrap())
                     .collect::<HashSet<_>>()
                     .len(),
                 1
@@ -1362,10 +1328,10 @@ mod tests {
             Vec::from([
                 BatchAggregation::new(
                     *task.id(),
-                    TimeInterval::to_batch_identifier(&task, &(), &first_report_time).unwrap(),
+                    TimeInterval::to_batch_identifier(&(), &first_report_time).unwrap(),
                     (),
                     0,
-                    Interval::new(first_report_time, *task.time_precision()).unwrap(),
+                    Interval::minimal(first_report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1376,10 +1342,10 @@ mod tests {
                 ),
                 BatchAggregation::new(
                     *task.id(),
-                    TimeInterval::to_batch_identifier(&task, &(), &second_report_time).unwrap(),
+                    TimeInterval::to_batch_identifier(&(), &second_report_time).unwrap(),
                     (),
                     0,
-                    Interval::new(second_report_time, *task.time_precision()).unwrap(),
+                    Interval::minimal(second_report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -1411,7 +1377,7 @@ mod tests {
         );
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -1472,7 +1438,7 @@ mod tests {
             2,
             100,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1581,7 +1547,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::new(report_time, *task.time_precision()).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1614,7 +1580,7 @@ mod tests {
         assert!(late_report_grace_period >= *task.time_precision());
 
         let report_time = clock.now_aligned_to_precision(task.time_precision());
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -1658,7 +1624,7 @@ mod tests {
             2,
             100,
             5000,
-            late_report_grace_period.into(),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1743,7 +1709,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::new(report_time, *task.time_precision()).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 0,
@@ -1780,7 +1746,7 @@ mod tests {
         let report_time = clock.now_aligned_to_precision(task.time_precision());
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&(), &report_time).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
             iter::repeat_with(|| {
                 let report_metadata = ReportMetadata::new(random(), report_time, Vec::new());
@@ -1826,7 +1792,7 @@ mod tests {
                     batch_identifier,
                     (),
                     0,
-                    Interval::new(report_time, *task.time_precision()).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -1853,7 +1819,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1925,7 +1891,7 @@ mod tests {
                 batch_identifier,
                 (),
                 0,
-                Interval::new(report_time, *task.time_precision()).unwrap(),
+                Interval::minimal(report_time).unwrap(),
                 BatchAggregationState::Collected {
                     aggregate_share: None,
                     report_count: 0,
@@ -2022,7 +1988,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2121,7 +2087,7 @@ mod tests {
                     *batch_id,
                     (),
                     0,
-                    Interval::new(report_time, *task.time_precision()).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -2217,7 +2183,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2387,7 +2353,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2651,7 +2617,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2850,16 +2816,18 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
         const MIN_BATCH_SIZE: usize = 200;
-        let batch_time_window_size = TimePrecision::from_hours(24);
+        let time_precision = TimePrecision::from_seconds(3600);
+        let batch_time_window_size = janus_messages::Duration::from_hours(24, &time_precision);
 
         let task = Arc::new(
             TaskBuilder::new(
                 TaskBatchMode::LeaderSelected {
-                    batch_time_window_size: Some(batch_time_window_size.into()),
+                    batch_time_window_size: Some(batch_time_window_size),
                 },
                 AggregationMode::Synchronous,
                 VdafInstance::Prio3Count,
             )
+            .with_time_precision(time_precision)
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
             .build()
             .leader_view()
@@ -2867,18 +2835,19 @@ mod tests {
         );
 
         // Create 2 * MIN_BATCH_SIZE reports in two different time buckets.
-        let report_time_1 = clock
-            .now()
-            .to_time()
-            .to_batch_interval_start(&batch_time_window_size)
-            .unwrap()
-            .sub_time_precision(&batch_time_window_size)
-            .unwrap();
-        let report_time_2 = clock
-            .now()
-            .to_time()
-            .to_batch_interval_start(&batch_time_window_size)
-            .unwrap();
+        let now_time = clock.now().to_time(&time_precision);
+
+        let report_time_2 = now_time.sub_duration(&batch_time_window_size).unwrap();
+        let report_time_1 = report_time_2.sub_duration(&batch_time_window_size).unwrap();
+
+        // Compute the bucketed time bucket starts for querying outstanding batches
+        let batch_window_units = batch_time_window_size.as_time_precision_units();
+        let bucket_time_1 = Time::from_time_precision_units(
+            (report_time_1.as_time_precision_units() / batch_window_units) * batch_window_units,
+        );
+        let bucket_time_2 = Time::from_time_precision_units(
+            (report_time_2.as_time_precision_units() / batch_window_units) * batch_window_units,
+        );
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
@@ -2957,7 +2926,7 @@ mod tests {
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::ONE,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2965,12 +2934,6 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let time_bucket_start_1 = report_time_1
-            .to_batch_interval_start(&batch_time_window_size)
-            .unwrap();
-        let time_bucket_start_2 = report_time_2
-            .to_batch_interval_start(&batch_time_window_size)
-            .unwrap();
         let want_ra_states: Arc<HashMap<_, _>> = Arc::new(
             reports
                 .iter()
@@ -2998,10 +2961,10 @@ mod tests {
 
                 Box::pin(async move {
                     Ok((
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_1))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(bucket_time_1))
                             .await
                             .unwrap(),
-                        tx.get_unfilled_outstanding_batches(task.id(), &Some(time_bucket_start_2))
+                        tx.get_unfilled_outstanding_batches(task.id(), &Some(bucket_time_2))
                             .await
                             .unwrap(),
                         read_and_verify_aggregate_info_for_task::<
@@ -3072,7 +3035,7 @@ mod tests {
                     *outstanding_batch.id(),
                     (),
                     0,
-                    Interval::new(report_time, *task.time_precision()).unwrap(),
+                    Interval::minimal(report_time).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: None,
                         report_count: 0,
@@ -3104,6 +3067,7 @@ mod tests {
         // and there is no reason to wait for more reports between receipt of a collection job and
         // performing the collection.
 
+        let time_precision = TimePrecision::from_seconds(30);
         let vdaf = Arc::new(dummy::Vdaf::new(1));
         let task = Arc::new(
             TaskBuilder::new(
@@ -3111,6 +3075,7 @@ mod tests {
                 AggregationMode::Synchronous,
                 VdafInstance::Fake { rounds: 1 },
             )
+            .with_time_precision(time_precision)
             .build()
             .leader_view()
             .unwrap(),
@@ -3143,7 +3108,7 @@ mod tests {
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
         // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
         let report_time = report_time
-            .sub_time_precision(task.time_precision())
+            .sub_duration(&janus_messages::Duration::ONE)
             .unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
@@ -3197,7 +3162,7 @@ mod tests {
             1,
             MAX_AGGREGATION_JOB_SIZE,
             5000,
-            janus_messages::Duration::from_seconds(3600),
+            janus_messages::Duration::from_seconds(3600, task.time_precision()),
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
@@ -3239,11 +3204,9 @@ mod tests {
                         *task.id(),
                         random(),
                         random(),
-                        Query::new_time_interval(
-                            Interval::new(report_time, *task.time_precision()).unwrap(),
-                        ),
+                        Query::new_time_interval(Interval::minimal(report_time).unwrap()),
                         second_aggregation_param,
-                        Interval::new(report_time, *task.time_precision()).unwrap(),
+                        Interval::minimal(report_time).unwrap(),
                         CollectionJobState::Start,
                     ))
                     .await?;
@@ -3253,20 +3216,16 @@ mod tests {
                         random(),
                         random(),
                         Query::new_time_interval(
-                            Interval::new_with_duration(
+                            Interval::new(
                                 report_time,
-                                janus_messages::Duration::from_seconds(
-                                    task.time_precision().as_seconds() * 2,
-                                ),
+                                janus_messages::Duration::from_time_precision_units(2),
                             )
                             .unwrap(),
                         ),
                         first_aggregation_param,
-                        Interval::new_with_duration(
+                        Interval::new(
                             report_time,
-                            janus_messages::Duration::from_seconds(
-                                task.time_precision().as_seconds() * 2,
-                            ),
+                            janus_messages::Duration::from_time_precision_units(2),
                         )
                         .unwrap(),
                         CollectionJobState::Start,

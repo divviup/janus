@@ -24,16 +24,19 @@ impl Arbitrary for Config {
         aggregation_job_size_limits.sort();
 
         let time_precision = TimePrecision::from_seconds(3600);
-        let late_report_grace_period = Duration::from_seconds(3600);
+        let late_report_grace_period = Duration::from_seconds(3600, &time_precision);
 
         Self {
             time_precision,
             min_batch_size: max(u8::arbitrary(g), 1).into(),
             batch_time_window_size: bool::arbitrary(g).then_some(Duration::from_seconds(
                 u64::from(max(u8::arbitrary(g), 1)) * time_precision.as_seconds(),
+                &time_precision,
             )),
-            report_expiry_age: bool::arbitrary(g)
-                .then_some(Duration::from_seconds(u16::arbitrary(g).into())),
+            report_expiry_age: bool::arbitrary(g).then_some(Duration::from_seconds(
+                u16::arbitrary(g).into(),
+                &time_precision,
+            )),
             aggregation_mode: if bool::arbitrary(g) {
                 AggregationMode::Synchronous
             } else {
@@ -100,7 +103,10 @@ impl Context {
     fn update(&mut self, op: &Op) {
         match op {
             Op::AdvanceTime { amount } => {
-                self.current_time = self.current_time.add_timedelta(amount).unwrap()
+                self.current_time = self
+                    .current_time
+                    .add_timedelta(amount, &self.time_precision)
+                    .unwrap()
             }
             Op::CollectorStart {
                 collection_job_id,
@@ -249,13 +255,19 @@ fn arbitrary_report_time(g: &mut Gen, context: &Context) -> Time {
         // future
         context
             .current_time
-            .add_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .add_duration(&Duration::from_seconds(
+                u16::arbitrary(g).into(),
+                &context.time_precision,
+            ))
             .unwrap()
     } else {
         // past
         context
             .current_time
-            .sub_duration(&Duration::from_seconds(u16::arbitrary(g).into()))
+            .sub_duration(&Duration::from_seconds(
+                u16::arbitrary(g).into(),
+                &context.time_precision,
+            ))
             .unwrap()
     }
 }
@@ -264,24 +276,23 @@ fn arbitrary_report_time(g: &mut Gen, context: &Context) -> Time {
 fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) -> Op {
     let start_to_now = context
         .current_time
-        .difference_as_time_delta(&START_TIME)
+        .difference_as_time_delta(&START_TIME, &context.time_precision)
         .unwrap();
     let random_range = start_to_now.num_seconds() as u64 / context.time_precision.as_seconds() + 10;
     let start = START_TIME
-        .add_duration(&Duration::from_seconds(
-            u64::arbitrary(g) % random_range * context.time_precision.as_seconds(),
+        .add_duration(&Duration::from_time_precision_units(
+            u64::arbitrary(g) % random_range,
         ))
         .unwrap();
 
     let duration_fn = g
         .choose(&[
-            (|_g: &mut Gen, context: &Context| -> TimePrecision { context.time_precision })
-                as fn(&mut Gen, &Context) -> TimePrecision,
-            (|g: &mut Gen, context: &Context| -> TimePrecision {
-                TimePrecision::from_seconds(
-                    context.time_precision.as_seconds() * (1 + u64::from(u8::arbitrary(g) & 0x1f)),
-                )
-            }) as fn(&mut Gen, &Context) -> TimePrecision,
+            (|_g: &mut Gen, _context: &Context| -> Duration {
+                Duration::from_time_precision_units(1)
+            }) as fn(&mut Gen, &Context) -> Duration,
+            (|g: &mut Gen, _context: &Context| -> Duration {
+                Duration::from_time_precision_units(1 + u64::from(u8::arbitrary(g) & 0x1f))
+            }) as fn(&mut Gen, &Context) -> Duration,
         ])
         .unwrap();
     Op::CollectorStart {

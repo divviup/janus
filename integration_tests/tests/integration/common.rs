@@ -4,7 +4,7 @@ use janus_aggregator_core::task::{BatchMode, test_util::TaskBuilder};
 use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::{ExponentialWithTotalDelayBuilder, test_util::test_http_request_exponential_backoff},
-    time::{Clock, DateTimeExt, RealClock, TimeExt},
+    time::{Clock, DateTimeExt, RealClock},
     vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_integration_tests::{
@@ -199,20 +199,15 @@ where
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval. (for time interval tasks)
-    let time = RealClock::default().now();
+    let time = RealClock::default().now().to_time(time_precision);
     for measurement in measurements.iter() {
         client_implementation
-            .upload(
-                measurement,
-                time.to_batch_interval_start(time_precision)
-                    .unwrap()
-                    .to_time(),
-            )
+            .upload(measurement, time)
             .await
             .unwrap();
     }
 
-    time.to_time()
+    time
 }
 
 pub async fn verify_aggregate_generic<V>(
@@ -261,6 +256,7 @@ where
         task_parameters.collector_auth_token.clone(),
         task_parameters.collector_hpke_keypair.clone(),
         vdaf,
+        task_parameters.time_precision,
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
@@ -276,13 +272,11 @@ where
     // Send a collect request and verify that we got the correct result.
     let (report_count, aggregate_result) = match &task_parameters.batch_mode {
         BatchMode::TimeInterval => {
-            let batch_interval = Interval::new_with_duration(
-                before_timestamp
-                    .to_batch_interval_start(&task_parameters.time_precision)
-                    .unwrap(),
+            let batch_interval = Interval::new(
+                before_timestamp,
                 // Use two time precisions as the interval duration in order to avoid a race condition if
                 // this test happens to run very close to the end of a batch window.
-                Duration::from_seconds(2 * task_parameters.time_precision.as_seconds()),
+                Duration::from_time_precision_units(2),
             )
             .unwrap();
 

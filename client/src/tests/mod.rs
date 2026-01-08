@@ -26,7 +26,7 @@ async fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) ->
         random(),
         server_url.clone(),
         server_url,
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
         vdaf,
     )
     .with_backoff(test_http_request_exponential_backoff())
@@ -43,7 +43,7 @@ fn aggregator_endpoints_end_in_slash() {
         random(),
         "http://leader_endpoint/foo/bar".parse().unwrap(),
         "http://helper_endpoint".parse().unwrap(),
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
     );
 
     assert_eq!(
@@ -164,27 +164,6 @@ async fn upload_problem_details() {
 }
 
 #[tokio::test]
-async fn upload_bad_time_precision() {
-    install_test_trace_subscriber();
-    initialize_rustls();
-
-    let client = Client::builder(
-        random(),
-        "https://leader.endpoint".parse().unwrap(),
-        "https://helper.endpoint".parse().unwrap(),
-        TimePrecision::from_seconds(0),
-        Prio3::new_count(2).unwrap(),
-    )
-    .with_leader_hpke_config(HpkeKeypair::test().config().clone())
-    .with_helper_hpke_config(HpkeKeypair::test().config().clone())
-    .build()
-    .await
-    .unwrap();
-    let result = client.upload(true).await;
-    assert_matches!(result, Err(Error::InvalidParameter(_)));
-}
-
-#[tokio::test]
 async fn report_timestamp() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -197,42 +176,42 @@ async fn report_timestamp() {
         client
             .prepare_report(
                 &true,
-                &Time::from_seconds_since_epoch(101),
+                &Time::from_seconds_since_epoch(101, &client.parameters.time_precision),
                 client.leader_hpke_config.lock().await.get().await.unwrap(),
                 client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
             .time(),
-        &Time::from_seconds_since_epoch(100),
+        &Time::from_seconds_since_epoch(100, &client.parameters.time_precision),
     );
 
     assert_eq!(
         client
             .prepare_report(
                 &true,
-                &Time::from_seconds_since_epoch(5200),
+                &Time::from_seconds_since_epoch(5200, &client.parameters.time_precision),
                 client.leader_hpke_config.lock().await.get().await.unwrap(),
                 client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
             .time(),
-        &Time::from_seconds_since_epoch(5200),
+        &Time::from_seconds_since_epoch(5200, &client.parameters.time_precision),
     );
 
     assert_eq!(
         client
             .prepare_report(
                 &true,
-                &Time::from_seconds_since_epoch(9814),
+                &Time::from_seconds_since_epoch(9800, &client.parameters.time_precision),
                 client.leader_hpke_config.lock().await.get().await.unwrap(),
                 client.helper_hpke_config.lock().await.get().await.unwrap(),
             )
             .unwrap()
             .metadata()
             .time(),
-        &Time::from_seconds_since_epoch(9800),
+        &Time::from_seconds_since_epoch(9800, &client.parameters.time_precision),
     );
 }
 
@@ -248,7 +227,7 @@ async fn unsupported_hpke_algorithms() {
         random(),
         server_url.clone(),
         server_url,
-        TimePrecision::from_seconds(1),
+        TimePrecision::from_seconds(100),
     );
     client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 

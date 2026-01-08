@@ -1,15 +1,19 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{AsyncAggregator, datastore::Error, task};
+use crate::{
+    AsyncAggregator,
+    datastore::{Error, SQL_UNIT_TIME_PRECISION},
+    task,
+};
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::ValueEnum;
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{self, HpkeCiphersuite},
     report_id::ReportIdChecksumExt,
-    time::{IntervalExt, TimeDeltaExt, TimeExt},
+    time::{IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -20,7 +24,8 @@ use janus_messages::{
     taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
-    Range, RangeBound, range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
+    Range, RangeBound, empty_range_to_sql, range_from_sql, range_to_sql, timestamp_from_sql,
+    timestamp_to_sql,
 };
 use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
@@ -619,12 +624,20 @@ impl<T> Lease<T> {
     /// Returns how long remains until the expiry time, with an optional clock skew allowance.
     /// The math saturates, because we want to timeout immediately if any of these
     /// subtractions would underflow.
-    pub fn remaining_lease_duration(&self, current_time: &Time, skew_seconds: u64) -> StdDuration {
+    pub fn remaining_lease_duration(
+        &self,
+        current_time: &DateTime<Utc>,
+        skew_seconds: u64,
+    ) -> StdDuration {
         StdDuration::from_secs(
-            u64::try_from(self.lease_expiry_time.and_utc().timestamp())
-                .unwrap_or_default()
-                .saturating_sub(current_time.as_seconds_since_epoch())
-                .saturating_sub(skew_seconds),
+            u64::try_from(
+                self.lease_expiry_time
+                    .and_utc()
+                    .timestamp()
+                    .saturating_sub(current_time.timestamp()),
+            )
+            .unwrap_or_default()
+            .saturating_sub(skew_seconds),
         )
     }
 }
@@ -2119,8 +2132,10 @@ impl OutstandingBatch {
     }
 }
 
-/// The SQL timestamp epoch, midnight UTC on 2000-01-01.
-const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
+/// The SQL timestamp epoch is midnight UTC on 2000-01-01. This const represents
+/// the Unix epoch seconds (946_684_800) in the context of SQL_UNIT_TIME_PRECISION
+/// and should not be necessary after Issue #4206.
+const SQL_EPOCH_TIME: Time = Time::from_time_precision_units(946_684_800);
 
 /// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2129,6 +2144,44 @@ pub struct SqlInterval(Interval);
 impl SqlInterval {
     pub fn as_interval(&self) -> Interval {
         self.0
+    }
+
+    /// Convert an interval from task time precision to SQL time precision.
+    pub fn from_dap_time_interval(
+        interval: &Interval,
+        task_precision: &TimePrecision,
+    ) -> Result<Self, Error> {
+        Ok(Self(Self::convert_time_precision(
+            interval,
+            task_precision,
+            &SQL_UNIT_TIME_PRECISION,
+        )?))
+    }
+
+    /// Convert this SQL interval to task time precision.
+    pub fn to_dap_time_interval(&self, task_precision: &TimePrecision) -> Result<Interval, Error> {
+        Ok(Self::convert_time_precision(
+            &self.0,
+            &SQL_UNIT_TIME_PRECISION,
+            task_precision,
+        )?)
+    }
+
+    /// Convert an interval from one time precision to another. This is deliberately
+    /// private as this is a dangerous conversion.
+    fn convert_time_precision(
+        interval: &Interval,
+        from_precision: &TimePrecision,
+        to_precision: &TimePrecision,
+    ) -> Result<Interval, janus_messages::Error> {
+        // Convert start and duration from source precision to target precision
+        let start_seconds = interval.start().as_seconds_since_epoch(from_precision);
+        let duration_seconds = interval.duration().as_seconds(from_precision);
+
+        let new_start = Time::from_seconds_since_epoch(start_seconds, to_precision);
+        let new_duration = Duration::from_seconds(duration_seconds, to_precision);
+
+        Interval::new(new_start, new_duration)
     }
 }
 
@@ -2176,10 +2229,14 @@ impl<'a> FromSql<'a> for SqlInterval {
                 let end_timestamp = timestamp_from_sql(end_raw)?;
 
                 // Convert from SQL timestamp representation to the internal representation.
+                // Note well that this truncates to SQL_UNIT_TIME_PRECISION, despite the
+                // database storing in microsecond precision.
                 let negative = start_timestamp < 0;
                 let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration =
-                    Duration::from_chrono(chrono::TimeDelta::microseconds(abs_start_us as i64));
+                let abs_start_duration = Duration::from_chrono(
+                    chrono::TimeDelta::microseconds(abs_start_us as i64),
+                    &SQL_UNIT_TIME_PRECISION,
+                );
                 let time = if negative {
                     SQL_EPOCH_TIME
                         .sub_duration(&abs_start_duration)
@@ -2197,10 +2254,12 @@ impl<'a> FromSql<'a> for SqlInterval {
                     return Err("timestamp range ends before it starts".into());
                 }
                 let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration =
-                    Duration::from_chrono(chrono::TimeDelta::microseconds(duration_us as i64));
+                let duration = Duration::from_chrono(
+                    chrono::TimeDelta::microseconds(duration_us as i64),
+                    &SQL_UNIT_TIME_PRECISION,
+                );
 
-                Ok(SqlInterval(Interval::new_with_duration(time, duration)?))
+                Ok(SqlInterval(Interval::new(time, duration)?))
             }
         }
     }
@@ -2208,17 +2267,28 @@ impl<'a> FromSql<'a> for SqlInterval {
     accepts!(TS_RANGE);
 }
 
-fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
-    if time.is_after(&SQL_EPOCH_TIME) {
-        let absolute_difference_us = time
-            .difference_as_time_delta(&SQL_EPOCH_TIME)?
-            .as_microseconds()?;
-        Ok(absolute_difference_us.try_into()?)
+fn time_to_sql_timestamp(time: Time, time_precision: &TimePrecision) -> Result<i64, Error> {
+    // Convert time from time_precision units to absolute seconds since Unix epoch
+    let time_seconds = time.as_seconds_since_epoch(time_precision);
+
+    let sql_epoch_seconds = SQL_EPOCH_TIME.as_seconds_since_epoch(&SQL_UNIT_TIME_PRECISION);
+
+    if time_seconds >= sql_epoch_seconds {
+        let diff_seconds = time_seconds - sql_epoch_seconds;
+        let diff_microseconds = diff_seconds
+            .checked_mul(1_000_000)
+            .ok_or(Error::TimeOverflow(
+                "overflow converting time to microseconds",
+            ))?;
+        Ok(diff_microseconds.try_into()?)
     } else {
-        let absolute_difference_us = SQL_EPOCH_TIME
-            .difference_as_time_delta(&time)?
-            .as_microseconds()?;
-        Ok(-i64::try_from(absolute_difference_us)?)
+        let diff_seconds = sql_epoch_seconds - time_seconds;
+        let diff_microseconds = diff_seconds
+            .checked_mul(1_000_000)
+            .ok_or(Error::TimeOverflow(
+                "overflow converting time to microseconds",
+            ))?;
+        Ok(-i64::try_from(diff_microseconds)?)
     }
 }
 
@@ -2229,10 +2299,18 @@ impl ToSql for SqlInterval {
         out: &mut bytes::BytesMut,
     ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         // Convert the interval start and end to SQL timestamps.
-        let start_sql_usec = time_to_sql_timestamp(*self.0.start())
-            .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
-        let end_sql_usec = time_to_sql_timestamp(self.0.end())
-            .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
+        if self.0 == Interval::EMPTY {
+            empty_range_to_sql(out);
+            return Ok(postgres_types::IsNull::No);
+        }
+
+        // Note: The interval should already be in SQL_UNIT_TIME_PRECISION (1 second) units,
+        // and if it isn't, badness ensues. This will stop being an problem as part of
+        // Issue #4206.
+        let start_sql_usec = time_to_sql_timestamp(self.0.start(), &SQL_UNIT_TIME_PRECISION)
+            .map_err(|_| "microsecond timestamp of Interval start overflowed")?;
+        let end_sql_usec = time_to_sql_timestamp(self.0.end(), &SQL_UNIT_TIME_PRECISION)
+            .map_err(|_| "microsecond timestamp of Interval end overflowed")?;
 
         range_to_sql(
             |out| {
@@ -2288,14 +2366,14 @@ pub enum HpkeKeyState {
 pub struct HpkeKeypair {
     hpke_keypair: hpke::HpkeKeypair,
     state: HpkeKeyState,
-    last_state_change_at: Time,
+    last_state_change_at: DateTime<Utc>,
 }
 
 impl HpkeKeypair {
     pub fn new(
         hpke_keypair: hpke::HpkeKeypair,
         state: HpkeKeyState,
-        last_state_change_at: Time,
+        last_state_change_at: DateTime<Utc>,
     ) -> Self {
         Self {
             hpke_keypair,
@@ -2312,7 +2390,7 @@ impl HpkeKeypair {
         &self.state
     }
 
-    pub fn set_state(&mut self, state: HpkeKeyState, time: Time) {
+    pub fn set_state(&mut self, state: HpkeKeyState, time: DateTime<Utc>) {
         self.state = state;
         self.last_state_change_at = time;
     }
@@ -2329,7 +2407,7 @@ impl HpkeKeypair {
         self.state == HpkeKeyState::Expired
     }
 
-    pub fn last_state_change_at(&self) -> &Time {
+    pub fn last_state_change_at(&self) -> &DateTime<Utc> {
         &self.last_state_change_at
     }
 
