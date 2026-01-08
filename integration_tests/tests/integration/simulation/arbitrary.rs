@@ -291,7 +291,7 @@ fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) ->
                 Duration::from_time_precision_units(1)
             }) as fn(&mut Gen, &Context) -> Duration,
             (|g: &mut Gen, _context: &Context| -> Duration {
-                Duration::from_time_precision_units(u64::from(u8::arbitrary(g) & 0x1f))
+                Duration::from_time_precision_units(1 + u64::from(u8::arbitrary(g) & 0x1f))
             }) as fn(&mut Gen, &Context) -> Duration,
         ])
         .unwrap();

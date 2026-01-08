@@ -1351,7 +1351,6 @@ pub mod test_util {
         pub fn build(self) -> Task {
             // If the tolerable clock skew is unset, copy the time_precision
             if *self.0.tolerable_clock_skew() == Duration::ZERO {
-                let _time_precision = *self.0.time_precision();
                 return self.with_tolerable_clock_skew(Duration::ONE).0;
             }
             self.0

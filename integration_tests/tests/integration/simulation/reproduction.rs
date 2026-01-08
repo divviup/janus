@@ -449,7 +449,7 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
             max_aggregation_job_size: 1,
             late_report_grace_period: Duration::from_seconds(
                 3600,
-                &TimePrecision::from_seconds(3600),
+                &TimePrecision::from_seconds(1000),
             ),
         },
         ops: Vec::from([
@@ -507,7 +507,7 @@ fn repro_helper_accumulate_on_retried_request() {
             max_aggregation_job_size: 1,
             late_report_grace_period: Duration::from_seconds(
                 3600,
-                &TimePrecision::from_seconds(3600),
+                &TimePrecision::from_seconds(1000),
             ),
         },
         ops: Vec::from([

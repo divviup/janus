@@ -1858,7 +1858,7 @@ impl VdafOps {
                 // Past report: now > report time
                 metrics
                     .past_report_clock_skew_histogram
-                    .record((skew_seconds) as u64, &[]);
+                    .record((-skew_seconds) as u64, &[]);
             }
         }
 
