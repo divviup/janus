@@ -5262,8 +5262,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let first_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP + 100,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     aggregation_param,
                     0,
                     Interval::EMPTY,
@@ -5298,8 +5301,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let third_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 300, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP + 300,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     aggregation_param,
                     2,
                     Interval::EMPTY,
@@ -5328,8 +5334,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is before the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     aggregation_param,
                     4,
                     Interval::EMPTY,
@@ -5366,8 +5375,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Aggregation parameter differs from the one queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     dummy::AggregationParam(13),
                     5,
                     Interval::EMPTY,
@@ -5385,8 +5397,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is after the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 500, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP + 500,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     aggregation_param,
                     6,
                     Interval::EMPTY,
@@ -5404,8 +5419,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Task ID differs from that queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *other_task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 200, task.time_precision()))
-                        .unwrap(),
+                    Interval::minimal(Time::from_seconds_since_epoch(
+                        START_TIMESTAMP + 200,
+                        task.time_precision(),
+                    ))
+                    .unwrap(),
                     aggregation_param,
                     7,
                     Interval::EMPTY,
