@@ -45,9 +45,9 @@ pub struct CommonConfig {
     #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
 
-    /// The maximum number of times a transaction can be retried. The intent is to guard against bugs
-    /// that induce infinite retries. It should be set to a reasonably high limit to prevent legitimate
-    /// work from being cancelled.
+    /// The maximum number of times a transaction can be retried. The intent is to guard against
+    /// bugs that induce infinite retries. It should be set to a reasonably high limit to
+    /// prevent legitimate work from being cancelled.
     #[serde(default = "default_max_transaction_retries")]
     pub max_transaction_retries: u64,
 

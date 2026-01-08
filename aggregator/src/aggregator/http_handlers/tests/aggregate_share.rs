@@ -651,7 +651,8 @@ async fn aggregate_share_request() {
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "title": "The message type for a response was incorrect or the payload was
+                 malformed.",
                 "detail": "batch has already been collected with another aggregation parameter",
                 "taskid": format!("{}", task.id()),
             })
@@ -805,7 +806,8 @@ async fn aggregate_share_request_get_poll_after_put() {
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
 
-    // Send the request. We'll ignore the details of the response and check that polling still works.
+    // Send the request. We'll ignore the details of the response and check that polling still
+    // works.
     let test_conn =
         put_aggregate_share_request(&task, &request, &aggregate_share_id, &handler).await;
 

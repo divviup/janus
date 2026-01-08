@@ -131,7 +131,8 @@ pub trait TimeDeltaExt: Sized {
     /// Create a [`chrono::TimeDelta`] from a number of microseconds.
     fn from_microseconds(microseconds: u64) -> TimeDelta;
 
-    /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second precision.
+    /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second
+    /// precision.
     fn as_microseconds(&self) -> Result<u64, Error>;
 
     /// Create a [`chrono::TimeDelta`] representing the provided number of minutes.
@@ -146,8 +147,9 @@ pub trait TimeDeltaExt: Sized {
     /// returning an error if the value is too large to represent.
     fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error>;
 
-    /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next largest multiple of
-    /// `time_precision`, or the same time delta if it's already a multiple.
+    /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next
+    /// largest multiple of `time_precision`, or the same time delta if it's already a
+    /// multiple.
     fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error>;
 
     /// Confirm that this time delta is a multiple of the task time precision.
@@ -275,7 +277,8 @@ pub trait DateTimeExt {
     /// Returns true if and only if this [`DateTime<Utc>`] occurs after the given [`Time`].
     fn is_after(&self, time: &Time) -> bool;
 
-    /// Compute the start of the batch interval containing this DateTime, given the task time precision.
+    /// Compute the start of the batch interval containing this DateTime, given the task time
+    /// precision.
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
     where
         Self: Sized;
@@ -578,7 +581,8 @@ pub trait IntervalExt: Sized {
     /// are multiples of `time_precision`.
     fn align_to_time_precision(&self, time_precision: &TimePrecision) -> Result<Self, Error>;
 
-    /// Confirm that this interval's start and duration are both multiples of the task time precision.
+    /// Confirm that this interval's start and duration are both multiples of the task time
+    /// precision.
     fn validate_precision(
         self,
         time_precision: &TimePrecision,

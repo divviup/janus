@@ -89,12 +89,12 @@ pub(super) enum Op {
     /// Requests and responses will pass through an inspecting proxy in front of the helper.
     LeaderAggregationJobDriver,
 
-    /// Same as `LeaderAggregationJobDriver`, with fault injection. Drop all requests and return some sort
-    /// of error.
+    /// Same as `LeaderAggregationJobDriver`, with fault injection. Drop all requests and
+    /// return some sort of error.
     LeaderAggregationJobDriverRequestError,
 
-    /// Same as `LeaderAggregationJobDriver`, with fault injection. Forward all requests, but drop the
-    /// responses, and return some sort of error.
+    /// Same as `LeaderAggregationJobDriver`, with fault injection. Forward all requests,
+    /// but drop the responses, and return some sort of error.
     LeaderAggregationJobDriverResponseError,
 
     /// Run the aggregation job driver once in the helper, and wait until it is done stepping all

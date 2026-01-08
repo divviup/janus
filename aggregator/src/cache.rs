@@ -392,8 +392,8 @@ mod tests {
                 || (task_aggregator.task.task_end() == Some(&new_end))
         );
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         let task_aggregator = task_aggregators.get(task.id()).await.unwrap().unwrap();
@@ -437,8 +437,8 @@ mod tests {
         // A wild task appears!
         datastore.put_aggregator_task(&task).await.unwrap();
 
-        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to resort
-        // to sleeps to test TTL functionality.
+        // Unfortunately, because moka doesn't provide any facility for a fake clock, we have to
+        // resort to sleeps to test TTL functionality.
         sleep(Duration::from_secs(1)).await;
 
         // Now we should see it.

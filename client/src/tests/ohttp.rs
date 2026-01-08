@@ -282,7 +282,8 @@ async fn http_client_error_from_target() {
             let encapsulated_req = request.body().unwrap();
             let (_, server_response) = ohttp_server.decapsulate(encapsulated_req.as_ref()).unwrap();
 
-            // Construct a 400 Client Error response to the encapsulated request, then encapsulate that
+            // Construct a 400 Client Error response to the encapsulated request, then
+            // encapsulate that
             let mut response = Vec::new();
             Message::response(StatusCode::try_from(400u16).unwrap())
                 .write_bhttp(Mode::KnownLength, &mut response)

@@ -23,7 +23,8 @@ pub struct PrivateCollectorCredential {
 }
 
 impl PrivateCollectorCredential {
-    /// Returns the [`AuthenticationToken`] necessary for connecting to an aggregator for collection.
+    /// Returns the [`AuthenticationToken`] necessary for connecting to an aggregator for
+    /// collection.
     pub fn authentication_token(&self) -> AuthenticationToken {
         AuthenticationToken::Bearer(self.token.clone())
     }

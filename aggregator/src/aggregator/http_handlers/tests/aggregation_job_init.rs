@@ -1,4 +1,5 @@
-#![allow(clippy::unit_arg)] // allow reference to dummy::Vdaf's public share, which has the unit type
+#![allow(clippy::unit_arg)] /* allow reference to dummy::Vdaf's public share, which has the unit
+type */
 
 use crate::aggregator::{
     BatchAggregationsIterator,
