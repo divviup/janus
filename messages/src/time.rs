@@ -37,9 +37,7 @@ impl Duration {
     ///
     /// Panics if `time_precision.as_seconds()` is 0.
     pub fn from_seconds(seconds: u64, time_precision: &TimePrecision) -> Self {
-        let precision_secs = time_precision.as_seconds();
-        assert!(precision_secs > 0);
-        Self(seconds / precision_secs)
+        Self(seconds / time_precision.as_seconds())
     }
 
     /// Create a duration representing the provided number of hours, given the task's time
