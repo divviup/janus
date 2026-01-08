@@ -540,7 +540,6 @@ async fn aggregate_share_request() {
                     Box::pin(async move {
                         let batch_aggregations: Vec<_> = try_join_all(
                             TimeInterval::batch_identifiers_for_collection_identifier(
-                                task.time_precision(),
                                 &collection_interval,
                             )
                             .map(|batch_identifier| {

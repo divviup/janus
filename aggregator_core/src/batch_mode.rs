@@ -7,11 +7,8 @@ use crate::{
     task::AggregatorTask,
 };
 use async_trait::async_trait;
-use chrono::TimeDelta;
 use futures::future::try_join_all;
-use janus_core::time::{
-    Clock, DateTimeExt as _, IntervalExt as _, TimeDeltaExt as _, TimeExt as _,
-};
+use janus_core::time::{Clock, DateTimeExt as _, IntervalExt as _, TimeExt as _};
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
@@ -190,7 +187,6 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
-        time_precision: &TimePrecision,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
@@ -215,30 +211,27 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     >(
         tx: &Transaction<C>,
         task_id: &TaskId,
-        time_precision: &TimePrecision,
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Self, A>>, datastore::Error> {
         Ok(try_join_all(
-            Self::batch_identifiers_for_collection_identifier(
-                time_precision,
-                collection_identifier,
-            )
-            .map(|batch_identifier| {
-                let task_id = *task_id;
-                let aggregation_param = aggregation_param.clone();
+            Self::batch_identifiers_for_collection_identifier(collection_identifier).map(
+                |batch_identifier| {
+                    let task_id = *task_id;
+                    let aggregation_param = aggregation_param.clone();
 
-                async move {
-                    tx.get_batch_aggregations_for_batch(
-                        vdaf,
-                        &task_id,
-                        &batch_identifier,
-                        &aggregation_param,
-                    )
-                    .await
-                }
-            }),
+                    async move {
+                        tx.get_batch_aggregations_for_batch(
+                            vdaf,
+                            &task_id,
+                            &batch_identifier,
+                            &aggregation_param,
+                        )
+                        .await
+                    }
+                },
+            ),
         )
         .await?
         .into_iter()
@@ -255,28 +248,25 @@ pub trait CollectableBatchMode: AccumulableBatchMode {
     >(
         tx: &Transaction<C>,
         task_id: &TaskId,
-        time_precision: &TimePrecision,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(u64, u64), datastore::Error> {
         Ok(try_join_all(
-            Self::batch_identifiers_for_collection_identifier(
-                time_precision,
-                collection_identifier,
-            )
-            .map(|batch_identifier| {
-                let task_id = *task_id;
-                let aggregation_param = aggregation_param.clone();
+            Self::batch_identifiers_for_collection_identifier(collection_identifier).map(
+                |batch_identifier| {
+                    let task_id = *task_id;
+                    let aggregation_param = aggregation_param.clone();
 
-                async move {
-                    tx.get_batch_aggregation_job_count_for_batch::<SEED_SIZE, Self, A>(
-                        &task_id,
-                        &batch_identifier,
-                        &aggregation_param,
-                    )
-                    .await
-                }
-            }),
+                    async move {
+                        tx.get_batch_aggregation_job_count_for_batch::<SEED_SIZE, Self, A>(
+                            &task_id,
+                            &batch_identifier,
+                            &aggregation_param,
+                        )
+                        .await
+                    }
+                },
+            ),
         )
         .await?
         .into_iter()
@@ -297,10 +287,9 @@ impl CollectableBatchMode for TimeInterval {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        time_precision: &TimePrecision,
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
-        TimeIntervalBatchIdentifierIter::new(time_precision, batch_interval)
+        TimeIntervalBatchIdentifierIter::new(batch_interval)
     }
 
     fn validate_collection_identifier(collection_identifier: &Self::BatchIdentifier) -> bool {
@@ -328,16 +317,14 @@ pub struct TimeIntervalBatchIdentifierIter {
     step: u64,
     total_step_count: u64,
     start: Time,
-    time_precision: TimePrecision,
 }
 
 impl TimeIntervalBatchIdentifierIter {
-    fn new(time_precision: &TimePrecision, batch_interval: &Interval) -> Self {
+    fn new(batch_interval: &Interval) -> Self {
         Self {
             step: 0,
             total_step_count: batch_interval.duration().as_time_precision_units(),
             start: batch_interval.start(),
-            time_precision: *time_precision,
         }
     }
 }
@@ -349,21 +336,9 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
         if self.step == self.total_step_count {
             return None;
         }
-        // Unwrap safety: errors can only occur if the times being unwrapped cannot be represented
-        // as a Time. The relevant times can always be represented since they are internal to the
-        // batch interval used to create the iterator.
-        let interval = Interval::minimal(
-            self.start
-                .add_timedelta(
-                    &TimeDelta::try_seconds_unsigned(self.step * self.time_precision.as_seconds())
-                        .unwrap(),
-                    &self.time_precision,
-                )
-                .unwrap(),
-        )
-        .unwrap();
+        let position = self.start.as_time_precision_units() + self.step;
         self.step += 1;
-        Some(interval)
+        Interval::minimal(Time::from_time_precision_units(position)).ok()
     }
 }
 
@@ -380,10 +355,7 @@ impl CollectableBatchMode for LeaderSelected {
             .await
     }
 
-    fn batch_identifiers_for_collection_identifier(
-        _: &TimePrecision,
-        batch_id: &Self::BatchIdentifier,
-    ) -> Self::Iter {
+    fn batch_identifiers_for_collection_identifier(batch_id: &Self::BatchIdentifier) -> Self::Iter {
         iter::once(*batch_id)
     }
 

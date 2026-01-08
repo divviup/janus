@@ -211,7 +211,7 @@ where
     ) -> Self {
         // Construct iterator over all possible batch aggregations for the collection identifier.
         let expected_batch_aggregations = iproduct!(
-            B::batch_identifiers_for_collection_identifier(task.time_precision(), batch_identifier),
+            B::batch_identifiers_for_collection_identifier(batch_identifier),
             0..batch_aggregation_shard_count
         );
 

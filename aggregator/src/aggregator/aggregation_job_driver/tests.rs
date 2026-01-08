@@ -2830,14 +2830,7 @@ async fn leader_sync_leader_selected_aggregation_job_continue() {
                         0,
                         dummy::Vdaf,
                         _,
-                    >(
-                        tx,
-                        task.id(),
-                        task.time_precision(),
-                        &vdaf,
-                        &batch_id,
-                        &aggregation_param,
-                    )
+                    >(tx, task.id(), &vdaf, &batch_id, &aggregation_param)
                     .await
                     .unwrap(),
                 );

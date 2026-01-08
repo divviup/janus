@@ -3651,7 +3651,6 @@ impl VdafOps {
                         B::get_batch_aggregations_for_collection_identifier(
                             tx,
                             task.id(),
-                            task.time_precision(),
                             vdaf.as_ref(),
                             aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param

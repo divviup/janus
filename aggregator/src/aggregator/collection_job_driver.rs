@@ -217,7 +217,6 @@ impl CollectionJobDriver {
                         >(
                             tx,
                             lease.leased().task_id(),
-                            lease.leased().time_precision(),
                             &collection_identifier,
                             &aggregation_param,
                         ),
@@ -272,7 +271,6 @@ impl CollectionJobDriver {
                     let batch_aggregations = B::get_batch_aggregations_for_collection_identifier(
                         tx,
                         lease.leased().task_id(),
-                        lease.leased().time_precision(),
                         vdaf.as_ref(),
                         &collection_identifier,
                         &aggregation_param,

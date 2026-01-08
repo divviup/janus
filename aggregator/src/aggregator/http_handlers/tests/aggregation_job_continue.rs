@@ -927,7 +927,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     >(
                         tx,
                         task.id(),
-                        task.time_precision(),
                         &vdaf,
                         &first_batch_identifier,
                         &aggregation_param,
@@ -984,7 +983,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     >(
                         tx,
                         task.id(),
-                        task.time_precision(),
                         &vdaf,
                         &second_batch_identifier,
                         &aggregation_param,
@@ -1221,7 +1219,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     >(
                         tx,
                         task.id(),
-                        task.time_precision(),
                         &vdaf,
                         &first_batch_identifier,
                         &aggregation_param,
@@ -1283,7 +1280,6 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
                     >(
                         tx,
                         task.id(),
-                        task.time_precision(),
                         &vdaf,
                         &second_batch_identifier,
                         &aggregation_param,

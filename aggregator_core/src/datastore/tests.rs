@@ -5443,7 +5443,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 >(
                     tx,
                     task.id(),
-                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100, task.time_precision()),
@@ -5495,7 +5494,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 >(
                     tx,
                     task.id(),
-                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100, task.time_precision()),
@@ -5542,7 +5540,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 >(
                     tx,
                     task.id(),
-                    task.time_precision(),
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100, task.time_precision()),
