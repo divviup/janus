@@ -1,0 +1,6 @@
+# Enforce consistent code formatting across the project
+max_width = 100
+use_small_heuristics = "Default"
+
+# Note: comment_width, wrap_comments, and format_code_in_doc_comments are all in
+# nightly, and when they become stable we'll want to use them, too.

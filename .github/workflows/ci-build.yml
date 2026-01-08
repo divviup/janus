@@ -98,7 +98,7 @@ jobs:
         path: ${{ github.workspace }}/test-logs/
         # Not all test failures yield log files
         if-no-files-found: ignore
-  
+
   janus_lints:
     strategy:
       matrix:
@@ -121,8 +121,18 @@ jobs:
       with:
         toolchain: ${{ matrix.rust-toolchain }}
         components: clippy, rustfmt
+    - name: Install ripgrep
+      run: sudo apt-get update && sudo apt-get install -y ripgrep
     - name: Format
       run: cargo fmt --message-format human -- --check
+    - name: Check comment line length
+      run: |
+        # Find comments exceeding 100 characters (excluding URLs)
+        if rg --line-number --max-columns 150 '^.{101,}$' --type rust | rg ' //' | grep -v "://"; then
+          echo "Error: Found comments exceeding 100 characters (see above)"
+          echo "Please wrap long comments to stay within the 100 character limit"
+          exit 1
+        fi
     - name: Clippy
       run: cargo clippy --profile ci --workspace --all-targets
     - name: Clippy (all features)

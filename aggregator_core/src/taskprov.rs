@@ -107,7 +107,8 @@ pub struct PeerAggregator {
     #[educe(Debug(method(std::fmt::Display::fmt)))]
     endpoint: Url,
 
-    /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or [`Role::Helper`].
+    /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or
+    /// [`Role::Helper`].
     /// This, along with `endpoint`, uniquely represents the peer aggregator.
     peer_role: Role,
 

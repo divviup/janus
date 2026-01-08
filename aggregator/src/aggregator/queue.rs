@@ -156,10 +156,10 @@ impl LIFORequestQueue {
                                     },
                                 }
                             }
-                            // The receiver is held open for at least the life of the LIFORequestQueue
-                            // by the stored dispatcher_rx. If that's been dropped, and all other
-                            // message senders have been dropped (one each is cloned to requests
-                            // for cancellation), then the dispatcher can be closed.
+                            // The receiver is held open for at least the life of the
+                            // LIFORequestQueue by the stored dispatcher_rx. If that's been dropped,
+                            // and all other message senders have been dropped (one each is cloned
+                            // to requests for cancellation), then the dispatcher can be closed.
                             None => {
                                 debug!("dispatcher receiver closed, shutting down dispatcher");
                                 return;
@@ -270,10 +270,10 @@ impl LIFORequestQueue {
                 &[KeyValue::new("status", "dequeued")],
             );
 
-            // If the rx channel is prematurely dropped, we'll reach this error, indicating that
-            // something has gone wrong with the dispatcher task or it has shutdown. If the drop guard
-            // causes the rx channel to be dropped, we shouldn't reach this error because the overall
-            // future would have been dropped.
+            // If the rx channel is prematurely dropped, we'll reach this error, indicating
+            // that something has gone wrong with the dispatcher task or it has shutdown. If
+            // the drop guard causes the rx channel to be dropped, we shouldn't reach this
+            // error because the overall future would have been dropped.
             permit.map_err(|_| {
                 Error::Internal("permit channel dropped; dispatcher may have shut down?".into())
             })?
@@ -620,7 +620,8 @@ mod tests {
                         let request = get("/").run_async(&handler).await;
                         match request.status().unwrap() {
                             Status::Ok => Ok(()),
-                            Status::TooManyRequests => Ok(()), // Timeouts and queue full are fine during filling
+                            // Timeouts and queue full are fine during filling
+                            Status::TooManyRequests => Ok(()),
                             status => Err(Error::Internal(
                                 format!("Unexpected status: {status}").into(),
                             )),

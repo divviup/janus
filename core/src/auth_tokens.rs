@@ -434,8 +434,8 @@ pub mod test_util {
 
     /// Extension trait to fluently add an auth token to a [`trillium_testing::TestConn`].
     pub trait WithAuthenticationToken {
-        /// Add the header and value obtained from [`AuthenticationToken::request_authentication`] to
-        /// the request.
+        /// Add the header and value obtained from
+        /// [`AuthenticationToken::request_authentication`] to the request.
         fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
     }
 

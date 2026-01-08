@@ -297,7 +297,8 @@ fn roundtrip_collection_job_resp() {
                     // partial_batch_selector
                     "02",   // batch_mode
                     "0020", // length
-                    "0303030303030303030303030303030303030303030303030303030303030303", // opaque data
+                    // opaque data
+                    "0303030303030303030303030303030303030303030303030303030303030303",
                 ),
                 "0000000000000000", // report_count
                 concat!(
@@ -358,7 +359,8 @@ fn roundtrip_collection_job_resp() {
                     // partial_batch_selector
                     "02",   // batch_mode
                     "0020", // length
-                    "0404040404040404040404040404040404040404040404040404040404040404", // opaque data
+                    // opaque data
+                    "0404040404040404040404040404040404040404040404040404040404040404",
                 ),
                 "0000000000000017", // report_count
                 concat!(
@@ -555,7 +557,8 @@ fn roundtrip_aggregate_share_req() {
                     // batch_selector
                     "02",   // batch_mode
                     "0020", // length
-                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // opaque data
+                    // opaque data
+                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C",
                 ),
                 concat!(
                     // aggregation_parameter
@@ -580,7 +583,8 @@ fn roundtrip_aggregate_share_req() {
                     // batch_selector
                     "02",   // batch_mode
                     "0020", // length
-                    "0707070707070707070707070707070707070707070707070707070707070707", // opaque data
+                    // opaque data
+                    "0707070707070707070707070707070707070707070707070707070707070707",
                 ),
                 concat!(
                     // aggregation_parameter

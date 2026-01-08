@@ -36,7 +36,8 @@ impl HttpErrorResponse {
                         match response.json::<HttpApiProblem>().await {
                             Ok(mut problem) => {
                                 problem.status = Some(status);
-                                // Unwrap safety: the conversion always succeeds if the status is populated.
+                                // Unwrap safety: the conversion always succeeds if the status is
+                                // populated.
                                 return problem.try_into().unwrap();
                             }
                             Err(error) => warn!(%error, "Failed to parse problem details"),

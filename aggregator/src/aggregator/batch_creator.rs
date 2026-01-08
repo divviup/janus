@@ -376,8 +376,10 @@ where
             .collect();
         report_ids_to_scrub.extend(report_aggregations.iter().map(|ra| *ra.report_id()));
 
-        let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
+        // unwrap safety: aggregation_job_size > 0
+        let min_client_timestamp = min_client_timestamp.unwrap();
+        // unwrap safety: aggregation_job_size > 0
+        let max_client_timestamp = max_client_timestamp.unwrap();
         let client_timestamp_interval = Interval::new_with_duration(
             min_client_timestamp.to_batch_interval_start(&time_precision)?,
             Duration::from_chrono(
