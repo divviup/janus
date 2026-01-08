@@ -1,4 +1,5 @@
-#![allow(clippy::unit_arg)] // allow reference to dummy::Vdaf's public share, which has the unit type
+// allow reference to dummy::Vdaf's public share, which has the unit type
+#![allow(clippy::unit_arg)]
 
 use crate::{
     batch_mode::CollectableBatchMode,
@@ -2033,8 +2034,9 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 .await
                 .unwrap();
 
-                // Write an aggregation job with old timestamp that will be expired after clock advance.
-                // Use a time that's not yet expired but will be after advancing the clock.
+                // Write an aggregation job with old timestamp that will be expired after clock
+                // advance. Use a time that's not yet expired but will be after advancing the
+                // clock.
                 let expired_aggregation_job_id = random();
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH_PRIO3,
@@ -2055,8 +2057,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 .await
                 .unwrap();
 
-                // Write an aggregation job that is awaiting a request from the Leader. We don't want to
-                // retrieve this one, either.
+                // Write an aggregation job that is awaiting a request from the Leader. We
+                // don't want to retrieve this one, either.
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH_PRIO3,
                     TimeInterval,
@@ -4078,7 +4080,8 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Finished, // Doesn't matter what state the report aggregation is in
+            // Doesn't matter what state the report aggregation is in
+            ReportAggregationState::Finished,
         ),
         // Second collection job
         ReportAggregation::<0, dummy::Vdaf>::new(
@@ -4478,8 +4481,8 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         .run_tx("test-acquire-leases", |tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
-                // Try to re-acquire collection jobs. Nothing should happen because the lease is still
-                // valid.
+                // Try to re-acquire collection jobs. Nothing should happen because the
+                // lease is still valid.
                 assert!(
                     tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
@@ -4666,8 +4669,8 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
         .run_unnamed_tx(|tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
-                // Try to re-acquire collection jobs. Nothing should happen because the lease is still
-                // valid.
+                // Try to re-acquire collection jobs. Nothing should happen because the
+                // lease is still valid.
                 assert!(
                     tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
                         .await
@@ -6134,9 +6137,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
-                        // Let report_count be 1 without an accompanying report_aggregation in a
-                        // terminal state. This captures the case where a FINISHED report_aggregation
-                        // was garbage collected and no longer exists in the database.
+                        // Let report_count be 1 without an accompanying report_aggregation
+                        // in a terminal state. This captures the case where a FINISHED
+                        // report_aggregation was garbage collected and no longer exists in the
+                        // database.
                         report_count: 1,
                         checksum: ReportIdChecksum::default(),
                         aggregation_jobs_created: 4,
@@ -7112,7 +7116,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     batch_time_window_size: Some(batch_time_window_size),
                     ..
                 } => {
-                    // Compute the batch time bucket start by rounding down to batch_time_window_size
+                    // Compute the batch time bucket start by rounding down to
+                    // batch_time_window_size
                     let batch_window_units = batch_time_window_size.as_time_precision_units();
                     let time_bucket_start = Time::from_time_precision_units(
                         (client_timestamps[0].as_time_precision_units() / batch_window_units)
@@ -7288,7 +7293,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Leader, time-interval collection artifacts with old & new reports. [collection job GC'ed, remainder not GC'ed]
+                // Leader, time-interval collection artifacts with old & new reports.
+                // [collection job GC'ed, remainder not GC'ed]
                 let (
                     _,
                     aggregate_share_job_id,
@@ -7345,7 +7351,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 )
                 .await;
 
-                // Helper, time-interval collection artifacts with old & new reports. [aggregate share job job GC'ed, remainder not GC'ed]
+                // Helper, time-interval collection artifacts with old & new reports.
+                // [aggregate share job job GC'ed, remainder not GC'ed]
                 let (_, _, batch_id, outstanding_batch_id, batch_aggregation_id, _) =
                     write_collect_artifacts::<TimeInterval>(
                         tx,

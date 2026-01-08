@@ -80,7 +80,8 @@ async fn handle_add_task(
         (AggregatorRole::Helper, _) => AggregatorTaskParameters::Helper {
             aggregator_auth_token_hash: AuthenticationTokenHash::from(&leader_authentication_token),
             collector_hpke_config,
-            // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated interop test design)
+            // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires
+            // updated interop test design)
             aggregation_mode: AggregationMode::Synchronous,
         },
     };
@@ -256,7 +257,8 @@ impl Options {
             |ctx| async move {
                 ctx.datastore.put_hpke_key().await.unwrap();
 
-                // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
+                // Run an HTTP server with both the DAP aggregator endpoints and the
+                // interoperation test
                 // endpoints.
                 let handler = make_handler(
                     Arc::new(ctx.datastore),

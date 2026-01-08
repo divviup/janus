@@ -351,7 +351,8 @@ async fn collection_job_success_leader_selected() {
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_body!(&mut test_conn, "");
 
-        // Update the collection job with the aggregate shares. collection job should now be complete.
+        // Update the collection job with the aggregate shares. collection job should now be
+        // complete.
         let batch_id = test_case
             .datastore
             .run_unnamed_tx(|tx| {

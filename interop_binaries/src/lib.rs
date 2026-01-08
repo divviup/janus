@@ -391,8 +391,8 @@ impl HpkeConfigRegistry {
                 // Unwrap safety: we always use a supported KEM.
                 HpkeKeypair::generate(
                     id,
-                    // These algorithms should be broadly compatible with other DAP implementations, since they
-                    // are required by section 6 of draft-ietf-ppm-dap-02.
+                    // These algorithms should be broadly compatible with other DAP implementations,
+                    // since they are required by section 6 of draft-ietf-ppm-dap-02.
                     HpkeKemId::X25519HkdfSha256,
                     HpkeKdfId::HkdfSha256,
                     HpkeAeadId::Aes128Gcm,

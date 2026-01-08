@@ -921,9 +921,9 @@ struct KubernetesSecretOptions {
 }
 
 impl KubernetesSecretOptions {
-    /// Fetch the datastore keys from the options. If --secrets-k8s-namespace is set, keys are fetched
-    /// from a secret therein. Otherwise, returns the keys provided to --datastore-keys. If neither was
-    /// set, returns an error.
+    /// Fetch the datastore keys from the options. If --secrets-k8s-namespace is set, keys
+    /// are fetched from a secret therein. Otherwise, returns the keys provided to
+    /// --datastore-keys. If neither was set, returns an error.
     async fn datastore_keys(
         &self,
         options: &CommonBinaryOptions,

@@ -419,7 +419,8 @@ impl InClusterJanusPair {
                 VdafInstance::Prio3Sum {
                     max_measurement: _max_measurement,
                 } => Vdaf::Sum {
-                    // TODO(#3436): once divviup_client is updated for DAP-13, plumb max_measurement through
+                    // TODO(#3436): once divviup_client is updated for DAP-13, plumb
+                    // max_measurement through
                     bits: 64,
                 },
                 VdafInstance::Prio3SumVec {

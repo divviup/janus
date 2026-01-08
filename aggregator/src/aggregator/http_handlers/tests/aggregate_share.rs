@@ -802,7 +802,8 @@ async fn aggregate_share_request_get_poll_after_put() {
 
     let aggregate_share_id = AggregateShareId::from([42u8; 16]);
 
-    // Send the request. We'll ignore the details of the response and check that polling still works.
+    // Send the request. We'll ignore the details of the response and check that polling still
+    // works.
     let test_conn =
         put_aggregate_share_request(&task, &request, &aggregate_share_id, &handler).await;
 

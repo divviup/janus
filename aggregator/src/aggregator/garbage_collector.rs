@@ -75,7 +75,8 @@ impl<C: Clock> GarbageCollector<C> {
 
     #[tracing::instrument(name = "GarbageCollector::run", skip(self))]
     pub async fn run(&self) -> Result<()> {
-        // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#224): add support for handling only a subset of tasks in a single job
+        // (i.e. sharding).
 
         // Retrieve tasks.
         let task_ids: Vec<_> = self
@@ -266,7 +267,8 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    let batch_identifier = Interval::minimal(client_timestamp).unwrap(); // unrealistic, but induces GC
+                    // unrealistic, but induces GC
+                    let batch_identifier = Interval::minimal(client_timestamp).unwrap();
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
@@ -304,7 +306,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
+        // Advance the clock by the expiry age and a time precision interval to "enable" report
+        // expiry.
         clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
@@ -458,7 +461,8 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    let batch_identifier = Interval::minimal(client_timestamp).unwrap(); // unrealistic, but induces GC
+                    // unrealistic, but induces GC
+                    let batch_identifier = Interval::minimal(client_timestamp).unwrap();
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
@@ -498,7 +502,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
+        // Advance the clock by the expiry age and a time precision interval to "enable" report
+        // expiry.
         clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
@@ -679,7 +684,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
+        // Advance the clock by the expiry age and a time precision interval to "enable" report
+        // expiry.
         clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 
@@ -890,7 +896,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Advance the clock by the expiry age and a time precision interval to "enable" report expiry.
+        // Advance the clock by the expiry age and a time precision interval to "enable" report
+        // expiry.
         clock.advance(chrono::TimeDelta::new(REPORT_EXPIRY_AGE.try_into().unwrap(), 0).unwrap());
         clock.advance(task.time_precision().to_chrono().unwrap());
 

@@ -136,7 +136,8 @@ where
                             } => (prepare_init, *require_taskbind_extension)
                         );
 
-                        // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+                        // If decryption fails, then the aggregator MUST fail with error
+                        // `hpke-decrypt-error`. (§4.4.2.2)
                         let hpke_keypair = hpke_keypairs.keypair(
                             prepare_init
                                 .report_share()
@@ -219,7 +220,8 @@ where
                                     ReportError::InvalidMessage
                                 })?;
 
-                            // Build map of extension type to extension data, checking for duplicates.
+                            // Build map of extension type to extension data, checking for
+                            // duplicates.
                             let mut extensions = HashMap::new();
                             if !plaintext_input_share.private_extensions().iter().chain(prepare_init.report_share().metadata().public_extensions()).all(|extension| {
                                 extensions
@@ -379,9 +381,10 @@ where
                             Ok(shares)
                         });
 
-                        // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
-                        // associated with the task and computes the first state transition. [...] If either
-                        // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
+                        // Next, the aggregator runs the preparation-state initialization algorithm
+                        // for the VDAF associated with the task and computes the first state
+                        // transition. [...] If either step fails, then the aggregator MUST fail
+                        // with error `vdaf-prep-error`. (§4.4.2.2)
                         let init_rslt = shares.and_then(|(public_share, input_share)| {
                             trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
                                 vdaf.helper_initialized(
@@ -885,9 +888,9 @@ mod tests {
             .aggregation_job_uri(&test_case.aggregation_job_id, None)
             .unwrap()
             .path())
-        // Authenticate using a malformed "Authorization: Bearer <token>" header and a `DAP-Auth-Token`
-        // header. The presence of the former should cause an error despite the latter being present and
-        // well formed.
+        // Authenticate using a malformed "Authorization: Bearer <token>" header and a
+        // `DAP-Auth-Token` header. The presence of the former should cause an error despite
+        // the latter being present and well formed.
         .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
         .with_request_header(
             DAP_AUTH_HEADER,
@@ -1020,9 +1023,9 @@ mod tests {
         // first step.
         let test_case = setup_multi_step_aggregate_init_test().await;
 
-        // Generate some new reports using the existing reports' metadata, but varying the measurement
-        // values such that the prepare state computed during aggregation initializaton won't match the
-        // first aggregation job.
+        // Generate some new reports using the existing reports' metadata, but varying the
+        // measurement values such that the prepare state computed during aggregation
+        // initializaton won't match the first aggregation job.
         let mutated_prepare_inits = test_case
             .aggregation_job_init_req
             .prepare_inits()

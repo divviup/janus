@@ -209,7 +209,8 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     .map_err(|err| error!(?err, "Failed to write upload metrics"));
 
                 // Individual, per-request results.
-                assert_eq!(result_senders.len(), results.len()); // sanity check: should be guaranteed.
+                // sanity check: should be guaranteed.
+                assert_eq!(result_senders.len(), results.len());
                 for (result_tx, result) in result_senders.into_iter().zip(results.into_iter()) {
                     if let Some(result_tx) = result_tx {
                         if result_tx.send(result.map_err(Arc::new)).is_err() {
