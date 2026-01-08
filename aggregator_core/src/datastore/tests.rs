@@ -69,9 +69,6 @@ use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade
 
 const TIME_PRECISION_SECONDS: u64 = 100;
 const TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(TIME_PRECISION_SECONDS);
-const OLDEST_ALLOWED_REPORT_TIME: Time = Time::from_time_precision_units(10);
-const OLDEST_ALLOWED_REPORT_TIMESTAMP: u64 =
-    OLDEST_ALLOWED_REPORT_TIME.as_seconds_since_epoch(&TIME_PRECISION);
 
 const REPORT_EXPIRY_AGE_UNITS: u64 = 10; // 10 * 100s = 1000s
 const REPORT_EXPIRY_AGE_DURATION: Duration =
@@ -86,6 +83,25 @@ const REPORT_EXPIRY_AGE_PLUS_ONE: TimeDelta = TimeDelta::new(
     0,
 )
 .unwrap();
+
+const ONE_UNIT: TimeDelta = TimeDelta::new(TIME_PRECISION_SECONDS as i64, 0).unwrap();
+
+// Start time for tests - chosen to be larger than REPORT_EXPIRY_AGE to allow testing reports
+// at the edge of expiry. This is the initial clock time in most tests.
+const START_TIME_UNITS: u64 = 20; // 20 * TIME_PRECISION = 2000 seconds
+const START_TIME: Time = Time::from_time_precision_units(START_TIME_UNITS);
+const START_TIMESTAMP: u64 = START_TIME_UNITS * TIME_PRECISION_SECONDS;
+
+// Report time at edge of expiry - at START_TIME, reports with this timestamp have age exactly
+// equal to REPORT_EXPIRY_AGE (at the edge). Used for testing edge cases in roundtrip_report.
+const REPORT_TIME_AT_EXPIRY_EDGE: Time =
+    Time::from_time_precision_units(START_TIME_UNITS - REPORT_EXPIRY_AGE_UNITS);
+
+// Report time for most tests - at START_TIME, reports with this timestamp have age 0.
+// This preserves the semantics from before the time precision changes.
+const OLDEST_ALLOWED_REPORT_TIME: Time = START_TIME;
+const OLDEST_ALLOWED_REPORT_TIMESTAMP: u64 =
+    OLDEST_ALLOWED_REPORT_TIME.as_seconds_since_epoch(&TIME_PRECISION);
 
 #[test]
 fn check_supported_versions() {
@@ -521,7 +537,7 @@ async fn get_task_ids(ephemeral_datastore: EphemeralDatastore) {
 #[tokio::test]
 async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -547,7 +563,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         *task.id(),
         ReportMetadata::new(
             report_id,
-            OLDEST_ALLOWED_REPORT_TIME,
+            REPORT_TIME_AT_EXPIRY_EDGE,
             Vec::from([
                 // public extensions
                 Extension::new(ExtensionType::Tbd, "public_extension_tbd".into()),
@@ -663,7 +679,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock so that the report is expired, and verify that it does not exist.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(ONE_UNIT);
     let retrieved_report = ds
         .run_unnamed_tx(|tx| {
             let task_id = *report.task_id();
@@ -707,7 +723,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let unexpired_time = OLDEST_ALLOWED_REPORT_TIME
         .add_duration(&Duration::ONE)
@@ -1251,7 +1267,7 @@ async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
 async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1283,7 +1299,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     .leader_view()
     .unwrap();
 
-    let interval_start = Time::from_time_precision_units(REPORT_EXPIRY_AGE_UNITS + 1);
+    let interval_start = Time::from_time_precision_units(START_TIME_UNITS + 1);
     let expired_report_in_interval = LeaderStoredReport::new_dummy(
         *task.id(),
         interval_start
@@ -1358,7 +1374,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         .run_unnamed_tx(|tx| {
             let (task, no_reports_task) = (task.clone(), no_reports_task.clone());
             Box::pin(async move {
-                let interval_start = Time::from_time_precision_units(REPORT_EXPIRY_AGE_UNITS + 1);
+                let interval_start = Time::from_time_precision_units(START_TIME_UNITS + 1);
                 let report_count = tx
                     .count_client_reports_for_interval(
                         task.id(),
@@ -1407,7 +1423,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
 async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -1559,7 +1575,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 #[tokio::test]
 async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let report_expiry_age = REPORT_EXPIRY_AGE_DURATION;
@@ -1715,7 +1731,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
 async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // We use a dummy VDAF & leader-selected task for this test, to better exercise the
@@ -1977,7 +1993,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     install_test_trace_subscriber();
 
     const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     const AGGREGATION_JOB_COUNT: usize = 10;
@@ -2082,7 +2098,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 .await
                 .unwrap();
 
-                // Write an expired aggregation job. We don't want to retrieve this one, either.
+                // Write an aggregation job with old timestamp that will be expired after clock advance.
+                // Use a time that's not yet expired but will be after advancing the clock.
                 let expired_aggregation_job_id = random();
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH_PRIO3,
@@ -2093,9 +2110,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     expired_aggregation_job_id,
                     (),
                     (),
-                    Interval::minimal(Time::from_seconds_since_epoch(
-                        0,
-                        leader_task.time_precision(),
+                    Interval::minimal(Time::from_time_precision_units(
+                        START_TIME_UNITS - REPORT_EXPIRY_AGE_UNITS + 1,
                     ))
                     .unwrap(),
                     AggregationJobState::Active,
@@ -2798,7 +2814,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     .into_iter()
     .enumerate()
     {
-        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let clock = MockClock::new(START_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
@@ -3080,7 +3096,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
 async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3251,7 +3267,7 @@ async fn create_report_aggregation_from_client_reports_table(
 ) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = random();
@@ -3477,7 +3493,7 @@ async fn crypter() {
 async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5203,7 +5219,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     install_test_trace_subscriber();
 
     let time_precision = TimePrecision::from_seconds(100);
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5246,7 +5262,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let first_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1100, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()))
                         .unwrap(),
                     aggregation_param,
                     0,
@@ -5264,7 +5280,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         Interval::minimal(Time::from_seconds_since_epoch(
-                            1200,
+                            START_TIMESTAMP + 200,
                             task.time_precision(),
                         ))
                         .unwrap(),
@@ -5282,7 +5298,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 
                 let third_batch_aggregation = BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1300, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 300, task.time_precision()))
                         .unwrap(),
                     aggregation_param,
                     2,
@@ -5299,7 +5315,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         Interval::minimal(Time::from_seconds_since_epoch(
-                            1400,
+                            START_TIMESTAMP + 400,
                             task.time_precision(),
                         ))
                         .unwrap(),
@@ -5312,7 +5328,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is before the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1000, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP, task.time_precision()))
                         .unwrap(),
                     aggregation_param,
                     4,
@@ -5350,7 +5366,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Aggregation parameter differs from the one queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1000, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP, task.time_precision()))
                         .unwrap(),
                     dummy::AggregationParam(13),
                     5,
@@ -5369,7 +5385,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Start of this aggregation's interval is after the interval queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1500, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 500, task.time_precision()))
                         .unwrap(),
                     aggregation_param,
                     6,
@@ -5388,7 +5404,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 // Task ID differs from that queried below.
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *other_task.id(),
-                    Interval::minimal(Time::from_seconds_since_epoch(1200, task.time_precision()))
+                    Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 200, task.time_precision()))
                         .unwrap(),
                     aggregation_param,
                     7,
@@ -5445,7 +5461,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(1100, task.time_precision()),
+                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
                         Duration::from_time_precision_units(4)
                     )
                     .unwrap(),
@@ -5472,7 +5488,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 *first_batch_aggregation.batch_interval(),
                 *first_batch_aggregation.aggregation_parameter(),
                 first_batch_aggregation.ord(),
-                Interval::minimal(Time::from_seconds_since_epoch(1100, task.time_precision()))
+                Interval::minimal(Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()))
                     .unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: Some(dummy::AggregateShare(92)),
@@ -5496,7 +5512,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(1100, task.time_precision()),
+                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
                         Duration::from_time_precision_units(4),
                     )
                     .unwrap(),
@@ -5542,7 +5558,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     task.id(),
                     &vdaf,
                     &Interval::new(
-                        Time::from_seconds_since_epoch(1100, task.time_precision()),
+                        Time::from_seconds_since_epoch(START_TIMESTAMP + 100, task.time_precision()),
                         Duration::from_time_precision_units(3)
                     )
                     .unwrap(),
@@ -5565,7 +5581,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
 async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task = TaskBuilder::new(
@@ -5781,7 +5797,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -5955,7 +5971,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
@@ -6106,7 +6122,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
 async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let batch_time_window_size = Duration::from_hours(24, &TIME_PRECISION);
@@ -6479,7 +6495,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
 
@@ -6668,7 +6684,7 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
 async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
     let vdaf = dummy::Vdaf::default();
     let aggregation_param = dummy::AggregationParam(0);
@@ -7154,7 +7170,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // Setup.
@@ -8507,7 +8523,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
 #[tokio::test]
 async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let clock = MockClock::new(START_TIMESTAMP);
     let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
     let time_precision = TIME_PRECISION;
