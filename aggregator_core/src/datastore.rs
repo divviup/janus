@@ -1944,7 +1944,7 @@ WHERE aggregation_jobs.task_id = $1
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error> {
         let client_timestamp_interval = row
             .get::<_, SqlInterval>("client_timestamp_interval")
-            .to_task_interval(time_precision)?;
+            .to_dap_time_interval(time_precision)?;
 
         let mut job = AggregationJob::new(
             *task_id,
@@ -3393,7 +3393,7 @@ WHERE task_id = $1
                     .ok_or_else(|| Error::DbState(
                         "collection job in state FINISHED but client_timestamp_interval is NULL".to_string())
                     )?
-                    .to_task_interval(time_precision)?;
+                    .to_dap_time_interval(time_precision)?;
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -4087,7 +4087,7 @@ WHERE task_id = $1
 
         let client_timestamp_interval = row
             .get::<_, SqlInterval>("client_timestamp_interval")
-            .to_task_interval(time_precision)?;
+            .to_dap_time_interval(time_precision)?;
         let state: BatchAggregationStateCode = row.get("state");
         let state = match state {
             BatchAggregationStateCode::Aggregating => {

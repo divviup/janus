@@ -2159,7 +2159,7 @@ impl SqlInterval {
     }
 
     /// Convert this SQL interval to task time precision.
-    pub fn to_task_interval(&self, task_precision: &TimePrecision) -> Result<Interval, Error> {
+    pub fn to_dap_time_interval(&self, task_precision: &TimePrecision) -> Result<Interval, Error> {
         Ok(Self::convert_time_precision(
             &self.0,
             &SQL_UNIT_TIME_PRECISION,
