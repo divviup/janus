@@ -858,7 +858,6 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
             .await?
             .ok_or(Error::MutationTargetNotFound)?;
 
-        if let Some(_end) = task_end {}
 
         check_single_row_mutation(
             self.execute(
