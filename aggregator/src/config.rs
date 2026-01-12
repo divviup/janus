@@ -199,23 +199,14 @@ pub struct JobDriverConfig {
     pub http_request_timeout_s: u64,
 
     /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.
-    #[serde(
-        default = "JobDriverConfig::default_retry_initial_interval_ms",
-        alias = "retry_initial_interval_millis"
-    )]
+    #[serde(default = "JobDriverConfig::default_retry_initial_interval_ms")]
     pub retry_initial_interval_ms: u64,
     /// The maximum interval, in milliseconds, to wait before retrying a retryable HTTP request.
-    #[serde(
-        default = "JobDriverConfig::default_retry_max_interval_ms",
-        alias = "retry_max_interval_millis"
-    )]
+    #[serde(default = "JobDriverConfig::default_retry_max_interval_ms")]
     pub retry_max_interval_ms: u64,
     /// The maximum retry time, in milliseconds, to wait before giving up on retrying a retryable
     /// HTTP request. Note this is the sum of the retry intervals, not wall-clock time.
-    #[serde(
-        default = "JobDriverConfig::default_retry_max_elapsed_time_ms",
-        alias = "retry_max_elapsed_time_millis"
-    )]
+    #[serde(default = "JobDriverConfig::default_retry_max_elapsed_time_ms")]
     pub retry_max_elapsed_time_ms: u64,
 }
 
