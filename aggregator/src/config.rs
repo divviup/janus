@@ -88,11 +88,7 @@ pub struct DbConfig {
     /// Timeout in seconds to apply when creating, waiting for, or recycling
     /// connection pool objects. This value will be used to construct a
     /// `deadpool_postgres::Timeouts` value.
-    // TODO(#3293): remove this alias during next breaking changes window.
-    #[serde(
-        default = "DbConfig::default_connection_pool_timeout",
-        alias = "connection_pool_timeouts_secs"
-    )]
+    #[serde(default = "DbConfig::default_connection_pool_timeout")]
     pub connection_pool_timeouts_s: u64,
 
     /// Maximum size of the connection pool. Affects the number of concurrent database operations.
@@ -172,13 +168,11 @@ pub struct TaskprovConfig {
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobDriverConfig {
     /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when
     /// there are no jobs to be stepped.
-    #[serde(alias = "job_discovery_interval_secs")]
     pub job_discovery_interval_s: u64,
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
@@ -186,12 +180,10 @@ pub struct JobDriverConfig {
     /// The length of time, in seconds, workers will acquire a lease for the jobs they are stepping.
     /// Along with worker_lease_clock_skew_allowance, determines the effective timeout of stepping a
     /// single job.
-    #[serde(alias = "worker_lease_duration_secs")]
     pub worker_lease_duration_s: u64,
     /// The length of time, in seconds, workers decrease their timeouts from the lease length in
-    /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
+    /// order to guard against the possibility of clock skew. Along with worker_lease_duration_s,
     /// determines the effective timeout of stepping a single job.
-    #[serde(alias = "worker_lease_clock_skew_allowance_secs")]
     pub worker_lease_clock_skew_allowance_s: u64,
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
@@ -199,17 +191,11 @@ pub struct JobDriverConfig {
 
     /// Timeout to apply when establishing connections to the helper for HTTP requests. See
     /// [`reqwest::ClientBuilder::connect_timeout`] for details.
-    #[serde(
-        default = "JobDriverConfig::default_http_connection_timeout_s",
-        alias = "http_request_connection_timeout_secs"
-    )]
+    #[serde(default = "JobDriverConfig::default_http_connection_timeout_s")]
     pub http_request_connection_timeout_s: u64,
     /// Timeout to apply to HTTP requests overall (including connection establishment) when
     /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
-    #[serde(
-        default = "JobDriverConfig::default_http_request_timeout_s",
-        alias = "http_request_timeout_secs"
-    )]
+    #[serde(default = "JobDriverConfig::default_http_request_timeout_s")]
     pub http_request_timeout_s: u64,
 
     /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.

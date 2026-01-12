@@ -69,7 +69,6 @@ impl BinaryOptions for Options {
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -81,10 +80,8 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
-    #[serde(alias = "tasks_update_frequency_secs")]
     pub tasks_update_frequency_s: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
-    #[serde(alias = "aggregation_job_creation_interval_secs")]
     pub aggregation_job_creation_interval_s: u64,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
     /// "current" batch only; historical batches will create aggregation jobs of any size, on the

@@ -120,7 +120,6 @@ impl BinaryOptions for Options {
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-// TODO(#3293): remove aliases during next breaking changes window.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -136,18 +135,12 @@ pub struct Config {
 
     /// The minimum duration to wait, in seconds, before retrying a collection job that has been
     /// stepped but was not ready yet because not all included reports had finished aggregation.
-    #[serde(
-        default = "Config::default_min_collection_job_retry_delay_s",
-        alias = "min_collection_job_retry_delay_secs"
-    )]
+    #[serde(default = "Config::default_min_collection_job_retry_delay_s")]
     pub min_collection_job_retry_delay_s: u64,
 
     /// The maximum duration to wait, in seconds, before retrying a collection job that has been
     /// stepped but was not ready yet because not all included reports had finished aggregation.
-    #[serde(
-        default = "Config::default_max_collection_job_retry_delay_s",
-        alias = "max_collection_job_retry_delay_secs"
-    )]
+    #[serde(default = "Config::default_max_collection_job_retry_delay_s")]
     pub max_collection_job_retry_delay_s: u64,
 
     /// The exponential factor to use when computing a retry delay when retrying a collection job
