@@ -97,12 +97,6 @@ const START_TIMESTAMP: u64 = START_TIME_UNITS * TIME_PRECISION_SECONDS;
 const REPORT_TIME_AT_EXPIRY_EDGE: Time =
     Time::from_time_precision_units(START_TIME_UNITS - REPORT_EXPIRY_AGE_UNITS);
 
-// Report time for most tests - at START_TIME, reports with this timestamp have age 0.
-// This preserves the semantics from before the time precision changes.
-const OLDEST_ALLOWED_REPORT_TIME: Time = START_TIME;
-const OLDEST_ALLOWED_REPORT_TIMESTAMP: u64 =
-    OLDEST_ALLOWED_REPORT_TIME.as_seconds_since_epoch(&TIME_PRECISION);
-
 #[test]
 fn check_supported_versions() {
     if SUPPORTED_SCHEMA_VERSIONS[0] != *SUPPORTED_SCHEMA_VERSIONS.iter().max().unwrap() {
@@ -725,10 +719,6 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
     let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
-    let unexpired_time = OLDEST_ALLOWED_REPORT_TIME
-        .add_duration(&Duration::ONE)
-        .unwrap();
-    let report_interval = Interval::minimal(unexpired_time).unwrap();
     let task = TaskBuilder::new(
         task::BatchMode::TimeInterval,
         AggregationMode::Synchronous,
@@ -749,16 +739,13 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .leader_view()
     .unwrap();
 
-    let first_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
-    let second_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
-    let expired_report = LeaderStoredReport::new_dummy(
-        *task.id(),
-        OLDEST_ALLOWED_REPORT_TIME
-            .sub_duration(&Duration::ONE)
-            .unwrap(),
-    );
-    let aggregated_report = LeaderStoredReport::new_dummy(*task.id(), unexpired_time);
-    let unrelated_report = LeaderStoredReport::new_dummy(*unrelated_task.id(), unexpired_time);
+    let report_interval = Interval::minimal(START_TIME).unwrap();
+    let first_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
+    let second_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
+    let expired_report =
+        LeaderStoredReport::new_dummy(*task.id(), START_TIME.sub_duration(&Duration::ONE).unwrap());
+    let aggregated_report = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
+    let unrelated_report = LeaderStoredReport::new_dummy(*unrelated_task.id(), START_TIME);
 
     // Set up state.
     ds.run_tx("test-unaggregated-reports", |tx| {
@@ -795,7 +782,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE);
 
     // Verify that we can acquire both unaggregated reports.
     let got_reports_ids: HashSet<_> = ds
@@ -907,9 +894,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             tx.check_timestamp_columns_at_create_time(
                 "client_reports",
                 "test-unaggregated-reports",
-                OLDEST_ALLOWED_REPORT_TIME
-                    .as_naive_date_time(&TIME_PRECISION)
-                    .unwrap(),
+                START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
                 false,
             )
             .await;
@@ -928,9 +913,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                     assert_eq!(tx.clock.now().naive_utc(), updated_at, "{report_id:?}");
                 } else {
                     assert_eq!(
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .as_naive_date_time(&TIME_PRECISION)
-                            .unwrap(),
+                        START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
                         updated_at
                     );
                 }
@@ -1299,37 +1282,18 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     .leader_view()
     .unwrap();
 
-    let interval_start = Time::from_time_precision_units(START_TIME_UNITS + 1);
-    let expired_report_in_interval = LeaderStoredReport::new_dummy(
-        *task.id(),
-        interval_start
-            .sub_timedelta(
-                &TimeDelta::seconds(TIME_PRECISION_SECONDS as i64),
-                &TIME_PRECISION,
-            )
-            .unwrap(),
-    );
-    let first_report_in_interval = LeaderStoredReport::new_dummy(*task.id(), interval_start);
-    let second_report_in_interval = LeaderStoredReport::new_dummy(
-        *task.id(),
-        interval_start
-            .add_timedelta(
-                &TimeDelta::seconds(TIME_PRECISION_SECONDS as i64),
-                &TIME_PRECISION,
-            )
-            .unwrap(),
-    );
+    let expired_report_in_interval =
+        LeaderStoredReport::new_dummy(*task.id(), START_TIME.sub_duration(&Duration::ONE).unwrap());
+    let first_report_in_interval = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
+    let second_report_in_interval =
+        LeaderStoredReport::new_dummy(*task.id(), START_TIME.add_duration(&Duration::ONE).unwrap());
     let report_outside_interval = LeaderStoredReport::new_dummy(
         *task.id(),
-        interval_start
-            .add_timedelta(
-                &TimeDelta::seconds(10 * TIME_PRECISION_SECONDS as i64),
-                &TIME_PRECISION,
-            )
+        START_TIME
+            .add_duration(&Duration::from_time_precision_units(10))
             .unwrap(),
     );
-    let report_for_other_task =
-        LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIME);
+    let report_for_other_task = LeaderStoredReport::new_dummy(*unrelated_task.id(), START_TIME);
 
     // Set up state.
     ds.run_unnamed_tx(|tx| {
@@ -1368,7 +1332,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE);
 
     let (report_count, no_reports_task_report_count) = ds
         .run_unnamed_tx(|tx| {
@@ -1379,12 +1343,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
                     .count_client_reports_for_interval(
                         task.id(),
                         &Interval::new(
-                            interval_start
-                                .sub_timedelta(
-                                    &TimeDelta::seconds(TIME_PRECISION_SECONDS as i64),
-                                    &TIME_PRECISION,
-                                )
-                                .unwrap(),
+                            interval_start.sub_duration(&Duration::ONE).unwrap(),
                             Duration::from_time_precision_units(3),
                         )
                         .unwrap(),
@@ -1396,12 +1355,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
                     .count_client_reports_for_interval(
                         no_reports_task.id(),
                         &Interval::new(
-                            interval_start
-                                .sub_timedelta(
-                                    &TimeDelta::seconds(TIME_PRECISION_SECONDS as i64),
-                                    &TIME_PRECISION,
-                                )
-                                .unwrap(),
+                            interval_start.sub_duration(&Duration::ONE).unwrap(),
                             Duration::from_time_precision_units(3),
                         )
                         .unwrap(),
@@ -1464,17 +1418,12 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                 let batch_id = random();
                 let expired_report = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.sub_duration(&Duration::ONE).unwrap(),
                 );
-                let report_0 =
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+                let report_0 = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
                 let report_1 = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .add_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.add_duration(&Duration::ONE).unwrap(),
                 );
 
                 let expired_aggregation_job = AggregationJob::<0, LeaderSelected, dummy::Vdaf>::new(
@@ -1482,12 +1431,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     random(),
                     dummy::AggregationParam(22),
                     batch_id,
-                    Interval::minimal(
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                    )
-                    .unwrap(),
+                    Interval::minimal(START_TIME.sub_duration(&Duration::ONE).unwrap()).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 );
@@ -1499,7 +1443,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     random(),
                     dummy::AggregationParam(22),
                     batch_id,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 );
@@ -1754,7 +1698,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         random(),
         dummy::AggregationParam(23),
         batch_id,
-        Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+        Interval::minimal(START_TIME).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -1763,7 +1707,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         random(),
         dummy::AggregationParam(23),
         random(),
-        Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+        Interval::minimal(START_TIME).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -1849,9 +1793,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
             tx.check_timestamp_columns_at_create_time(
                 "aggregation_jobs",
                 "test-update-aggregation-jobs",
-                OLDEST_ALLOWED_REPORT_TIME
-                    .as_naive_date_time(&TIME_PRECISION)
-                    .unwrap(),
+                START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
                 true,
             )
             .await;
@@ -1992,7 +1934,10 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Setup: insert a few aggregation jobs.
     install_test_trace_subscriber();
 
-    const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
+    let lease_duration_sec = 300;
+    let lease_duration_std = StdDuration::from_secs(lease_duration_sec);
+    let lease_duration = Duration::from_seconds(lease_duration_sec, &TIME_PRECISION);
+
     let clock = MockClock::new(START_TIMESTAMP);
     let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
@@ -2054,20 +1999,10 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                             (),
                             (),
                             Interval::minimal(
-                                OLDEST_ALLOWED_REPORT_TIME
-                                    .add_timedelta(
-                                        &TimeDelta::seconds(
-                                            LEASE_DURATION.as_secs().try_into().unwrap(),
-                                        ),
-                                        &TIME_PRECISION,
-                                    )
+                                START_TIME
+                                    .add_duration(&lease_duration)
                                     .unwrap()
-                                    .add_timedelta(
-                                        &TimeDelta::seconds(
-                                            LEASE_DURATION.as_secs().try_into().unwrap(),
-                                        ),
-                                        &TIME_PRECISION,
-                                    )
+                                    .add_duration(&lease_duration)
                                     .unwrap(),
                             )
                             .unwrap(),
@@ -2091,7 +2026,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     finished_aggregation_job_id,
                     (),
                     (),
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 ))
@@ -2246,7 +2181,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     }
 
     let want_expiry_time =
-        clock.now().naive_utc() + chrono::Duration::from_std(LEASE_DURATION).unwrap();
+        clock.now().naive_utc() + chrono::Duration::from_std(lease_duration_std).unwrap();
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2276,7 +2211,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                         ds.run_unnamed_tx(|tx| {
                             Box::pin(async move {
                                 tx.acquire_incomplete_aggregation_jobs(
-                                    &LEASE_DURATION,
+                                    &lease_duration_std,
                                     MAXIMUM_ACQUIRE_COUNT,
                                 )
                                 .await
@@ -2389,7 +2324,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     #[allow(clippy::assertions_on_constants)]
     {
         assert!(RELEASE_COUNT < MAXIMUM_ACQUIRE_COUNT);
-        assert!(REACQUIRE_DELAY < LEASE_DURATION);
+        assert!(REACQUIRE_DELAY < lease_duration_std);
     }
 
     let leases_to_release: Vec<_> = got_leases.into_iter().take(RELEASE_COUNT).collect();
@@ -2416,7 +2351,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
             assert!(
-                tx.acquire_incomplete_aggregation_jobs(&LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
+                tx.acquire_incomplete_aggregation_jobs(&lease_duration_std, MAXIMUM_ACQUIRE_COUNT)
                     .await
                     .unwrap()
                     .is_empty()
@@ -2435,7 +2370,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 tx.acquire_incomplete_aggregation_jobs(
-                    &(LEASE_DURATION - REACQUIRE_DELAY),
+                    &(lease_duration_std - REACQUIRE_DELAY),
                     MAXIMUM_ACQUIRE_COUNT,
                 )
                 .await
@@ -2457,11 +2392,10 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
     // to acquire aggregation jobs again.
     clock.advance(
-        TimeDelta::try_seconds_unsigned(LEASE_DURATION.as_secs() - REACQUIRE_DELAY.as_secs())
-            .unwrap(),
+        TimeDelta::try_seconds_unsigned(lease_duration_sec - REACQUIRE_DELAY.as_secs()).unwrap(),
     );
     let want_expiry_time =
-        clock.now().naive_utc() + chrono::Duration::from_std(LEASE_DURATION).unwrap();
+        clock.now().naive_utc() + chrono::Duration::from_std(lease_duration_std).unwrap();
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2481,7 +2415,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             Box::pin(async move {
                 // This time, we just acquire all jobs in a single go for simplicity -- we've
                 // already tested the maximum acquire count functionality above.
-                tx.acquire_incomplete_aggregation_jobs(&LEASE_DURATION, AGGREGATION_JOB_COUNT)
+                tx.acquire_incomplete_aggregation_jobs(&lease_duration_std, AGGREGATION_JOB_COUNT)
                     .await
             })
         })
@@ -2503,12 +2437,12 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Run: advance time again to release jobs, acquire a single job, modify its lease token
     // to simulate a previously-held lease, and attempt to release it. Verify that releasing
     // fails.
-    clock.advance(TimeDelta::try_seconds_unsigned(LEASE_DURATION.as_secs()).unwrap());
+    clock.advance(TimeDelta::try_seconds_unsigned(lease_duration_std.as_secs()).unwrap());
     let lease = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 Ok(tx
-                    .acquire_incomplete_aggregation_jobs(&LEASE_DURATION, 1)
+                    .acquire_incomplete_aggregation_jobs(&lease_duration_std, 1)
                     .await
                     .unwrap()
                     .remove(0))
@@ -2838,7 +2772,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             *task.id(),
             aggregation_job_id,
             report_id,
-            OLDEST_ALLOWED_REPORT_TIME,
+            START_TIME,
             ord.try_into().unwrap(),
             Some(PrepareResp::new(
                 report_id,
@@ -2863,13 +2797,13 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                         *report_aggregation.aggregation_job_id(),
                         aggregation_param,
                         (),
-                        Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                        Interval::minimal(START_TIME).unwrap(),
                         AggregationJobState::Active,
                         AggregationJobStep::from(0),
                     ))
                     .await
                     .unwrap();
-                    tx.put_scrubbed_report(task.id(), &report_id, &OLDEST_ALLOWED_REPORT_TIME)
+                    tx.put_scrubbed_report(task.id(), &report_id, &START_TIME)
                         .await
                         .unwrap();
 
@@ -3137,7 +3071,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                     aggregation_job_id,
                     aggregation_param,
                     (),
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     AggregationJobState::Active,
                     AggregationJobStep::from(0),
                 ))
@@ -3170,7 +3104,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 .enumerate()
                 {
                     let report_id = ReportId::from((ord as u128).to_be_bytes());
-                    tx.put_scrubbed_report(task.id(), &report_id, &OLDEST_ALLOWED_REPORT_TIME)
+                    tx.put_scrubbed_report(task.id(), &report_id, &START_TIME)
                         .await
                         .unwrap();
 
@@ -3178,7 +3112,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         *task.id(),
                         aggregation_job_id,
                         report_id,
-                        OLDEST_ALLOWED_REPORT_TIME,
+                        START_TIME,
                         ord.try_into().unwrap(),
                         Some(PrepareResp::new(report_id, PrepareStepResult::Finished)),
                         state.clone(),
@@ -3300,7 +3234,7 @@ async fn create_report_aggregation_from_client_reports_table(
         random(),
         aggregation_param,
         (),
-        Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+        Interval::minimal(START_TIME).unwrap(),
         AggregationJobState::Active,
         AggregationJobStep::from(0),
     );
@@ -3506,17 +3440,11 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .build()
     .leader_view()
     .unwrap();
-    let first_batch_interval = Interval::minimal(
-        OLDEST_ALLOWED_REPORT_TIME
-            .add_duration(&Duration::ONE)
-            .unwrap(),
-    )
-    .unwrap();
+    let first_batch_interval =
+        Interval::minimal(START_TIME.add_duration(&Duration::ONE).unwrap()).unwrap();
     let second_batch_interval = Interval::minimal(
-        OLDEST_ALLOWED_REPORT_TIME
-            .add_duration(&Duration::ONE)
-            .unwrap()
-            .add_duration(&Duration::ONE)
+        START_TIME
+            .add_duration(&Duration::from_time_precision_units(2))
             .unwrap(),
     )
     .unwrap();
@@ -3560,7 +3488,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     // Advance the clock to "enable" report expiry.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -3686,7 +3614,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     // Advance the clock again to expire everything that has been written.
-    clock.advance(REPORT_EXPIRY_AGE_PLUS_ONE);
+    clock.advance(REPORT_EXPIRY_AGE);
 
     ds.run_unnamed_tx(|tx| {
         let task = task.clone();
@@ -5218,7 +5146,6 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
 async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
-    let time_precision = TimePrecision::from_seconds(100);
     let clock = MockClock::new(START_TIMESTAMP);
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -5227,10 +5154,10 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
         AggregationMode::Synchronous,
         VdafInstance::Fake { rounds: 1 },
     )
-    .with_time_precision(time_precision)
+    .with_time_precision(TIME_PRECISION)
     .with_report_expiry_age(Some(Duration::from_chrono(
         REPORT_EXPIRY_AGE,
-        &time_precision,
+        &TIME_PRECISION,
     )))
     .build()
     .leader_view()
@@ -5641,11 +5568,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     0,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_time_precision_units(10),
-                    )
-                    .unwrap(),
+                    Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(aggregate_share),
                         report_count: 0,
@@ -5670,7 +5593,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     other_batch_id,
                     aggregation_param,
                     1,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -5688,7 +5611,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     2,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(aggregate_share),
                         report_count: 0,
@@ -5706,7 +5629,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                     batch_id,
                     aggregation_param,
                     3,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Collected {
                         aggregate_share: None,
                         report_count: 0,
@@ -5749,11 +5672,7 @@ async fn roundtrip_batch_aggregation_leader_selected(ephemeral_datastore: Epheme
                 *batch_aggregation.batch_id(),
                 *batch_aggregation.aggregation_parameter(),
                 batch_aggregation.ord(),
-                Interval::new(
-                    OLDEST_ALLOWED_REPORT_TIME,
-                    Duration::from_time_precision_units(2),
-                )
-                .unwrap(),
+                Interval::new(START_TIME, Duration::from_time_precision_units(2)).unwrap(),
                 BatchAggregationState::Aggregating {
                     aggregate_share: None,
                     report_count: 1,
@@ -5835,18 +5754,10 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                     *task.id(),
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_time_precision_units(10),
-                    )
-                    .unwrap(),
+                    Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
                     dummy::AggregationParam(11),
                     0,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_time_precision_units(10),
-                    )
-                    .unwrap(),
+                    Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -5860,7 +5771,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
 
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     dummy::AggregationParam(11),
                     dummy::AggregateShare(42),
                     random(),
@@ -5924,11 +5835,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                 .get_aggregate_share_jobs_intersecting_interval::<0, dummy::Vdaf>(
                     &vdaf,
                     want_aggregate_share_job.task_id(),
-                    &Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME,
-                        Duration::from_time_precision_units(10),
-                    )
-                    .unwrap(),
+                    &Interval::new(START_TIME, Duration::from_time_precision_units(10)).unwrap(),
                 )
                 .await
                 .unwrap();
@@ -5965,9 +5872,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
                     &vdaf,
                     want_aggregate_share_job.task_id(),
                     &Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                         Duration::from_time_precision_units(10),
                     )
                     .unwrap(),
@@ -6015,7 +5920,7 @@ async fn roundtrip_aggregate_share_job_leader_selected(ephemeral_datastore: Ephe
                     batch_id,
                     dummy::AggregationParam(11),
                     0,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6167,15 +6072,14 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
                 tx.put_aggregator_task(&task_1).await.unwrap();
                 let batch_id_1 = random();
-                let report_1 =
-                    LeaderStoredReport::new_dummy(*task_1.id(), OLDEST_ALLOWED_REPORT_TIME);
+                let report_1 = LeaderStoredReport::new_dummy(*task_1.id(), START_TIME);
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_1.id(),
                     batch_id_1,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6191,7 +6095,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     dummy::AggregationParam(0),
                     1,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         report_count: 1,
@@ -6220,15 +6124,14 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
                 tx.put_aggregator_task(&task_2).await.unwrap();
                 let batch_id_2 = random();
-                let report_2 =
-                    LeaderStoredReport::new_dummy(*task_2.id(), OLDEST_ALLOWED_REPORT_TIME);
+                let report_2 = LeaderStoredReport::new_dummy(*task_2.id(), START_TIME);
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
                     *task_2.id(),
                     batch_id_2,
                     dummy::AggregationParam(0),
                     0,
-                    Interval::minimal(OLDEST_ALLOWED_REPORT_TIME).unwrap(),
+                    Interval::minimal(START_TIME).unwrap(),
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(dummy::AggregateShare(0)),
                         // Let report_count be 1 without an accompanying report_aggregation in a
@@ -6544,21 +6447,15 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
 
                 let old_report = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.sub_duration(&Duration::ONE).unwrap(),
                 );
                 let new_report = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .add_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.add_duration(&Duration::ONE).unwrap(),
                 );
                 let other_task_report = LeaderStoredReport::new_dummy(
                     *other_task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.sub_duration(&Duration::ONE).unwrap(),
                 );
                 tx.put_client_report::<0, dummy::Vdaf>(&old_report)
                     .await
@@ -6644,12 +6541,9 @@ async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatast
 
                 let old_report = LeaderStoredReport::new_dummy(
                     *task.id(),
-                    OLDEST_ALLOWED_REPORT_TIME
-                        .sub_duration(&Duration::ONE)
-                        .unwrap(),
+                    START_TIME.sub_duration(&Duration::ONE).unwrap(),
                 );
-                let new_report =
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIME);
+                let new_report = LeaderStoredReport::new_dummy(*task.id(), START_TIME);
                 tx.put_client_report(&old_report).await.unwrap();
                 tx.put_client_report(&new_report).await.unwrap();
 
@@ -6838,12 +6732,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     leader_time_interval_task.id(),
                     &aggregation_param,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -6855,12 +6745,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         leader_time_interval_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .sub_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -6874,12 +6760,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         leader_time_interval_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -6892,12 +6774,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     helper_time_interval_task.id(),
                     &aggregation_param,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -6909,12 +6787,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         helper_time_interval_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .sub_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -6928,12 +6802,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         helper_time_interval_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -6946,12 +6816,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     leader_leader_selected_task.id(),
                     &aggregation_param,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -6963,12 +6829,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         leader_leader_selected_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .sub_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -6982,12 +6844,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         leader_leader_selected_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -7000,12 +6858,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                     helper_leader_selected_task.id(),
                     &aggregation_param,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7017,12 +6871,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         helper_leader_selected_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .sub_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -7036,12 +6886,8 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         helper_leader_selected_task.id(),
                         &aggregation_param,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -7436,12 +7282,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_time_interval_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7458,12 +7300,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_time_interval_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7485,12 +7323,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_time_interval_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7505,12 +7339,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &helper_time_interval_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7521,12 +7351,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                         tx,
                         &helper_time_interval_task,
                         &[
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .sub_duration(&Duration::ONE)
-                                .unwrap(),
-                            OLDEST_ALLOWED_REPORT_TIME
-                                .add_duration(&Duration::ONE)
-                                .unwrap(),
+                            START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                            START_TIME.add_duration(&Duration::ONE).unwrap(),
                         ],
                     )
                     .await;
@@ -7548,12 +7374,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &helper_time_interval_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7568,12 +7390,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7590,12 +7408,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7617,12 +7431,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7637,12 +7447,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &helper_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7659,12 +7465,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &helper_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7686,12 +7488,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &helper_leader_selected_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7707,12 +7505,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_time_bucketed_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7731,12 +7525,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_time_bucketed_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7760,12 +7550,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &leader_leader_selected_time_bucketed_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .add_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
+                        START_TIME.add_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7788,12 +7574,8 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     tx,
                     &other_task,
                     &[
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
-                        OLDEST_ALLOWED_REPORT_TIME
-                            .sub_duration(&Duration::ONE)
-                            .unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
+                        START_TIME.sub_duration(&Duration::ONE).unwrap(),
                     ],
                 )
                 .await;
@@ -7856,7 +7638,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         .unwrap();
 
     // Reset the clock to "disable" GC-on-read.
-    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    clock.set(START_TIMESTAMP);
 
     // Verify.
     assert_eq!((1, 1, 1, 1, 1), deleted_batch_counts);
