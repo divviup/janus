@@ -152,9 +152,9 @@ enum Command {
         collector_hpke_config_file: PathBuf,
 
         /// The age after which reports are considered expired & will be deleted permanently from
-        /// the datastore, in seconds.
+        /// the datastore, in time precision units.
         #[arg(long)]
-        report_expiry_age_secs: Option<u64>,
+        report_expiry_age_units: Option<u64>,
 
         /// The aggregator auth token, which must be in the format `bearer:value` or `dap:value`.
         #[arg(long, env = "AGGREGATOR_AUTH_TOKEN", hide_env_values = true)]
@@ -287,7 +287,7 @@ impl Command {
                 aggregation_mode,
                 verify_key_init,
                 collector_hpke_config_file,
-                report_expiry_age_secs,
+                report_expiry_age_units,
                 aggregator_auth_token,
                 collector_auth_token,
             } => {
@@ -300,7 +300,8 @@ impl Command {
                 .await?;
 
                 // Parse flags into proper types.
-                let report_expiry_age = report_expiry_age_secs.map(Duration::from_seconds);
+                let report_expiry_age =
+                    report_expiry_age_units.map(Duration::from_time_precision_units);
 
                 add_taskprov_peer_aggregator(
                     &datastore,
@@ -1031,6 +1032,7 @@ mod tests {
         time::RealClock,
         vdaf::{VdafInstance, vdaf_dp_strategies},
     };
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
         codec::Encode,
@@ -1355,7 +1357,10 @@ mod tests {
         .unwrap()
         .config()
         .clone();
-        let report_expiry_age = Some(Duration::from_seconds(3600));
+        let report_expiry_age = Some(Duration::from_seconds(
+            3600,
+            &TimePrecision::from_seconds(1),
+        ));
         let aggregator_auth_token = random();
         let collector_auth_token = random();
 
@@ -1424,7 +1429,10 @@ mod tests {
             .unwrap()
             .config()
             .clone(),
-            Some(Duration::from_seconds(3600)),
+            Some(Duration::from_seconds(
+                3600,
+                &TimePrecision::from_seconds(1),
+            )),
             &random(),
             Some(&random()),
         )

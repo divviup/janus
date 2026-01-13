@@ -28,7 +28,7 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_integration_tests::{TaskParameters, client::ClientBackend};
-use janus_messages::{Duration as JanusDuration, TaskId};
+use janus_messages::{Duration as JanusDuration, TaskId, taskprov::TimePrecision};
 use prio::{
     dp::{
         DifferentialPrivacyStrategy, PureDpBudget, Rational, distributions::PureDpDiscreteLaplace,
@@ -41,6 +41,8 @@ use trillium_rustls::RustlsConfig;
 use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
+
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 
 /// Options for running tests.
 #[derive(Debug, Parser)]
@@ -458,7 +460,7 @@ impl InClusterJanusPair {
                 BatchMode::LeaderSelected {
                     batch_time_window_size,
                     ..
-                } => batch_time_window_size.map(|window| window.as_seconds()),
+                } => batch_time_window_size.map(|window| window.as_seconds(task.time_precision())),
             },
             time_precision_seconds: task.time_precision().as_seconds(),
             collector_credential_id,
@@ -646,7 +648,10 @@ async fn in_cluster_time_bucketed_leader_selected() {
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3Count,
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
+            batch_time_window_size: Some(JanusDuration::from_chrono(
+                TimeDelta::hours(8),
+                &TEST_TIME_PRECISION,
+            )),
         },
     )
     .await;
@@ -944,7 +949,10 @@ async fn in_cluster_histogram_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
+            batch_time_window_size: Some(JanusDuration::from_chrono(
+                TimeDelta::hours(8),
+                &TEST_TIME_PRECISION,
+            )),
         },
     )
     .await;
@@ -1017,7 +1025,10 @@ async fn in_cluster_sumvec_dp_noise() {
             ),
         },
         BatchMode::LeaderSelected {
-            batch_time_window_size: Some(JanusDuration::from_chrono(TimeDelta::hours(8))),
+            batch_time_window_size: Some(JanusDuration::from_chrono(
+                TimeDelta::hours(8),
+                &TEST_TIME_PRECISION,
+            )),
         },
     )
     .await;

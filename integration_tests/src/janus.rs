@@ -189,7 +189,7 @@ impl JanusInProcess {
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 100,
             aggregation_job_creation_report_window: 5000,
-            late_report_grace_period_s: 3600,
+            late_report_grace_period_units: 1,
         };
         let aggregation_job_driver_options = AggregationJobDriverOptions {
             common: common_binary_options.clone(),

@@ -1,7 +1,6 @@
 //! In-memory data structure to incrementally build leader-selected batches.
 
 use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
-use chrono::TimeDelta;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -13,16 +12,16 @@ use janus_aggregator_core::{
         },
     },
 };
-use janus_core::time::{Clock, TimeDeltaExt, TimeExt};
+use janus_core::time::{Clock, IntervalExt};
 use janus_messages::{
     AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
-    batch_mode::LeaderSelected, taskprov::TimePrecision,
+    batch_mode::LeaderSelected,
 };
 use opentelemetry::metrics::Histogram;
 use prio::codec::Encode;
 use rand::random;
 use std::{
-    cmp::{Ordering, max, min},
+    cmp::{Ordering, min},
     collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut, hash_map},
     ops::RangeInclusive,
     sync::Arc,
@@ -62,7 +61,6 @@ struct Properties {
     task_id: TaskId,
     task_min_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
-    task_time_precision: TimePrecision,
     aggregation_job_size_histogram: Histogram<u64>,
 }
 
@@ -77,7 +75,6 @@ where
         task_id: TaskId,
         task_min_batch_size: usize,
         task_batch_time_window_size: Option<Duration>,
-        task_time_precision: TimePrecision,
         aggregation_job_writer: &'a mut AggregationJobWriter<
             SEED_SIZE,
             LeaderSelected,
@@ -94,7 +91,6 @@ where
                 task_id,
                 task_min_batch_size,
                 task_batch_time_window_size,
-                task_time_precision,
                 aggregation_job_size_histogram,
             },
             aggregation_job_writer,
@@ -113,17 +109,18 @@ where
     where
         C: Clock,
     {
-        let time_bucket_start_opt = self
-            .properties
-            .task_batch_time_window_size
-            .map(|batch_time_window_size| {
-                report
-                    .client_timestamp()
-                    .to_batch_interval_start(&TimePrecision::from_seconds(
-                        batch_time_window_size.as_seconds(),
-                    ))
-            })
-            .transpose()?;
+        let time_bucket_start_opt =
+            self.properties
+                .task_batch_time_window_size
+                .map(|batch_time_window_size| {
+                    // While everything is in units of the time precision, we still have to
+                    // bucket things by the batch_time_window_size.
+                    let batch_window_units = batch_time_window_size.as_time_precision_units();
+                    Time::from_time_precision_units(
+                        (report.client_timestamp().as_time_precision_units() / batch_window_units)
+                            * batch_window_units,
+                    )
+                });
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),
@@ -238,7 +235,6 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
-                            properties.task_time_precision,
                             &properties.aggregation_job_size_histogram,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
@@ -268,7 +264,6 @@ where
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                             report_ids_to_scrub,
-                            properties.task_time_precision,
                             &properties.aggregation_job_size_histogram,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
@@ -311,7 +306,6 @@ where
                     &mut bucket.unaggregated_reports,
                     aggregation_job_writer,
                     report_ids_to_scrub,
-                    properties.task_time_precision,
                     &properties.aggregation_job_size_histogram,
                 )?;
 
@@ -339,7 +333,6 @@ where
             ReportAggregationMetadata,
         >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
-        time_precision: TimePrecision,
         aggregation_job_size_histogram: &Histogram<u64>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
@@ -350,25 +343,14 @@ where
             report_count = aggregation_job_size,
             "Creating aggregation job"
         );
-        let mut min_client_timestamp = None;
-        let mut max_client_timestamp = None;
-
         let report_aggregations: Vec<_> = (0u64..)
             .zip(unaggregated_reports.drain(..aggregation_job_size))
             .map(|(ord, report)| {
-                let client_timestamp = *report.client_timestamp();
-                min_client_timestamp = Some(
-                    min_client_timestamp.map_or(client_timestamp, |ts| min(ts, client_timestamp)),
-                );
-                max_client_timestamp = Some(
-                    max_client_timestamp.map_or(client_timestamp, |ts| max(ts, client_timestamp)),
-                );
-
                 ReportAggregationMetadata::new(
                     task_id,
                     aggregation_job_id,
                     *report.report_id(),
-                    client_timestamp,
+                    *report.client_timestamp(),
                     ord,
                     ReportAggregationMetadataState::Init,
                 )
@@ -376,17 +358,12 @@ where
             .collect();
         report_ids_to_scrub.extend(report_aggregations.iter().map(|ra| *ra.report_id()));
 
-        let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let client_timestamp_interval = Interval::new_with_duration(
-            min_client_timestamp.to_batch_interval_start(&time_precision)?,
-            Duration::from_chrono(
-                max_client_timestamp
-                    .difference_as_time_delta(&min_client_timestamp)?
-                    .add(&TimeDelta::seconds(1))?
-                    .round_up(&time_precision.to_chrono()?)?,
-            ),
-        )?;
+        let client_timestamp_interval = report_aggregations
+            .iter()
+            .map(ReportAggregationMetadata::time)
+            .fold(Interval::EMPTY, |interval, timestamp| {
+                interval.merged_with(timestamp).unwrap()
+            });
         let aggregation_job = AggregationJob::<SEED_SIZE, LeaderSelected, A>::new(
             task_id,
             aggregation_job_id,

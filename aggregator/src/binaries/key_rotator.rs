@@ -93,6 +93,7 @@ mod tests {
 
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
@@ -116,6 +117,7 @@ mod tests {
 
     #[test]
     fn roundtrip_config() {
+        let time_precision = TimePrecision::from_seconds(random());
         roundtrip_encoding(Config {
             common_config: CommonConfig {
                 database: generate_db_config(),
@@ -127,9 +129,10 @@ mod tests {
             },
             key_rotator: KeyRotatorConfig {
                 hpke: HpkeKeyRotatorConfig {
-                    pending_duration: Duration::from_seconds(random()),
-                    active_duration: Duration::from_seconds(random()),
-                    expired_duration: Duration::from_seconds(random()),
+                    // This terribleness will get revisited in Issue #4216.
+                    pending_duration: Duration::from_seconds(random(), &time_precision),
+                    active_duration: Duration::from_seconds(random(), &time_precision),
+                    expired_duration: Duration::from_seconds(random(), &time_precision),
                     ciphersuites: HashSet::from([
                         HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,

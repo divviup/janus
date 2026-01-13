@@ -3,8 +3,11 @@ use crate::{
     BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
     ReportError, ReportId, ReportMetadata, ReportShare, Time, roundtrip_encoding,
+    taskprov::TimePrecision,
 };
 use prio::topology::ping_pong::PingPongMessage;
+
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]
 fn roundtrip_report_share() {
@@ -13,7 +16,7 @@ fn roundtrip_report_share() {
             ReportShare {
                 metadata: ReportMetadata::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                    Time::from_seconds_since_epoch(54321),
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                     Vec::new(),
                 ),
                 public_share: Vec::new(),
@@ -58,7 +61,7 @@ fn roundtrip_report_share() {
             ReportShare {
                 metadata: ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                    Time::from_seconds_since_epoch(73542),
+                    Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 public_share: Vec::from("0123"),
@@ -118,7 +121,7 @@ fn roundtrip_prepare_init() {
                 report_share: ReportShare {
                     metadata: ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                        Time::from_seconds_since_epoch(54321),
+                        Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                         Vec::new(),
                     ),
                     public_share: Vec::new(),
@@ -180,7 +183,7 @@ fn roundtrip_prepare_init() {
                 report_share: ReportShare {
                     metadata: ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                        Time::from_seconds_since_epoch(73542),
+                        Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
                         Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
                     public_share: Vec::from("0123"),
@@ -332,7 +335,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                            Time::from_seconds_since_epoch(54321),
+                            Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                             Vec::new(),
                         ),
                         public_share: Vec::new(),
@@ -350,7 +353,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                            Time::from_seconds_since_epoch(73542),
+                            Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
                             Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),
@@ -488,7 +491,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                            Time::from_seconds_since_epoch(54321),
+                            Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
                             Vec::new(),
                         ),
                         public_share: Vec::new(),
@@ -506,7 +509,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                     report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                            Time::from_seconds_since_epoch(73542),
+                            Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
                             Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),

@@ -436,10 +436,12 @@ macro_rules! options_query_dispatch {
             &$options.query.batch_interval_duration,
         ) {
             (Some(batch_interval_start), Some(batch_interval_duration)) => {
+                // Time Precision needs to be provided somehow, fix in #4218.
+                let time_precision = &janus_messages::taskprov::TimePrecision::from_seconds(1);
                 let $query = Query::new_time_interval(
-                    Interval::new_with_duration(
-                        Time::from_seconds_since_epoch(*batch_interval_start),
-                        Duration::from_seconds(*batch_interval_duration),
+                    Interval::new(
+                        Time::from_seconds_since_epoch(*batch_interval_start, time_precision),
+                        Duration::from_seconds(*batch_interval_duration, time_precision),
                     )
                     .map_err(|err| Error::Anyhow(err.into()))?,
                 );
@@ -627,19 +629,27 @@ fn new_collector<V: vdaf::Collector>(
     let (authentication, hpke_keypair) = options.credential()?;
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
-    let collector =
-        Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
-            .with_http_client(http_client)
-            .with_collect_poll_backoff(
-                ExponentialWithTotalDelayBuilder::new()
-                    .with_min_delay(StdDuration::from_secs(3))
-                    .with_max_delay(StdDuration::from_secs(300))
-                    .with_factor(1.2)
-                    .with_max_times(10)
-                    .with_jitter(),
-            )
-            .build()
-            .map_err(|err| Error::Anyhow(err.into()))?;
+    // Time Precision needs to be provided somehow, fix in #4218.
+    let time_precision = janus_messages::taskprov::TimePrecision::from_seconds(1);
+    let collector = Collector::builder(
+        task_id,
+        leader_endpoint,
+        authentication,
+        hpke_keypair,
+        vdaf,
+        time_precision,
+    )
+    .with_http_client(http_client)
+    .with_collect_poll_backoff(
+        ExponentialWithTotalDelayBuilder::new()
+            .with_min_delay(StdDuration::from_secs(3))
+            .with_max_delay(StdDuration::from_secs(300))
+            .with_factor(1.2)
+            .with_max_times(10)
+            .with_jitter(),
+    )
+    .build()
+    .map_err(|err| Error::Anyhow(err.into()))?;
     Ok(collector)
 }
 

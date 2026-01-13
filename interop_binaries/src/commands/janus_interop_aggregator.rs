@@ -19,7 +19,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
 };
-use janus_messages::{HpkeConfig, Time, taskprov::TimePrecision};
+use janus_messages::{Duration, HpkeConfig, Time, taskprov::TimePrecision};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -104,13 +104,17 @@ async fn handle_add_task(
         batch_mode,
         vdaf,
         vdaf_verify_key,
-        request.task_start.map(Time::from_seconds_since_epoch),
-        request.task_end.map(Time::from_seconds_since_epoch),
+        request
+            .task_start
+            .map(|t| Time::from_seconds_since_epoch(t, &time_precision)),
+        request
+            .task_end
+            .map(|t| Time::from_seconds_since_epoch(t, &time_precision)),
         None,
         request.min_batch_size,
         time_precision,
         /* tolerable clock skew */
-        time_precision.into(), // Since the clock skew must be a multiple of the precision, start at 1x
+        Duration::ONE, // Since the clock skew must be a multiple of the precision, start at 1x
         aggregator_parameters,
     )
     .context("error constructing task")?;

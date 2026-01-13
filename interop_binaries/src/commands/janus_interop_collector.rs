@@ -21,7 +21,7 @@ use janus_core::{
 };
 use janus_messages::{
     BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
-    batch_mode::BatchMode,
+    batch_mode::BatchMode, taskprov::TimePrecision,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -54,6 +54,7 @@ struct AddTaskRequest {
     collector_authentication_token: String,
     #[serde(rename = "batch_mode")]
     _batch_mode: u8,
+    time_precision: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +135,7 @@ struct TaskState {
     leader_url: Url,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
+    time_precision: TimePrecision,
 }
 
 /// A collection job handle.
@@ -181,6 +183,7 @@ async fn handle_add_task(
         leader_url: request.leader,
         vdaf: request.vdaf,
         auth_token,
+        time_precision: TimePrecision::from_seconds(request.time_precision),
     });
 
     Ok(hpke_config)
@@ -200,12 +203,14 @@ where
     V::AggregationParam: Send + Sync + 'static,
     B: BatchMode,
 {
+    let time_precision = task_state.time_precision;
     let collector = Collector::builder(
         task_state.task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
         task_state.keypair.clone(),
         vdaf,
+        time_precision,
     )
     .with_http_client(http_client.clone())
     .with_http_request_backoff(
@@ -265,20 +270,23 @@ async fn handle_collection_start(
 
     let query = match request.query.batch_mode {
         1 => {
+            let time_precision = task_state.time_precision;
             let start = Time::from_seconds_since_epoch(
                 request
                     .query
                     .batch_interval_start
                     .context("\"batch_interval_start\" was missing")?,
+                &time_precision,
             );
             let duration = Duration::from_seconds(
                 request
                     .query
                     .batch_interval_duration
                     .context("\"batch_interval_duration\" was missing")?,
+                &time_precision,
             );
-            let interval = Interval::new_with_duration(start, duration)
-                .context("invalid batch interval specification")?;
+            let interval =
+                Interval::new(start, duration).context("invalid batch interval specification")?;
             ParsedQuery::TimeInterval(interval)
         }
         2 => ParsedQuery::LeaderSelected,

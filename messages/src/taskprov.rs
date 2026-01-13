@@ -34,7 +34,7 @@ pub struct TaskConfig {
     /// The earliest timestamp that will be accepted for this task.
     task_start: Time,
     /// The duration of the task.
-    task_duration: TimePrecision,
+    task_duration: Duration,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
     /// Taskbind extensions.
@@ -51,7 +51,7 @@ impl TaskConfig {
         min_batch_size: u32,
         batch_mode: batch_mode::Code,
         task_start: Time,
-        task_duration: TimePrecision,
+        task_duration: Duration,
         vdaf_config: VdafConfig,
         extensions: Vec<TaskbindExtension>,
     ) -> Result<Self, Error> {
@@ -101,7 +101,7 @@ impl TaskConfig {
         &self.task_start
     }
 
-    pub fn task_duration(&self) -> &TimePrecision {
+    pub fn task_duration(&self) -> &Duration {
         &self.task_duration
     }
 
@@ -171,7 +171,7 @@ impl Decode for TaskConfig {
             ));
         };
         let task_start = Time::decode(bytes)?;
-        let task_duration = TimePrecision::decode(bytes)?;
+        let task_duration = Duration::decode(bytes)?;
         let vdaf_config = VdafConfig::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
@@ -508,10 +508,13 @@ impl Decode for TaskbindExtensionType {
 pub struct TimePrecision(u64);
 
 impl TimePrecision {
-    pub const ZERO: TimePrecision = TimePrecision::from_seconds(0);
-
     /// Create a duration representing the provided number of seconds.
+    ///
+    /// # Panics
+    /// Panics if `seconds` is 0.
+    ///
     pub const fn from_seconds(seconds: u64) -> Self {
+        assert!(seconds > 0);
         Self(seconds)
     }
 
@@ -525,7 +528,7 @@ impl TimePrecision {
     }
 
     /// Get the number of seconds this duration represents.
-    pub fn as_seconds(&self) -> u64 {
+    pub const fn as_seconds(&self) -> u64 {
         self.0
     }
 
@@ -567,25 +570,18 @@ impl Display for TimePrecision {
     }
 }
 
-/// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<TimePrecision> for Duration {
-    fn from(value: TimePrecision) -> Self {
-        Duration::from_seconds(value.as_seconds())
-    }
-}
-
-/// This method is only as a bridge for Issue #4019, and will be removed.
-impl From<Duration> for TimePrecision {
-    fn from(duration: Duration) -> Self {
-        TimePrecision::from_seconds(duration.as_seconds())
-    }
-}
+// Note: The From<TimePrecision> for Duration and From<Duration> for TimePrecision bridge
+// implementations have been removed as part of #4019. Duration now represents a number of
+// time_precision units, while TimePrecision represents the unit size in seconds. These are
+// fundamentally different types and cannot be directly converted without additional context.
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        Time, TimePrecision, Url, batch_mode, roundtrip_encoding,
-        taskprov::{TaskConfig, TaskbindExtension, TaskbindExtensionType, VdafConfig},
+        Duration, Time, Url, batch_mode, roundtrip_encoding,
+        taskprov::{
+            TaskConfig, TaskbindExtension, TaskbindExtensionType, TimePrecision, VdafConfig,
+        },
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode as _};
@@ -601,8 +597,8 @@ mod tests {
                     TimePrecision::from_seconds(3600),
                     10000,
                     batch_mode::Code::TimeInterval,
-                    Time::from_seconds_since_epoch(1000000),
-                    TimePrecision::from_seconds(100000),
+                    Time::from_seconds_since_epoch(1000000, &TimePrecision::from_seconds(3600)),
+                    Duration::from_time_precision_units(28),
                     VdafConfig::Prio3Count,
                     Vec::new(),
                 )
@@ -630,8 +626,8 @@ mod tests {
                         // batch_config
                         "0000", // length
                     ),
-                    "00000000000F4240", // task_start
-                    "00000000000186A0", // task_duration
+                    "0000000000000115", // task_start
+                    "000000000000001C", // task_duration
                     "00000001",         // vdaf_type
                     concat!(
                         // vdaf_config
@@ -651,8 +647,8 @@ mod tests {
                     TimePrecision::from_seconds(1000),
                     1000,
                     batch_mode::Code::LeaderSelected,
-                    Time::from_seconds_since_epoch(10000000),
-                    TimePrecision::from_seconds(50000),
+                    Time::from_seconds_since_epoch(10000000, &TimePrecision::from_seconds(1000)),
+                    Duration::from_time_precision_units(605),
                     VdafConfig::Prio3Sum {
                         max_measurement: 0xFF,
                     },
@@ -685,8 +681,8 @@ mod tests {
                         // batch_config
                         "0000", // length
                     ),
-                    "0000000000989680", // task_start
-                    "000000000000C350", // task_duration
+                    "0000000000002710", // task_start
+                    "000000000000025D", // task_duration
                     "00000002",         // vdaf_type
                     concat!(
                         // vdaf_config
@@ -733,7 +729,7 @@ mod tests {
                         "0000", // length
                     ),
                     "00000000000F4240", // task_start
-                    "00000000000186A0", // task_duration
+                    "000000000000001B", // task_duration
                     "00000001",         // vdaf_type
                     concat!(
                         // vdaf_config

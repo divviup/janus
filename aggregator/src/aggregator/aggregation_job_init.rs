@@ -100,7 +100,7 @@ where
     let report_aggregation_count = report_aggregations.len();
     let now = clock.now();
     let report_deadline = now
-        .add_duration(task.tolerable_clock_skew())
+        .add_duration(task.tolerable_clock_skew(), task.time_precision())
         .map_err(Error::from)?;
 
     // Shutdown on cancellation: if this request is cancelled, the `receiver` will be dropped. This
@@ -312,22 +312,27 @@ where
                         let shares =
                             input_share.and_then(|input_share| Ok((public_share?, input_share)));
 
-                        if let Ok(clock_skew) = prepare_init
+                        if let Ok(report_time_dt) = prepare_init
                             .report_share()
                             .metadata()
                             .time()
-                            .difference_as_time_delta(&now.to_time())
+                            .as_naive_date_time(task.time_precision())
+                            .map(|ndt| ndt.and_utc())
                         {
-                            metrics
-                                .early_report_clock_skew_histogram
-                                .record(clock_skew.num_seconds() as u64, &[]);
-                        }
-                        if let Ok(clock_skew) =
-                            now.difference_as_time_delta(prepare_init.report_share().metadata().time())
-                        {
-                            metrics
-                                .past_report_clock_skew_histogram
-                                .record(clock_skew.num_seconds() as u64, &[]);
+                            let clock_skew = report_time_dt.signed_duration_since(now);
+                            let skew_seconds = clock_skew.num_seconds();
+
+                            if skew_seconds > 0 {
+                                // Early report: report time > now
+                                metrics
+                                    .early_report_clock_skew_histogram
+                                    .record(skew_seconds as u64, &[]);
+                            } else if skew_seconds < 0 {
+                                // Past report: now > report time
+                                metrics
+                                    .past_report_clock_skew_histogram
+                                    .record((-skew_seconds) as u64, &[]);
+                            }
                         }
 
                         // Reject reports from too far in the future.
@@ -336,7 +341,7 @@ where
                                 .report_share()
                                 .metadata()
                                 .time()
-                                .is_after(&report_deadline.to_time())
+                                .is_after(&report_deadline.to_time(task.time_precision()))
                             {
                                 return Err(ReportError::ReportTooEarly);
                             }
@@ -548,11 +553,7 @@ pub mod test_util {
             self.next_with_metadata(
                 ReportMetadata::new(
                     random(),
-                    self.clock
-                        .now()
-                        .to_batch_interval_start(self.task.time_precision())
-                        .unwrap()
-                        .to_time(),
+                    self.clock.now().to_time(self.task.time_precision()),
                     Vec::new(),
                 ),
                 measurement,
@@ -585,11 +586,7 @@ pub mod test_util {
             self.next_report_share_with_metadata(
                 ReportMetadata::new(
                     random(),
-                    self.clock
-                        .now()
-                        .to_batch_interval_start(self.task.time_precision())
-                        .unwrap()
-                        .to_time(),
+                    self.clock.now().to_time(self.task.time_precision()),
                     Vec::new(),
                 ),
                 measurement,
@@ -653,7 +650,6 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
-    use chrono::TimeDelta;
     use http::StatusCode;
     use janus_aggregator_core::{
         AsyncAggregator,
@@ -777,13 +773,14 @@ mod tests {
     ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
         install_test_trace_subscriber();
 
+        let time_precision = TimePrecision::from_seconds(100);
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
             vdaf_instance,
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(auth_token)
         .build();
         let helper_task = task.helper_view().unwrap();
@@ -1096,7 +1093,7 @@ mod tests {
                                 .now_aligned_to_precision(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap()
-                                .add_time_precision(test_case.task.time_precision())
+                                .add_duration(&Duration::ONE)
                                 .unwrap(),
                             Vec::new(),
                         ),
@@ -1139,15 +1136,16 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let task_end_time = clock.now_aligned_to_precision(&TimePrecision::from_seconds(100));
+        let time_precision = TimePrecision::from_seconds(100);
+        let task_end_time = clock.now_aligned_to_precision(&time_precision);
 
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_end(Some(task_end_time))
         .build();
@@ -1192,9 +1190,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time
-                                .sub_time_precision(helper_task.time_precision())
-                                .unwrap(),
+                            task_end_time.sub_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1205,9 +1201,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_end_time
-                                .add_time_precision(helper_task.time_precision())
-                                .unwrap(),
+                            task_end_time.add_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1282,9 +1276,10 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
+        let time_precision = TimePrecision::from_seconds(100);
         let task_start_time = clock
-            .now_aligned_to_precision(&TimePrecision::from_seconds(100))
-            .sub_timedelta(&TimeDelta::seconds(1000))
+            .now_aligned_to_precision(&time_precision)
+            .sub_duration(&Duration::from_seconds(1000, &time_precision))
             .unwrap();
 
         let task = TaskBuilder::new(
@@ -1292,8 +1287,8 @@ mod tests {
             AggregationMode::Synchronous,
             VdafInstance::Fake { rounds: 1 },
         )
-        .with_time_precision(TimePrecision::from_seconds(100))
-        .with_tolerable_clock_skew(Duration::from_seconds(500))
+        .with_time_precision(time_precision)
+        .with_tolerable_clock_skew(Duration::from_seconds(500, &time_precision))
         .with_aggregator_auth_token(AuthenticationToken::Bearer(random()))
         .with_task_start(Some(task_start_time))
         .build();
@@ -1338,9 +1333,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time
-                                .add_time_precision(helper_task.time_precision())
-                                .unwrap(),
+                            task_start_time.add_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,
@@ -1351,9 +1344,7 @@ mod tests {
                     .next_with_metadata(
                         ReportMetadata::new(
                             random(),
-                            task_start_time
-                                .sub_time_precision(helper_task.time_precision())
-                                .unwrap(),
+                            task_start_time.sub_duration(&Duration::ONE).unwrap(),
                             Vec::new(),
                         ),
                         &0,

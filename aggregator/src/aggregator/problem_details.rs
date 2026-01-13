@@ -144,6 +144,7 @@ mod tests {
         test_util::install_test_trace_subscriber,
         time::{Clock, DateTimeExt, RealClock},
     };
+    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, Interval, ReportIdChecksum,
         problem_type::{DapProblemType, DapProblemTypeParseError},
@@ -227,9 +228,9 @@ mod tests {
                             random(),
                             format!(
                                 "{}",
-                                Interval::new_with_duration(
-                                    RealClock::default().now().to_time(),
-                                    Duration::from_seconds(3600)
+                                Interval::new(
+                                    RealClock::default().now().to_time(&TimePrecision::from_seconds(1)),
+                                    Duration::from_seconds(3600, &TimePrecision::from_seconds(1))
                                 )
                                 .unwrap()
                             ),
@@ -241,7 +242,7 @@ mod tests {
                     Box::new(|| {
                         Error::BatchOverlap(
                             random(),
-                            Interval::new_with_duration(RealClock::default().now().to_time(), Duration::from_seconds(3600))
+                            Interval::new(RealClock::default().now().to_time(&TimePrecision::from_seconds(1)), Duration::from_seconds(3600, &TimePrecision::from_seconds(1)))
                                 .unwrap(),
                         )
                     }),

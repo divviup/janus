@@ -1,7 +1,9 @@
 use crate::{
     BatchId, Duration, Interval, LeaderSelected, Query, TaskId, Time, TimeInterval, batch_mode,
-    roundtrip_encoding,
+    roundtrip_encoding, taskprov::TimePrecision,
 };
+
+const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
 #[test]
 fn roundtrip_batch_id() {
@@ -30,9 +32,9 @@ fn roundtrip_query() {
     roundtrip_encoding(&[
         (
             Query::<TimeInterval> {
-                query_body: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(54321),
-                    Duration::from_seconds(12345),
+                query_body: Interval::new(
+                    Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
+                    Duration::from_seconds(12345, &TEST_TIME_PRECISION),
                 )
                 .unwrap(),
             },
@@ -48,9 +50,9 @@ fn roundtrip_query() {
         ),
         (
             Query::<TimeInterval> {
-                query_body: Interval::new_with_duration(
-                    Time::from_seconds_since_epoch(48913),
-                    Duration::from_seconds(44721),
+                query_body: Interval::new(
+                    Time::from_seconds_since_epoch(48913, &TEST_TIME_PRECISION),
+                    Duration::from_seconds(44721, &TEST_TIME_PRECISION),
                 )
                 .unwrap(),
             },

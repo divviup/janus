@@ -19,7 +19,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, DateTimeExt as _, MockClock, TimeDeltaExt as _, TimeExt as _},
+    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -87,13 +87,17 @@ async fn upload_handler() {
     } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(1000);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(1000))
-    .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+    .with_time_precision(time_precision)
+    .with_report_expiry_age(Some(Duration::from_seconds(
+        REPORT_EXPIRY_AGE,
+        &time_precision,
+    )))
     .build();
 
     let leader_task = task.leader_view().unwrap();
@@ -210,7 +214,10 @@ async fn upload_handler() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub_timedelta(&TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap())
+                .sub_timedelta(
+                    &TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap(),
+                    task.time_precision(),
+                )
                 .unwrap(),
             report.metadata().public_extensions().to_vec(),
         ),
@@ -270,9 +277,7 @@ async fn upload_handler() {
     // Reports from the future should be rejected.
     let bad_report_time = clock
         .now_aligned_to_precision(task.time_precision())
-        .add_duration(&Duration::from_seconds(
-            task.time_precision().as_seconds() * 2,
-        ))
+        .add_duration(&Duration::from_time_precision_units(2))
         .unwrap();
     let bad_report = Report::new(
         ReportMetadata::new(
@@ -308,14 +313,12 @@ async fn upload_handler() {
     )
     // Since HttpHandlerTest's clock instance is a copy of ours, we can't simply
     // advance it, and we have to instead tolerate skew.
-    .with_tolerable_clock_skew(Duration::from_seconds(
-        task.time_precision().as_seconds() * 2,
-    ))
+    .with_tolerable_clock_skew(Duration::from_time_precision_units(2))
     .with_time_precision(*task.time_precision())
     .with_task_end(Some(
         clock
             .now_aligned_to_precision(task.time_precision())
-            .add_time_precision(task.time_precision())
+            .add_duration(&Duration::ONE)
             .unwrap(),
     ))
     .build();
@@ -331,6 +334,7 @@ async fn upload_handler() {
             .now_aligned_to_precision(task.time_precision())
             .add_duration(&Duration::from_seconds(
                 task.time_precision().as_seconds() * 2,
+                task.time_precision(),
             ))
             .unwrap(),
     );
@@ -351,8 +355,11 @@ async fn upload_handler() {
     .await;
 
     // Reject reports with an undecodeable public share.
-    let mut bad_public_share_report =
-        create_report(&leader_task, &hpke_keypair, clock.now().to_time());
+    let mut bad_public_share_report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     bad_public_share_report = Report::new(
         bad_public_share_report.metadata().clone(),
         // Some obviously wrong public share.
@@ -383,7 +390,7 @@ async fn upload_handler() {
     // Reject reports which are not decryptable.
     let undecryptable_report = create_report_custom(
         &leader_task,
-        clock.now().to_time(),
+        clock.now_aligned_to_precision(task.time_precision()),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
@@ -408,8 +415,11 @@ async fn upload_handler() {
     .await;
 
     // Reject reports whose leader input share is corrupt.
-    let mut bad_leader_input_share_report =
-        create_report(&leader_task, &hpke_keypair, clock.now().to_time());
+    let mut bad_leader_input_share_report = create_report(
+        &leader_task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
     bad_leader_input_share_report = Report::new(
         bad_leader_input_share_report.metadata().clone(),
         bad_leader_input_share_report.public_share().to_vec(),
@@ -524,13 +534,17 @@ async fn upload_handler_mixed_success_failure() {
     } = HttpHandlerTest::new().await;
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(1000);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(1000))
-    .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+    .with_time_precision(time_precision)
+    .with_report_expiry_age(Some(Duration::from_seconds(
+        REPORT_EXPIRY_AGE,
+        &time_precision,
+    )))
     .build();
 
     let leader_task = task.leader_view().unwrap();
@@ -548,9 +562,9 @@ async fn upload_handler_mixed_success_failure() {
             random(),
             clock
                 .now_aligned_to_precision(task.time_precision())
-                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
                 .unwrap()
-                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE))
+                .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
                 .unwrap(),
             Vec::new(),
         ),
@@ -662,13 +676,16 @@ async fn upload_handler_task_not_started() {
     .with_task_start(Some(
         clock
             .now_aligned_to_precision(&time_precision)
-            .add_time_precision(&time_precision) // Add one time precision interval
+            .add_duration(&Duration::ONE) // Add one time precision interval
             .unwrap()
-            .add_time_precision(&time_precision) // Add another to be clearly in the future
+            .add_duration(&Duration::ONE) // Add another to be clearly in the future
             .unwrap(),
     ))
     // Need to allow clock skew so the handler doesn't reject for being "too far in the future"
-    .with_tolerable_clock_skew(Duration::from_seconds(time_precision.as_seconds() * 10))
+    .with_tolerable_clock_skew(Duration::from_seconds(
+        time_precision.as_seconds() * 10,
+        &time_precision,
+    ))
     .build();
 
     let leader_task = task.leader_view().unwrap();
@@ -791,13 +808,17 @@ async fn upload_handler_error_fanout() {
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+    let time_precision = TimePrecision::from_seconds(100);
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3Count,
     )
-    .with_time_precision(TimePrecision::from_seconds(100))
-    .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+    .with_time_precision(time_precision)
+    .with_report_expiry_age(Some(Duration::from_seconds(
+        REPORT_EXPIRY_AGE,
+        &time_precision,
+    )))
     .build();
 
     let leader_task = task.leader_view().unwrap();
@@ -867,7 +888,11 @@ async fn upload_handler_error_fanout() {
                 let url = url.clone();
                 let hpke_keypair = hpke_keypair.clone();
                 async move {
-                    let report = create_report(&leader_task, &hpke_keypair, clock.now().to_time());
+                    let report = create_report(
+                        &leader_task,
+                        &hpke_keypair,
+                        clock.now_aligned_to_precision(&time_precision),
+                    );
                     let response = client
                         .post(url)
                         .header("Content-Type", UploadRequest::MEDIA_TYPE)
