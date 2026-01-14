@@ -376,8 +376,8 @@ mod tests {
                             let incomplete_jobs = incomplete_jobs
                                 .get(test_state.job_acquire_counter)
                                 // Clone here so that incomplete_jobs will be Vec<_> and not
-                                // &Vec<_>, which
-                                // would be impossible to return from Option::unwrap_or_default.
+                                // &Vec<_>, which would be impossible to return from
+                                // Option::unwrap_or_default.
                                 .cloned()
                                 .unwrap_or_default();
 

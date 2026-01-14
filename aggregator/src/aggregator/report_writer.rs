@@ -209,6 +209,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     .map_err(|err| error!(?err, "Failed to write upload metrics"));
 
                 // Individual, per-request results.
+                //
                 // sanity check: should be guaranteed.
                 assert_eq!(result_senders.len(), results.len());
                 for (result_tx, result) in result_senders.into_iter().zip(results.into_iter()) {

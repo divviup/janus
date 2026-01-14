@@ -267,6 +267,7 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
+                    //
                     // unrealistic, but induces GC
                     let batch_identifier = Interval::minimal(client_timestamp).unwrap();
                     tx.put_batch_aggregation(
@@ -461,6 +462,7 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
+                    //
                     // unrealistic, but induces GC
                     let batch_identifier = Interval::minimal(client_timestamp).unwrap();
                     tx.put_batch_aggregation(
