@@ -1769,21 +1769,16 @@ impl VdafOps {
         let mut report_stream = Box::pin(report_stream);
         let mut futures = FuturesUnordered::new();
         let mut status = Vec::new();
-        let mut stream_eof = false;
 
         loop {
-            // If stream is exhausted and no futures remain, we're done
-            if stream_eof && futures.is_empty() {
-                break;
-            }
-
             select! {
+                // Note: Both report_stream.next() and futures.next() are cancellation-safe.
+                // Cancelling these calls does not drop the underlying data.
+
                 // Poll for new reports from the stream (only if not eof)
-                stream_result = report_stream.next(), if !stream_eof => {
+                Some(stream_result) = report_stream.next() => {
                     match stream_result {
-                        Some(Ok(report)) => {
-                            // Got a report - wrap in Arc and move it into the async task
-                            let report_arc = Arc::new(report);
+                        Ok(report) => {
                             let vdaf_clone = Arc::clone(&vdaf);
                             futures.push(async move {
                                 Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
@@ -1793,48 +1788,40 @@ impl VdafOps {
                                     metrics,
                                     task,
                                     report_writer,
-                                    &report_arc,
+                                    report,
                                 ).await
                             });
                         }
-                        Some(Err(e)) => {
+                        Err(e) => {
                             // Stream error (decode failure, client disconnect) - fail fast
                             return Err(Arc::new(e));
-                        }
-                        None => {
-                            stream_eof = true;
                         }
                     }
                 },
 
                 // Poll for completed report processing
-                report_result = futures.next(), if !futures.is_empty() => {
-                    if let Some(result) = report_result {
-                        match result {
-                            Ok(_) => {
-                                // Report succeeded, no status entry needed
-                            }
-                            Err(e) => match e.borrow() {
-                                Error::ReportRejected(rejection) => {
-                                    status.push(ReportUploadStatus::new(
-                                        *rejection.report_id(),
-                                        rejection.reason().report_error(),
-                                    ));
-                                }
-                                _ => {
-                                    // Non-rejection errors are fatal
-                                    return Err(e);
-                                }
-                            },
+                Some(result) = futures.next() => {
+                    match result {
+                        Ok(_) => {
+                            // Report succeeded, no status entry needed
                         }
+                        Err(e) => match e.borrow() {
+                            Error::ReportRejected(rejection) => {
+                                status.push(ReportUploadStatus::new(
+                                    *rejection.report_id(),
+                                    rejection.reason().report_error(),
+                                ));
+                            }
+                            _ => {
+                                // Non-rejection errors are fatal
+                                return Err(e);
+                            }
+                        },
                     }
                 },
 
-                // If both arms are disabled (stream exhausted + no futures), yield to prevent
-                // busy loop. The check at the top of the loop will break us out.
-                else => {
-                    tokio::task::yield_now().await;
-                }
+                // If both arms are disabled (stream exhausted + no futures), we're done
+                else => break
             }
         }
 
@@ -1848,7 +1835,7 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        report: &Report,
+        report: Report,
     ) -> Result<(), Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
