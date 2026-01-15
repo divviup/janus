@@ -172,7 +172,8 @@ async fn janus_janus_sync_count() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "testcontainer")]
 async fn janus_janus_async_count() {
-    // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated interop test design)
+    // TODO(#3436): allow callers to specify asynchronous aggregation mode (requires updated
+    // interop test design)
     run_container_test(
         "janus_janus_async_count",
         BatchMode::TimeInterval,

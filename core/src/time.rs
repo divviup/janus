@@ -101,7 +101,8 @@ pub trait TimeDeltaExt: Sized {
     /// Create a [`chrono::TimeDelta`] from a number of microseconds.
     fn from_microseconds(microseconds: u64) -> TimeDelta;
 
-    /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second precision.
+    /// Get the number of microseconds this [`chrono::TimeDelta`] represents, rounded to second
+    /// precision.
     fn as_microseconds(&self) -> Result<u64, Error>;
 
     /// Create a [`chrono::TimeDelta`] representing the provided number of minutes.
@@ -116,8 +117,9 @@ pub trait TimeDeltaExt: Sized {
     /// returning an error if the value is too large to represent.
     fn try_seconds_unsigned(seconds: u64) -> Result<TimeDelta, Error>;
 
-    /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next largest multiple of
-    /// `time_precision`, or the same time delta if it's already a multiple.
+    /// Return a [`chrono::TimeDelta`] representing this time delta rounded up to the next
+    /// largest multiple of `time_precision`, or the same time delta if it's already a
+    /// multiple.
     fn round_up(&self, time_precision: &TimeDelta) -> Result<TimeDelta, Error>;
 
     /// Confirm that this time delta is a multiple of the task time precision.
@@ -252,7 +254,8 @@ pub trait DateTimeExt {
     /// Returns true if and only if this [`DateTime<Utc>`] occurs before the given [`Time`].
     fn is_before(&self, time: &Time, time_precision: &TimePrecision) -> bool;
 
-    /// Compute the start of the batch interval containing this DateTime, given the task time precision.
+    /// Compute the start of the batch interval containing this DateTime, given the task time
+    /// precision.
     fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
     where
         Self: Sized;
@@ -265,8 +268,9 @@ pub trait DateTimeExt {
         time_precision: &TimePrecision,
     ) -> Result<TimeDelta, Error>;
 
-    /// Get the difference between the provided `other` [`DateTime<Utc>`] and this [`DateTime<Utc>`] using
-    /// saturating arithmetic. If `self` is before `other`, the result is zero.
+    /// Get the difference between the provided `other` [`DateTime<Utc>`] and this
+    /// [`DateTime<Utc>`] using saturating arithmetic. If `self` is before `other`, the result
+    /// is zero.
     fn saturating_difference(&self, other: &Self, time_precision: &TimePrecision) -> Duration;
 }
 

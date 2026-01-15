@@ -230,12 +230,12 @@ pub struct Config {
     /// becomes aware of key state changes.
     pub hpke_configs_refresh_interval: StdDuration,
 
-    /// Defines how long tasks should be cached for. This affects how often an aggregator becomes aware
-    /// of task parameter changes.
+    /// Defines how long tasks should be cached for. This affects how often an aggregator
+    /// becomes aware of task parameter changes.
     pub task_cache_ttl: StdDuration,
 
-    /// Defines how many tasks can be cached at once. This affects how much memory the aggregator may
-    /// consume for caching tasks.
+    /// Defines how many tasks can be cached at once. This affects how much memory the
+    /// aggregator may consume for caching tasks.
     pub task_cache_capacity: u64,
 
     /// The key used to sign HPKE configurations.
@@ -651,10 +651,10 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for the
-    /// collection job parsed out of the request URI. Returns an encoded [`Collection`] if the collect
-    /// job has been run to completion, `None` if the collection job has not yet run, or an error
-    /// otherwise.
+    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier
+    /// for the collection job parsed out of the request URI. Returns an encoded
+    /// [`Collection`] if the collect job has been run to completion, `None` if the collection
+    /// job has not yet run, or an error otherwise.
     async fn handle_get_collection_job(
         &self,
         task_id: &TaskId,
@@ -721,8 +721,9 @@ impl<C: Clock> Aggregator<C> {
         if task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task.id()));
         }
-        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
-        // have to use the peer aggregator's collector config rather than the main task.
+        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov
+        // task, we have to use the peer aggregator's collector config rather than the main
+        // task.
         let collector_hpke_config = match taskprov_task_config {
             Some(taskprov_task_config) if self.cfg.taskprov_config.enabled => {
                 let (peer_aggregator, _, _) = self
@@ -750,8 +751,8 @@ impl<C: Clock> Aggregator<C> {
         Ok(collector_hpke_config.clone())
     }
 
-    /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded
-    /// [`AggregateShareReq`]. Returns an [`AggregateShare`].
+    /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an
+    /// encoded [`AggregateShareReq`]. Returns an [`AggregateShare`].
     async fn handle_put_aggregate_share(
         &self,
         task_id: &TaskId,
@@ -787,7 +788,8 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    /// Handle an aggregate share request. Only supported by the helper. Returns an [`AggregateShare`].
+    /// Handle an aggregate share request. Only supported by the helper. Returns an
+    /// [`AggregateShare`].
     async fn handle_get_aggregate_share(
         &self,
         task_id: &TaskId,
@@ -901,9 +903,9 @@ impl<C: Clock> Aggregator<C> {
             .await
             .or_else(|error| -> Result<(), Error> {
                 match error {
-                    // If the task is already in the datastore, then some other request or aggregator
-                    // replica beat us to inserting it. They _should_ have inserted all the same parameters
-                    // as we would have, so we can proceed as normal.
+                    // If the task is already in the datastore, then some other request or
+                    // aggregator replica beat us to inserting it. They _should_ have inserted
+                    // all the same parameters as we would have, so we can proceed as normal.
                     DatastoreError::MutationTargetAlreadyExists => {
                         warn!(
                             ?task_id,
@@ -920,9 +922,9 @@ impl<C: Clock> Aggregator<C> {
         Ok(())
     }
 
-    /// Validate and authorize a taskprov request. Returns values necessary for determining whether
-    /// we can opt into the task. This function might return an opt-out error for conditions that
-    /// are relevant for all DAP workflows (e.g. task end).
+    /// Validate and authorize a taskprov request. Returns values necessary for determining
+    /// whether we can opt into the task. This function might return an opt-out error for
+    /// conditions that are relevant for all DAP workflows (e.g. task end).
     #[tracing::instrument(skip(self, aggregator_auth_token), err(level = Level::DEBUG))]
     async fn taskprov_authorize_request(
         &self,
@@ -3054,7 +3056,8 @@ impl VdafOps {
                     Arc::clone(&aggregation_param),
                 );
                 Box::pin(async move {
-                    // Check if this collection job already exists, ensuring that all parameters match.
+                    // Check if this collection job already exists, ensuring that all parameters
+                    // match.
                     if let Some(collection_job) = tx
                         .get_collection_job::<SEED_SIZE, B, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
@@ -3224,24 +3227,24 @@ impl VdafOps {
                 leader_aggregate_share,
             } => {
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
-                // aggregate share *unencrypted* in the datastore so that we can encrypt cached
-                // results to the collector HPKE config valid when the current collection job request
-                // was made, and not whatever was valid at the time the aggregate share was first
-                // computed.
-                // However we store the helper's *encrypted* share.
+                //  aggregate share *unencrypted* in the datastore so that we can encrypt
+                //  cached results to the collector HPKE config valid when the current
+                //  collection job request was made, and not whatever was valid at the time the
+                //  aggregate share was first computed. However we store the
+                //  helper's *encrypted* share.
 
-                // TODO(#240): consider fetching freshly encrypted helper aggregate share if it has
-                // been long enough since the encrypted helper share was cached -- tricky thing is
-                // deciding what "long enough" is.
+                // TODO(#240): consider fetching freshly encrypted helper aggregate share if it
+                // has been long enough since the encrypted helper share was cached -- tricky
+                // thing is deciding what "long enough" is.
                 debug!(
                     %collection_job_id,
                     task_id = %task.id(),
                     "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
-                    // Unwrap safety: collector_hpke_config is only None for taskprov tasks. Taskprov
-                    // is not currently supported for Janus operating as the Leader, so this unwrap
-                    // is not reachable.
+                    // Unwrap safety: collector_hpke_config is only None for taskprov tasks.
+                    // Taskprov is not currently supported for Janus operating as the Leader,
+                    // so this unwrap is not reachable.
                     task.collector_hpke_config().unwrap(),
                     &HpkeApplicationInfo::new(
                         &Label::AggregateShare,
@@ -3361,7 +3364,8 @@ impl VdafOps {
             .await?;
         Ok(())
     }
-    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` GET endpoint for the helper.
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` GET endpoint for
+    /// the helper.
     #[tracing::instrument(
         skip(self, datastore, task, aggregate_share_id),
         fields(task_id = ?task.id()),
@@ -3471,7 +3475,8 @@ impl VdafOps {
         Ok(AggregateShare::new(encrypted_aggregate_share))
     }
 
-    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` PUT endpoint for the helper.
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` PUT endpoint for
+    /// the helper.
     #[tracing::instrument(
         skip(self, datastore, clock, task, req_bytes, aggregate_share_id),
         fields(task_id = ?task.id()),
@@ -3616,12 +3621,13 @@ impl VdafOps {
                         )
                         .await?
                     {
-                        // Duplicate aggregate share job found - verify the aggregate share ID matches
+                        // Duplicate aggregate share job found - verify the aggregate share ID
+                        // matches
                         if aggregate_share_job.aggregate_share_id() != &aggregate_share_id
                         {
                             // Mismatch here indicates a duplicate request with a different
-                            // aggregate share ID. This violates the DAP protocol requirement that
-                            // duplicate requests must be identical.
+                            // aggregate share ID. This violates the DAP protocol requirement
+                            // that duplicate requests must be identical.
                             return Err(datastore::Error::User(
                                 Error::AggregateShareRequestRejected(
                                     *task.id(),
@@ -3766,7 +3772,8 @@ impl VdafOps {
         Ok(AggregateShare::new(encrypted_aggregate_share))
     }
 
-    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` DELETE endpoint for the helper.
+    /// Implements the `tasks/{task-id}/aggregate_shares/{aggregate-share-id}` DELETE endpoint
+    /// for the helper.
     #[tracing::instrument(
         skip(self, datastore, task, aggregate_share_id),
         fields(task_id = ?task.id()),
