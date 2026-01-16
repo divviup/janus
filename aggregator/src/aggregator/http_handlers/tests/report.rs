@@ -1171,3 +1171,99 @@ async fn upload_client_early_disconnect() {
         HashSet::from(["400".into(), "200".into()])
     );
 }
+
+/// This test streams reports using HTTP/1.1 chunked encoding and ensures they're all counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_client_http11_bulk() {
+    install_test_trace_subscriber();
+    use tracing::info;
+
+    let clock = MockClock::default();
+    let ephemeral_datastore = ephemeral_datastore().await;
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+    let handler = AggregatorHandlerBuilder::new(
+        datastore.clone(),
+        clock.clone(),
+        TestRuntime::default(),
+        &noop_meter(),
+        default_aggregator_config(),
+    )
+    .await
+    .unwrap()
+    .build()
+    .unwrap();
+
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(TimePrecision::from_seconds(5))
+    .build();
+    let task_id = *task.id();
+    let leader_task = task.leader_view().unwrap();
+    datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+    let stopper = Stopper::new();
+    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let local_addr = server.local_addr().unwrap();
+    let handle = trillium_tokio::config()
+        .without_signals()
+        .with_stopper(stopper.clone())
+        .with_prebound_server(server)
+        .spawn(handler);
+
+    let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
+    let request_line_and_headers = format!(
+        "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
+        Content-Type: application/dap-upload-req\r\n\
+        Transfer-Encoding: chunked\r\n\r\n"
+    );
+    client_socket
+        .write_all(request_line_and_headers.as_bytes())
+        .await
+        .unwrap();
+
+    let report_count = 20;
+
+    for i in 0..report_count {
+        info!(i, report_count, "Starting loop");
+        let report = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+        let encoded = report.get_encoded().unwrap();
+        let chunk_length_line = format!("{:x}\r\n", encoded.len());
+        client_socket
+            .write_all(chunk_length_line.as_bytes())
+            .await
+            .unwrap();
+        client_socket.write_all(&encoded).await.unwrap();
+        client_socket.write_all(b"\r\n").await.unwrap(); // Chunk terminator
+        client_socket.flush().await.unwrap();
+        if i % 10 == 9 {
+            info!(i, report_count, "sleep start");
+            sleep(StdDuration::from_millis(500)).await;
+        }
+        clock.advance(TimeDelta::seconds(1));
+    }
+    client_socket.write_all(b"0\r\n\r\n").await.unwrap(); // Final chunk terminator
+    client_socket.flush().await.unwrap();
+    client_socket.shutdown().await.unwrap();
+    drop(client_socket);
+
+    // Verify that the valid reports were actually written to the datastore
+    let stored_reports = datastore
+        .count_client_reports_for_task(leader_task.id())
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_reports, report_count,
+        "Expected the right number of valid reports in the datastore"
+    );
+
+    stopper.stop();
+    handle.await;
+}
