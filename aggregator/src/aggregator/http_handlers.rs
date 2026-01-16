@@ -28,16 +28,15 @@ use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
-    TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
-    problem_type::DapProblemType, taskprov::TaskConfig,
+    ReportDecodeError, TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval,
+    codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Meter},
 };
-use prio::codec::CodecError;
-use prio::codec::Encode;
+use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)] // Used in async_stream macro expansion
@@ -599,7 +598,9 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 /// Streams reports decoded from an async reader. This function reads the body in chunks and
 /// yields reports as soon as they're fully decoded. When a chunk boundary falls in the middle
 /// of a report, the incomplete bytes are buffered until the next chunk arrives.
-fn decode_reports_stream<R>(mut body: R) -> impl Stream<Item = Result<Report, Error>>
+fn decode_reports_stream<R>(
+    mut body: R,
+) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>
 where
     R: AsyncRead + Unpin,
 {
@@ -634,21 +635,32 @@ where
             let mut bytes_consumed = 0;
 
             loop {
-                match Report::decode(&mut cursor) {
+                match Report::decode_with_metadata(&mut cursor) {
                     Ok(report) => {
                         bytes_consumed = cursor.position() as usize;
-                        yield report;
+                        yield Ok(report);
                     }
-                    Err(CodecError::LengthPrefixTooBig(_)) => {
-                        // Incomplete report - insufficient remaining bytes in the buffer
-                        break;
-                    }
-                    Err(CodecError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        // Incomplete report - we didn't make it to the end
-                        break;
-                    }
-                    Err(e) => {
-                        Err(Error::MessageDecode(e))?;
+                    Err(decode_error) => {
+                        match decode_error.error {
+                            CodecError::LengthPrefixTooBig(_) => {
+                                // Incomplete report - insufficient remaining bytes in the buffer
+                                break;
+                            }
+                            CodecError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                // Incomplete report - we didn't make it to the end
+                                break;
+                            }
+                            _ if decode_error.metadata.is_none() => {
+                                // We failed to decode even the metadata, but not due to
+                                // one of the above conditions. Without details we must not
+                                // put this error into the result stream as we can't report
+                                // it back. Instead, fail fast out of the stream
+                                Err(Error::MessageDecode(decode_error.error))?;
+                            }
+                            _ => {
+                                yield Err(decode_error);
+                            }
+                        }
                     }
                 }
             }

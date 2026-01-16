@@ -43,7 +43,7 @@ use fixed::{
 };
 use futures::{
     Stream,
-    future::try_join_all,
+    future::{BoxFuture, try_join_all},
     stream::{FuturesUnordered, StreamExt, TryStreamExt},
 };
 use http::{Method, header::CONTENT_TYPE};
@@ -80,8 +80,8 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
-    PlaintextInputShare, PrepareResp, Report, ReportError, ReportUploadStatus, Role, TaskId,
-    UploadResponse,
+    PlaintextInputShare, PrepareResp, Report, ReportDecodeError, ReportError, ReportUploadStatus,
+    Role, TaskId, UploadResponse,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -380,7 +380,7 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_upload(
         &self,
         task_id: &TaskId,
-        reports: impl Stream<Item = Result<Report, Error>>,
+        reports: impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
         let task_aggregator = self
             .task_aggregators
@@ -1100,7 +1100,7 @@ impl<C: Clock> TaskAggregator<C> {
         clock: &C,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
-        reports: impl Stream<Item = Result<Report, Error>>,
+        reports: impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
@@ -1539,7 +1539,7 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        reports: impl Stream<Item = Result<Report, Error>>,
+        reports: impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
@@ -1757,7 +1757,7 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        report_stream: impl Stream<Item = Result<Report, Error>>,
+        report_stream: impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>,
     ) -> Result<UploadResponse, Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
@@ -1775,7 +1775,7 @@ impl VdafOps {
                 // Note: Both report_stream.next() and futures.next() are cancellation-safe.
                 // Cancelling these calls does not drop the underlying data.
 
-                // Poll for new reports from the stream (only if not eof)
+                // Poll for new reports from the stream
                 Some(stream_result) = report_stream.next() => {
                     match stream_result {
                         Ok(report) => {
@@ -1835,22 +1835,42 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        report: Report,
+        report: Result<Report, ReportDecodeError>,
     ) -> Result<(), Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
         B: UploadableBatchMode,
     {
+        let (report_metadata, report) = match report {
+            Ok(report) => (Some(report.metadata().clone()), Some(report)),
+            Err(decode_error) => (decode_error.metadata, None),
+        };
+
         // Shorthand function for generating an Error::ReportRejected with proper parameters and
         // recording it in the report_writer.
-        let reject_report = |reason| {
-            let report_id = *report.metadata().id();
-            let report_time = *report.metadata().time();
-            async move {
+        let reject_report = |reason| -> BoxFuture<'_, Result<Arc<Error>, Arc<Error>>> {
+            let Some(report_metadata) = report_metadata else {
+                return Box::pin(async move {
+                    error!("Attempted to reject report without metadata - this is a bug.");
+                    Err(Arc::new(Error::Internal(
+                        "Cannot reject report without metadata".into(),
+                    )))
+                });
+            };
+            let report_id = *report_metadata.id();
+            let report_time = *report_metadata.time();
+            Box::pin(async move {
                 let rejection = ReportRejection::new(*task.id(), report_id, report_time, reason);
                 report_writer.write_rejection(rejection).await;
                 Ok::<_, Arc<Error>>(Arc::new(Error::ReportRejected(rejection)))
+            })
+        };
+
+        let report = match report {
+            Some(report) => report,
+            None => {
+                return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
 

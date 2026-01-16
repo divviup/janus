@@ -31,8 +31,8 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    PlaintextInputShare, Query, Report, ReportError, Role, batch_mode::TimeInterval,
-    taskprov::TimePrecision,
+    PlaintextInputShare, Query, Report, ReportDecodeError, ReportError, Role,
+    batch_mode::TimeInterval, taskprov::TimePrecision,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
@@ -100,13 +100,17 @@ impl UploadTest {
 }
 
 /// Helper to convert a single report into a Stream for testing
-fn report_stream(report: Report) -> impl Stream<Item = Result<Report, Error>> {
-    stream::iter(vec![Ok(report)])
+fn report_stream(
+    report: Report,
+) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>> {
+    stream::iter(vec![Ok(Ok(report))])
 }
 
 /// Helper to convert multiple reports into a Stream for testing
-fn reports_stream(reports: Vec<Report>) -> impl Stream<Item = Result<Report, Error>> {
-    stream::iter(reports.into_iter().map(Ok))
+fn reports_stream(
+    reports: Vec<Report>,
+) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>> {
+    stream::iter(reports.into_iter().map(|r| Ok(Ok(r))))
 }
 
 #[tokio::test]
