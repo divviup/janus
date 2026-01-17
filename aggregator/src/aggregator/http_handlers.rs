@@ -598,7 +598,9 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 /// Streams reports decoded from an async reader. This function reads the body in chunks and
 /// yields reports as soon as they're fully decoded. When a chunk boundary falls in the middle
 /// of a report, the incomplete bytes are buffered until the next chunk arrives.
-fn decode_reports_stream<R>(
+///
+/// This method is pub(super) so that its tests can reside in tests/report.rs.
+pub(super) fn decode_reports_stream<R>(
     mut body: R,
 ) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>
 where

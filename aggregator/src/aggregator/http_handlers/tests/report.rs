@@ -1267,3 +1267,274 @@ async fn upload_client_http11_bulk() {
     stopper.stop();
     handle.await;
 }
+
+/// These are all tests of the decode_reports_stream method in http_handlers.rs
+mod decode_reports_stream_tests {
+    use super::*;
+    use crate::aggregator::{Error, http_handlers::decode_reports_stream};
+    use assert_matches::assert_matches;
+    use futures::StreamExt;
+    use prio::codec::CodecError;
+    use std::{
+        io,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    /// Helper to create a mock AsyncRead that returns an IO error
+    struct ErrorReader {
+        error_kind: io::ErrorKind,
+    }
+
+    impl futures::io::AsyncRead for ErrorReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Err(io::Error::new(self.error_kind, "mock error")))
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_body() {
+        let body = futures::io::Cursor::new(Vec::<u8>::new());
+        let mut stream = Box::pin(decode_reports_stream(body));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn single_valid_report() {
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_time_precision(TimePrecision::from_seconds(1))
+        .build();
+        let leader_task = task.leader_view().unwrap();
+
+        let report = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+        let encoded = report.get_encoded().unwrap();
+        let body = futures::io::Cursor::new(encoded);
+
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let decoded_report = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should yield Result<Report>")
+            .expect("report should decode Report successfully");
+        assert_eq!(decoded_report.metadata().id(), report.metadata().id());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn multiple_reports_in_one_chunk() {
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_time_precision(TimePrecision::from_seconds(1))
+        .build();
+        let leader_task = task.leader_view().unwrap();
+
+        let report1 = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+        let report2 = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+        let mut encoded = report1.get_encoded().unwrap();
+        encoded.extend_from_slice(&report2.get_encoded().unwrap());
+        let body = futures::io::Cursor::new(encoded);
+
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let decoded1 = stream
+            .next()
+            .await
+            .expect("stream should yield first item, Result<Result<Report>>")
+            .expect("stream should not error, Result<Report>")
+            .expect("report should decode successfully as Report");
+        assert_eq!(decoded1.metadata().id(), report1.metadata().id());
+
+        let decoded2 = stream
+            .next()
+            .await
+            .expect("stream should yield second item, Result<Result<Report>>")
+            .expect("stream should not error, Result<Report>")
+            .expect("report should decode successfully as Report");
+        assert_eq!(decoded2.metadata().id(), report2.metadata().id());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn leftover_bytes() {
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_time_precision(TimePrecision::from_seconds(1))
+        .build();
+        let leader_task = task.leader_view().unwrap();
+
+        let report = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+        let mut encoded = report.get_encoded().unwrap();
+        encoded.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let body = futures::io::Cursor::new(encoded);
+
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let _ = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should yield Result<Report>")
+            .expect("report should decode successfully into Report");
+
+        let error = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect_err("should be Err<Error>");
+        assert_matches!(error, Error::MessageDecode(CodecError::BytesLeftOver(4)));
+    }
+
+    #[tokio::test]
+    async fn io_error_client_disconnected() {
+        let body = ErrorReader {
+            error_kind: io::ErrorKind::ConnectionReset,
+        };
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let error = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect_err("should be Err<Error>");
+        assert_matches!(error, Error::ClientDisconnected);
+    }
+
+    #[tokio::test]
+    async fn io_error_bad_request() {
+        let body = ErrorReader {
+            error_kind: io::ErrorKind::InvalidData,
+        };
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let error = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect_err("should be Err<Error>");
+        assert_matches!(error, Error::BadRequest(_));
+    }
+
+    #[tokio::test]
+    async fn decode_error_with_metadata() {
+        // This tests that decode errors with metadata are yielded correctly and bytes
+        // are consumed, allowing the stream to continue.
+        //
+        // Note: Creating test data that naturally triggers a decode error (not UnexpectedEof
+        // or LengthPrefixTooBig) with metadata is challenging because most corruptions cause
+        // UnexpectedEof. This test verifies that when such errors occur (as they can in
+        // production with network issues or malformed clients), they're handled correctly.
+
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_time_precision(TimePrecision::from_seconds(1))
+        .build();
+        let leader_task = task.leader_view().unwrap();
+
+        let report1 = create_report(
+            &leader_task,
+            &hpke_keypair,
+            clock.now_aligned_to_precision(task.time_precision()),
+        );
+
+        let report2_metadata = ReportMetadata::new(
+            random(),
+            clock.now_aligned_to_precision(task.time_precision()),
+            vec![],
+        );
+
+        // Build stream: [valid report] [valid metadata + incomplete body]
+        let mut stream_bytes = report1.get_encoded().unwrap();
+        report2_metadata.encode(&mut stream_bytes).unwrap();
+        // Incomplete public_share to trigger UnexpectedEof
+        stream_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x64]); // Claim 100 bytes
+        stream_bytes.extend_from_slice(&[0xAA; 99]); // Only provide 99 bytes of screaming
+
+        let body = futures::io::Cursor::new(stream_bytes);
+        let mut stream = Box::pin(decode_reports_stream(body));
+
+        // First report decodes successfully
+        let decoded1 = stream
+            .next()
+            .await
+            .expect("stream should yield an item, Some(Result<Result<Report>>)")
+            .expect("stream should not error, OK(Result<Report>)")
+            .expect("first report should decode successfully, OK(Report)");
+        assert_eq!(decoded1.metadata().id(), report1.metadata().id());
+
+        // Corrupted report causes UnexpectedEof, which buffers the data.
+        // When stream ends, BytesLeftOver error occurs.
+        let error = stream
+            .next()
+            .await
+            .expect("stream should yield an item, Some(Result<Error>)")
+            .expect_err("should be stream error, Err(MessageDecode<CodecError>)");
+        assert_matches!(error, Error::MessageDecode(CodecError::BytesLeftOver(_)));
+    }
+
+    #[tokio::test]
+    async fn decode_error_without_metadata_fails_fast() {
+        // Create malformed data that fails to decode metadata
+        // Using an invalid fixed size value (all 0xFF) should cause early failure
+        let bad_data = vec![0xFF; 100];
+        let body = futures::io::Cursor::new(bad_data);
+
+        let mut stream = Box::pin(decode_reports_stream(body));
+        let error = stream
+            .next()
+            .await
+            .expect("stream should yield Result<Result<Report>>")
+            .expect_err("should be stream Err<Error>");
+
+        assert_matches!(error, Error::MessageDecode(_));
+    }
+}

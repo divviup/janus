@@ -1174,7 +1174,7 @@ async fn upload_report_decode_failure_without_metadata() {
     let task = task.leader_view().unwrap();
 
     // Create completely corrupted bytes that can't even parse as metadata
-    let corrupted_bytes = vec![0xAC; 100];
+    let corrupted_bytes = [0xAC; 100];
     let decode_result = Report::decode_with_metadata(&mut Cursor::new(&corrupted_bytes[..]));
 
     // Verify the decode failed without metadata
