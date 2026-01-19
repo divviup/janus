@@ -713,7 +713,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_urlencoded",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -1317,7 +1317,7 @@ dependencies = [
  "prio",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "time",
  "trillium-client",
  "trillium-http",
@@ -2659,7 +2659,7 @@ dependencies = [
  "signal-hook-tokio 0.4.0",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
@@ -2707,7 +2707,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "trillium",
@@ -2761,7 +2761,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -2790,7 +2790,7 @@ dependencies = [
  "prio",
  "rand 0.8.5",
  "reqwest",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-log",
@@ -2819,7 +2819,7 @@ dependencies = [
  "retry-after",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",
@@ -2863,7 +2863,7 @@ dependencies = [
  "stopper",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -2973,7 +2973,7 @@ dependencies = [
  "prio",
  "rand 0.8.5",
  "serde",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "url",
 ]
 
@@ -2992,7 +2992,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_test",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "url",
 ]
 
@@ -3552,7 +3552,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "toml",
 ]
 
@@ -4109,7 +4109,7 @@ dependencies = [
  "sha2",
  "sha3",
  "subtle",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "zipf",
 ]
 
@@ -5287,7 +5287,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -5367,7 +5367,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tracing",
  "whoami",
 ]
@@ -5404,7 +5404,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tracing",
  "whoami",
 ]
@@ -5427,7 +5427,7 @@ dependencies = [
  "percent-encoding",
  "serde_urlencoded",
  "sqlx-core",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tracing",
  "url",
 ]
@@ -5598,7 +5598,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -5616,11 +5616,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.17"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.17",
+ "thiserror-impl 2.0.18",
 ]
 
 [[package]]
@@ -5636,9 +5636,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.17"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
