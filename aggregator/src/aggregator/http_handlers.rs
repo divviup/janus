@@ -658,6 +658,10 @@ where
                                 Err(Error::MessageDecode(decode_error.error))?;
                             }
                             _ => {
+                                // Consume bytes up to the point of failure (including metadata and
+                                // any successfully decoded fields). This allows the stream to continue
+                                // processing subsequent reports after a corrupted one.
+                                bytes_consumed = cursor.position() as usize;
                                 yield Err(decode_error);
                             }
                         }
