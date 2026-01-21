@@ -1273,9 +1273,10 @@ mod decode_reports_stream_tests {
     use super::*;
     use crate::aggregator::{Error, http_handlers::decode_reports_stream};
     use assert_matches::assert_matches;
-    use futures::StreamExt;
+    use futures::{StreamExt, io::Cursor};
     use prio::codec::CodecError;
     use std::{
+        cmp::min,
         io,
         pin::Pin,
         task::{Context, Poll},
@@ -1296,9 +1297,45 @@ mod decode_reports_stream_tests {
         }
     }
 
+    /// Helper AsyncRead that feeds data in small chunks to test buffering logic.
+    /// This ensures the stream correctly handles reports split at arbitrary byte boundaries.
+    struct ChunkedReader {
+        data: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
+    }
+
+    impl ChunkedReader {
+        fn new(data: Vec<u8>, chunk_size: usize) -> Self {
+            Self {
+                data,
+                position: 0,
+                chunk_size,
+            }
+        }
+    }
+
+    impl futures::io::AsyncRead for ChunkedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.position >= self.data.len() {
+                return Poll::Ready(Ok(0));
+            }
+
+            let remaining = self.data.len() - self.position;
+            let to_read = min(min(remaining, self.chunk_size), buf.len());
+            buf[..to_read].copy_from_slice(&self.data[self.position..self.position + to_read]);
+            self.position += to_read;
+            Poll::Ready(Ok(to_read))
+        }
+    }
+
     #[tokio::test]
     async fn empty_body() {
-        let body = futures::io::Cursor::new(Vec::<u8>::new());
+        let body = Cursor::new(Vec::<u8>::new());
         let mut stream = Box::pin(decode_reports_stream(body));
         assert!(stream.next().await.is_none());
     }
@@ -1325,7 +1362,7 @@ mod decode_reports_stream_tests {
             clock.now_aligned_to_precision(task.time_precision()),
         );
         let encoded = report.get_encoded().unwrap();
-        let body = futures::io::Cursor::new(encoded);
+        let body = Cursor::new(encoded);
 
         let mut stream = Box::pin(decode_reports_stream(body));
         let decoded_report = stream
@@ -1366,7 +1403,7 @@ mod decode_reports_stream_tests {
         );
         let mut encoded = report1.get_encoded().unwrap();
         encoded.extend_from_slice(&report2.get_encoded().unwrap());
-        let body = futures::io::Cursor::new(encoded);
+        let body = Cursor::new(encoded);
 
         let mut stream = Box::pin(decode_reports_stream(body));
         let decoded1 = stream
@@ -1410,7 +1447,7 @@ mod decode_reports_stream_tests {
         );
         let mut encoded = report.get_encoded().unwrap();
         encoded.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        let body = futures::io::Cursor::new(encoded);
+        let body = Cursor::new(encoded);
 
         let mut stream = Box::pin(decode_reports_stream(body));
         let _ = stream
@@ -1499,7 +1536,7 @@ mod decode_reports_stream_tests {
         stream_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x64]); // Claim 100 bytes
         stream_bytes.extend_from_slice(&[0xAA; 99]); // Only provide 99 bytes of screaming
 
-        let body = futures::io::Cursor::new(stream_bytes);
+        let body = Cursor::new(stream_bytes);
         let mut stream = Box::pin(decode_reports_stream(body));
 
         // First report decodes successfully
@@ -1526,7 +1563,7 @@ mod decode_reports_stream_tests {
         // Create malformed data that fails to decode metadata
         // Using an invalid fixed size value (all 0xFF) should cause early failure
         let bad_data = vec![0xFF; 100];
-        let body = futures::io::Cursor::new(bad_data);
+        let body = Cursor::new(bad_data);
 
         let mut stream = Box::pin(decode_reports_stream(body));
         let error = stream
@@ -1536,5 +1573,87 @@ mod decode_reports_stream_tests {
             .expect_err("should be stream Err<Error>");
 
         assert_matches!(error, Error::MessageDecode(_));
+    }
+
+    #[tokio::test]
+    async fn chunk_boundary_handling() {
+        // This test feeds data in very small chunks to ensure the buffering logic and error
+        // variant matching (LengthPrefixTooBig, UnexpectedEof) correctly distinguish
+        // "incomplete report" from "actual decode error".
+
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let hpke_keypair = datastore.put_hpke_key().await.unwrap();
+
+        let task = TaskBuilder::new(
+            BatchMode::TimeInterval,
+            AggregationMode::Synchronous,
+            VdafInstance::Prio3Count,
+        )
+        .with_time_precision(TimePrecision::from_seconds(1))
+        .build();
+        let leader_task = task.leader_view().unwrap();
+
+        // Create multiple reports to test various split points
+        let reports = (0..3)
+            .map(|_| {
+                create_report(
+                    &leader_task,
+                    &hpke_keypair,
+                    clock.now_aligned_to_precision(task.time_precision()),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Encode all reports
+        let mut all_bytes = Vec::new();
+        for report in &reports {
+            all_bytes.extend_from_slice(&report.get_encoded().unwrap());
+        }
+
+        // Test with various chunk sizes to ensure we hit boundaries at different points
+        // within the report structure (metadata, length prefixes, ciphertexts, etc.)
+        for chunk_size in [1, 3, 7, 13, 29, 67] {
+            let body = ChunkedReader::new(all_bytes.clone(), chunk_size);
+            let mut stream = Box::pin(decode_reports_stream(body));
+
+            // All reports should decode successfully regardless of chunk boundaries
+            for (i, expected_report) in reports.iter().enumerate() {
+                let decoded = stream
+                    .next()
+                    .await
+                    .unwrap_or_else(|| {
+                        panic!("chunk_size={}: should yield report {}", chunk_size, i)
+                    })
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "chunk_size={}: stream error at report {}: {:?}",
+                            chunk_size, i, e
+                        )
+                    })
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "chunk_size={}: decode error at report {}: {:?}",
+                            chunk_size, i, e
+                        )
+                    });
+
+                assert_eq!(
+                    decoded.metadata().id(),
+                    expected_report.metadata().id(),
+                    "chunk_size={}: report {} metadata mismatch",
+                    chunk_size,
+                    i
+                );
+            }
+
+            // Stream should end cleanly
+            assert!(
+                stream.next().await.is_none(),
+                "chunk_size={}: stream should end after all reports",
+                chunk_size
+            );
+        }
     }
 }
