@@ -1,3 +1,28 @@
+use std::{
+    future::{Future, ready},
+    iter::Iterator,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
+
+use anyhow::{Context, Result, anyhow};
+use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
+use clap::Parser;
+use educe::Educe;
+use janus_aggregator_api::{self, aggregator_api_handler};
+use janus_aggregator_core::datastore::Datastore;
+use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, time::RealClock};
+use opentelemetry::metrics::Meter;
+use sec1::EcPrivateKey;
+use serde::{Deserialize, Deserializer, Serialize, de};
+use tokio::{spawn, sync::watch, time::interval, try_join};
+use tracing::{error, info};
+use trillium::Handler;
+use trillium_router::router;
+use url::Url;
+
 use crate::{
     aggregator::{
         self,
@@ -11,29 +36,6 @@ use crate::{
     },
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
-use anyhow::{Context, Result, anyhow};
-use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
-use clap::Parser;
-use educe::Educe;
-use janus_aggregator_api::{self, aggregator_api_handler};
-use janus_aggregator_core::datastore::Datastore;
-use janus_core::{TokioRuntime, auth_tokens::AuthenticationToken, time::RealClock};
-use opentelemetry::metrics::Meter;
-use sec1::EcPrivateKey;
-use serde::{Deserialize, Deserializer, Serialize, de};
-use std::{
-    future::{Future, ready},
-    iter::Iterator,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
-use tokio::{spawn, sync::watch, time::interval, try_join};
-use tracing::{error, info};
-use trillium::Handler;
-use trillium_router::router;
-use url::Url;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     let (sender, _) = watch::channel(None);
@@ -518,6 +520,23 @@ pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<Ecdsa
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashSet,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        path::PathBuf,
+        time::Duration as StdDuration,
+    };
+
+    use assert_matches::assert_matches;
+    use aws_lc_rs::{
+        rand::SystemRandom,
+        signature::{ECDSA_P256_SHA256_ASN1, KeyPair, UnparsedPublicKey},
+    };
+    use clap::CommandFactory;
+    use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
+    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
+    use rand::random;
+
     use super::{AggregatorApi, Config, GarbageCollectorConfig, KeyRotatorConfig, Options};
     use crate::{
         aggregator::{
@@ -533,21 +552,6 @@ mod tests {
         trace::{
             OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
         },
-    };
-    use assert_matches::assert_matches;
-    use aws_lc_rs::{
-        rand::SystemRandom,
-        signature::{ECDSA_P256_SHA256_ASN1, KeyPair, UnparsedPublicKey},
-    };
-    use clap::CommandFactory;
-    use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
-    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
-    use rand::random;
-    use std::{
-        collections::HashSet,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        path::PathBuf,
-        time::Duration as StdDuration,
     };
 
     #[test]

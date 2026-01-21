@@ -1,6 +1,12 @@
 //! In-memory data structure to incrementally build leader-selected batches.
 
-use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
+use std::{
+    cmp::{Ordering, min},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut, hash_map},
+    ops::RangeInclusive,
+    sync::Arc,
+};
+
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -20,14 +26,10 @@ use janus_messages::{
 use opentelemetry::metrics::Histogram;
 use prio::codec::Encode;
 use rand::random;
-use std::{
-    cmp::{Ordering, min},
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut, hash_map},
-    ops::RangeInclusive,
-    sync::Arc,
-};
 use tokio::try_join;
 use tracing::debug;
+
+use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
 
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
 /// outstanding batches and aggregation jobs, and provides unused reports at the end.

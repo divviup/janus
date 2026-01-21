@@ -1,12 +1,9 @@
-use crate::{
-    Config, ConnExt, Error, git_revision,
-    models::{
-        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
-        GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, HpkeConfigResp,
-        PatchHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
-    },
+use std::{
+    str::FromStr,
+    sync::{Arc, LazyLock},
+    unreachable,
 };
+
 use anyhow::Context;
 use aws_lc_rs::digest::{SHA256, digest};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -26,13 +23,18 @@ use janus_messages::{
 };
 use querystring::querify;
 use rand::random;
-use std::{
-    str::FromStr,
-    sync::{Arc, LazyLock},
-    unreachable,
-};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
+
+use crate::{
+    Config, ConnExt, Error, git_revision,
+    models::{
+        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq,
+        GetTaskAggregationMetricsResp, GetTaskIdsResp, GetTaskUploadMetricsResp, HpkeConfigResp,
+        PatchHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
+    },
+};
 
 pub(super) async fn get_config(
     _: &mut Conn,

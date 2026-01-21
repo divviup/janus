@@ -1,15 +1,6 @@
 // allow reference to dummy::Vdaf's public share, which has the unit type
 #![allow(clippy::unit_arg)]
 
-use crate::aggregator::{
-    BatchAggregationsIterator,
-    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
-    test_util::{
-        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
-        generate_helper_report_share, generate_helper_report_share_for_plaintext,
-    },
-};
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -41,6 +32,16 @@ use rand::random;
 use serde_json::json;
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{TestConn, assert_body, assert_headers, prelude::put};
+
+use crate::aggregator::{
+    BatchAggregationsIterator,
+    aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    test_util::{
+        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
+        generate_helper_report_share, generate_helper_report_share_for_plaintext,
+    },
+};
 
 #[tokio::test]
 async fn aggregate_leader() {

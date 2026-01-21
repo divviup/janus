@@ -1,3 +1,17 @@
+use std::{
+    collections::HashMap,
+    env::{self, VarError},
+    fmt::Display,
+    fs::{File, create_dir_all},
+    io::{Write, stderr},
+    marker::PhantomData,
+    ops::Deref,
+    path::PathBuf,
+    process::{Command, Stdio},
+    str::FromStr,
+    sync::Arc,
+};
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_aggregator_core::task::{BatchMode, test_util::Task};
@@ -14,19 +28,6 @@ use janus_messages::{
 use prio::codec::Encode;
 use rand::random;
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::{
-    collections::HashMap,
-    env::{self, VarError},
-    fmt::Display,
-    fs::{File, create_dir_all},
-    io::{Write, stderr},
-    marker::PhantomData,
-    ops::Deref,
-    path::PathBuf,
-    process::{Command, Stdio},
-    str::FromStr,
-    sync::Arc,
-};
 use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
@@ -573,9 +574,10 @@ pub fn get_rust_log_level() -> String {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
+    use std::time::Duration;
+
     use backon::{BackoffBuilder, ConstantBuilder, Retryable};
     use rand::random;
-    use std::time::Duration;
     use url::Url;
 
     /// Waits a while for the given IPv4 port to start responding successfully to

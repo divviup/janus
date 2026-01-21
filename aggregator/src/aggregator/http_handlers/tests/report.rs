@@ -1,13 +1,5 @@
-use crate::{
-    aggregator::{
-        http_handlers::{
-            AggregatorHandlerBuilder,
-            test_util::{HttpHandlerTest, take_problem_details, take_response_body},
-        },
-        test_util::{create_report, create_report_custom, default_aggregator_config},
-    },
-    metrics::test_util::InMemoryMetricInfrastructure,
-};
+use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
+
 use chrono::TimeDelta;
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
@@ -31,7 +23,6 @@ use opentelemetry_sdk::metrics::data::{Histogram, Sum};
 use prio::codec::{Encode, ParameterizedDecode};
 use rand::random;
 use serde_json::json;
-use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -40,6 +31,17 @@ use tokio::{
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{TestConn, assert_headers, prelude::post};
 use trillium_tokio::Stopper;
+
+use crate::{
+    aggregator::{
+        http_handlers::{
+            AggregatorHandlerBuilder,
+            test_util::{HttpHandlerTest, take_problem_details, take_response_body},
+        },
+        test_util::{create_report, create_report_custom, default_aggregator_config},
+    },
+    metrics::test_util::InMemoryMetricInfrastructure,
+};
 
 #[tokio::test]
 async fn upload_handler() {

@@ -1,10 +1,7 @@
 //! Database accessors for leased jobs.
 
-use crate::datastore::{
-    AsyncAggregator, Error, RowExt, Transaction,
-    models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
-    task,
-};
+use std::fmt::Debug;
+
 use chrono::NaiveDateTime;
 use janus_core::{time::Clock, vdaf::VdafInstance};
 use janus_messages::{
@@ -12,8 +9,13 @@ use janus_messages::{
 };
 use postgres_types::{Json, Timestamp};
 use prio::codec::Decode;
-use std::fmt::Debug;
 use tokio_postgres::Row;
+
+use crate::datastore::{
+    AsyncAggregator, Error, RowExt, Transaction,
+    models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
+    task,
+};
 
 impl<C: Clock> Transaction<'_, C> {
     /// Return the lease on a collection job for the provided ID, or `None` if no such collection

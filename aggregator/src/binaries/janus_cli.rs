@@ -1,9 +1,10 @@
-use crate::{
-    binary_utils::{CommonBinaryOptions, database_pool, datastore, read_config},
-    config::{BinaryConfig, CommonConfig},
-    metrics::{MetricsExporterHandle, install_metrics_exporter},
-    trace::{TraceGuards, install_trace_subscriber},
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
+
 use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::aead::AES_128_GCM;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -36,12 +37,6 @@ use opentelemetry::global::meter;
 use prio::codec::Decode as _;
 use rand::{Rng, distr::StandardUniform, rng};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    fmt::Debug,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 use tokio::{
     fs,
     runtime::{self, Runtime},
@@ -49,6 +44,13 @@ use tokio::{
 };
 use tracing::{debug, info};
 use url::Url;
+
+use crate::{
+    binary_utils::{CommonBinaryOptions, database_pool, datastore, read_config},
+    config::{BinaryConfig, CommonConfig},
+    metrics::{MetricsExporterHandle, install_metrics_exporter},
+    trace::{TraceGuards, install_trace_subscriber},
+};
 
 pub fn run(command_line_options: CommandLineOptions) -> Result<()> {
     initialize_rustls();
@@ -1005,17 +1007,12 @@ impl From<kube::Client> for LazyKubeClient {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        binaries::janus_cli::{
-            CommandLineOptions, ConfigFile, KubernetesSecretOptions, LazyKubeClient,
-            fetch_datastore_keys,
-        },
-        binary_utils::CommonBinaryOptions,
-        config::{
-            CommonConfig, default_max_transaction_retries,
-            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        },
+    use std::{
+        collections::HashMap,
+        io::Write,
+        net::{Ipv4Addr, SocketAddr},
     };
+
     use aws_lc_rs::aead::{AES_128_GCM, UnboundKey};
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::CommandFactory;
@@ -1038,14 +1035,21 @@ mod tests {
     };
     use prio::codec::Decode;
     use rand::random;
-    use std::{
-        collections::HashMap,
-        io::Write,
-        net::{Ipv4Addr, SocketAddr},
-    };
     use tempfile::{NamedTempFile, tempdir};
     use tokio::fs;
     use url::Url;
+
+    use crate::{
+        binaries::janus_cli::{
+            CommandLineOptions, ConfigFile, KubernetesSecretOptions, LazyKubeClient,
+            fetch_datastore_keys,
+        },
+        binary_utils::CommonBinaryOptions,
+        config::{
+            CommonConfig, default_max_transaction_retries,
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
+        },
+    };
 
     #[test]
     fn verify_app() {

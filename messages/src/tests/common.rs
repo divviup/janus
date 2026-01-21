@@ -1,9 +1,10 @@
-use crate::{
-    Duration, Interval, Role, TaskId, Time, Url, roundtrip_encoding, taskprov::TimePrecision,
-};
 use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode, Encode};
 use serde_test::{Token, assert_de_tokens_error, assert_tokens};
+
+use crate::{
+    Duration, Interval, Role, TaskId, Time, Url, roundtrip_encoding, taskprov::TimePrecision,
+};
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 

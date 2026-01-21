@@ -1,3 +1,5 @@
+use std::io::{Write, stdout};
+
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
@@ -8,7 +10,6 @@ use janus_core::{
 use janus_messages::HpkeConfigId;
 use prio::codec::Encode;
 use serde_yaml::to_writer;
-use std::io::{Write, stdout};
 
 fn main() -> Result<()> {
     let options = Options::parse();
@@ -73,8 +74,9 @@ struct Options {
 
 #[cfg(test)]
 mod tests {
-    use crate::Options;
     use clap::CommandFactory;
+
+    use crate::Options;
 
     #[test]
     fn verify_clap_app() {

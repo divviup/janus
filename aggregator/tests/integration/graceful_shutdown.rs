@@ -3,6 +3,15 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
+use std::{
+    collections::HashSet,
+    future::Future,
+    io::{ErrorKind, Write},
+    net::{Ipv4Addr, SocketAddr},
+    process::{Child, Command, Stdio},
+    time::{Duration as StdDuration, Instant},
+};
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator::{
     aggregator::key_rotator::HpkeKeyRotatorConfig,
@@ -33,14 +42,6 @@ use janus_core::{
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
 use reqwest::Url;
 use serde::Serialize;
-use std::{
-    collections::HashSet,
-    future::Future,
-    io::{ErrorKind, Write},
-    net::{Ipv4Addr, SocketAddr},
-    process::{Child, Command, Stdio},
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     join,

@@ -1,12 +1,13 @@
-use anyhow::{Context, Result, anyhow};
-use clap::{Args, Parser};
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     env::{self},
     fs::File,
     process::Command,
 };
+
+use anyhow::{Context, Result, anyhow};
+use clap::{Args, Parser};
+use serde::Deserialize;
 use tempfile::tempdir;
 
 /// Command line arguments that will get passed through to Cargo.
@@ -154,8 +155,9 @@ fn run_docker_tests(images: ContainerImages, cargo_args: CargoArgs) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use crate::Subcommand;
     use clap::CommandFactory;
+
+    use crate::Subcommand;
 
     #[test]
     fn verify_app() {

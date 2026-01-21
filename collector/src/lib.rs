@@ -63,6 +63,11 @@
 
 mod credential;
 
+use std::{
+    convert::TryFrom,
+    time::{Duration as StdDuration, SystemTime},
+};
+
 use anyhow::Context;
 pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -96,10 +101,6 @@ use reqwest::{
 };
 pub use retry_after;
 use retry_after::{FromHeaderValueError, RetryAfter};
-use std::{
-    convert::TryFrom,
-    time::{Duration as StdDuration, SystemTime},
-};
 use tokio::time::{Instant, sleep};
 use tracing::debug;
 use url::Url;
@@ -781,7 +782,6 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
     use fixed::types::I1F31;
@@ -812,6 +812,8 @@ mod tests {
         header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     };
     use retry_after::RetryAfter;
+
+    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 

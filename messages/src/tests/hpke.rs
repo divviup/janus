@@ -1,8 +1,9 @@
+use serde_test::{Token, assert_de_tokens_error, assert_tokens};
+
 use crate::{
     HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeConfigList, HpkeKdfId, HpkeKemId,
     HpkePublicKey, roundtrip_encoding,
 };
-use serde_test::{Token, assert_de_tokens_error, assert_tokens};
 
 #[test]
 fn roundtrip_hpke_config_id() {

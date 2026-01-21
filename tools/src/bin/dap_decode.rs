@@ -1,3 +1,9 @@
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::{Read, stdin},
+};
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
@@ -6,11 +12,6 @@ use janus_messages::{
     batch_mode::{LeaderSelected, TimeInterval},
 };
 use prio::codec::Decode;
-use std::{
-    fmt::Debug,
-    fs::File,
-    io::{Read, stdin},
-};
 
 fn main() -> Result<()> {
     let options = Options::parse();
@@ -151,8 +152,9 @@ struct Options {
 
 #[cfg(test)]
 mod tests {
-    use crate::Options;
     use clap::CommandFactory;
+
+    use crate::Options;
 
     #[test]
     fn verify_clap_app() {

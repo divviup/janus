@@ -1,23 +1,11 @@
-use crate::{
-    aggregator::{
-        Error, RequestBody, aggregate_step_failure_counter,
-        aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
-        aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
-            WritableReportAggregation,
-        },
-        batch_mode::CollectableBatchMode,
-        error::handle_ping_pong_error,
-        http_handlers::AGGREGATION_JOB_ROUTE,
-        report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
-    },
-    cache::HpkeKeypairCache,
-    metrics::{
-        aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
-        past_report_clock_skew_histogram,
-    },
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    panic,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
 };
+
 use anyhow::{Context, Result, anyhow};
 use backon::BackoffBuilder;
 use bytes::Bytes;
@@ -60,19 +48,33 @@ use prio::{
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelIterator as _, ParallelIterator as _};
 use reqwest::Method;
 use retry_after::RetryAfter;
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    panic,
-    sync::Arc,
-    time::{Duration, UNIX_EPOCH},
-};
 use tokio::{
     join,
     sync::{Mutex, mpsc},
     try_join,
 };
 use tracing::{Span, debug, error, info, info_span, trace_span, warn};
+
+use crate::{
+    aggregator::{
+        Error, RequestBody, aggregate_step_failure_counter,
+        aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
+        aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
+        aggregation_job_writer::{
+            AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
+            WritableReportAggregation,
+        },
+        batch_mode::CollectableBatchMode,
+        error::handle_ping_pong_error,
+        http_handlers::AGGREGATION_JOB_ROUTE,
+        report_aggregation_success_counter, send_request_to_helper, write_task_aggregation_counter,
+    },
+    cache::HpkeKeypairCache,
+    metrics::{
+        aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
+        past_report_clock_skew_histogram,
+    },
+};
 
 #[cfg(test)]
 mod tests;

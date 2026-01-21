@@ -1,7 +1,5 @@
-use crate::aggregator::{
-    Aggregator, Config,
-    test_util::{create_report, create_report_custom, default_aggregator_config},
-};
+use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -35,7 +33,11 @@ use janus_messages::{
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
-use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+
+use crate::aggregator::{
+    Aggregator, Config,
+    test_util::{create_report, create_report_custom, default_aggregator_config},
+};
 
 struct UploadTest {
     vdaf: Prio3Count,

@@ -46,7 +46,6 @@ impl PrivateCollectorCredential {
 
 #[cfg(test)]
 mod tests {
-    use crate::credential::PrivateCollectorCredential;
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use janus_core::{
         auth_tokens::AuthenticationToken,
@@ -55,6 +54,8 @@ mod tests {
     use janus_messages::{
         HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
     };
+
+    use crate::credential::PrivateCollectorCredential;
 
     const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
   "aead": "AesGcm128",

@@ -1,11 +1,12 @@
 //! This crate contains functionality useful for Janus integration tests.
 
+use std::time;
+
 use janus_aggregator_core::task::BatchMode;
 use janus_client::OhttpConfig;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{TaskId, taskprov::TimePrecision};
-use std::time;
 use url::Url;
 
 pub mod client;

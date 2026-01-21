@@ -5,13 +5,14 @@
 // https://github.com/rust-lang/rust-clippy/pull/9879
 #![allow(clippy::single_component_path_imports)]
 
+use std::hash::Hash;
+
 use educe::Educe;
 use prio::{
     codec::{Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
     vdaf::{Aggregator, AggregatorWithNoise},
 };
-use std::hash::Hash;
 use tracing::{Instrument, Span, debug, info_span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;

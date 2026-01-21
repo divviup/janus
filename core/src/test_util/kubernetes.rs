@@ -1,5 +1,11 @@
 //! Testing framework for functionality that interacts with Kubernetes.
 
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
 use anyhow::Context;
 use backon::{BackoffBuilder, BlockingRetryable, ConstantBuilder};
 use futures::TryStreamExt;
@@ -10,11 +16,6 @@ use kube::{
     config::{KubeConfigOptions, Kubeconfig},
 };
 use rand::random;
-use std::{
-    net::{Ipv4Addr, SocketAddrV4},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
 use stopper::Stopper;
 use tempfile::NamedTempFile;
 use tokio::{
@@ -286,10 +287,11 @@ impl Drop for PortForward {
 
 #[cfg(test)]
 mod tests {
-    use super::EphemeralCluster;
-    use crate::test_util::install_test_trace_subscriber;
     use k8s_openapi::api::core::v1::Node;
     use kube::{Api, api::ListParams};
+
+    use super::EphemeralCluster;
+    use crate::test_util::install_test_trace_subscriber;
 
     #[tokio::test]
     async fn create_clusters() {

@@ -1,9 +1,11 @@
-use crate::datastore::{Error, RowExt, Transaction, check_single_row_mutation};
+use std::sync::{Arc, Mutex};
+
 use janus_core::time::Clock;
 use janus_messages::{ReportError, TaskId};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 use tracing::Level;
+
+use crate::datastore::{Error, RowExt, Transaction, check_single_row_mutation};
 
 /// Per-task counts of uploaded reports and upload attempts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

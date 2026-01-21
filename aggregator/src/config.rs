@@ -1,16 +1,18 @@
 //! Configuration for various Janus binaries.
 
-use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
-use educe::Educe;
-use janus_core::retries::ExponentialWithTotalDelayBuilder;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     time::Duration,
 };
+
+use educe::Educe;
+use janus_core::retries::ExponentialWithTotalDelayBuilder;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use url::Url;
+
+use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 
 /// Configuration options common to all Janus binaries.
 ///
@@ -243,6 +245,8 @@ impl JobDriverConfig {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use reqwest::Url;
+
     use super::DbConfig;
     use crate::{
         metrics::{MetricsConfiguration, MetricsExporterConfiguration},
@@ -251,7 +255,6 @@ pub mod test_util {
             TraceConfiguration,
         },
     };
-    use reqwest::Url;
 
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
@@ -294,6 +297,11 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use assert_matches::assert_matches;
+    use janus_core::test_util::roundtrip_encoding;
+
     use crate::{
         config::{
             CommonConfig, DbConfig, JobDriverConfig, default_max_transaction_retries,
@@ -302,9 +310,6 @@ mod tests {
         metrics::MetricsExporterConfiguration,
         trace::OpenTelemetryTraceConfiguration,
     };
-    use assert_matches::assert_matches;
-    use janus_core::test_util::roundtrip_encoding;
-    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn roundtrip_db_config() {

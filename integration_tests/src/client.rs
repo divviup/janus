@@ -1,4 +1,5 @@
-use crate::TaskParameters;
+use std::env;
+
 use anyhow::anyhow;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_client::Client;
@@ -16,13 +17,14 @@ use prio::{
 };
 use rand::random;
 use serde_json::{Value, json};
-use std::env;
 use testcontainers::{
     ContainerRequest, Image, ImageExt,
     core::{WaitFor, wait::HealthWaitStrategy},
     runners::AsyncRunner,
 };
 use url::Url;
+
+use crate::TaskParameters;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
 /// draft-dcook-ppm-dap-interop-test-design.

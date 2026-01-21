@@ -1,12 +1,7 @@
 //! Implements portions of aggregation job initialization for the Helper.
 
-use crate::{
-    aggregator::{
-        AggregatorMetrics, Error, aggregation_job_writer::WritableReportAggregation,
-        error::handle_ping_pong_error,
-    },
-    cache::HpkeKeypairCache,
-};
+use std::{collections::HashMap, panic, sync::Arc};
+
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -32,9 +27,16 @@ use prio::{
     topology::ping_pong::{Continued, PingPongState, PingPongTopology as _},
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use std::{collections::HashMap, panic, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{Span, debug, info_span, trace_span};
+
+use crate::{
+    aggregator::{
+        AggregatorMetrics, Error, aggregation_job_writer::WritableReportAggregation,
+        error::handle_ping_pong_error,
+    },
+    cache::HpkeKeypairCache,
+};
 
 #[derive(Clone)]
 pub struct AggregateInitMetrics {
@@ -487,7 +489,6 @@ where
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::test_util::generate_helper_report_share;
     use janus_aggregator_core::{
         AsyncAggregator,
         task::{AggregatorTask, test_util::Task},
@@ -509,6 +510,8 @@ pub mod test_util {
     use rand::random;
     use trillium::{Handler, KnownHeaderName};
     use trillium_testing::{TestConn, prelude::put};
+
+    use crate::aggregator::test_util::generate_helper_report_share;
 
     #[derive(Clone)]
     pub struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
@@ -644,14 +647,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        Config,
-        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
-        http_handlers::{
-            AggregatorHandlerBuilder,
-            test_util::{decode_response_body, take_problem_details},
-        },
-    };
+    use std::sync::Arc;
+
     use assert_matches::assert_matches;
     use http::StatusCode;
     use janus_aggregator_core::{
@@ -680,9 +677,17 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::sync::Arc;
     use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::prelude::put;
+
+    use crate::aggregator::{
+        Config,
+        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+        http_handlers::{
+            AggregatorHandlerBuilder,
+            test_util::{decode_response_body, take_problem_details},
+        },
+    };
 
     pub(super) struct AggregationJobInitTestCase<
         const VERIFY_KEY_SIZE: usize,

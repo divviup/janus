@@ -1,10 +1,12 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{
-    AsyncAggregator,
-    datastore::{Error, SQL_UNIT_TIME_PRECISION},
-    task,
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+    ops::RangeInclusive,
+    time::Duration as StdDuration,
 };
+
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::ValueEnum;
@@ -35,11 +37,11 @@ use prio::{
 };
 use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-    ops::RangeInclusive,
-    time::Duration as StdDuration,
+
+use crate::{
+    AsyncAggregator,
+    datastore::{Error, SQL_UNIT_TIME_PRECISION},
+    task,
 };
 
 // We have to manually implement [Partial]Eq for a number of types because the derived

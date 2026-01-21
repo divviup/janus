@@ -3,12 +3,21 @@
 //!
 //! [dap]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/
 
-use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
+use core::slice;
+#[cfg(test)]
+use std::borrow::Borrow;
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    io::{Cursor, Read},
+    num::TryFromIntError,
+    str::{self, FromStr},
+};
+
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
-use core::slice;
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
+pub use prio::codec;
 use prio::{
     codec::{
         CodecError, Decode, Encode, ParameterizedDecode, decode_fixlen_items, decode_u16_items,
@@ -21,16 +30,8 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
-#[cfg(test)]
-use std::borrow::Borrow;
-use std::{
-    fmt::{self, Debug, Display, Formatter},
-    io::{Cursor, Read},
-    num::TryFromIntError,
-    str::{self, FromStr},
-};
 
-pub use prio::codec;
+use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 
 pub mod batch_mode;
 pub mod problem_type;

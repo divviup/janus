@@ -1,3 +1,10 @@
+use std::{
+    fmt::{self, Display, Formatter},
+    num::TryFromIntError,
+    ops::Deref,
+    sync::Arc,
+};
+
 use janus_aggregator_core::{datastore, task};
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
@@ -6,12 +13,6 @@ use janus_messages::{
 };
 use opentelemetry::{KeyValue, metrics::Counter};
 use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
-use std::{
-    fmt::{self, Display, Formatter},
-    num::TryFromIntError,
-    ops::Deref,
-    sync::Arc,
-};
 use tracing::info;
 
 /// Errors returned by functions and methods in this module.

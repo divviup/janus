@@ -1,6 +1,7 @@
 //! Testing functionality that interacts with the testcontainers library.
 
 use std::{borrow::Cow, process::Command};
+
 use testcontainers::{Image, core::WaitFor};
 
 /// A [`testcontainers::Image`] that provides a Postgres server.

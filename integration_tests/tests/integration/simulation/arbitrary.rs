@@ -4,9 +4,9 @@
 // and/or "interesting", to control more configuration from simulation inputs, and to introduce new
 // forms of fault injection. See https://users.cs.utah.edu/~regehr/papers/swarm12.pdf for example.
 
-use chrono::TimeDelta;
 use std::cmp::max;
 
+use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
 use janus_core::time::{TimeDeltaExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time, taskprov::TimePrecision};

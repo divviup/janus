@@ -1,13 +1,15 @@
-use crate::{BatchId, Interval, Query};
-use anyhow::anyhow;
-use num_enum::TryFromPrimitive;
-use prio::codec::{CodecError, Decode, Encode};
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
     io::Cursor,
 };
+
+use anyhow::anyhow;
+use num_enum::TryFromPrimitive;
+use prio::codec::{CodecError, Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{BatchId, Interval, Query};
 
 /// BatchMode represents a DAP batch mode. This is a task-level configuration setting which
 /// determines how individual client reports are grouped together into batches for collection.

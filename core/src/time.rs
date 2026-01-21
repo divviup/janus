@@ -1,11 +1,12 @@
 //! Utilities for timestamps and durations.
 
-use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
-use janus_messages::{Duration, Error, Interval, Time, taskprov::TimePrecision};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
 };
+
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
+use janus_messages::{Duration, Error, Interval, Time, taskprov::TimePrecision};
 
 /// A clock knows what time it currently is.
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
@@ -565,9 +566,10 @@ impl IntervalExt for Interval {
 
 #[cfg(test)]
 mod tests {
-    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt};
     use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+
+    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt};
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 

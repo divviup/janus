@@ -1,5 +1,3 @@
-use crate::Runtime;
-use futures::FutureExt;
 use std::{
     collections::HashMap,
     future::Future,
@@ -10,10 +8,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+
+use futures::FutureExt;
 use tokio::{
     sync::watch::{self, Sender},
     task::JoinHandle,
 };
+
+use crate::Runtime;
 
 /// Tracks multiple instrumented [`Runtime`] objects, for use in tests.
 ///
@@ -136,9 +138,11 @@ impl Runtime for TestRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{Runtime, TestRuntimeManager};
     use std::sync::Arc;
+
     use tokio::{sync::Barrier, task::JoinHandle};
+
+    use super::{Runtime, TestRuntimeManager};
 
     #[tokio::test]
     async fn mock_runtime() {

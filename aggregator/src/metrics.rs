@@ -1,14 +1,14 @@
 //! Collection and exporting of application-level metrics for Janus.
 
+use std::net::AddrParseError;
+
 use anyhow::anyhow;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
 };
 use serde::{Deserialize, Serialize};
-use std::net::AddrParseError;
 use tokio::runtime::Runtime;
-
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
@@ -20,13 +20,6 @@ use {
     tokio::{sync::oneshot, task::JoinHandle},
     trillium::{Info, Init},
 };
-
-#[cfg(feature = "otlp")]
-use {
-    opentelemetry_otlp::WithExportConfig,
-    opentelemetry_sdk::{metrics::PeriodicReader, runtime::Tokio},
-};
-
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     janus_aggregator_api::git_revision,
@@ -35,6 +28,11 @@ use {
         Resource,
         metrics::{MetricError, SdkMeterProvider},
     },
+};
+#[cfg(feature = "otlp")]
+use {
+    opentelemetry_otlp::WithExportConfig,
+    opentelemetry_sdk::{metrics::PeriodicReader, runtime::Tokio},
 };
 
 #[cfg(feature = "prometheus")]

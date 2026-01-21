@@ -1,13 +1,15 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
-use crate::http::HttpErrorResponse;
+use std::{error::Error as StdError, time::Duration};
+
 use backon::{Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBuilder, Retryable};
 use bytes::Bytes;
 use futures::Future;
 use http::HeaderMap;
 use reqwest::StatusCode;
-use std::{error::Error as StdError, time::Duration};
 use tracing::{debug, warn};
+
+use crate::http::HttpErrorResponse;
 
 /// Traverse chain of source errors looking for an `std::io::Error`.
 fn find_io_error(original_error: &reqwest::Error) -> Option<&std::io::Error> {
@@ -308,8 +310,9 @@ pub fn is_retryable_http_client_error(error: &reqwest::Error) -> bool {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::ExponentialWithTotalDelayBuilder;
     use std::time::Duration;
+
+    use super::ExponentialWithTotalDelayBuilder;
 
     /// An [`backon::ExponentialBackoff`] with parameters tuned for tests where we don't want to be
     /// retrying for 10 minutes.
@@ -343,6 +346,14 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use backon::BackoffBuilder;
+    use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
+    use reqwest::StatusCode;
+    use tokio::net::TcpListener;
+    use url::Url;
+
     use crate::{
         initialize_rustls,
         retries::{
@@ -351,12 +362,6 @@ mod tests {
         },
         test_util::install_test_trace_subscriber,
     };
-    use backon::BackoffBuilder;
-    use http_api_problem::PROBLEM_JSON_MEDIA_TYPE;
-    use reqwest::StatusCode;
-    use std::time::Duration;
-    use tokio::net::TcpListener;
-    use url::Url;
 
     #[tokio::test]
     async fn http_retry_client_error() {

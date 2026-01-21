@@ -1,21 +1,21 @@
 //! Janus datastore (durable storage) implementation.
 
-use self::models::{
-    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
-    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, UnaggregatedReport,
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{Debug, Display},
+    future::Future,
+    io::Cursor,
+    mem::size_of,
+    ops::RangeInclusive,
+    pin::{Pin, pin},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration as StdDuration, Instant},
 };
-#[cfg(feature = "test-util")]
-use crate::VdafHasAggregationParameter;
-use crate::{
-    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
-    batch_mode::{AccumulableBatchMode, CollectableBatchMode},
-    task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
-    taskprov::PeerAggregator,
-};
+
 use aws_lc_rs::aead::{self, AES_128_GCM, LessSafeKey};
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
@@ -43,25 +43,27 @@ use prio::{
     topology::ping_pong::PingPongContinuation,
 };
 use rand::random;
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-    fmt::{Debug, Display},
-    future::Future,
-    io::Cursor,
-    mem::size_of,
-    ops::RangeInclusive,
-    pin::{Pin, pin},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{IsolationLevel, Row, Statement, ToStatement, error::SqlState, row::RowIndex};
 use tracing::{Level, error};
 use url::Url;
+
+use self::models::{
+    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+    AggregatorRole, AuthenticationTokenType, BatchAggregation, BatchAggregationState,
+    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
+    HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, UnaggregatedReport,
+};
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
+use crate::{
+    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
+    batch_mode::{AccumulableBatchMode, CollectableBatchMode},
+    task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
+    taskprov::PeerAggregator,
+};
 
 /// A "unit" time precision representing 1 second, used for SQL timestamp conversions.
 /// SQL timestamps are stored as microseconds but we convert them to/from seconds.

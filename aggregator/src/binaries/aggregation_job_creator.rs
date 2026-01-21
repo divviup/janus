@@ -1,14 +1,16 @@
+use std::{sync::Arc, time::Duration};
+
+use anyhow::Result;
+use clap::Parser;
+use janus_core::time::RealClock;
+use serde::{Deserialize, Serialize};
+use tracing::info;
+
 use crate::{
     aggregator::aggregation_job_creator::AggregationJobCreator,
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
-use anyhow::Result;
-use clap::Parser;
-use janus_core::time::RealClock;
-use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
-use tracing::info;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     // Start creating aggregation jobs.
@@ -121,14 +123,16 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use clap::CommandFactory;
+    use janus_core::test_util::roundtrip_encoding;
+
     use super::{Config, Options};
     use crate::config::{
         CommonConfig, default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
     };
-    use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
-    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn verify_app() {

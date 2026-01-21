@@ -1,33 +1,15 @@
 //! Common functionality for DAP aggregators.
 
-pub use crate::aggregator::error::Error;
-use crate::{
-    aggregator::{
-        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
-        aggregation_job_init::compute_helper_aggregate_init,
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
-            ReportAggregationUpdate as _, UpdateWrite, WritableReportAggregation,
-        },
-        batch_mode::{CollectableBatchMode, UploadableBatchMode},
-        error::{
-            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
-            handle_ping_pong_error,
-        },
-        report_writer::{ReportWriteBatcher, WritableReport},
-    },
-    cache::{
-        HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
-    },
-    config::TaskprovConfig,
-    diagnostic::AggregationJobInitForbiddenMutationEvent,
-    metrics::{
-        aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
-        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
-        report_aggregation_success_counter,
-    },
+use std::{
+    borrow::{Borrow, Cow},
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    panic,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration as StdDuration, Instant},
 };
+
 use aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue};
 use aws_lc_rs::{
     digest::{SHA256, digest},
@@ -101,18 +83,38 @@ use prio::{
 };
 use rand::{Rng, random, rng};
 use reqwest::Client;
-use std::{
-    borrow::{Borrow, Cow},
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    panic,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::try_join;
 use tracing::{Level, debug, error, info, warn};
 use url::Url;
+
+pub use crate::aggregator::error::Error;
+use crate::{
+    aggregator::{
+        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
+        aggregation_job_init::compute_helper_aggregate_init,
+        aggregation_job_writer::{
+            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
+            ReportAggregationUpdate as _, UpdateWrite, WritableReportAggregation,
+        },
+        batch_mode::{CollectableBatchMode, UploadableBatchMode},
+        error::{
+            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
+            handle_ping_pong_error,
+        },
+        report_writer::{ReportWriteBatcher, WritableReport},
+    },
+    cache::{
+        HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
+    },
+    config::TaskprovConfig,
+    diagnostic::AggregationJobInitForbiddenMutationEvent,
+    metrics::{
+        aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
+        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
+        report_aggregation_success_counter,
+    },
+};
 
 pub mod aggregate_share;
 pub mod aggregation_job_continue;

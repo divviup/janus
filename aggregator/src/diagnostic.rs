@@ -1,10 +1,11 @@
 //! Writing diagnostic files to disk.
 
+use std::{fs::File, path::Path, time::SystemTime};
+
 use anyhow::Context;
 use educe::Educe;
 use janus_messages::{AggregationJobId, ReportId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{fs::File, path::Path, time::SystemTime};
 use uuid::Uuid;
 
 /// Represents an illegal attempt to mutate an aggregation job.
@@ -191,9 +192,11 @@ pub async fn write_event<P: AsRef<Path>, S: Serialize + Send + Sync + 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::{fs::read_dir, io::BufReader};
+
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn write_two_events() {

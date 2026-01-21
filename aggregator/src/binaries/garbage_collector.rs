@@ -10,13 +10,12 @@ use tokio::time::interval;
 use tracing::{error, info};
 use trillium_tokio::Stopper;
 
+use super::aggregator::GarbageCollectorConfig;
 use crate::{
     aggregator::garbage_collector::GarbageCollector,
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
-
-use super::aggregator::GarbageCollectorConfig;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     let BinaryContext {
@@ -123,6 +122,7 @@ mod tests {
     use clap::CommandFactory;
     use janus_core::test_util::roundtrip_encoding;
 
+    use super::{Config, Options};
     use crate::{
         binaries::aggregator::GarbageCollectorConfig,
         config::{
@@ -130,8 +130,6 @@ mod tests {
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         },
     };
-
-    use super::{Config, Options};
 
     #[test]
     fn verify_app() {

@@ -1,7 +1,3 @@
-use crate::aggregator::{
-    collection_job_tests::setup_collection_job_test_case,
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
-};
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
@@ -27,6 +23,11 @@ use trillium::{KnownHeaderName, Status};
 use trillium_testing::{
     assert_body, assert_headers,
     prelude::{delete, get, put},
+};
+
+use crate::aggregator::{
+    collection_job_tests::setup_collection_job_test_case,
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
 };
 
 #[tokio::test]

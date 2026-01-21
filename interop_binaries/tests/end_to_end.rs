@@ -1,5 +1,7 @@
 #![cfg(feature = "testcontainer")]
 
+use std::time::Duration as StdDuration;
+
 use backon::{BackoffBuilder, ExponentialBuilder};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use fixed::types::{I1F15, I1F31};
@@ -24,7 +26,6 @@ use prio::codec::Encode;
 use rand::random;
 use reqwest::{StatusCode, Url, header::CONTENT_TYPE};
 use serde_json::{Value, json};
-use std::time::Duration as StdDuration;
 use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
 use tokio::time::sleep;
 

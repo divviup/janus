@@ -1,7 +1,8 @@
 //! In-memory accumulation of aggregation job (& report aggregation) writes, along with related
 //! batch aggregation writes.
 
-use crate::Operation;
+use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
+
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -30,9 +31,10 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
 };
 use rand::{Rng as _, rng};
-use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
 use tracing::{Level, warn};
+
+use crate::Operation;
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
 pub struct AggregationJobWriter<const SEED_SIZE: usize, B, A, WT, RA>

@@ -1,5 +1,12 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
+use std::{
+    fmt::{Debug, Display},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
+
 use anyhow::Context as _;
 use janus_aggregator_core::{
     TIME_HISTOGRAM_BOUNDARIES,
@@ -8,12 +15,6 @@ use janus_aggregator_core::{
 use janus_core::{Runtime, time::Clock};
 use opentelemetry::{KeyValue, metrics::Meter};
 use rand::{Rng, rng};
-use std::{
-    fmt::{Debug, Display},
-    future::Future,
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{
     sync::{Semaphore, SemaphorePermit},
     time::{self, Instant},
@@ -259,7 +260,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::JobDriver;
+    use std::{sync::Arc, time::Duration};
+
     use chrono::{DateTime, NaiveDateTime, Utc};
     use janus_aggregator_core::{
         datastore::{self, models::Lease},
@@ -273,9 +275,10 @@ mod tests {
     };
     use janus_messages::{AggregationJobId, TaskId};
     use rand::random;
-    use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
     use trillium_tokio::Stopper;
+
+    use super::JobDriver;
 
     #[tokio::test]
     async fn job_driver() {

@@ -1,3 +1,5 @@
+use std::{net::Ipv4Addr, sync::Arc};
+
 use assert_matches::assert_matches;
 use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
@@ -36,7 +38,6 @@ use prio::{
     },
 };
 use rand::{Rng, distr::StandardUniform, random, rng};
-use std::{net::Ipv4Addr, sync::Arc};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;
 use url::Url;

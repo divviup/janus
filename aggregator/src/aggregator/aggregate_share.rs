@@ -1,6 +1,7 @@
 //! Implements functionality for computing & validating aggregate shares.
 
-use super::Error;
+use std::{borrow::Cow, collections::HashMap};
+
 use itertools::iproduct;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -14,7 +15,8 @@ use janus_aggregator_core::{
 use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
 use janus_messages::{Interval, ReportIdChecksum, TaskId, batch_mode::BatchMode};
 use prio::vdaf::Aggregatable;
-use std::{borrow::Cow, collections::HashMap};
+
+use super::Error;
 
 /// Computes the aggregate share over the provided batch aggregations.
 ///

@@ -2,7 +2,11 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url, batch_mode};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    io::Cursor,
+};
+
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -10,10 +14,8 @@ use prio::codec::{
     encode_u16_items,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    io::Cursor,
-};
+
+use crate::{Duration, Error, Time, Url, batch_mode};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -576,14 +578,15 @@ impl Display for TimePrecision {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+    use prio::codec::{CodecError, Decode as _};
+
     use crate::{
         Duration, Time, Url, batch_mode, roundtrip_encoding,
         taskprov::{
             TaskConfig, TaskbindExtension, TaskbindExtensionType, TimePrecision, VdafConfig,
         },
     };
-    use assert_matches::assert_matches;
-    use prio::codec::{CodecError, Decode as _};
 
     #[test]
     fn roundtrip_task_config() {

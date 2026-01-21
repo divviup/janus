@@ -1,12 +1,14 @@
 //! DAP protocol types for representing time, duration, and intervals.
 
-use crate::{Error, taskprov::TimePrecision};
-use prio::codec::{CodecError, Decode, Encode};
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Display, Formatter},
     io::Cursor,
 };
+
+use prio::codec::{CodecError, Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{Error, taskprov::TimePrecision};
 
 /// DAP protocol message representing a duration in terms of the task's time precision.
 /// The value represents the number of time_precision intervals.

@@ -1,10 +1,5 @@
-use crate::{
-    common::{
-        TestContext, build_test_task, collect_aggregate_result_generic,
-        submit_measurements_and_verify_aggregate, submit_measurements_generic,
-    },
-    initialize_rustls,
-};
+use std::{iter, time::Duration};
+
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{
     test_util::install_test_trace_subscriber,
@@ -23,7 +18,14 @@ use prio::{
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
 };
-use std::{iter, time::Duration};
+
+use crate::{
+    common::{
+        TestContext, build_test_task, collect_aggregate_result_generic,
+        submit_measurements_and_verify_aggregate, submit_measurements_generic,
+    },
+    initialize_rustls,
+};
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 #[cfg(feature = "testcontainer")]

@@ -1,6 +1,8 @@
-#[allow(unused_imports)]
-use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
-use crate::cache::HpkeKeypairCache;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
+
 use anyhow::{Error, anyhow};
 use chrono::{DateTime, Utc};
 use educe::Educe;
@@ -19,12 +21,12 @@ use janus_messages::{
 #[cfg(test)]
 use quickcheck::{Arbitrary, Gen};
 use serde::{Deserialize, Deserializer, Serialize, de};
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
 use tokio::try_join;
 use tracing::{debug, info};
+
+#[allow(unused_imports)]
+use crate::aggregator::Config as AggregatorConfig; // used in doccomment.
+use crate::cache::HpkeKeypairCache;
 
 /// Handles key rotation for Janus, according to policies defined in the configuration.
 ///
@@ -508,7 +510,11 @@ impl Arbitrary for HpkeKeyRotatorConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::key_rotator::KR_TIME_PRECISION;
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
+
     use chrono::{DateTime, TimeDelta};
     use itertools::Itertools;
     use janus_aggregator_core::datastore::{
@@ -524,14 +530,11 @@ mod tests {
     use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time};
     use quickcheck::{Arbitrary, Gen, TestResult};
     use quickcheck_macros::quickcheck;
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
-
-    use crate::aggregator::key_rotator::{HpkeKeyRotatorConfig, KeyRotator, duration_since};
 
     use super::HpkeKeyRotator;
+    use crate::aggregator::key_rotator::{
+        HpkeKeyRotatorConfig, KR_TIME_PRECISION, KeyRotator, duration_since,
+    };
 
     async fn get_hpke_keypairs<C: Clock>(ds: &Datastore<C>) -> Vec<HpkeKeypair> {
         ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_hpke_keypairs().await }))

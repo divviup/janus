@@ -96,6 +96,7 @@ mod tests {
     use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
     use rand::random;
 
+    use super::{Config, KeyRotatorConfig, Options};
     use crate::{
         aggregator::key_rotator::{
             HpkeKeyRotatorConfig, default_active_duration, default_expired_duration,
@@ -106,8 +107,6 @@ mod tests {
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         },
     };
-
-    use super::{Config, KeyRotatorConfig, Options};
 
     #[test]
     fn verify_app() {

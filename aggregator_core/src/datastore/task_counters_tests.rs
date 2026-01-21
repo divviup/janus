@@ -1,3 +1,6 @@
+use janus_core::{test_util::install_test_trace_subscriber, time::MockClock, vdaf::VdafInstance};
+use rand::{Rng, random, rng};
+
 use crate::{
     datastore::{
         schema_versions_template,
@@ -6,8 +9,6 @@ use crate::{
     },
     task::{self, AggregationMode, test_util::TaskBuilder},
 };
-use janus_core::{test_util::install_test_trace_subscriber, time::MockClock, vdaf::VdafInstance};
-use rand::{Rng, random, rng};
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]

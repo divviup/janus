@@ -1,11 +1,5 @@
-use crate::{
-    aggregator::{
-        Config,
-        aggregation_job_init::test_util::PrepareInitGenerator,
-        http_handlers::test_util::{decode_response_body, take_problem_details},
-    },
-    config::TaskprovConfig,
-};
+use std::sync::Arc;
+
 use assert_matches::assert_matches;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
@@ -51,7 +45,6 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
@@ -60,6 +53,14 @@ use trillium_testing::{
 use url::Url;
 
 use super::http_handlers::AggregatorHandlerBuilder;
+use crate::{
+    aggregator::{
+        Config,
+        aggregation_job_init::test_util::PrepareInitGenerator,
+        http_handlers::test_util::{decode_response_body, take_problem_details},
+    },
+    config::TaskprovConfig,
+};
 
 pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     _ephemeral_datastore: EphemeralDatastore,
