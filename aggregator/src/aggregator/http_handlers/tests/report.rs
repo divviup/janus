@@ -1243,6 +1243,10 @@ async fn upload_client_http11_bulk() {
         client_socket.write_all(&encoded).await.unwrap();
         client_socket.write_all(b"\r\n").await.unwrap(); // Chunk terminator
         client_socket.flush().await.unwrap();
+        if i % 10 == 9 {
+            info!(i, report_count, "sleep start");
+            sleep(StdDuration::from_millis(50)).await;
+        }
         clock.advance(TimeDelta::seconds(1));
     }
     client_socket.write_all(b"0\r\n\r\n").await.unwrap(); // Final chunk terminator
