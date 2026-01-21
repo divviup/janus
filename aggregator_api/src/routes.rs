@@ -20,9 +20,8 @@ use janus_aggregator_core::{
     taskprov::PeerAggregator,
 };
 use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::Clock};
-use janus_messages::HpkeConfigId;
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId,
+    Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
     batch_mode::Code as SupportedBatchMode,
 };
 use querystring::querify;

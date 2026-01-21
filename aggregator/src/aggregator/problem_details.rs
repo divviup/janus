@@ -144,10 +144,10 @@ mod tests {
         test_util::install_test_trace_subscriber,
         time::{Clock, DateTimeExt, RealClock},
     };
-    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, Interval, ReportIdChecksum,
         problem_type::{DapProblemType, DapProblemTypeParseError},
+        taskprov::TimePrecision,
     };
     use rand::random;
     use reqwest::Client;

@@ -14,10 +14,11 @@ use fixed::{FixedI16, FixedI32};
 use janus_collector::Collector;
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_core::{
+    auth_tokens::AuthenticationToken,
+    hpke::HpkeKeypair,
     retries::ExponentialWithTotalDelayBuilder,
-    vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+    vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
     BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,

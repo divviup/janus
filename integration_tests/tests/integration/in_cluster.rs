@@ -7,8 +7,7 @@ use crate::{
     },
     initialize_rustls,
 };
-use chrono::TimeDelta;
-use chrono::prelude::*;
+use chrono::{TimeDelta, prelude::*};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask,

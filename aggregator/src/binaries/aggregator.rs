@@ -23,9 +23,12 @@ use sec1::EcPrivateKey;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     future::{Future, ready},
+    iter::Iterator,
+    net::SocketAddr,
     path::PathBuf,
+    sync::Arc,
+    time::Duration,
 };
-use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
 use trillium::Handler;
@@ -538,8 +541,7 @@ mod tests {
     };
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
-    use janus_messages::taskprov::TimePrecision;
-    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
+    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
     use rand::random;
     use std::{
         collections::HashSet,

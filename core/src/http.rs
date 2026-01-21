@@ -6,8 +6,10 @@ use janus_messages::problem_type::DapProblemType;
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
-use std::fmt::{self, Display, Formatter};
-use std::time::Duration;
+use std::{
+    fmt::{self, Display, Formatter},
+    time::Duration,
+};
 use tracing::warn;
 use trillium::{Conn, HeaderValue};
 

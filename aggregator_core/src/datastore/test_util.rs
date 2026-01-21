@@ -19,8 +19,7 @@ use std::{
     env,
     path::PathBuf,
     str::FromStr,
-    sync::mpsc,
-    sync::{Arc, Weak},
+    sync::{Arc, Weak, mpsc},
     thread::JoinHandle,
     time::Duration,
 };

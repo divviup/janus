@@ -1032,10 +1032,9 @@ mod tests {
         time::RealClock,
         vdaf::{VdafInstance, vdaf_dp_strategies},
     };
-    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
-        codec::Encode,
+        codec::Encode, taskprov::TimePrecision,
     };
     use prio::codec::Decode;
     use rand::random;

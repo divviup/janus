@@ -3,17 +3,19 @@ use super::{
     error::ArcError,
     queue::{LIFORequestQueue, queued_lifo},
 };
-use crate::aggregator::AggregationJobContinueResult;
-use crate::aggregator::problem_details::{
-    ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt,
+use crate::aggregator::{
+    AggregationJobContinueResult,
+    problem_details::{ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt},
 };
 use anyhow::Context;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES, datastore::Datastore, datastore::Error as datastoreError,
-    instrumented, taskprov::taskprov_task_id,
+    TIME_HISTOGRAM_BOUNDARIES,
+    datastore::{Datastore, Error as datastoreError},
+    instrumented,
+    taskprov::taskprov_task_id,
 };
 use janus_core::{
     Runtime,
@@ -37,8 +39,7 @@ use opentelemetry::{
 use prio::codec::Encode;
 use querystring::querify;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::{borrow::Cow, time::Duration as StdDuration};
+use std::{borrow::Cow, sync::Arc, time::Duration as StdDuration};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};

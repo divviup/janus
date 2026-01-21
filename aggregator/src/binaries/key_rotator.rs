@@ -93,8 +93,7 @@ mod tests {
 
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
-    use janus_messages::taskprov::TimePrecision;
-    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId};
+    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
     use rand::random;
 
     use crate::{
