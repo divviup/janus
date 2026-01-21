@@ -1245,7 +1245,7 @@ async fn upload_client_http11_bulk() {
         client_socket.flush().await.unwrap();
         if i % 10 == 9 {
             info!(i, report_count, "sleep start");
-            sleep(StdDuration::from_millis(50)).await;
+            sleep(StdDuration::from_millis(100)).await;
         }
         clock.advance(TimeDelta::seconds(1));
     }
