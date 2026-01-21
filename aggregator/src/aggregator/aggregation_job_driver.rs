@@ -1077,9 +1077,10 @@ where
                         .report_aggregation
                         .with_state(polling_state),
                     // Even if we have recovered an output share (i.e.,
-                    // `stepped_aggregation.leader_state` is Finished), we don't include it here: we
-                    // aren't done with aggregation until we receive a response from the Helper, so
-                    // it would be incorrect to merge the results into the batch aggregations at
+                    // `stepped_aggregation.leader_state` is Finished), we don't include it here:
+                    // we aren't done with aggregation until we receive a
+                    // response from the Helper, so it would be incorrect to
+                    // merge the results into the batch aggregations at
                     // this point.
                     None,
                 )

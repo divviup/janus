@@ -146,8 +146,8 @@ enum Command {
         #[arg(long, env = "VERIFY_KEY_INIT", hide_env_values = true)]
         verify_key_init: VerifyKeyInit,
 
-        /// The location of the collector HPKE config file, which contains an encoded DAP HpkeConfig
-        /// (i.e. public key & metadata) used to encrypt to the collector.
+        /// The location of the collector HPKE config file, which contains an encoded DAP
+        /// HpkeConfig (i.e. public key & metadata) used to encrypt to the collector.
         #[arg(long)]
         collector_hpke_config_file: PathBuf,
 

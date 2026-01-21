@@ -818,8 +818,8 @@ pub mod test_util {
         helper_aggregation_mode: AggregationMode,
         /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
         collector_hpke_keypair: HpkeKeypair,
-        /// Token used to authenticate messages exchanged between the aggregators in the aggregation
-        /// sub-protocol.
+        /// Token used to authenticate messages exchanged between the aggregators in the
+        /// aggregation sub-protocol.
         aggregator_auth_token: AuthenticationToken,
         /// Token used to authenticate messages exchanged between the collector and leader in the
         /// collection sub-protocol.

@@ -207,8 +207,8 @@ pub struct Config {
     /// transaction.
     pub max_upload_batch_size: usize,
 
-    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`. This is the maximum delay added to the
+    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not
+    /// yet reached `max_batch_upload_size`. This is the maximum delay added to the
     /// `tasks/{task-id}/reports` endpoint due to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 
@@ -295,8 +295,8 @@ impl<C: Clock> Aggregator<C> {
                 cfg.max_upload_batch_write_delay,
             ),
             // If we're in taskprov mode, we can never cache None entries for tasks, since
-            // aggregators could insert tasks at any time and expect them to be available across all
-            // aggregator replicas.
+            // aggregators could insert tasks at any time and expect them to be available across
+            // all aggregator replicas.
             !cfg.taskprov_config.enabled,
             cfg.task_cache_capacity,
             cfg.task_cache_ttl,

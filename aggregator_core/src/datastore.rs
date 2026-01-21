@@ -527,7 +527,8 @@ pub struct Transaction<'a, C: Clock> {
     task_infos: Arc<Mutex<HashMap<TaskId, TaskInfo>>>,
 
     retry: AtomicBool,
-    op_group: Mutex<Arc<Mutex<OperationGroup>>>, // locking discipline: outer lock before inner lock
+    op_group: Mutex<Arc<Mutex<OperationGroup>>>, /* locking discipline: outer lock before inner
+                                                  * lock */
 }
 
 enum OperationGroup {

@@ -79,8 +79,8 @@ pub struct AggregationJobCreator<C: Clock> {
     /// The minimum number of client reports to include in an aggregation job. For time-interval
     /// tasks, applies to the "current" batch only; historical batches will create aggregation jobs
     /// of any size, on the theory that almost all reports will have be received for these batches
-    /// already. For leader-selected tasks, a single small aggregation job per batch will be created
-    /// if necessary to meet the batch size requirements.
+    /// already. For leader-selected tasks, a single small aggregation job per batch will be
+    /// created if necessary to meet the batch size requirements.
     min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     max_aggregation_job_size: usize,

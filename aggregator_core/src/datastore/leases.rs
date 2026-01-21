@@ -69,7 +69,7 @@ WHERE collection_jobs.task_id = $1
             &stmt,
             &[
                 /* task ID */ &task_info.pkey,
-                /* collection_job_id*/ &collection_job_id.as_ref(),
+                /* collection_job_id */ &collection_job_id.as_ref(),
                 /* now */ &now,
             ],
         )
@@ -171,7 +171,7 @@ WHERE aggregation_jobs.task_id = $1
             &stmt,
             &[
                 /* task ID */ &task_info.pkey,
-                /* aggregation_job_id*/ &aggregation_job_id.as_ref(),
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
                 &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],

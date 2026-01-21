@@ -309,8 +309,8 @@ where
     }
 }
 
-/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it across
-/// futures.
+/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it
+/// across futures.
 #[derive(Debug, Default, Clone)]
 pub struct TaskUploadCounters(Arc<StdMutex<BTreeMap<TaskId, TaskUploadCounter>>>);
 

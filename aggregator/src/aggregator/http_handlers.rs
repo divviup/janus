@@ -988,7 +988,8 @@ fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
         .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))
 }
 
-/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path parameters.
+/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path
+/// parameters.
 fn parse_aggregate_share_id(conn: &Conn) -> Result<AggregateShareId, Error> {
     let encoded = conn.param("aggregate_share_id").ok_or_else(|| {
         Error::Internal("aggregate_share_id parameter is missing from captures".into())

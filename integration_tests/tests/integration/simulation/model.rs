@@ -22,8 +22,9 @@ pub(super) struct Config {
     /// DAP task parameter: minimum batch size.
     pub(super) min_batch_size: u64,
 
-    /// Janus-specific task parameter: batch time window size (for the time-bucketed leader-selected
-    /// feature). This is only used with leader-selected tasks, and ignored otherwise.
+    /// Janus-specific task parameter: batch time window size (for the time-bucketed
+    /// leader-selected feature). This is only used with leader-selected tasks, and ignored
+    /// otherwise.
     pub(super) batch_time_window_size: Option<Duration>,
 
     /// Janus-specific task parameter: report expiry age (for garbage collection).

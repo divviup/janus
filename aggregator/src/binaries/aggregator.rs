@@ -382,8 +382,9 @@ pub struct Config {
     pub task_counter_shard_count: u64,
 
     /// Defines how often to refresh the HPKE configs cache in milliseconds. This affects how often
-    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined by
-    /// [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to specify this.
+    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined
+    /// by [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
+    /// specify this.
     #[serde(default)]
     pub hpke_configs_refresh_interval: Option<u64>,
 
@@ -428,8 +429,8 @@ pub struct GarbageCollectorConfig {
     /// How frequently garbage collection is run, in seconds.
     pub gc_frequency_s: u64,
 
-    /// The limit to the number of client report artifacts deleted for a single task by a single run
-    /// of the garbage collector.
+    /// The limit to the number of client report artifacts deleted for a single task by a single
+    /// run of the garbage collector.
     pub report_limit: u64,
 
     /// The limit to the number of aggregation jobs, and related aggregation artifacts, deleted for

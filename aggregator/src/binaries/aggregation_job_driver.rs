@@ -142,8 +142,9 @@ pub struct Config {
     pub task_counter_shard_count: u64,
 
     /// Defines how often to refresh the HPKE configs cache in milliseconds. This affects how often
-    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined by
-    /// [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to specify this.
+    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined
+    /// by [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
+    /// specify this.
     #[serde(default)]
     pub hpke_configs_refresh_interval: Option<u64>,
 

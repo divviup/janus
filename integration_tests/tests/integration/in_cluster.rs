@@ -53,9 +53,10 @@ const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// If set, the integration tests will be run against remote instances of `divviup-api`, a Janus
-    /// leader and a Janus helper. If not set, the integration tests will be run against instances
-    /// of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes cluster.
+    /// If set, the integration tests will be run against remote instances of `divviup-api`, a
+    /// Janus leader and a Janus helper. If not set, the integration tests will be run against
+    /// instances of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes
+    /// cluster.
     ///
     /// See doccomments on InClusterJanusPair::new_in_cloud and InClusterJanusPair::new_in_kind for
     /// discussion of how to configure this test setup.

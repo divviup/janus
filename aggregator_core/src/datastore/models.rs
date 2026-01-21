@@ -880,7 +880,6 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     //
     // Leader-only states.
-    //
     /// The Leader is ready to send an aggregation initialization request to the Helper.
     LeaderInit {
         /// The sequence of public extensions from this report's metadata.
@@ -923,7 +922,6 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
 
     //
     // Helper-only states.
-    //
     /// The Helper has received an aggregation initialization request from the Leader, and is
     /// processing it asynchronously.
     HelperInitProcessing {
@@ -951,7 +949,6 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
 
     //
     // Common states.
-    //
     /// Aggregation has completed successfully.
     Finished,
     /// Aggregation has completed unsuccessfully.

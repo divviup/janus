@@ -512,7 +512,6 @@ impl TimePrecision {
     ///
     /// # Panics
     /// Panics if `seconds` is 0.
-    ///
     pub const fn from_seconds(seconds: u64) -> Self {
         assert!(seconds > 0);
         Self(seconds)
