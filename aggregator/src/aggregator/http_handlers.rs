@@ -40,9 +40,9 @@ use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)] // Used in async_stream macro expansion
-use std::io::Cursor;
-use std::sync::Arc;
-use std::{borrow::Cow, time::Duration as StdDuration};
+use std::{
+    borrow::Cow, collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration,
+};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
@@ -609,7 +609,7 @@ where
     async_stream::try_stream! {
         const CHUNK_SIZE: usize = 64 * 1024;
         let mut chunk = vec![0u8; CHUNK_SIZE];
-        let mut buffer = Vec::with_capacity(CHUNK_SIZE);
+        let mut buffer: VecDeque<u8> = VecDeque::with_capacity(CHUNK_SIZE);
 
         loop {
             // Read a chunk from the body (reusing the same buffer)
@@ -631,9 +631,10 @@ where
                 break;
             }
 
-            buffer.extend_from_slice(&chunk[..bytes_read]);
-
-            let mut cursor = Cursor::new(buffer.as_slice());
+            buffer.extend(&chunk[..bytes_read]);
+            buffer.make_contiguous();
+            let (contiguous_slice, _) = buffer.as_slices();
+            let mut cursor = Cursor::new(contiguous_slice);
             let mut bytes_consumed = 0;
 
             loop {
