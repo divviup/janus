@@ -1611,7 +1611,7 @@ mod decode_reports_stream_tests {
         // Encode all reports
         let mut all_bytes = Vec::new();
         for report in &reports {
-            all_bytes.extend_from_slice(&report.get_encoded().unwrap());
+            report.encode(&mut all_bytes).unwrap();
         }
 
         // Test with various chunk sizes to ensure we hit boundaries at different points
