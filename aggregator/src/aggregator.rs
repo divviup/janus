@@ -44,7 +44,7 @@ use fixed::{
 use futures::{
     Stream,
     future::{BoxFuture, try_join_all},
-    stream::{FuturesUnordered, StreamExt, TryStreamExt},
+    stream::{FuturesOrdered, StreamExt, TryStreamExt},
 };
 use http::{Method, header::CONTENT_TYPE};
 use janus_aggregator_core::{
@@ -1764,10 +1764,10 @@ impl VdafOps {
         C: Clock,
         B: UploadableBatchMode,
     {
-        // Process reports as they arrive from the stream, feeding them into FuturesUnordered
+        // Process reports as they arrive from the stream, feeding them into FuturesOrdered
         // for concurrent processing.
         let mut report_stream = Box::pin(report_stream);
-        let mut futures = FuturesUnordered::new();
+        let mut futures = FuturesOrdered::new();
         let mut status = Vec::new();
 
         loop {
@@ -1780,7 +1780,7 @@ impl VdafOps {
                     match stream_result {
                         Ok(report) => {
                             let vdaf_clone = Arc::clone(&vdaf);
-                            futures.push(async move {
+                            futures.push_back(async move {
                                 Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
                                     vdaf_clone,
                                     clock,
