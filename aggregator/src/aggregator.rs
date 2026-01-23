@@ -1793,7 +1793,10 @@ impl VdafOps {
                             });
                         }
                         Err(e) => {
-                            // Stream error (decode failure, client disconnect) - fail fast
+                            // Stream error (decode failure, client disconnect) - complete the
+                            // existing futures and then fail out. Since we're already failing,
+                            // we don't care about the future statuses, only that they resolve.
+                            futures.all(|_| async { true }).await;
                             return Err(Arc::new(e));
                         }
                     }
@@ -1813,7 +1816,11 @@ impl VdafOps {
                                 ));
                             }
                             _ => {
-                                // Non-rejection errors are fatal
+                                // We've had an unexpected error from handle_uploaded_report. We
+                                // cannot format a ReportUploadStatus, we need to fail here, but
+                                // also resolve all remaining futures (ignoring their statuses)
+                                // so we can safely return this error.
+                                futures.all(|_| async { true }).await;
                                 return Err(e);
                             }
                         },
