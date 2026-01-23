@@ -31,12 +31,12 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    PlaintextInputShare, Query, Report, ReportDecodeError, ReportError, Role,
-    batch_mode::TimeInterval, taskprov::TimePrecision,
+    PlaintextInputShare, Query, Report, ReportError, Role, batch_mode::TimeInterval,
+    taskprov::TimePrecision,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
-use std::{collections::HashSet, io::Cursor, iter, sync::Arc, time::Duration as StdDuration};
+use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
 
 struct UploadTest {
     vdaf: Prio3Count,
@@ -100,17 +100,13 @@ impl UploadTest {
 }
 
 /// Helper to convert a single report into a Stream for testing
-fn report_stream(
-    report: Report,
-) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>> {
-    stream::iter(vec![Ok(Ok(report))])
+fn report_stream(report: Report) -> impl Stream<Item = Result<Report, Error>> {
+    stream::iter(vec![Ok(report)])
 }
 
 /// Helper to convert multiple reports into a Stream for testing
-fn reports_stream(
-    reports: Vec<Report>,
-) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>> {
-    stream::iter(reports.into_iter().map(|r| Ok(Ok(r))))
+fn reports_stream(reports: Vec<Report>) -> impl Stream<Item = Result<Report, Error>> {
+    stream::iter(reports.into_iter().map(Ok))
 }
 
 #[tokio::test]
@@ -1048,10 +1044,9 @@ async fn upload_report_duplicate_extensions() {
 }
 
 #[tokio::test]
-async fn upload_report_decode_failure_with_preserved_metadata() {
-    // This test verifies that when a Report fails to decode AFTER the metadata
-    // has been successfully parsed, the error preserves the metadata and allows
-    // for proper per-report rejection (rather than aborting the entire stream).
+async fn upload_report_decode_failure() {
+    // This test verifies that when a Report fails to decode that the stream aborts,
+    // but processes the earlier reports.
 
     install_test_trace_subscriber();
     let mut runtime_manager = TestRuntimeManager::new();
@@ -1071,72 +1066,41 @@ async fn upload_report_decode_failure_with_preserved_metadata() {
 
     let task = task.leader_view().unwrap();
 
-    // Create a valid report to extract metadata from
-    let valid_report = create_report(
+    let report = create_report(
         &task,
         &hpke_keypair,
         clock.now_aligned_to_precision(task.time_precision()),
     );
-    let expected_report_id = *valid_report.metadata().id();
-
-    // Manually construct corrupted report bytes in two parts:
-    // 1. Valid metadata (not the whole report)
-    // 2. Then we extend on some corrupted fields (will fail to decode)
-    let mut corrupted_bytes = Vec::new();
-
-    // Encode valid metadata
-    valid_report
-        .metadata()
-        .encode(&mut corrupted_bytes)
-        .unwrap();
-
-    // Add invalid public_share: length prefix claims 16777215 bytes but we only provide 10
-    corrupted_bytes.extend_from_slice(&[0x00, 0x0F, 0xFF, 0xFF]); // u32: 16777215 bytes
-    corrupted_bytes.extend_from_slice(&[0xFF; 10]); // Only 10 bytes of garbage
-
-    // Try to decode this corrupted report - should fail with metadata preserved
-    let decode_result = Report::decode_with_metadata(&mut Cursor::new(&corrupted_bytes[..]));
-
-    // Verify the decode failed but metadata was preserved
-    let decode_error = decode_result.expect_err("decode should fail");
-    assert!(
-        decode_error.metadata.is_some(),
-        "Metadata should be preserved in decode error"
-    );
-    assert_eq!(
-        decode_error.metadata.as_ref().unwrap().id(),
-        &expected_report_id,
-        "Preserved metadata should match original"
-    );
 
     // Create a stream that yields this decode error (simulating what decode_reports_stream does)
-    let error_stream = stream::iter(vec![Ok(Err(decode_error))]);
+    let error_stream = stream::iter(vec![
+        Ok(report),
+        Err(Error::MessageDecode(
+            prio::codec::CodecError::UnexpectedValue,
+        )),
+    ]);
 
-    let result = aggregator
+    let error = aggregator
         .handle_upload(task.id(), error_stream)
         .await
-        .unwrap();
+        .unwrap_err();
 
-    // Should get a rejection status with InvalidMessage error
-    assert_eq!(result.status().len(), 1, "Should have one rejection");
-    let result_upload_status = &result.status()[0];
-    assert_eq!(
-        result_upload_status.report_id(),
-        expected_report_id,
-        "Rejection should reference the correct report ID from metadata"
-    );
+    // Should recieve a MessageDecode error
     assert_matches!(
-        result_upload_status.error(),
-        ReportError::InvalidMessage,
-        "Should reject with InvalidMessage error"
+        *error,
+        Error::MessageDecode(_),
+        "A decoding error should become Error::MessageDecode"
     );
 
-    // Wait for the report writer to complete
-    runtime_manager
-        .wait_for_completed_tasks("aggregator", 1)
-        .await;
+    // Wait for the report writer to complete anyway
+    tokio::time::timeout(
+        StdDuration::from_secs(5),
+        runtime_manager.wait_for_completed_tasks("aggregator", 1),
+    )
+    .await
+    .unwrap();
 
-    // Verify the rejection was recorded in counters
+    // Verify the success was recorded in counters
     let got_counters = datastore
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
@@ -1145,59 +1109,12 @@ async fn upload_report_decode_failure_with_preserved_metadata() {
         .await
         .unwrap();
 
-    // Counter position 1 is report_decode_failure
+    // Counter position 5 is report_success
     assert_eq!(
         got_counters,
         Some(TaskUploadCounter::new_with_values(
-            0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+            0, 0, 0, 0, 0, 1, 0, 0, 0, 0
         )),
-        "Should increment report_decode_failure counter"
-    );
-}
-
-#[tokio::test]
-async fn upload_report_decode_failure_without_metadata() {
-    // This test verifies that when a Report fails to decode BEFORE the metadata
-    // can be parsed, the entire upload stream is aborted (rather than per-report rejection).
-    // We have a guard in place to ensure that even if handle_upload is called with such
-    // a report, it will return InternalError instead of panicking; this tests that.
-
-    install_test_trace_subscriber();
-    let UploadTest {
-        aggregator,
-        task,
-        datastore: _datastore,
-        ephemeral_datastore: _ephemeral_datastore,
-        ..
-    } = UploadTest::new(default_aggregator_config()).await;
-
-    let task = task.leader_view().unwrap();
-
-    // Create completely corrupted bytes that can't even parse as metadata
-    let corrupted_bytes = [0xAC; 100];
-    let decode_result = Report::decode_with_metadata(&mut Cursor::new(&corrupted_bytes[..]));
-
-    // Verify the decode failed without metadata
-    let decode_error = decode_result.expect_err("decode should fail");
-    assert!(
-        decode_error.metadata.is_none(),
-        "Metadata should NOT be preserved when metadata parsing fails"
-    );
-
-    // When decode_reports_stream encounters a bad Report, it aborts the stream
-    // rather than yield it. But we're now testing what happens if it passes
-    // through to handle_upload: It should be safe, and just log an error.
-    let error_stream = stream::iter(vec![Ok(Err(decode_error))]);
-    let result = aggregator.handle_upload(task.id(), error_stream).await;
-
-    // Should fail with a stream-level error, not return an UploadResponse
-    assert!(
-        result.is_err(),
-        "Upload should fail entirely when metadata can't be decoded"
-    );
-    assert_matches!(
-        result.unwrap_err().as_ref(),
-        Error::Internal(_),
-        "Should fail with Internal error"
+        "Should increment report_success counter"
     );
 }

@@ -28,8 +28,8 @@ use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
-    ReportDecodeError, TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval,
-    codec::Decode, problem_type::DapProblemType, taskprov::TaskConfig,
+    TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
+    problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
 use opentelemetry::{
@@ -600,9 +600,7 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 /// of a report, the incomplete bytes are buffered until the next chunk arrives.
 ///
 /// This method is pub(super) so that its tests can reside in tests/report.rs.
-pub(super) fn decode_reports_stream<R>(
-    mut body: R,
-) -> impl Stream<Item = Result<Result<Report, ReportDecodeError>, Error>>
+pub(super) fn decode_reports_stream<R>(mut body: R) -> impl Stream<Item = Result<Report, Error>>
 where
     R: AsyncRead + Unpin,
 {
@@ -612,6 +610,7 @@ where
         let mut buffer: VecDeque<u8> = VecDeque::with_capacity(CHUNK_SIZE);
 
         loop {
+            eprintln!("top of stream loop");
             // Read a chunk from the body (reusing the same buffer)
             let bytes_read = body.read(&mut chunk).await
                 .map_err(|e| match e.kind() {
@@ -638,35 +637,26 @@ where
             let mut bytes_consumed = 0;
 
             loop {
-                match Report::decode_with_metadata(&mut cursor) {
+                eprintln!("top of decode loop");
+                match Report::decode(&mut cursor) {
                     Ok(report) => {
+                        eprintln!("Got OK(report) {:?}", report);
                         bytes_consumed = cursor.position() as usize;
-                        yield Ok(report);
+                        yield report;
                     }
-                    Err(decode_error) => {
-                        match decode_error.error {
-                            CodecError::LengthPrefixTooBig(_) => {
-                                // Incomplete report - insufficient remaining bytes in the buffer
-                                break;
-                            }
-                            CodecError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                                // Incomplete report - we didn't make it to the end
-                                break;
-                            }
-                            _ if decode_error.metadata.is_none() => {
-                                // We failed to decode even the metadata, but not due to
-                                // one of the above conditions. Without details we must not
-                                // put this error into the result stream as we can't report
-                                // it back. Instead, fail fast out of the stream
-                                Err(Error::MessageDecode(decode_error.error))?;
-                            }
-                            _ => {
-                                // Consume bytes up to the point of failure (including metadata and
-                                // any successfully decoded fields). This allows the stream to continue
-                                // processing subsequent reports after a corrupted one.
-                                bytes_consumed = cursor.position() as usize;
-                                yield Err(decode_error);
-                            }
+                    Err(decode_error) => match decode_error {
+                        CodecError::LengthPrefixTooBig(_) => {
+                            eprintln!("err-LengthPrefixTooBig");
+                            // Incomplete report - insufficient remaining bytes in the buffer
+                            break;
+                        }
+                        CodecError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            eprintln!("err-Io");
+                            // Incomplete report - we didn't make it to the end
+                            break;
+                        }
+                        _ => {
+                            Err(Error::MessageDecode(decode_error))?
                         }
                     }
                 }

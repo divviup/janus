@@ -1370,9 +1370,8 @@ mod decode_reports_stream_tests {
         let decoded_report = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
-            .expect("stream should yield Result<Report>")
-            .expect("report should decode Report successfully");
+            .expect("stream should yield Some(Result<Report>")
+            .expect("report should decode successfully");
         assert_eq!(decoded_report.metadata().id(), report.metadata().id());
         assert!(stream.next().await.is_none());
     }
@@ -1411,7 +1410,6 @@ mod decode_reports_stream_tests {
         let decoded1 = stream
             .next()
             .await
-            .expect("stream should yield first item, Result<Result<Report>>")
             .expect("stream should not error, Result<Report>")
             .expect("report should decode successfully as Report");
         assert_eq!(decoded1.metadata().id(), report1.metadata().id());
@@ -1419,8 +1417,7 @@ mod decode_reports_stream_tests {
         let decoded2 = stream
             .next()
             .await
-            .expect("stream should yield second item, Result<Result<Report>>")
-            .expect("stream should not error, Result<Report>")
+            .expect("stream should not error on second item, Result<Report>")
             .expect("report should decode successfully as Report");
         assert_eq!(decoded2.metadata().id(), report2.metadata().id());
         assert!(stream.next().await.is_none());
@@ -1455,14 +1452,13 @@ mod decode_reports_stream_tests {
         let _ = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
-            .expect("stream should yield Result<Report>")
+            .expect("stream should have yielded Some(Result<Report>)")
             .expect("report should decode successfully into Report");
 
         let error = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should have yielded Some(Result<Report>)")
             .expect_err("should be Err<Error>");
         assert_matches!(error, Error::MessageDecode(CodecError::BytesLeftOver(4)));
     }
@@ -1476,7 +1472,7 @@ mod decode_reports_stream_tests {
         let error = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should have yielded Some(Result<Report>)")
             .expect_err("should be Err<Error>");
         assert_matches!(error, Error::ClientDisconnected);
     }
@@ -1490,20 +1486,15 @@ mod decode_reports_stream_tests {
         let error = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should have yielded Some(Result<Report>)")
             .expect_err("should be Err<Error>");
         assert_matches!(error, Error::BadRequest(_));
     }
 
     #[tokio::test]
-    async fn decode_error_with_metadata() {
-        // This tests that decode errors with metadata are yielded correctly and bytes
-        // are consumed, allowing the stream to continue.
-        //
-        // Note: Creating test data that naturally triggers a decode error (not UnexpectedEof
-        // or LengthPrefixTooBig) with metadata is challenging because most corruptions cause
-        // UnexpectedEof. This test verifies that when such errors occur (as they can in
-        // production with network issues or malformed clients), they're handled correctly.
+    async fn decode_error_midstream() {
+        // This tests that decode errors midstream are yielded correctly and bytes
+        // are consumed, returning some valid reports, then failure and ending.
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -1531,12 +1522,23 @@ mod decode_reports_stream_tests {
             vec![],
         );
 
-        // Build stream: [valid report] [valid metadata + incomplete body]
+        // Build stream: [valid report] [valid metadata + incomplete body] [valid reports..]
         let mut stream_bytes = report1.get_encoded().unwrap();
         report2_metadata.encode(&mut stream_bytes).unwrap();
-        // Incomplete public_share to trigger UnexpectedEof
-        stream_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x64]); // Claim 100 bytes
-        stream_bytes.extend_from_slice(&[0xAA; 99]); // Only provide 99 bytes of screaming
+
+        // Incomplete public_share u32 to trigger UnexpectedEof
+        stream_bytes.extend_from_slice(&[0x00, 0x00, 0x00]);
+
+        // Add more reports, which should all be dropped.
+        for _ in 0..=10 {
+            create_report(
+                &leader_task,
+                &hpke_keypair,
+                clock.now_aligned_to_precision(task.time_precision()),
+            )
+            .encode(&mut stream_bytes)
+            .unwrap();
+        }
 
         let body = Cursor::new(stream_bytes);
         let mut stream = Box::pin(decode_reports_stream(body));
@@ -1545,23 +1547,26 @@ mod decode_reports_stream_tests {
         let decoded1 = stream
             .next()
             .await
-            .expect("stream should yield an item, Some(Result<Result<Report>>)")
-            .expect("stream should not error, OK(Result<Report>)")
+            .expect("stream should yield an item, Some(Result<Report>)")
             .expect("first report should decode successfully, OK(Report)");
         assert_eq!(decoded1.metadata().id(), report1.metadata().id());
 
-        // Corrupted report causes UnexpectedEof, which buffers the data.
-        // When stream ends, BytesLeftOver error occurs.
-        let error = stream
+        // Corrupted report causes Error
+        stream
             .next()
             .await
             .expect("stream should yield an item, Some(Result<Error>)")
-            .expect_err("should be stream error, Err(MessageDecode<CodecError>)");
-        assert_matches!(error, Error::MessageDecode(CodecError::BytesLeftOver(_)));
+            .expect_err("should be a report decode error, Err(Error)");
+
+        // After a CodecError the stream should be over.
+        assert!(
+            stream.next().await.is_none(),
+            "Expected the stream to end after the Error"
+        );
     }
 
     #[tokio::test]
-    async fn decode_error_without_metadata_fails_fast() {
+    async fn decode_error_fails_fast() {
         // Create malformed data that fails to decode metadata
         // Using an invalid fixed size value (all 0xFF) should cause early failure
         let bad_data = vec![0xFF; 100];
@@ -1571,7 +1576,7 @@ mod decode_reports_stream_tests {
         let error = stream
             .next()
             .await
-            .expect("stream should yield Result<Result<Report>>")
+            .expect("stream should yield Some(Result<Report>)")
             .expect_err("should be stream Err<Error>");
 
         assert_matches!(error, Error::MessageDecode(_));
@@ -1627,12 +1632,6 @@ mod decode_reports_stream_tests {
                     .await
                     .unwrap_or_else(|| {
                         panic!("chunk_size={}: should yield report {}", chunk_size, i)
-                    })
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "chunk_size={}: stream error at report {}: {:?}",
-                            chunk_size, i, e
-                        )
                     })
                     .unwrap_or_else(|e| {
                         panic!(

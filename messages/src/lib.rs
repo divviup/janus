@@ -1305,29 +1305,6 @@ impl Decode for PlaintextInputShare {
     }
 }
 
-/// A wrapper of CodecError that contains the ReportMetadata
-#[derive(Debug)]
-pub struct ReportDecodeError {
-    pub error: CodecError,
-    pub metadata: Option<ReportMetadata>,
-}
-
-impl ReportDecodeError {
-    fn without_metadata(error: CodecError) -> Self {
-        Self {
-            error,
-            metadata: None,
-        }
-    }
-
-    fn with_metadata(error: CodecError, metadata: ReportMetadata) -> Self {
-        Self {
-            error,
-            metadata: Some(metadata),
-        }
-    }
-}
-
 /// DAP protocol message representing a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
@@ -1372,27 +1349,6 @@ impl Report {
     pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
         &self.helper_encrypted_input_share
     }
-
-    /// Decode a Report with enhanced error information from the report's Metadata.
-    ///
-    /// Unlike the `Decode` trait implementation, this preserves the `ReportMetadata` when
-    /// decoding failures happen after the metadata is decoded, but before the report is fully
-    /// parsed. We use this for per-report rejection tracking.
-    pub fn decode_with_metadata(bytes: &mut Cursor<&[u8]>) -> Result<Self, ReportDecodeError> {
-        let metadata =
-            ReportMetadata::decode(bytes).map_err(ReportDecodeError::without_metadata)?;
-        let report_err = |err| ReportDecodeError::with_metadata(err, metadata.clone());
-        let public_share = decode_u32_items(&(), bytes).map_err(report_err)?;
-        let leader_encrypted_input_share = HpkeCiphertext::decode(bytes).map_err(report_err)?;
-        let helper_encrypted_input_share = HpkeCiphertext::decode(bytes).map_err(report_err)?;
-
-        Ok(Self {
-            metadata,
-            public_share,
-            leader_encrypted_input_share,
-            helper_encrypted_input_share,
-        })
-    }
 }
 
 impl MediaType for Report {
@@ -1418,10 +1374,18 @@ impl Encode for Report {
 }
 
 impl Decode for Report {
-    /// The prio::Decode trait doesn't want the ReportDecodeError, so return
-    /// only the inner error.
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Self::decode_with_metadata(bytes).map_err(|err| err.error)
+        let metadata = ReportMetadata::decode(bytes)?;
+        let public_share = decode_u32_items(&(), bytes)?;
+        let leader_encrypted_input_share = HpkeCiphertext::decode(bytes)?;
+        let helper_encrypted_input_share = HpkeCiphertext::decode(bytes)?;
+
+        Ok(Self {
+            metadata,
+            public_share,
+            leader_encrypted_input_share,
+            helper_encrypted_input_share,
+        })
     }
 }
 
