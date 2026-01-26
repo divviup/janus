@@ -1006,6 +1006,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2631,7 +2641,7 @@ dependencies = [
  "kube",
  "mockito",
  "moka",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
@@ -2639,7 +2649,7 @@ dependencies = [
  "postgres-protocol",
  "postgres-types",
  "prio",
- "prometheus",
+ "prometheus 0.13.4",
  "quickcheck",
  "quickcheck_macros",
  "rand 0.8.5",
@@ -2700,7 +2710,7 @@ dependencies = [
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.7.105",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "querystring",
  "rand 0.8.5",
  "rstest",
@@ -2744,7 +2754,7 @@ dependencies = [
  "janus_messages 0.7.105",
  "k8s-openapi",
  "kube",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "postgres-protocol",
  "postgres-types",
  "prio",
@@ -2899,7 +2909,7 @@ dependencies = [
  "janus_messages 0.7.105",
  "k8s-openapi",
  "kube",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "prio",
  "quickcheck",
  "rand 0.8.5",
@@ -3025,16 +3035,18 @@ dependencies = [
 
 [[package]]
 name = "jni"
-version = "0.19.0"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6df18c2e3db7e453d3c6ac5b3e9d5182664d28788126d39b91f2d1e22b017ec"
+checksum = "1a87aa2bb7d2af34197c04845522473242e1aa17c12f4935d5856491a7fb8c97"
 dependencies = [
  "cesu8",
+ "cfg-if",
  "combine",
  "jni-sys",
  "log",
  "thiserror 1.0.69",
  "walkdir",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -3253,9 +3265,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 dependencies = [
  "value-bag",
 ]
@@ -3595,6 +3607,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab70038c28ed37b97d8ed414b6429d343a8bbf44c9f79ec854f3a643029ba6d7"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "opentelemetry-otlp"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3603,7 +3628,7 @@ dependencies = [
  "async-trait",
  "futures-core",
  "http",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost 0.13.1",
@@ -3619,9 +3644,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4191ce34aa274621861a7a9d68dbcf618d5b6c66b10081631b61fd81fbc015"
 dependencies = [
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
- "prometheus",
+ "prometheus 0.13.4",
  "protobuf",
 ]
 
@@ -3631,7 +3656,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
  "prost 0.13.1",
  "tonic 0.12.3",
@@ -3639,9 +3664,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-semantic-conventions"
-version = "0.16.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cefe0543875379e47eb5f1e68ff83f45cc41366a92dfd0d073d513bf68e9a05"
+checksum = "bc1b6902ff63b32ef6c489e8048c5e253e2e4a803ea3ea7e783914536eb15c52"
 
 [[package]]
 name = "opentelemetry_sdk"
@@ -3656,7 +3681,7 @@ dependencies = [
  "futures-util",
  "glob",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "percent-encoding",
  "rand 0.8.5",
  "serde_json",
@@ -4144,6 +4169,20 @@ dependencies = [
  "parking_lot",
  "protobuf",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "prometheus"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ca5326d8d0b950a9acd87e6a3f94745394f62e4dae1b1ee22b2bc0c394af43a"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4664,7 +4703,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-pki-types",
  "schannel",
- "security-framework",
+ "security-framework 2.11.1",
 ]
 
 [[package]]
@@ -4677,7 +4716,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-pki-types",
  "schannel",
- "security-framework",
+ "security-framework 2.11.1",
 ]
 
 [[package]]
@@ -4700,23 +4739,23 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.3.4"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afbb878bdfdf63a336a5e63561b1835e7a8c91524f51621db870169eac84b490"
+checksum = "1d99feebc72bae7ab76ba994bb5e121b8d83d910ca40b36e0921f53becc41784"
 dependencies = [
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "jni",
  "log",
  "once_cell",
  "rustls",
- "rustls-native-certs 0.7.0",
+ "rustls-native-certs 0.8.0",
  "rustls-platform-verifier-android",
- "rustls-webpki 0.102.8",
- "security-framework",
+ "rustls-webpki 0.103.8",
+ "security-framework 3.5.1",
  "security-framework-sys",
- "webpki-roots 0.26.1",
- "winapi",
+ "webpki-root-certs",
+ "windows-sys 0.61.1",
 ]
 
 [[package]]
@@ -4813,18 +4852,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
 dependencies = [
  "bitflags 2.6.0",
- "core-foundation",
+ "core-foundation 0.9.4",
  "core-foundation-sys",
  "libc",
- "num-bigint",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3297343eaf830f66ede390ea39da1d462b6b0c1b000f420d0a83f898bbbe6ef"
+dependencies = [
+ "bitflags 2.6.0",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "libc",
  "security-framework-sys",
 ]
 
 [[package]]
 name = "security-framework-sys"
-version = "2.11.1"
+version = "2.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75da29fe9b9b08fe9d6b22b5b4bcbc75d8db3aa31e639aa56bb62e9d46bfceaf"
+checksum = "cc1f0cbffaac4852523ce30d8bd3c5cdc873501d96ff467ca09b6767bb8cd5c0"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -6106,7 +6157,7 @@ checksum = "a9784ed4da7d921bc8df6963f8c80a0e4ce34ba6ba76668acadd3edbd985ff3b"
 dependencies = [
  "js-sys",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.24.0",
  "opentelemetry_sdk",
  "smallvec",
  "tracing",
@@ -6288,11 +6339,11 @@ dependencies = [
 
 [[package]]
 name = "trillium-opentelemetry"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "369989011133b91f356bc790cfda4eae9243ffd33929dfb067fb135a728f88af"
+checksum = "3b5e36d8e79ad6b8858715b9342b4d761d936dcd884f5680ecfb15c0076fa46a"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.27.1",
  "opentelemetry-semantic-conventions",
  "trillium",
  "trillium-macros 0.0.6",
@@ -6300,11 +6351,11 @@ dependencies = [
 
 [[package]]
 name = "trillium-prometheus"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
+checksum = "c3ebf005713e863706df87bb90d9e35256e732401fb244ff84dadb7e7881b816"
 dependencies = [
- "prometheus",
+ "prometheus 0.14.0",
  "tracing",
  "trillium",
  "trillium-router",
@@ -6342,16 +6393,16 @@ dependencies = [
 
 [[package]]
 name = "trillium-rustls"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "371e6e906bfed11c2ebe85af747976805766ca5063a39e1329f9413c5543ef9e"
+checksum = "0501210eedcb4eae5d4a48c7855632f4be7fac5f57c7c772f5b1e598d6db53ff"
 dependencies = [
  "futures-rustls",
  "log",
  "rustls-pemfile",
  "rustls-platform-verifier",
  "trillium-server-common",
- "webpki-roots 0.26.1",
+ "webpki-roots 1.0.3",
 ]
 
 [[package]]
@@ -6602,9 +6653,9 @@ checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
 
 [[package]]
 name = "value-bag"
-version = "1.9.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a84c137d37ab0142f0f2ddfe332651fdbf252e7b7dbb4e67b6c1f1b2e925101"
+checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
 
 [[package]]
 name = "vcpkg"
@@ -6751,6 +6802,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpki-root-certs"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36a29fc0408b113f68cf32637857ab740edfafdf460c326cd2afaa2d84cc05dc"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "webpki-roots"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6862,6 +6922,15 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
+version = "0.45.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
+dependencies = [
+ "windows-targets 0.42.2",
+]
+
+[[package]]
+name = "windows-sys"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
@@ -6903,6 +6972,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
 dependencies = [
  "windows-link 0.2.0",
+]
+
+[[package]]
+name = "windows-targets"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071"
+dependencies = [
+ "windows_aarch64_gnullvm 0.42.2",
+ "windows_aarch64_msvc 0.42.2",
+ "windows_i686_gnu 0.42.2",
+ "windows_i686_msvc 0.42.2",
+ "windows_x86_64_gnu 0.42.2",
+ "windows_x86_64_gnullvm 0.42.2",
+ "windows_x86_64_msvc 0.42.2",
 ]
 
 [[package]]
@@ -6955,6 +7039,12 @@ dependencies = [
 
 [[package]]
 name = "windows_aarch64_gnullvm"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8"
+
+[[package]]
+name = "windows_aarch64_gnullvm"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8"
@@ -6973,6 +7063,12 @@ checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
 
 [[package]]
 name = "windows_aarch64_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43"
+
+[[package]]
+name = "windows_aarch64_msvc"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc"
@@ -6988,6 +7084,12 @@ name = "windows_aarch64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
+
+[[package]]
+name = "windows_i686_gnu"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -7021,6 +7123,12 @@ checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
 
 [[package]]
 name = "windows_i686_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060"
+
+[[package]]
+name = "windows_i686_msvc"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406"
@@ -7036,6 +7144,12 @@ name = "windows_i686_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
+
+[[package]]
+name = "windows_x86_64_gnu"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36"
 
 [[package]]
 name = "windows_x86_64_gnu"
@@ -7057,6 +7171,12 @@ checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3"
+
+[[package]]
+name = "windows_x86_64_gnullvm"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc"
@@ -7072,6 +7192,12 @@ name = "windows_x86_64_gnullvm"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
+
+[[package]]
+name = "windows_x86_64_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0"
 
 [[package]]
 name = "windows_x86_64_msvc"
