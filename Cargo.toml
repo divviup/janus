@@ -25,8 +25,9 @@ version = "0.9.0-prerelease-1"
 [workspace.dependencies]
 anyhow = "1"
 assert_matches = "1"
+async-stream = "0.3"
 async-trait = "0.1"
-aws-lc-rs = "1.15.3"
+aws-lc-rs = "1.15.4"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.6.1"
@@ -43,7 +44,7 @@ deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
 educe = { version = "0.6.0", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
-fixed = "1.29"
+fixed = "1.30"
 futures = "0.3.31"
 git-version = "0.3.9"
 hex = "0.4.3"
@@ -96,7 +97,7 @@ serde_json = "1.0.149"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
 serde_yaml = "0.9.34"
-signal-hook = "0.4.1"
+signal-hook = "0.4.3"
 signal-hook-tokio = "0.4.0"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
 # sqlx-mysql which pulls in the vulnerable rsa crate
@@ -130,7 +131,7 @@ trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
 trycmd = "0.15.10"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.19.0", features = ["v4"] }
+uuid = { version = "1.20.0", features = ["v4"] }
 wait-timeout = "0.2.1"
 
 [profile.ci]

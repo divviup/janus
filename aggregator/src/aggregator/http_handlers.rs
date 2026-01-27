@@ -3,6 +3,10 @@ use std::{borrow::Cow, sync::Arc, time::Duration as StdDuration};
 use anyhow::Context;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures::{
+    io::{AsyncRead, AsyncReadExt},
+    stream::Stream,
+};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
     TIME_HISTOGRAM_BOUNDARIES,
@@ -20,8 +24,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, TaskId,
-    UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
+    CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
+    TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
@@ -29,7 +33,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Meter},
 };
-use prio::codec::Encode;
+use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -594,39 +598,82 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
     conn
 }
 
+/// Streams reports decoded from an async reader. This function reads the body in chunks and
+/// yields reports as soon as they're fully decoded. When a chunk boundary falls in the middle
+/// of a report, the incomplete bytes are buffered until the next chunk arrives.
+///
+/// This method is pub(super) so that its tests can reside in tests/report.rs.
+pub(super) fn decode_reports_stream<R>(mut body: R) -> impl Stream<Item = Result<Report, Error>>
+where
+    R: AsyncRead + Unpin,
+{
+    async_stream::try_stream! {
+        const CHUNK_SIZE: usize = 64 * 1024;
+        let mut chunk = vec![0u8; CHUNK_SIZE];
+        let mut buffer: VecDeque<u8> = VecDeque::with_capacity(CHUNK_SIZE);
+
+        loop {
+            // Read a chunk from the body (reusing the same buffer)
+            let bytes_read = body.read(&mut chunk).await
+                .map_err(|e| match e.kind() {
+                    std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::TimedOut => Error::ClientDisconnected,
+                    _ => Error::BadRequest(e.into()),
+                })?;
+
+            if bytes_read == 0 {
+                if !buffer.is_empty() {
+                    Err(Error::MessageDecode(CodecError::BytesLeftOver(buffer.len())))?;
+                }
+                break;
+            }
+
+            buffer.extend(&chunk[..bytes_read]);
+            buffer.make_contiguous();
+            let (contiguous_slice, _) = buffer.as_slices();
+            let mut cursor = Cursor::new(contiguous_slice);
+            let mut bytes_consumed = 0;
+
+            loop {
+                match Report::decode(&mut cursor) {
+                    Ok(report) => {
+                        bytes_consumed = cursor.position() as usize;
+                        yield report;
+                    }
+                    Err(decode_error) => match decode_error {
+                        CodecError::LengthPrefixTooBig(_) => {
+                            // Incomplete report - insufficient remaining bytes in the buffer
+                            break;
+                        }
+                        CodecError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            // Incomplete report - we didn't make it to the end
+                            break;
+                        }
+                        _ => {
+                            Err(Error::MessageDecode(decode_error))?
+                        }
+                    }
+                }
+            }
+
+            // Remove decoded bytes from buffer, keeping incomplete report data
+            buffer.drain(..bytes_consumed);
+        }
+    }
+}
+
 /// API handler for the "/tasks/.../reports" POST endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<EncodedBody<UploadResponse>, ArcError> {
     validate_content_type(conn, UploadRequest::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(conn).map_err(Arc::new)?;
-
-    // Validate Content-Length if present. For chunked Transfer-Encoding, there won't be a
-    // Content-Length header, which is OK - we use body.len() for decoding in both cases.
-    if let Some(content_length) = conn.request_headers().get(KnownHeaderName::ContentLength) {
-        let content_length = content_length
-            .as_str()
-            .ok_or(Arc::new(Error::InvalidMessage(
-                Some(task_id),
-                "invalid content length encoding",
-            )))?
-            .parse::<usize>()
-            .map_err(|_| Arc::new(Error::InvalidMessage(Some(task_id), "bad content length")))?;
-        if content_length != body.len() {
-            return Err(Arc::new(Error::InvalidMessage(
-                Some(task_id),
-                "unexpected content length",
-            ))
-            .into());
-        }
-    }
-
-    let response = conn
-        .cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
-        .await
-        .ok_or(Arc::new(Error::ClientDisconnected))??;
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -635,6 +682,10 @@ async fn upload<C: Clock>(
         conn.response_headers_mut()
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
+
+    let response = aggregator
+        .handle_upload(&task_id, decode_reports_stream(conn.request_body().await))
+        .await?;
 
     // Regardless of whether all or any reports were accepted, return 200 OK to indicate that the
     // HTTP messages were exchanged successfully. The client will have to examine the response body

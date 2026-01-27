@@ -1,7 +1,7 @@
 use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
 
 use assert_matches::assert_matches;
-use futures::future::try_join_all;
+use futures::stream::{self, Stream};
 use janus_aggregator_core::{
     datastore::{
         Datastore,
@@ -35,7 +35,7 @@ use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;
 
 use crate::aggregator::{
-    Aggregator, Config,
+    Aggregator, Config, Error,
     test_util::{create_report, create_report_custom, default_aggregator_config},
 };
 
@@ -100,6 +100,16 @@ impl UploadTest {
     }
 }
 
+/// Helper to convert a single report into a Stream for testing
+fn report_stream(report: Report) -> impl Stream<Item = Result<Report, Error>> {
+    stream::iter(vec![Ok(report)])
+}
+
+/// Helper to convert multiple reports into a Stream for testing
+fn reports_stream(reports: Vec<Report>) -> impl Stream<Item = Result<Report, Error>> {
+    stream::iter(reports.into_iter().map(Ok))
+}
+
 #[tokio::test]
 async fn upload() {
     let UploadTest {
@@ -126,7 +136,7 @@ async fn upload() {
     );
 
     aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -144,7 +154,7 @@ async fn upload() {
 
     // Report uploads are idempotent.
     aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -160,7 +170,7 @@ async fn upload() {
         Vec::new(),
     );
     aggregator
-        .handle_upload(task.id(), &mutated_report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(mutated_report))
         .await
         .unwrap();
 
@@ -221,15 +231,10 @@ async fn upload_batch() {
     .collect();
     let want_report_ids: HashSet<_> = reports.iter().map(|r| *r.metadata().id()).collect();
 
-    let aggregator = Arc::new(aggregator);
-    try_join_all(reports.iter().map(|r| {
-        let aggregator = Arc::clone(&aggregator);
-        let enc = r.get_encoded().unwrap();
-        let task_id = task.id();
-        async move { aggregator.handle_upload(task_id, &enc).await }
-    }))
-    .await
-    .unwrap();
+    aggregator
+        .handle_upload(task.id(), reports_stream(reports))
+        .await
+        .unwrap();
 
     let got_report_ids = datastore
         .run_unnamed_tx(|tx| {
@@ -301,7 +306,7 @@ async fn upload_wrong_hpke_config_id() {
     );
 
     let result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let report_upload_status = &result.status()[0];
@@ -352,7 +357,7 @@ async fn upload_report_in_the_future_boundary_condition() {
     );
 
     aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
 
@@ -411,7 +416,7 @@ async fn upload_report_in_the_future_past_clock_skew() {
     );
 
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -491,7 +496,7 @@ async fn upload_report_for_collected_batch() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -569,7 +574,7 @@ async fn upload_report_task_not_started() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -638,7 +643,7 @@ async fn upload_report_task_ended() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -713,7 +718,7 @@ async fn upload_report_report_expired() {
     // won't be stored (it's dropped asynchronously during batch write), and we want to see
     // the ReportDropped status returned.
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -791,7 +796,7 @@ async fn upload_report_faulty_encryption() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -856,7 +861,7 @@ async fn upload_report_public_share_decode_failure() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -935,7 +940,7 @@ async fn upload_report_leader_input_share_decode_failure() {
 
     // Try to upload the report, verify that we get the expected error.
     let result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &result.status()[0];
@@ -1008,7 +1013,7 @@ async fn upload_report_duplicate_extensions() {
 
     // Try to upload the report, verify that we get the expected error.
     let upload_result = aggregator
-        .handle_upload(task.id(), &report.get_encoded().unwrap())
+        .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
     let result_upload_status = &upload_result.status()[0];
@@ -1037,4 +1042,80 @@ async fn upload_report_duplicate_extensions() {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 1
         ))
     )
+}
+
+#[tokio::test]
+async fn upload_report_decode_failure() {
+    // This test verifies that when a Report fails to decode that the stream aborts,
+    // but processes the earlier reports.
+
+    install_test_trace_subscriber();
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        task,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let task = task.leader_view().unwrap();
+
+    let report = create_report(
+        &task,
+        &hpke_keypair,
+        clock.now_aligned_to_precision(task.time_precision()),
+    );
+
+    // Create a stream that yields this decode error (simulating what decode_reports_stream does)
+    let error_stream = stream::iter(vec![
+        Ok(report),
+        Err(Error::MessageDecode(
+            prio::codec::CodecError::UnexpectedValue,
+        )),
+    ]);
+
+    let error = aggregator
+        .handle_upload(task.id(), error_stream)
+        .await
+        .unwrap_err();
+
+    // Should recieve a MessageDecode error
+    assert_matches!(
+        *error,
+        Error::MessageDecode(_),
+        "A decoding error should become Error::MessageDecode"
+    );
+
+    // Wait for the report writer to complete anyway
+    tokio::time::timeout(
+        StdDuration::from_secs(5),
+        runtime_manager.wait_for_completed_tasks("aggregator", 1),
+    )
+    .await
+    .unwrap();
+
+    // Verify the success was recorded in counters
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+
+    // Counter position 5 is report_success
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 0, 0, 0, 0, 1, 0, 0, 0, 0
+        )),
+        "Should increment report_success counter"
+    );
 }
