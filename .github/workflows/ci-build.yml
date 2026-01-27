@@ -116,13 +116,15 @@ jobs:
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v6
+    - name: Install Nightly rustfmt
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rustfmt
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust-toolchain }}
-        components: clippy, rustfmt
-    - name: Install nightly rustfmt
-      run: rustup toolchain install nightly --component rustfmt
+        components: clippy
     - name: Format
       run: cargo +nightly fmt --message-format human -- --check
     - name: Clippy
