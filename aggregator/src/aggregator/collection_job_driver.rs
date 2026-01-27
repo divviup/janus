@@ -1,10 +1,7 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use crate::aggregator::{
-    BatchAggregationsIterator, Error, RequestBody, aggregate_share::AggregateShareComputer,
-    batch_mode::CollectableBatchMode, http_handlers::AGGREGATE_SHARES_ROUTE,
-    send_request_to_helper,
-};
+use std::{borrow::Cow, sync::Arc, time::Duration};
+
 use anyhow::bail;
 use bytes::Bytes;
 use educe::Educe;
@@ -39,9 +36,14 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
 };
 use reqwest::Method;
-use std::{borrow::Cow, sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
+
+use crate::aggregator::{
+    BatchAggregationsIterator, Error, RequestBody, aggregate_share::AggregateShareComputer,
+    batch_mode::CollectableBatchMode, http_handlers::AGGREGATE_SHARES_ROUTE,
+    send_request_to_helper,
+};
 
 /// Drives a collection job.
 #[derive(Educe)]
@@ -890,14 +892,8 @@ impl RetryStrategy {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::{
-            Error,
-            collection_job_driver::{CollectionJobDriver, RetryStrategy},
-            test_util::{BATCH_AGGREGATION_SHARD_COUNT, fake_aggregate_share},
-        },
-        binary_utils::job_driver::JobDriver,
-    };
+    use std::{sync::Arc, time::Duration as StdDuration};
+
     use assert_matches::assert_matches;
     use chrono::TimeDelta;
     use http::{StatusCode, header::CONTENT_TYPE};
@@ -937,8 +933,16 @@ mod tests {
         vdaf::dummy,
     };
     use rand::random;
-    use std::{sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
+
+    use crate::{
+        aggregator::{
+            Error,
+            collection_job_driver::{CollectionJobDriver, RetryStrategy},
+            test_util::{BATCH_AGGREGATION_SHARD_COUNT, fake_aggregate_share},
+        },
+        binary_utils::job_driver::JobDriver,
+    };
 
     async fn setup_collection_job_test_case(
         server: &mut mockito::Server,

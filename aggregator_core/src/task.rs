@@ -1,6 +1,7 @@
 //! Shared parameters for a DAP task.
 
-use crate::SecretBytes;
+use std::{array::TryFromSliceError, str::FromStr};
+
 use anyhow::anyhow;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
@@ -16,8 +17,9 @@ use janus_messages::{
 use postgres_types::{FromSql, ToSql};
 use rand::{Rng, distr::StandardUniform, random, rng};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-use std::{array::TryFromSliceError, str::FromStr};
 use url::Url;
+
+use crate::SecretBytes;
 
 /// Errors that methods and functions in this module may return.
 #[derive(Debug, thiserror::Error)]
@@ -780,13 +782,8 @@ impl<'de> Deserialize<'de> for AggregatorTask {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::{
-        SecretBytes,
-        task::{
-            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode,
-            CommonTaskParameters, Error, VerifyKey,
-        },
-    };
+    use std::collections::HashMap;
+
     use educe::Educe;
     use janus_core::{
         auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -799,8 +796,15 @@ pub mod test_util {
         HpkeConfigId, Role, TaskId, Time, taskprov::TimePrecision,
     };
     use rand::{Rng, distr::StandardUniform, random, rng};
-    use std::collections::HashMap;
     use url::Url;
+
+    use crate::{
+        SecretBytes,
+        task::{
+            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode,
+            CommonTaskParameters, Error, VerifyKey,
+        },
+    };
 
     /// All parameters and secrets for a task, for all participants.
     #[derive(Clone, Educe, PartialEq, Eq)]
@@ -818,8 +822,8 @@ pub mod test_util {
         helper_aggregation_mode: AggregationMode,
         /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
         collector_hpke_keypair: HpkeKeypair,
-        /// Token used to authenticate messages exchanged between the aggregators in the aggregation
-        /// sub-protocol.
+        /// Token used to authenticate messages exchanged between the aggregators in the
+        /// aggregation sub-protocol.
         aggregator_auth_token: AuthenticationToken,
         /// Token used to authenticate messages exchanged between the collector and leader in the
         /// collection sub-protocol.
@@ -1366,13 +1370,6 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        SecretBytes,
-        task::{
-            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode, VdafInstance,
-            test_util::TaskBuilder,
-        },
-    };
     use assert_matches::assert_matches;
     use chrono::TimeDelta;
     use janus_core::{
@@ -1387,6 +1384,14 @@ mod tests {
     use rand::random;
     use serde_json::json;
     use serde_test::{Token, assert_de_tokens, assert_tokens};
+
+    use crate::{
+        SecretBytes,
+        task::{
+            AggregationMode, AggregatorTask, AggregatorTaskParameters, BatchMode, VdafInstance,
+            test_util::TaskBuilder,
+        },
+    };
 
     #[test]
     fn leader_task_serialization() {

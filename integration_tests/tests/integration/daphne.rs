@@ -1,7 +1,5 @@
-use crate::{
-    common::{TestContext, build_test_task, submit_measurements_and_verify_aggregate},
-    initialize_rustls,
-};
+use std::time::Duration;
+
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
 #[cfg(feature = "testcontainer")]
@@ -11,7 +9,11 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
-use std::time::Duration;
+
+use crate::{
+    common::{TestContext, build_test_task, submit_measurements_and_verify_aggregate},
+    initialize_rustls,
+};
 
 const VERSION_PATH: &str = "/v09/";
 

@@ -2,11 +2,18 @@
 
 pub mod job_driver;
 
-use crate::{
-    config::{BinaryConfig, DbConfig},
-    metrics::install_metrics_exporter,
-    trace::{TraceReloadHandle, install_trace_subscriber},
+use std::{
+    fmt::{self, Debug, Formatter},
+    fs,
+    future::Future,
+    net::SocketAddr,
+    panic,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
+
 use anyhow::{Context as _, Result, anyhow};
 use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
@@ -23,17 +30,6 @@ use opentelemetry_sdk::metrics::MetricError;
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use rustls::RootCertStore;
 use rustls_pki_types::{CertificateDer, pem::PemObject};
-use std::{
-    fmt::{self, Debug, Formatter},
-    fs,
-    future::Future,
-    net::SocketAddr,
-    panic,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{runtime, sync::oneshot};
 use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
@@ -44,6 +40,12 @@ use trillium_api::{State, api};
 use trillium_head::Head;
 use trillium_router::Router;
 use trillium_tokio::Stopper;
+
+use crate::{
+    config::{BinaryConfig, DbConfig},
+    metrics::install_metrics_exporter,
+    trace::{TraceReloadHandle, install_trace_subscriber},
+};
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
@@ -536,6 +538,20 @@ fn initialize_rayon(stack_size: Option<usize>) -> Result<(), ThreadPoolBuildErro
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use clap::CommandFactory;
+    use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
+    use janus_core::test_util::{
+        install_test_trace_subscriber,
+        testcontainers::{Postgres, Volume},
+    };
+    use opentelemetry_sdk::metrics::data::Gauge;
+    use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
+    use tracing_subscriber::{EnvFilter, reload};
+    use trillium::Status;
+    use trillium_testing::prelude::*;
+
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
         binary_utils::{
@@ -545,18 +561,6 @@ mod tests {
         config::DbConfig,
         metrics::test_util::InMemoryMetricInfrastructure,
     };
-    use clap::CommandFactory;
-    use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
-    use janus_core::test_util::{
-        install_test_trace_subscriber,
-        testcontainers::{Postgres, Volume},
-    };
-    use opentelemetry_sdk::metrics::data::Gauge;
-    use std::fs;
-    use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
-    use tracing_subscriber::{EnvFilter, reload};
-    use trillium::Status;
-    use trillium_testing::prelude::*;
 
     #[test]
     fn verify_app() {

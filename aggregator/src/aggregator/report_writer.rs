@@ -1,8 +1,12 @@
-use crate::aggregator::{
-    Error,
-    batch_mode::UploadableBatchMode,
-    error::{ReportRejection, ReportRejectionReason},
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    marker::PhantomData,
+    mem::{replace, take},
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
 };
+
 use async_trait::async_trait;
 use futures::future::{join_all, try_join_all};
 use janus_aggregator_core::{
@@ -14,20 +18,18 @@ use janus_aggregator_core::{
 use janus_core::{Runtime, time::Clock};
 use janus_messages::TaskId;
 use rand::{Rng, rng};
-use std::{
-    collections::BTreeMap,
-    fmt::Debug,
-    marker::PhantomData,
-    mem::{replace, take},
-    sync::{Arc, Mutex as StdMutex},
-    time::Duration,
-};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
     time::{Instant, sleep_until},
 };
 use tracing::{debug, error};
+
+use crate::aggregator::{
+    Error,
+    batch_mode::UploadableBatchMode,
+    error::{ReportRejection, ReportRejectionReason},
+};
 
 type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
 
@@ -309,8 +311,8 @@ where
     }
 }
 
-/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it across
-/// futures.
+/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it
+/// across futures.
 #[derive(Debug, Default, Clone)]
 pub struct TaskUploadCounters(Arc<StdMutex<BTreeMap<TaskId, TaskUploadCounter>>>);
 

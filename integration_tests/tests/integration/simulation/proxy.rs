@@ -97,7 +97,8 @@ impl FaultInjector {
     }
 }
 
-/// A [`Handler`] wrapper that inspects request and response bodies, in order to trigger test failures.
+/// A [`Handler`] wrapper that inspects request and response bodies, in order to trigger test
+/// failures.
 #[derive(Handler)]
 pub(super) struct InspectHandler<H> {
     #[handler(except = [run, before_send, name])]

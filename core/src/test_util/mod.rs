@@ -1,4 +1,5 @@
-use crate::vdaf::vdaf_application_context;
+use std::{fmt::Debug, sync::Once};
+
 use assert_matches::assert_matches;
 use janus_messages::{ReportId, Role, TaskId};
 use prio::{
@@ -8,9 +9,10 @@ use prio::{
     vdaf,
 };
 use serde::{Serialize, de::DeserializeOwned};
-use std::{fmt::Debug, sync::Once};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
+
+use crate::vdaf::vdaf_application_context;
 
 pub mod kubernetes;
 pub mod runtime;

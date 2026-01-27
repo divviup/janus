@@ -1,21 +1,20 @@
-use super::{
-    Aggregator, Config, Error,
-    error::ArcError,
-    queue::{LIFORequestQueue, queued_lifo},
+use std::{
+    borrow::Cow, collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration,
 };
-use crate::aggregator::AggregationJobContinueResult;
-use crate::aggregator::problem_details::{
-    ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt,
-};
+
 use anyhow::Context;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use futures::io::{AsyncRead, AsyncReadExt};
-use futures::stream::Stream;
+use futures::{
+    io::{AsyncRead, AsyncReadExt},
+    stream::Stream,
+};
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES, datastore::Datastore, datastore::Error as datastoreError,
-    instrumented, taskprov::taskprov_task_id,
+    TIME_HISTOGRAM_BOUNDARIES,
+    datastore::{Datastore, Error as datastoreError},
+    instrumented,
+    taskprov::taskprov_task_id,
 };
 use janus_core::{
     Runtime,
@@ -39,16 +38,22 @@ use opentelemetry::{
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
-#[allow(unused_imports)] // Used in async_stream macro expansion
-use std::{
-    borrow::Cow, collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration,
-};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::Metrics;
 use trillium_router::{Router, RouterConnExt};
+
+use super::{
+    Aggregator, Config, Error,
+    error::ArcError,
+    queue::{LIFORequestQueue, queued_lifo},
+};
+use crate::aggregator::{
+    AggregationJobContinueResult,
+    problem_details::{ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt},
+};
 
 #[cfg(test)]
 mod tests;
@@ -1039,7 +1044,8 @@ fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
         .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))
 }
 
-/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path parameters.
+/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path
+/// parameters.
 fn parse_aggregate_share_id(conn: &Conn) -> Result<AggregateShareId, Error> {
     let encoded = conn.param("aggregate_share_id").ok_or_else(|| {
         Error::Internal("aggregate_share_id parameter is missing from captures".into())
@@ -1139,7 +1145,8 @@ impl TryFromConn for BodyBytes {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::test_util::default_aggregator_config;
+    use std::sync::Arc;
+
     use janus_aggregator_core::{
         datastore::{
             Datastore,
@@ -1154,11 +1161,11 @@ pub mod test_util {
         time::MockClock,
     };
     use janus_messages::codec::Decode;
-    use std::sync::Arc;
     use trillium::Handler;
     use trillium_testing::{TestConn, assert_headers};
 
     use super::AggregatorHandlerBuilder;
+    use crate::aggregator::test_util::default_aggregator_config;
 
     pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn

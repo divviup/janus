@@ -1,14 +1,8 @@
 #![cfg(feature = "in-cluster")]
 
-use crate::{
-    common::{
-        TestContext, build_test_task, collect_aggregate_result_generic,
-        submit_measurements_and_verify_aggregate, submit_measurements_generic,
-    },
-    initialize_rustls,
-};
-use chrono::TimeDelta;
-use chrono::prelude::*;
+use std::{env, iter, str::FromStr, time::Duration};
+
+use chrono::{TimeDelta, prelude::*};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask,
@@ -36,11 +30,18 @@ use prio::{
     field::{Field128, FieldElementWithInteger},
     vdaf::prio3::Prio3,
 };
-use std::{env, iter, str::FromStr, time::Duration};
 use trillium_rustls::RustlsConfig;
 use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
+
+use crate::{
+    common::{
+        TestContext, build_test_task, collect_aggregate_result_generic,
+        submit_measurements_and_verify_aggregate, submit_measurements_generic,
+    },
+    initialize_rustls,
+};
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
 
@@ -53,9 +54,10 @@ const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(100);
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// If set, the integration tests will be run against remote instances of `divviup-api`, a Janus
-    /// leader and a Janus helper. If not set, the integration tests will be run against instances
-    /// of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes cluster.
+    /// If set, the integration tests will be run against remote instances of `divviup-api`, a
+    /// Janus leader and a Janus helper. If not set, the integration tests will be run against
+    /// instances of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes
+    /// cluster.
     ///
     /// See doccomments on InClusterJanusPair::new_in_cloud and InClusterJanusPair::new_in_kind for
     /// discussion of how to configure this test setup.
@@ -669,8 +671,13 @@ async fn in_cluster_time_bucketed_leader_selected() {
 
 #[cfg(feature = "in-cluster-rate-limits")]
 mod rate_limits {
-    use super::InClusterJanusPair;
-    use crate::initialize_rustls;
+    use std::{
+        env,
+        fs::File,
+        sync::{Arc, LazyLock},
+        time::Duration,
+    };
+
     use assert_matches::assert_matches;
     use http::Method;
     use janus_aggregator_core::task::BatchMode;
@@ -679,14 +686,11 @@ mod rate_limits {
     use rand::random;
     use reqwest::StatusCode;
     use serde::Deserialize;
-    use std::{
-        env,
-        fs::File,
-        sync::{Arc, LazyLock},
-        time::Duration,
-    };
     use tokio::sync::Semaphore;
     use url::Url;
+
+    use super::InClusterJanusPair;
+    use crate::initialize_rustls;
 
     /// Configuration for the rate limit test. We need to know the QPS and the window over which
     /// it is enforced so that we can send the appropriate number of requests. We load this config

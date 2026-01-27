@@ -1,11 +1,5 @@
-use crate::{
-    AsyncAggregator,
-    datastore::{
-        self, Transaction,
-        models::{BatchAggregation, CollectionJob},
-    },
-    task::AggregatorTask,
-};
+use std::iter;
+
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use janus_core::time::{Clock, DateTimeExt as _, IntervalExt as _, TimeExt as _};
@@ -14,7 +8,15 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     taskprov::TimePrecision,
 };
-use std::iter;
+
+use crate::{
+    AsyncAggregator,
+    datastore::{
+        self, Transaction,
+        models::{BatchAggregation, CollectionJob},
+    },
+    task::AggregatorTask,
+};
 
 #[async_trait]
 pub trait AccumulableBatchMode: BatchMode {
@@ -375,8 +377,9 @@ impl CollectableBatchMode for LeaderSelected {
 
 #[cfg(test)]
 mod tests {
-    use crate::batch_mode::CollectableBatchMode;
     use janus_messages::{Duration, Interval, Time, batch_mode::TimeInterval};
+
+    use crate::batch_mode::CollectableBatchMode;
 
     #[test]
     fn reject_null_collection_intervals() {

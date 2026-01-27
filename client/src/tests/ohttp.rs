@@ -1,7 +1,5 @@
-use crate::{
-    Client, Error, OHTTP_KEYS_MEDIA_TYPE, OHTTP_REQUEST_MEDIA_TYPE, OHTTP_RESPONSE_MEDIA_TYPE,
-    OhttpConfig,
-};
+use std::io::Cursor;
+
 use assert_matches::assert_matches;
 use bhttp::{Message, Mode, StatusCode};
 use http::header::{ACCEPT, CONTENT_TYPE};
@@ -22,8 +20,12 @@ use prio::{
     vdaf::prio3::{Prio3, Prio3Count},
 };
 use rand::random;
-use std::io::Cursor;
 use url::Url;
+
+use crate::{
+    Client, Error, OHTTP_KEYS_MEDIA_TYPE, OHTTP_REQUEST_MEDIA_TYPE, OHTTP_RESPONSE_MEDIA_TYPE,
+    OhttpConfig,
+};
 
 async fn build_client(server: &mockito::ServerGuard) -> Result<Client<Prio3Count>, Error> {
     let task_id = random();

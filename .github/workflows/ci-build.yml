@@ -116,23 +116,17 @@ jobs:
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v6
+    - name: Install Nightly rustfmt
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rustfmt
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust-toolchain }}
-        components: clippy, rustfmt
-    - name: Install ripgrep
-      run: sudo apt-get update && sudo apt-get install -y ripgrep
+        components: clippy
     - name: Format
-      run: cargo fmt --message-format human -- --check
-    - name: Check comment line length
-      run: |
-        # Find comments exceeding 100 characters (excluding URLs)
-        if rg --line-number --max-columns 150 '^.{101,}$' --type rust | rg ' //' | grep -v "://"; then
-          echo "Error: Found comments exceeding 100 characters (see above)"
-          echo "Please wrap long comments to stay within the 100 character limit"
-          exit 1
-        fi
+      run: cargo +nightly fmt --message-format human -- --check
     - name: Clippy
       run: cargo clippy --profile ci --workspace --all-targets
     - name: Clippy (all features)

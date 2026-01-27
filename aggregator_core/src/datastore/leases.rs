@@ -1,10 +1,7 @@
 //! Database accessors for leased jobs.
 
-use crate::datastore::{
-    AsyncAggregator, Error, RowExt, Transaction,
-    models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
-    task,
-};
+use std::fmt::Debug;
+
 use chrono::NaiveDateTime;
 use janus_core::{time::Clock, vdaf::VdafInstance};
 use janus_messages::{
@@ -12,8 +9,13 @@ use janus_messages::{
 };
 use postgres_types::{Json, Timestamp};
 use prio::codec::Decode;
-use std::fmt::Debug;
 use tokio_postgres::Row;
+
+use crate::datastore::{
+    AsyncAggregator, Error, RowExt, Transaction,
+    models::{AcquiredAggregationJob, AcquiredCollectionJob, LeaseToken},
+    task,
+};
 
 impl<C: Clock> Transaction<'_, C> {
     /// Return the lease on a collection job for the provided ID, or `None` if no such collection
@@ -69,7 +71,7 @@ WHERE collection_jobs.task_id = $1
             &stmt,
             &[
                 /* task ID */ &task_info.pkey,
-                /* collection_job_id*/ &collection_job_id.as_ref(),
+                /* collection_job_id */ &collection_job_id.as_ref(),
                 /* now */ &now,
             ],
         )
@@ -171,7 +173,7 @@ WHERE aggregation_jobs.task_id = $1
             &stmt,
             &[
                 /* task ID */ &task_info.pkey,
-                /* aggregation_job_id*/ &aggregation_job_id.as_ref(),
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
                 &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
             ],

@@ -1,4 +1,5 @@
-use crate::DAP_VERSION_IDENTIFIER;
+use std::str;
+
 use janus_messages::{TaskId, taskprov};
 use prio::{
     field::Field64,
@@ -9,7 +10,8 @@ use prio::{
     vdaf::{VdafError, prio3::Prio3, xof::XofHmacSha256Aes128},
 };
 use serde::{Deserialize, Serialize};
-use std::str;
+
+use crate::DAP_VERSION_IDENTIFIER;
 
 /// The length of the verify key parameter for Prio3 VDAF instantiations using
 /// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
@@ -596,9 +598,6 @@ macro_rules! vdaf_dispatch {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use crate::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-    use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
     use assert_matches::assert_matches;
     use prio::dp::{
         DifferentialPrivacyStrategy, PureDpBudget, Rational,
@@ -607,6 +606,10 @@ mod tests {
     #[cfg(feature = "fpvec_bounded_l2")]
     use prio::dp::{ZCdpBudget, distributions::ZCdpDiscreteGaussian};
     use serde_test::{Token, assert_tokens};
+
+    #[cfg(feature = "fpvec_bounded_l2")]
+    use crate::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
+    use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
 
     #[test]
     fn vdaf_serialization() {

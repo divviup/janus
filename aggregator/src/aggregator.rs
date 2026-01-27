@@ -1,33 +1,15 @@
 //! Common functionality for DAP aggregators.
 
-pub use crate::aggregator::error::Error;
-use crate::{
-    aggregator::{
-        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
-        aggregation_job_init::compute_helper_aggregate_init,
-        aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
-            ReportAggregationUpdate as _, UpdateWrite, WritableReportAggregation,
-        },
-        batch_mode::{CollectableBatchMode, UploadableBatchMode},
-        error::{
-            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
-            handle_ping_pong_error,
-        },
-        report_writer::{ReportWriteBatcher, WritableReport},
-    },
-    cache::{
-        HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
-        TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
-    },
-    config::TaskprovConfig,
-    diagnostic::AggregationJobInitForbiddenMutationEvent,
-    metrics::{
-        aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
-        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
-        report_aggregation_success_counter,
-    },
+use std::{
+    borrow::{Borrow, Cow},
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    panic,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration as StdDuration, Instant},
 };
+
 use aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue};
 use aws_lc_rs::{
     digest::{SHA256, digest},
@@ -102,18 +84,38 @@ use prio::{
 };
 use rand::{Rng, random, rng};
 use reqwest::Client;
-use std::{
-    borrow::{Borrow, Cow},
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    panic,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{Duration as StdDuration, Instant},
-};
 use tokio::{select, try_join};
 use tracing::{Level, debug, error, info, warn};
 use url::Url;
+
+pub use crate::aggregator::error::Error;
+use crate::{
+    aggregator::{
+        aggregate_share::{AggregateShareComputer, BatchAggregationsIterator},
+        aggregation_job_init::compute_helper_aggregate_init,
+        aggregation_job_writer::{
+            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
+            ReportAggregationUpdate as _, UpdateWrite, WritableReportAggregation,
+        },
+        batch_mode::{CollectableBatchMode, UploadableBatchMode},
+        error::{
+            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
+            handle_ping_pong_error,
+        },
+        report_writer::{ReportWriteBatcher, WritableReport},
+    },
+    cache::{
+        HpkeKeypairCache, PeerAggregatorCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY,
+        TASK_AGGREGATOR_CACHE_DEFAULT_TTL, TaskAggregatorCache,
+    },
+    config::TaskprovConfig,
+    diagnostic::AggregationJobInitForbiddenMutationEvent,
+    metrics::{
+        aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
+        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
+        report_aggregation_success_counter,
+    },
+};
 
 pub mod aggregate_share;
 pub mod aggregation_job_continue;
@@ -208,8 +210,8 @@ pub struct Config {
     /// transaction.
     pub max_upload_batch_size: usize,
 
-    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`. This is the maximum delay added to the
+    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not
+    /// yet reached `max_batch_upload_size`. This is the maximum delay added to the
     /// `tasks/{task-id}/reports` endpoint due to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 
@@ -296,8 +298,8 @@ impl<C: Clock> Aggregator<C> {
                 cfg.max_upload_batch_write_delay,
             ),
             // If we're in taskprov mode, we can never cache None entries for tasks, since
-            // aggregators could insert tasks at any time and expect them to be available across all
-            // aggregator replicas.
+            // aggregators could insert tasks at any time and expect them to be available across
+            // all aggregator replicas.
             !cfg.taskprov_config.enabled,
             cfg.task_cache_capacity,
             cfg.task_cache_ttl,

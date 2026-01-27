@@ -1,4 +1,5 @@
-use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
+use std::time::Duration;
+
 use aws_lc_rs::signature::EcdsaKeyPair;
 use janus_aggregator_core::{
     datastore::{Datastore, task_counters::TaskAggregationCounter},
@@ -18,8 +19,9 @@ use prio::{
     vdaf::{self, Client, prio3::Prio3Count},
 };
 use rand::random;
-use std::time::Duration;
 use tokio::time::{Instant, sleep};
+
+use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
 
 pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 

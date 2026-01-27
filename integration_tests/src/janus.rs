@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-#[cfg(feature = "testcontainer")]
-use crate::interop_api;
+use std::net::{Ipv4Addr, SocketAddr};
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use janus_aggregator::{
     binaries::{
@@ -36,10 +36,12 @@ use janus_interop_binaries::{
     testcontainer::Aggregator,
 };
 use janus_messages::Role;
-use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "testcontainer")]
 use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
 use trillium_tokio::Stopper;
+
+#[cfg(feature = "testcontainer")]
+use crate::interop_api;
 
 /// Represents a running Janus test instance in a container.
 #[cfg(feature = "testcontainer")]

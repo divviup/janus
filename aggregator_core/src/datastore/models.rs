@@ -1,10 +1,12 @@
 //! This module contains models used by the datastore that are not DAP messages.
 
-use crate::{
-    AsyncAggregator,
-    datastore::{Error, SQL_UNIT_TIME_PRECISION},
-    task,
+use std::{
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+    ops::RangeInclusive,
+    time::Duration as StdDuration,
 };
+
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::ValueEnum;
@@ -35,11 +37,11 @@ use prio::{
 };
 use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Formatter},
-    hash::Hash,
-    ops::RangeInclusive,
-    time::Duration as StdDuration,
+
+use crate::{
+    AsyncAggregator,
+    datastore::{Error, SQL_UNIT_TIME_PRECISION},
+    task,
 };
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
@@ -880,7 +882,6 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> ReportAggregation<SE
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     //
     // Leader-only states.
-    //
     /// The Leader is ready to send an aggregation initialization request to the Helper.
     LeaderInit {
         /// The sequence of public extensions from this report's metadata.
@@ -923,7 +924,6 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
 
     //
     // Helper-only states.
-    //
     /// The Helper has received an aggregation initialization request from the Leader, and is
     /// processing it asynchronously.
     HelperInitProcessing {
@@ -951,7 +951,6 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
 
     //
     // Common states.
-    //
     /// Aggregation has completed successfully.
     Finished,
     /// Aggregation has completed unsuccessfully.

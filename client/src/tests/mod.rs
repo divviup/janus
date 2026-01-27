@@ -1,4 +1,3 @@
-use crate::{Client, ClientParameters, Error, HpkeConfiguration, default_http_client};
 use assert_matches::assert_matches;
 use hex_literal::hex;
 use http::{StatusCode, header::CONTENT_TYPE};
@@ -16,6 +15,8 @@ use prio::{
 };
 use rand::random;
 use url::Url;
+
+use crate::{Client, ClientParameters, Error, HpkeConfiguration, default_http_client};
 
 #[cfg(feature = "ohttp")]
 mod ohttp;

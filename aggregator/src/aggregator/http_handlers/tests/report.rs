@@ -1,14 +1,5 @@
-use crate::{
-    aggregator::{
-        http_handlers::{
-            AggregatorHandlerBuilder,
-            test_util::take_response_body,
-            test_util::{HttpHandlerTest, take_problem_details},
-        },
-        test_util::{create_report, create_report_custom, default_aggregator_config},
-    },
-    metrics::test_util::InMemoryMetricInfrastructure,
-};
+use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
+
 use chrono::TimeDelta;
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
@@ -32,7 +23,6 @@ use opentelemetry_sdk::metrics::data::{Histogram, Sum};
 use prio::codec::{Encode, ParameterizedDecode};
 use rand::random;
 use serde_json::json;
-use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -41,6 +31,17 @@ use tokio::{
 use trillium::{KnownHeaderName, Status};
 use trillium_testing::{TestConn, assert_headers, prelude::post};
 use trillium_tokio::Stopper;
+
+use crate::{
+    aggregator::{
+        http_handlers::{
+            AggregatorHandlerBuilder,
+            test_util::{HttpHandlerTest, take_problem_details, take_response_body},
+        },
+        test_util::{create_report, create_report_custom, default_aggregator_config},
+    },
+    metrics::test_util::InMemoryMetricInfrastructure,
+};
 
 #[tokio::test]
 async fn upload_handler() {
@@ -1272,17 +1273,19 @@ async fn upload_client_http11_bulk() {
 
 /// These are all tests of the decode_reports_stream method in http_handlers.rs
 mod decode_reports_stream_tests {
-    use super::*;
-    use crate::aggregator::{Error, http_handlers::decode_reports_stream};
-    use assert_matches::assert_matches;
-    use futures::{StreamExt, io::Cursor};
-    use prio::codec::CodecError;
     use std::{
         cmp::min,
         io,
         pin::Pin,
         task::{Context, Poll},
     };
+
+    use assert_matches::assert_matches;
+    use futures::{StreamExt, io::Cursor};
+    use prio::codec::CodecError;
+
+    use super::*;
+    use crate::aggregator::{Error, http_handlers::decode_reports_stream};
 
     /// Helper to create a mock AsyncRead that returns an IO error
     struct ErrorReader {

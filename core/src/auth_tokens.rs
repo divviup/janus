@@ -1,3 +1,8 @@
+use std::{
+    str::{self, FromStr},
+    sync::LazyLock,
+};
+
 use anyhow::anyhow;
 use aws_lc_rs::{
     constant_time,
@@ -9,10 +14,6 @@ use http::{HeaderValue, header::AUTHORIZATION};
 use rand::{distr::StandardUniform, prelude::Distribution};
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
-use std::{
-    str::{self, FromStr},
-    sync::LazyLock,
-};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -463,9 +464,11 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
-    use rand::random;
     use std::str::FromStr as _;
+
+    use rand::random;
+
+    use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
 
     #[test]
     fn valid_dap_auth_token() {

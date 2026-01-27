@@ -1,18 +1,20 @@
-use crate::{
-    http::cached_resource::{CachedResource, expires_at},
-    initialize_rustls,
-    retries::test_util::test_http_request_exponential_backoff,
-    test_util::install_test_trace_subscriber,
-};
+use std::time::Duration;
+
 use http::{
     HeaderValue,
     header::{CACHE_CONTROL, CONTENT_TYPE},
 };
 use janus_messages::MediaType;
 use prio::codec::{Decode, Encode};
-use std::time::Duration;
 use tokio::time::Instant;
 use url::Url;
+
+use crate::{
+    http::cached_resource::{CachedResource, expires_at},
+    initialize_rustls,
+    retries::test_util::test_http_request_exponential_backoff,
+    test_util::install_test_trace_subscriber,
+};
 
 #[derive(Debug, Eq)]
 struct TestResource {}

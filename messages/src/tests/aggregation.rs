@@ -1,3 +1,5 @@
+use prio::topology::ping_pong::PingPongMessage;
+
 use crate::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected,
@@ -5,7 +7,6 @@ use crate::{
     ReportError, ReportId, ReportMetadata, ReportShare, Time, roundtrip_encoding,
     taskprov::TimePrecision,
 };
-use prio::topology::ping_pong::PingPongMessage;
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 

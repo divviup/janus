@@ -1,7 +1,3 @@
-use super::{
-    Error,
-    error::{ReportRejection, ReportRejectionReason},
-};
 use async_trait::async_trait;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -13,6 +9,11 @@ use janus_core::time::Clock;
 use janus_messages::{
     Role,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+};
+
+use super::{
+    Error,
+    error::{ReportRejection, ReportRejectionReason},
 };
 
 #[async_trait]

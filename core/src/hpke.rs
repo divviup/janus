@@ -1,5 +1,9 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
-use crate::DAP_VERSION_IDENTIFIER;
+use std::{
+    fmt::{self, Debug},
+    str::FromStr,
+};
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use constcat::concat;
 use educe::Educe;
@@ -11,13 +15,10 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
-use std::{
-    fmt::{self, Debug},
-    str::FromStr,
-};
-
 #[cfg(feature = "test-util")]
 use {quickcheck::Arbitrary, rand::random};
+
+use crate::DAP_VERSION_IDENTIFIER;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -358,16 +359,18 @@ impl HpkeKeypair {
 
 #[cfg(test)]
 mod tests {
-    use super::{HpkeApplicationInfo, Label};
-    #[allow(deprecated)]
-    use crate::hpke::{HpkeKeypair, HpkePrivateKey, open, seal};
+    use std::collections::HashSet;
+
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
         Role,
     };
     use serde::Deserialize;
-    use std::collections::HashSet;
+
+    use super::{HpkeApplicationInfo, Label};
+    #[allow(deprecated)]
+    use crate::hpke::{HpkeKeypair, HpkePrivateKey, open, seal};
 
     #[test]
     fn exchange_message() {
@@ -574,7 +577,8 @@ mod tests {
         // See https://github.com/cfrg/draft-irtf-cfrg-hpke/blob/5f503c564da00b0687b3de75f1dfbdfc4079ad31/test-vectors.json
         //
         // The file was processed with the following command:
-        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions: [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
+        // jq 'map({mode, kem_id, kdf_id, aead_id, info, enc, pkRm, skRm, base_nonce, encryptions:
+        // [.encryptions[0]]} | select(.mode == 0) | select(.aead_id != 65535))'
         let test_vectors: Vec<TestVector> =
             serde_json::from_str(include_str!("test-vectors.json")).unwrap();
         let mut algorithms_tested = HashSet::new();

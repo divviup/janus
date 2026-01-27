@@ -1,8 +1,7 @@
 //! Implements portions of aggregation job continuation for the Helper.
 
-use crate::aggregator::{
-    aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error,
-};
+use std::{panic, sync::Arc};
+
 use assert_matches::assert_matches;
 use janus_aggregator_core::{
     AsyncAggregator,
@@ -18,9 +17,12 @@ use janus_messages::{PrepareResp, PrepareStepResult, Role};
 use opentelemetry::metrics::Counter;
 use prio::topology::ping_pong::{Continued, PingPongState, PingPongTopology as _};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use std::{panic, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::{Span, info_span, trace_span};
+
+use crate::aggregator::{
+    aggregation_job_writer::WritableReportAggregation, handle_ping_pong_error,
+};
 
 #[derive(Clone)]
 pub struct AggregateContinueMetrics {
@@ -202,7 +204,6 @@ where
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use assert_matches::assert_matches;
     use janus_aggregator_core::task::test_util::Task;
     use janus_core::auth_tokens::test_util::WithAuthenticationToken;
@@ -213,6 +214,8 @@ pub mod test_util {
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::{TestConn, assert_headers, assert_status, prelude::post};
+
+    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -327,18 +330,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-            post_aggregation_job_expecting_status,
-        },
-        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
-        http_handlers::{
-            AggregatorHandlerBuilder,
-            test_util::{HttpHandlerTest, take_problem_details},
-        },
-        test_util::default_aggregator_config,
-    };
+    use std::sync::Arc;
+
     use janus_aggregator_core::{
         datastore::{
             Datastore,
@@ -370,9 +363,21 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::sync::Arc;
     use trillium::{Handler, Status};
     use trillium_testing::prelude::delete;
+
+    use crate::aggregator::{
+        aggregation_job_continue::test_util::{
+            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            post_aggregation_job_expecting_status,
+        },
+        aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
+        http_handlers::{
+            AggregatorHandlerBuilder,
+            test_util::{HttpHandlerTest, take_problem_details},
+        },
+        test_util::default_aggregator_config,
+    };
 
     struct AggregationJobContinueTestCase<
         const VERIFY_KEY_LENGTH: usize,

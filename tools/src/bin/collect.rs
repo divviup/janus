@@ -1,3 +1,5 @@
+use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
+
 use anyhow::Context;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{
@@ -28,7 +30,6 @@ use prio::{
     vdaf::{self, Vdaf, prio3::Prio3},
 };
 use rand::random;
-use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 use url::Url;
@@ -313,8 +314,8 @@ struct Options {
         display_order = 0
     )]
     vdaf: VdafType,
-    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when
-    /// used with --vdaf=histogram
+    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets,
+    /// when used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sumvec
@@ -717,10 +718,8 @@ impl BatchModeExt for LeaderSelected {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, Subcommands, VdafType, run,
-    };
+    use std::io::Write;
+
     use assert_matches::assert_matches;
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -735,8 +734,12 @@ mod tests {
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
-    use std::io::Write;
     use tempfile::NamedTempFile;
+
+    use crate::{
+        AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
+        QueryOptions, Subcommands, VdafType, run,
+    };
 
     const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
   "aead": "AesGcm128",

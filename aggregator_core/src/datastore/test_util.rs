@@ -1,7 +1,12 @@
-use crate::{
-    datastore::{Crypter, Datastore, Transaction},
-    test_util::noop_meter,
+use std::{
+    env,
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, Weak, mpsc},
+    thread::JoinHandle,
+    time::Duration,
 };
+
 use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
 use chrono::NaiveDateTime;
@@ -14,15 +19,6 @@ use rand::{Rng, distr::StandardUniform, random, rng};
 use sqlx::{
     Connection, PgConnection,
     migrate::{Migrate, Migrator},
-};
-use std::{
-    env,
-    path::PathBuf,
-    str::FromStr,
-    sync::mpsc,
-    sync::{Arc, Weak},
-    thread::JoinHandle,
-    time::Duration,
 };
 use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
 use tokio::{
@@ -37,6 +33,10 @@ use tokio_postgres::{Config, NoTls, connect};
 use tracing::trace;
 
 use super::SUPPORTED_SCHEMA_VERSIONS;
+use crate::{
+    datastore::{Crypter, Datastore, Transaction},
+    test_util::noop_meter,
+};
 
 pub struct EphemeralDatabase {
     db_thread: Option<JoinHandle<()>>,

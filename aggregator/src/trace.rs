@@ -1,17 +1,17 @@
 //! Configures a tracing subscriber for Janus.
 
-use serde::{Deserialize, Serialize};
 use std::{
     io::{IsTerminal, stdout},
     net::SocketAddr,
 };
+
+use serde::{Deserialize, Serialize};
 use tracing::Level;
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::FromEnvError, layer::SubscriberExt, reload,
 };
-
 #[cfg(feature = "otlp")]
 use {
     opentelemetry::{global::set_tracer_provider, trace::TracerProvider as _},

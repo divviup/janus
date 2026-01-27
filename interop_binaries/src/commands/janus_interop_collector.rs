@@ -1,8 +1,10 @@
-use crate::{
-    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
-    install_tracing_subscriber,
-    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    net::Ipv4Addr,
+    sync::Arc,
+    time::Duration as StdDuration,
 };
+
 use anyhow::Context;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
@@ -14,10 +16,11 @@ use fixed::{FixedI16, FixedI32};
 use janus_collector::Collector;
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_core::{
+    auth_tokens::AuthenticationToken,
+    hpke::HpkeKeypair,
     retries::ExponentialWithTotalDelayBuilder,
-    vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+    vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128},
 };
 use janus_messages::{
     BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
@@ -33,16 +36,16 @@ use prio::{
 use rand::{distr::StandardUniform, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    net::Ipv4Addr,
-    sync::Arc,
-    time::Duration as StdDuration,
-};
 use tokio::{sync::Mutex, task::JoinHandle};
 use trillium::{Conn, Handler};
 use trillium_api::{Json, State, api};
 use trillium_router::Router;
+
+use crate::{
+    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
+    install_tracing_subscriber,
+    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
+};
 
 #[derive(Educe, Deserialize)]
 #[educe(Debug)]

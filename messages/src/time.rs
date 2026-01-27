@@ -1,12 +1,14 @@
 //! DAP protocol types for representing time, duration, and intervals.
 
-use crate::{Error, taskprov::TimePrecision};
-use prio::codec::{CodecError, Decode, Encode};
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Display, Formatter},
     io::Cursor,
 };
+
+use prio::codec::{CodecError, Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{Error, taskprov::TimePrecision};
 
 /// DAP protocol message representing a duration in terms of the task's time precision.
 /// The value represents the number of time_precision intervals.
@@ -54,7 +56,6 @@ impl Duration {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     #[cfg(any(test, feature = "test-util"))]
     pub fn from_hours(hours: u64, time_precision: &TimePrecision) -> Self {
         Self::from_seconds(hours * 3600, time_precision)
@@ -67,7 +68,6 @@ impl Duration {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     pub fn as_seconds(&self, time_precision: &TimePrecision) -> u64 {
         self.0.saturating_mul(time_precision.as_seconds())
     }
@@ -92,7 +92,6 @@ impl Duration {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     pub fn to_chrono(&self, time_precision: &TimePrecision) -> Result<chrono::TimeDelta, Error> {
         let seconds = self.as_seconds(time_precision);
         chrono::TimeDelta::try_seconds(
@@ -119,7 +118,6 @@ impl Duration {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     pub fn from_chrono(delta: chrono::TimeDelta, time_precision: &TimePrecision) -> Self {
         let seconds = delta.num_seconds();
         assert!(
@@ -174,7 +172,6 @@ impl Time {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     pub fn from_seconds_since_epoch(timestamp: u64, time_precision: &TimePrecision) -> Self {
         let precision_secs = time_precision.as_seconds();
         assert!(precision_secs > 0);
@@ -189,7 +186,6 @@ impl Time {
     ///
     /// # Panics
     /// Panics if `time_precision.as_seconds()` is 0.
-    ///
     pub const fn as_seconds_since_epoch(&self, time_precision: &TimePrecision) -> u64 {
         let precision_secs = time_precision.as_seconds();
         assert!(precision_secs > 0);

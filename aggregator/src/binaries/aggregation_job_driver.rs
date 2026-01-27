@@ -1,15 +1,17 @@
+use std::{fmt::Debug, sync::Arc, time::Duration};
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use janus_core::{TokioRuntime, time::RealClock};
+use serde::{Deserialize, Serialize};
+use tracing::info;
+
 use crate::{
     aggregator::aggregation_job_driver::AggregationJobDriver,
     binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, job_driver::JobDriver},
     cache::HpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, JobDriverConfig, TaskprovConfig},
 };
-use anyhow::{Context, Result};
-use clap::Parser;
-use janus_core::{TokioRuntime, time::RealClock};
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, sync::Arc, time::Duration};
-use tracing::info;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     const CLIENT_USER_AGENT: &str = concat!(
@@ -142,8 +144,9 @@ pub struct Config {
     pub task_counter_shard_count: u64,
 
     /// Defines how often to refresh the HPKE configs cache in milliseconds. This affects how often
-    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined by
-    /// [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to specify this.
+    /// an aggregator becomes aware of HPKE key state changes. If unspecified, default is defined
+    /// by [`HpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
+    /// specify this.
     #[serde(default)]
     pub hpke_configs_refresh_interval: Option<u64>,
 
@@ -175,14 +178,16 @@ fn default_default_async_poll_interval() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use clap::CommandFactory;
+    use janus_core::test_util::roundtrip_encoding;
+
     use super::{Config, Options};
     use crate::config::{
         CommonConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
     };
-    use clap::CommandFactory;
-    use janus_core::test_util::roundtrip_encoding;
-    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn verify_app() {

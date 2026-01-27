@@ -1,7 +1,5 @@
-use crate::{
-    SecretBytes,
-    task::{AggregationMode, Error},
-};
+use std::{fmt, str::FromStr, sync::LazyLock};
+
 use anyhow::anyhow;
 use aws_lc_rs::{
     digest::{self, Digest, SHA256, digest},
@@ -16,8 +14,12 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
-use std::{fmt, str::FromStr, sync::LazyLock};
 use url::Url;
+
+use crate::{
+    SecretBytes,
+    task::{AggregationMode, Error},
+};
 
 #[derive(Educe, Clone, Copy, PartialEq, Eq)]
 #[educe(Debug)]
@@ -288,14 +290,15 @@ pub fn taskprov_task_id(encoded_task_config: &[u8]) -> TaskId {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::{
-        task::AggregationMode,
-        taskprov::{PeerAggregator, VerifyKeyInit},
-    };
     use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair};
     use janus_messages::{Duration, HpkeConfig, Role};
     use rand::random;
     use url::Url;
+
+    use crate::{
+        task::AggregationMode,
+        taskprov::{PeerAggregator, VerifyKeyInit},
+    };
 
     #[derive(Debug, Clone)]
     pub struct PeerAggregatorBuilder {

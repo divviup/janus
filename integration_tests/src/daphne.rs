@@ -1,6 +1,5 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
-use crate::interop_api;
 use janus_aggregator_core::task::test_util::{Task, TaskBuilder};
 use janus_interop_binaries::{
     ContainerLogsDropGuard, ContainerLogsSource, get_rust_log_level, test_util::await_ready_ok,
@@ -9,6 +8,8 @@ use janus_messages::{Role, Time};
 use serde_json::json;
 use testcontainers::{ContainerRequest, GenericImage, ImageExt, runners::AsyncRunner};
 use url::Url;
+
+use crate::interop_api;
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 

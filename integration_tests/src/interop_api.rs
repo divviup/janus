@@ -1,7 +1,8 @@
+use std::collections::HashMap;
+
 use janus_aggregator_core::task::test_util::Task;
 use janus_interop_binaries::AggregatorAddTaskRequest;
 use janus_messages::Role;
-use std::collections::HashMap;
 use url::Url;
 
 /// Send an interop test API request to add a DAP task. This assumes the server is available on

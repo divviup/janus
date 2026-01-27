@@ -1,28 +1,17 @@
 // allow reference to dummy::Vdaf's public share, which has the unit type
 #![allow(clippy::unit_arg)]
 
-use crate::{
-    batch_mode::CollectableBatchMode,
-    datastore::{
-        Crypter, Datastore, Error, RowExt, SUPPORTED_SCHEMA_VERSIONS, Transaction,
-        models::{
-            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-            AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-            CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
-            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval,
-        },
-        schema_versions_template,
-        test_util::{
-            EphemeralDatastore, EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
-            ephemeral_datastore_schema_version, generate_aead_key,
-        },
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+    ops::RangeInclusive,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
     },
-    task::{self, AggregationMode, AggregatorTask, test_util::TaskBuilder},
-    taskprov::test_util::PeerAggregatorBuilder,
-    test_util::noop_meter,
+    time::Duration as StdDuration,
 };
+
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
@@ -51,22 +40,34 @@ use prio::{
     vdaf::{dummy, prio3::Prio3Count},
 };
 use rand::{Rng, distr::StandardUniform, random, rng};
-use std::{
-    collections::{HashMap, HashSet},
-    iter,
-    ops::RangeInclusive,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration as StdDuration,
-};
 use tokio::{time::timeout, try_join};
 use url::Url;
 
 // This function is only used when there are multiple supported versions.
 #[allow(unused_imports)]
 use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
+use crate::{
+    batch_mode::CollectableBatchMode,
+    datastore::{
+        Crypter, Datastore, Error, RowExt, SUPPORTED_SCHEMA_VERSIONS, Transaction,
+        models::{
+            AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+            AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
+            CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
+            LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+            ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
+            SqlInterval,
+        },
+        schema_versions_template,
+        test_util::{
+            EphemeralDatastore, EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+            ephemeral_datastore_schema_version, generate_aead_key,
+        },
+    },
+    task::{self, AggregationMode, AggregatorTask, test_util::TaskBuilder},
+    taskprov::test_util::PeerAggregatorBuilder,
+    test_util::noop_meter,
+};
 
 const TIME_PRECISION_SECONDS: u64 = 100;
 const TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(TIME_PRECISION_SECONDS);

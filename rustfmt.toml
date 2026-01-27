@@ -2,5 +2,14 @@
 max_width = 100
 use_small_heuristics = "Default"
 
-# Note: comment_width, wrap_comments, and format_code_in_doc_comments are all in
-# nightly, and when they become stable we'll want to use them, too.
+# Comment formatting (requires nightly rustfmt)
+wrap_comments = true
+comment_width = 100
+
+# Unstable features
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+# Note: format_code_in_doc_comments is NOT enabled due to known issues
+# with block comment conversion and trailing comment alignment.
+# See: https://github.com/rust-lang/rustfmt/issues/5533

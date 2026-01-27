@@ -1,14 +1,5 @@
-use crate::aggregator::{
-    BatchAggregationsIterator,
-    aggregation_job_continue::test_util::{
-        post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-    },
-    http_handlers::test_util::HttpHandlerTest,
-    test_util::{
-        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
-        generate_helper_report_share,
-    },
-};
+use std::sync::Arc;
+
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -38,8 +29,19 @@ use prio::{
     vdaf::{Aggregator, dummy},
 };
 use rand::random;
-use std::sync::Arc;
 use trillium::Status;
+
+use crate::aggregator::{
+    BatchAggregationsIterator,
+    aggregation_job_continue::test_util::{
+        post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    },
+    http_handlers::test_util::HttpHandlerTest,
+    test_util::{
+        BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
+        generate_helper_report_share,
+    },
+};
 
 #[tokio::test]
 async fn aggregate_continue_sync() {

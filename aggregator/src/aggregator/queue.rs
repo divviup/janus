@@ -1,10 +1,3 @@
-use itertools::Itertools;
-use janus_aggregator_core::TIME_HISTOGRAM_BOUNDARIES;
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Histogram, Meter},
-};
-use opentelemetry_sdk::metrics::MetricError;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -13,6 +6,14 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use itertools::Itertools;
+use janus_aggregator_core::TIME_HISTOGRAM_BOUNDARIES;
+use opentelemetry::{
+    KeyValue,
+    metrics::{Counter, Histogram, Meter},
+};
+use opentelemetry_sdk::metrics::MetricError;
 use tokio::{
     select,
     sync::{
@@ -531,7 +532,6 @@ mod tests {
     use trillium_testing::{assert_ok, assert_status, methods::get};
 
     use super::Error;
-
     use crate::{
         aggregator::queue::{LIFORequestQueue, Metrics, queued_lifo},
         metrics::test_util::InMemoryMetricInfrastructure,

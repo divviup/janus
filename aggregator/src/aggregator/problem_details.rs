@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use janus_messages::{
     AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
 };
 use serde::Serialize;
-use std::time::Duration;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
 
@@ -132,7 +133,8 @@ impl RetryAfterConnExt for Conn {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
+    use std::{borrow::Cow, sync::Arc};
+
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::future::join_all;
@@ -144,16 +146,17 @@ mod tests {
         test_util::install_test_trace_subscriber,
         time::{Clock, DateTimeExt, RealClock},
     };
-    use janus_messages::taskprov::TimePrecision;
     use janus_messages::{
         Duration, Interval, ReportIdChecksum,
         problem_type::{DapProblemType, DapProblemTypeParseError},
+        taskprov::TimePrecision,
     };
     use rand::random;
     use reqwest::Client;
-    use std::{borrow::Cow, sync::Arc};
     use trillium::Status;
     use trillium_testing::{assert_headers, assert_status, prelude::post};
+
+    use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
 
     #[test]
     fn dap_problem_type_round_trip() {

@@ -1,4 +1,8 @@
-use crate::auth_tokens::AuthenticationToken;
+use std::{
+    fmt::{self, Display, Formatter},
+    time::Duration,
+};
+
 use anyhow::anyhow;
 use http::{StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
@@ -6,10 +10,10 @@ use janus_messages::problem_type::DapProblemType;
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
-use std::fmt::{self, Display, Formatter};
-use std::time::Duration;
 use tracing::warn;
 use trillium::{Conn, HeaderValue};
+
+use crate::auth_tokens::AuthenticationToken;
 
 pub mod cached_resource;
 #[cfg(test)]
@@ -202,9 +206,8 @@ mod tests {
     use assert_matches::assert_matches;
     use trillium_testing::TestConn;
 
-    use crate::auth_tokens::AuthenticationToken;
-
     use super::extract_bearer_token;
+    use crate::auth_tokens::AuthenticationToken;
 
     #[test]
     fn authorization_header() {

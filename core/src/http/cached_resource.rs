@@ -2,10 +2,8 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/html/rfc9111#section-5.2
 
-use crate::{
-    http::HttpErrorResponse,
-    retries::{ExponentialWithTotalDelayBuilder, retry_http_request},
-};
+use std::time::Duration;
+
 use backon::BackoffBuilder;
 use http::{
     HeaderValue,
@@ -13,9 +11,13 @@ use http::{
 };
 use janus_messages::MediaType;
 use prio::codec::Decode;
-use std::time::Duration;
 use tokio::time::Instant;
 use url::Url;
+
+use crate::{
+    http::HttpErrorResponse,
+    retries::{ExponentialWithTotalDelayBuilder, retry_http_request},
+};
 
 /// Errors that may arise while managing cached HTTP resources.
 #[derive(Debug, thiserror::Error)]

@@ -1,8 +1,5 @@
-use crate::aggregator::{
-    Config,
-    http_handlers::test_util::{decode_response_body, take_problem_details},
-    test_util::BATCH_AGGREGATION_SHARD_COUNT,
-};
+use std::{collections::HashSet, sync::Arc};
+
 use assert_matches::assert_matches;
 use http::StatusCode;
 use janus_aggregator_core::{
@@ -39,7 +36,6 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     TestConn, assert_body, assert_headers,
@@ -47,6 +43,11 @@ use trillium_testing::{
 };
 
 use super::http_handlers::AggregatorHandlerBuilder;
+use crate::aggregator::{
+    Config,
+    http_handlers::test_util::{decode_response_body, take_problem_details},
+    test_util::BATCH_AGGREGATION_SHARD_COUNT,
+};
 
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,

@@ -39,6 +39,10 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "ohttp")]
+use std::io::Cursor;
+use std::{convert::Infallible, fmt::Debug, sync::Arc, time::SystemTimeError};
+
 use backon::BackoffBuilder;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
@@ -67,9 +71,6 @@ use ohttp::{ClientRequest, KeyConfig};
 use ohttp_keys::OhttpKeys;
 use prio::{codec::Encode, vdaf};
 use rand::random;
-#[cfg(feature = "ohttp")]
-use std::io::Cursor;
-use std::{convert::Infallible, fmt::Debug, sync::Arc, time::SystemTimeError};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -812,11 +813,12 @@ impl HpkeConfiguration {
 
 #[cfg(feature = "ohttp")]
 pub mod ohttp_keys {
-    use crate::{ClientParameters, Error, OHTTP_KEYS_MEDIA_TYPE, OhttpConfig};
     use janus_core::http::cached_resource::{CachedResource, FromBytes};
     use janus_messages::MediaType;
     use ohttp::KeyConfig;
     use url::Url;
+
+    use crate::{ClientParameters, Error, OHTTP_KEYS_MEDIA_TYPE, OhttpConfig};
 
     /// Shim around a vector of OHTTP key configs so that we can implement traits on it locally.
     #[derive(Debug, Clone)]

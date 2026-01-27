@@ -1,18 +1,8 @@
 // allow reference to dummy::Vdaf's public share, which has the unit type
 #![allow(clippy::unit_arg)]
 
-use crate::{
-    aggregator::{
-        Error,
-        aggregation_job_driver::AggregationJobDriver,
-        test_util::{
-            BATCH_AGGREGATION_SHARD_COUNT, TASK_AGGREGATION_COUNTER_SHARD_COUNT,
-            assert_task_aggregation_counter, generate_helper_report_share,
-        },
-    },
-    binary_utils::job_driver::JobDriver,
-    cache::HpkeKeypairCache,
-};
+use std::{sync::Arc, time::Duration as StdDuration};
+
 use assert_matches::assert_matches;
 use chrono::TimeDelta;
 use futures::future::join_all;
@@ -61,9 +51,21 @@ use prio::{
     },
 };
 use rand::random;
-use std::{sync::Arc, time::Duration as StdDuration};
 use tokio::time::timeout;
 use trillium_tokio::Stopper;
+
+use crate::{
+    aggregator::{
+        Error,
+        aggregation_job_driver::AggregationJobDriver,
+        test_util::{
+            BATCH_AGGREGATION_SHARD_COUNT, TASK_AGGREGATION_COUNTER_SHARD_COUNT,
+            assert_task_aggregation_counter, generate_helper_report_share,
+        },
+    },
+    binary_utils::job_driver::JobDriver,
+    cache::HpkeKeypairCache,
+};
 
 const DEFAULT_ASYNC_POLL_INTERVAL: StdDuration = StdDuration::from_secs(1);
 

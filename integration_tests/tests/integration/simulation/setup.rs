@@ -1,9 +1,9 @@
-use crate::simulation::{
-    http_request_exponential_backoff,
-    model::Input,
-    proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
-    run::State,
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration as StdDuration,
 };
+
 use futures::future::BoxFuture;
 use janus_aggregator::{
     aggregator::{
@@ -37,12 +37,14 @@ use janus_core::{
     time::MockClock,
 };
 use prio::vdaf::prio3::Prio3Histogram;
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-    time::Duration as StdDuration,
-};
 use tokio::net::TcpListener;
+
+use crate::simulation::{
+    http_request_exponential_backoff,
+    model::Input,
+    proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
+    run::State,
+};
 
 // Labels for TestRuntimeManager.
 static LEADER_AGGREGATOR_REPORT_WRITER: &str = "leader_aggregator_report_writer";

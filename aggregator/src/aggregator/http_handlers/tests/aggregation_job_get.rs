@@ -1,7 +1,5 @@
-use crate::aggregator::{
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
-    test_util::generate_helper_report_share,
-};
+use std::sync::Arc;
+
 use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
@@ -21,9 +19,13 @@ use janus_messages::{
 };
 use prio::vdaf::dummy;
 use rand::random;
-use std::sync::Arc;
 use trillium::{Handler, Status};
 use trillium_testing::{TestConn, assert_body, assert_headers, prelude::get};
+
+use crate::aggregator::{
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
+    test_util::generate_helper_report_share,
+};
 
 #[tokio::test]
 async fn aggregation_job_get_ready() {

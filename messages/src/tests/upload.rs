@@ -1,9 +1,10 @@
+use prio::codec::Encode;
+
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
     Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, UploadRequest,
     UploadResponse, roundtrip_encoding, roundtrip_encoding_parameterized, taskprov::TimePrecision,
 };
-use prio::codec::Encode;
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
