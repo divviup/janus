@@ -610,7 +610,6 @@ where
         let mut buffer: VecDeque<u8> = VecDeque::with_capacity(CHUNK_SIZE);
 
         loop {
-            eprintln!("top of stream loop");
             // Read a chunk from the body (reusing the same buffer)
             let bytes_read = body.read(&mut chunk).await
                 .map_err(|e| match e.kind() {
@@ -637,21 +636,17 @@ where
             let mut bytes_consumed = 0;
 
             loop {
-                eprintln!("top of decode loop");
                 match Report::decode(&mut cursor) {
                     Ok(report) => {
-                        eprintln!("Got OK(report) {:?}", report);
                         bytes_consumed = cursor.position() as usize;
                         yield report;
                     }
                     Err(decode_error) => match decode_error {
                         CodecError::LengthPrefixTooBig(_) => {
-                            eprintln!("err-LengthPrefixTooBig");
                             // Incomplete report - insufficient remaining bytes in the buffer
                             break;
                         }
                         CodecError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            eprintln!("err-Io");
                             // Incomplete report - we didn't make it to the end
                             break;
                         }
