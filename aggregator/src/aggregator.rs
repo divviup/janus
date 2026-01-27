@@ -42,8 +42,9 @@ use fixed::{
     types::extra::{U15, U31},
 };
 use futures::{
-    future::{join_all, try_join_all},
-    stream::TryStreamExt,
+    Stream,
+    future::try_join_all,
+    stream::{FuturesOrdered, StreamExt, TryStreamExt},
 };
 use http::{Method, header::CONTENT_TYPE};
 use janus_aggregator_core::{
@@ -80,7 +81,7 @@ use janus_messages::{
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
     PlaintextInputShare, PrepareResp, Report, ReportError, ReportUploadStatus, Role, TaskId,
-    UploadRequest, UploadResponse,
+    UploadResponse,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -110,7 +111,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::try_join;
+use tokio::{select, try_join};
 use tracing::{Level, debug, error, info, warn};
 use url::Url;
 
@@ -379,14 +380,8 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_upload(
         &self,
         task_id: &TaskId,
-        request_bytes: &[u8],
+        reports: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
-        // Assume that request_bytes is the entire request body, and so its length is the HTTP
-        // Content-Length and can be used to decode the vector of reports.
-        let upload_request =
-            UploadRequest::get_decoded_with_param(&request_bytes.len(), request_bytes)
-                .map_err(|err| Arc::new(Error::MessageDecode(err)))?;
-
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -396,12 +391,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
         task_aggregator
-            .handle_upload(
-                &self.clock,
-                &self.hpke_keypairs,
-                &self.metrics,
-                upload_request,
-            )
+            .handle_upload(&self.clock, &self.hpke_keypairs, &self.metrics, reports)
             .await
     }
 
@@ -1112,7 +1102,7 @@ impl<C: Clock> TaskAggregator<C> {
         clock: &C,
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
-        upload_request: UploadRequest,
+        reports: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
@@ -1121,7 +1111,7 @@ impl<C: Clock> TaskAggregator<C> {
                 metrics,
                 &self.task,
                 &self.report_writer,
-                upload_request,
+                reports,
             )
             .await
     }
@@ -1551,7 +1541,7 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        upload_request: UploadRequest,
+        reports: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadResponse, Arc<Error>> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
@@ -1563,7 +1553,7 @@ impl VdafOps {
                         metrics,
                         task,
                         report_writer,
-                        upload_request,
+                        reports,
                     )
                     .await
                 })
@@ -1577,7 +1567,7 @@ impl VdafOps {
                         metrics,
                         task,
                         report_writer,
-                        upload_request,
+                        reports,
                     )
                     .await
                 })
@@ -1769,42 +1759,78 @@ impl VdafOps {
         metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
-        upload_request: UploadRequest,
+        report_stream: impl Stream<Item = Result<Report, Error>>,
     ) -> Result<UploadResponse, Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
         B: UploadableBatchMode,
     {
-        let futures = upload_request.reports().iter().map(|report| {
-            Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
-                Arc::clone(&vdaf),
-                clock,
-                hpke_keypairs,
-                metrics,
-                task,
-                report_writer,
-                report,
-            )
-        });
+        // Process reports as they arrive from the stream, feeding them into FuturesOrdered
+        // for concurrent processing.
+        let mut report_stream = Box::pin(report_stream);
+        let mut futures = FuturesOrdered::new();
         let mut status = Vec::new();
-        for result in join_all(futures).await {
-            match result {
-                Err(e) => match e.borrow() {
-                    Error::ReportRejected(rejection) => {
-                        status.push(ReportUploadStatus::new(
-                            *rejection.report_id(),
-                            rejection.reason().report_error(),
-                        ));
-                    }
-                    _ => {
-                        // Non-rejection errors are fatal
-                        return Err(e);
+
+        loop {
+            select! {
+                // Note: Both report_stream.next() and futures.next() are cancellation-safe.
+                // Cancelling these calls does not drop the underlying data.
+
+                // Poll for new reports from the stream
+                Some(stream_result) = report_stream.next() => {
+                    match stream_result {
+                        Ok(report) => {
+                            let vdaf_clone = Arc::clone(&vdaf);
+                            futures.push_back(async move {
+                                Self::handle_uploaded_report::<SEED_SIZE, B, A, C>(
+                                    vdaf_clone,
+                                    clock,
+                                    hpke_keypairs,
+                                    metrics,
+                                    task,
+                                    report_writer,
+                                    &report,
+                                ).await
+                            });
+                        }
+                        Err(e) => {
+                            // Stream error (decode failure, client disconnect) - complete the
+                            // existing futures and then fail out. Since we're already failing,
+                            // we don't care about the future statuses, only that they resolve.
+                            futures.for_each(|_| async { }).await;
+                            return Err(Arc::new(e));
+                        }
                     }
                 },
-                Ok(_) => {
-                    // Report succeeded, no status entry needed
-                }
+
+                // Poll for completed report processing
+                Some(result) = futures.next() => {
+                    match result {
+                        Ok(_) => {
+                            // Report succeeded, no status entry needed
+                        }
+                        Err(e) => match e.borrow() {
+                            Error::ReportRejected(rejection) => {
+                                status.push(ReportUploadStatus::new(
+                                    *rejection.report_id(),
+                                    rejection.reason().report_error(),
+                                ));
+                            }
+                            _ => {
+                                // We've had an unexpected error from handle_uploaded_report. We
+                                // cannot format a ReportUploadStatus, we need to fail here, but
+                                // also resolve all remaining futures (ignoring their statuses)
+                                // so we can safely return this error.
+                                futures.for_each(|_| async { }).await;
+                                return Err(e);
+                            }
+                        },
+                    }
+                },
+
+                // If both arms are disabled (stream exhausted + no futures), we're done
+                else => break
             }
         }
 

@@ -36,6 +36,7 @@ test-util = [
 [dependencies]
 anyhow.workspace = true
 assert_matches = { workspace = true }
+async-stream = { workspace = true }
 async-trait = { workspace = true }
 aws-lc-rs = { workspace = true }
 backon = { workspace = true }
