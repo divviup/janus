@@ -994,6 +994,7 @@ async fn upload_report_duplicate_extensions() {
         VdafInstance::Prio3Count,
     )
     .with_time_precision(time_precision)
+    .with_task_start(None)
     .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
     .build()
     .leader_view()
@@ -1040,6 +1041,106 @@ async fn upload_report_duplicate_extensions() {
         got_counters,
         Some(TaskUploadCounter::new_with_values(
             0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+        ))
+    )
+}
+
+#[tokio::test]
+async fn upload_report_unrecognized_extension() {
+    let mut runtime_manager = TestRuntimeManager::new();
+    let UploadTest {
+        aggregator,
+        clock,
+        datastore,
+        ephemeral_datastore: _ephemeral_datastore,
+        hpke_keypair,
+        ..
+    } = UploadTest::new_with_runtime(
+        default_aggregator_config(),
+        runtime_manager.with_label("aggregator"),
+    )
+    .await;
+
+    let time_precision = TimePrecision::from_seconds(100);
+    let task = TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Prio3Count,
+    )
+    .with_time_precision(time_precision)
+    .with_task_start(None)
+    .with_report_expiry_age(Some(Duration::from_seconds(60, &time_precision)))
+    .build()
+    .leader_view()
+    .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Report with unrecognized extension type in public extensions
+    let report_public = create_report_custom(
+        &task,
+        clock.now_aligned_to_precision(task.time_precision()),
+        random(),
+        &hpke_keypair,
+        /* public */ Vec::from([Extension::new(ExtensionType::Unknown(0x1234), Vec::new())]),
+        /* leader */ Vec::new(),
+        /* helper */ Vec::new(),
+    );
+
+    // Try to upload the report, verify that we get the expected error.
+    let upload_result = aggregator
+        .handle_upload(task.id(), report_stream(report_public.clone()))
+        .await
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report_public.metadata().id(), &result_upload_status.report_id());
+        }
+    );
+
+    // Report with unrecognized extension type in private extensions
+    let report_private = create_report_custom(
+        &task,
+        clock.now_aligned_to_precision(task.time_precision()),
+        random(),
+        &hpke_keypair,
+        /* public */ Vec::new(),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Unknown(0xABCD), Vec::new())]),
+        /* helper */ Vec::new(),
+    );
+
+    let upload_result = aggregator
+        .handle_upload(task.id(), report_stream(report_private.clone()))
+        .await
+        .unwrap();
+    let result_upload_status = &upload_result.status()[0];
+    assert_matches!(
+        result_upload_status.error(),
+        ReportError::InvalidMessage => {
+            assert_eq!(report_private.metadata().id(), &result_upload_status.report_id());
+        }
+    );
+
+    // Wait for the report writer to have completed the write task.
+    tokio::time::timeout(
+        StdDuration::from_secs(5),
+        runtime_manager.wait_for_completed_tasks("aggregator", 1),
+    )
+    .await
+    .unwrap();
+
+    let got_counters = datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move { TaskUploadCounter::load(tx, &task_id).await })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        got_counters,
+        Some(TaskUploadCounter::new_with_values(
+            0, 2, 0, 0, 0, 0, 0, 0, 0, 0
         ))
     )
 }

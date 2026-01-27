@@ -445,6 +445,68 @@ async fn aggregate_init_sync() {
             .clone(),
     );
 
+    // prepare_init_10 fails due to having unrecognized extension type in public extensions.
+    let report_metadata_10 = ReportMetadata::new(
+        random(),
+        clock.now_aligned_to_precision(task.time_precision()),
+        Vec::from([Extension::new(ExtensionType::Unknown(0x1234), Vec::new())]),
+    );
+    let transcript_10 = run_vdaf(
+        &vdaf,
+        task.id(),
+        verify_key.as_bytes(),
+        &dummy::AggregationParam(0),
+        report_metadata_10.id(),
+        &measurement,
+    );
+    let report_share_10 = generate_helper_report_share::<dummy::Vdaf>(
+        *task.id(),
+        report_metadata_10,
+        hpke_keypair.config(),
+        &transcript_10.public_share,
+        Vec::new(),
+        &transcript_10.helper_input_share,
+    );
+
+    let prepare_init_10 = PrepareInit::new(
+        report_share_10,
+        transcript_10.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
+    );
+
+    // prepare_init_11 fails due to having unrecognized extension type in private extensions.
+    let report_metadata_11 = ReportMetadata::new(
+        random(),
+        clock.now_aligned_to_precision(task.time_precision()),
+        Vec::new(),
+    );
+    let transcript_11 = run_vdaf(
+        &vdaf,
+        task.id(),
+        verify_key.as_bytes(),
+        &dummy::AggregationParam(0),
+        report_metadata_11.id(),
+        &measurement,
+    );
+    let report_share_11 = generate_helper_report_share::<dummy::Vdaf>(
+        *task.id(),
+        report_metadata_11,
+        hpke_keypair.config(),
+        &transcript_11.public_share,
+        Vec::from([Extension::new(ExtensionType::Unknown(0xABCD), Vec::new())]),
+        &transcript_11.helper_input_share,
+    );
+
+    let prepare_init_11 = PrepareInit::new(
+        report_share_11,
+        transcript_11.leader_prepare_transitions[0]
+            .message()
+            .unwrap()
+            .clone(),
+    );
+
     let mut batch_aggregations_results = Vec::new();
     let mut aggregation_jobs_results = Vec::new();
     datastore
@@ -507,6 +569,8 @@ async fn aggregate_init_sync() {
             prepare_init_7.clone(),
             prepare_init_8.clone(),
             prepare_init_9.clone(),
+            prepare_init_10.clone(),
+            prepare_init_11.clone(),
         ]),
     );
 
@@ -527,7 +591,7 @@ async fn aggregate_init_sync() {
         );
 
         // Validate response.
-        assert_eq!(prepare_resps.len(), 10);
+        assert_eq!(prepare_resps.len(), 12);
 
         let prepare_step_0 = prepare_resps.first().unwrap();
         assert_eq!(
@@ -625,6 +689,26 @@ async fn aggregate_init_sync() {
         );
         assert_eq!(
             prepare_step_9.result(),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let prepare_step_10 = prepare_resps.get(10).unwrap();
+        assert_eq!(
+            prepare_step_10.report_id(),
+            prepare_init_10.report_share().metadata().id()
+        );
+        assert_eq!(
+            prepare_step_10.result(),
+            &PrepareStepResult::Reject(ReportError::InvalidMessage),
+        );
+
+        let prepare_step_11 = prepare_resps.get(11).unwrap();
+        assert_eq!(
+            prepare_step_11.report_id(),
+            prepare_init_11.report_share().metadata().id()
+        );
+        assert_eq!(
+            prepare_step_11.result(),
             &PrepareStepResult::Reject(ReportError::InvalidMessage),
         );
 

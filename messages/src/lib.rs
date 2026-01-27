@@ -856,17 +856,36 @@ impl Decode for Extension {
 }
 
 /// DAP protocol message representing the type of an extension included in a client report.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, TryFromPrimitive)]
-#[repr(u16)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ExtensionType {
-    Tbd = 0,
-    Taskbind = 0xFF00,
+    Tbd,
+    Taskbind,
+    Unknown(u16),
+}
+
+impl ExtensionType {
+    const TBD: u16 = 0;
+    const TASKBIND: u16 = 0xFF00;
+    fn from_u16(val: u16) -> Self {
+        match val {
+            Self::TBD => Self::Tbd,
+            Self::TASKBIND => Self::Taskbind,
+            other => Self::Unknown(other),
+        }
+    }
+    fn to_u16(self) -> u16 {
+        match self {
+            Self::Tbd => Self::TBD,
+            Self::Taskbind => Self::TASKBIND,
+            Self::Unknown(val) => val,
+        }
+    }
 }
 
 impl Encode for ExtensionType {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        (*self as u16).encode(bytes)
+        self.to_u16().encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -877,8 +896,7 @@ impl Encode for ExtensionType {
 impl Decode for ExtensionType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected ExtensionType value {val}").into()))
+        Ok(Self::from_u16(val))
     }
 }
 

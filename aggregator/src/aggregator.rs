@@ -61,9 +61,9 @@ use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareId, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    Duration, HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
-    PlaintextInputShare, PrepareResp, Report, ReportError, ReportUploadStatus, Role, TaskId,
-    UploadResponse,
+    Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
+    PartialBatchSelector, PlaintextInputShare, PrepareResp, Report, ReportError,
+    ReportUploadStatus, Role, TaskId, UploadResponse,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -1892,8 +1892,7 @@ impl VdafOps {
             }
         }
 
-        // Reject reports from too far in the future.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
+        // Reject reports from too far in the future. (§4.6.2.4 step 2 [dap-16])
         if report
             .metadata()
             .time()
@@ -1902,15 +1901,14 @@ impl VdafOps {
             return Err(reject_report(ReportRejectionReason::TooEarly).await?);
         }
 
-        // Reject reports before a task has started.
+        // Reject reports before a task has started. (§4.6.2.4 step 3 [dap-16])
         if let Some(task_start) = task.task_start() {
             if report.metadata().time().is_before(task_start) {
                 return Err(reject_report(ReportRejectionReason::TaskNotStarted).await?);
             }
         }
 
-        // Reject reports after a task has ended.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
+        // Reject reports after a task has ended. (§4.6.2.4 step 4 [dap-16])
         if let Some(task_end) = task.task_end() {
             if report.metadata().time().ge(task_end) {
                 return Err(reject_report(ReportRejectionReason::TaskEnded).await?);
@@ -1936,7 +1934,7 @@ impl VdafOps {
         // report before storing them in the datastore. The spec does not require the
         // `tasks/{task-id}/reports` handler to do this, but it exercises HPKE decryption, saves us
         // the trouble of storing reports we can't use, and lets the aggregation job handler assume
-        // the values it reads from the datastore are valid.
+        // the values it reads from the datastore are valid. (§4.6.2.4 step 1 [dap-16])
         let public_share =
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
@@ -2021,31 +2019,39 @@ impl VdafOps {
             }
         };
 
-        // Check if any two extensions have the same extension type across public
-        // and private extension fields. If so, the Aggregator MUST mark the input
-        // share as invalid with error invalid_message. (§4.6.2.4 step 7)
-        //
-        // Note at this point we can't provide Error::InvalidMessage here because
-        // we're packaging this into a report rejection list.
+        // Check for unrecognized extension types (§4.6.2.4 step 5 [dap-16]) and
+        // duplicate extensions (§4.6.2.4 step 6 [dap-16]) in a single pass.
         let mut extensions = HashMap::new();
-        if !leader_private_extensions
+        for extension in leader_private_extensions
             .iter()
             .chain(report.metadata().public_extensions())
-            .all(|extension| {
-                extensions
-                    .insert(*extension.extension_type(), extension.extension_data())
-                    .is_none()
-            })
         {
-            debug!(
-                task_id = %task.id(),
-                report_id = ?report.metadata().id(),
-                "Received report share with duplicate extensions",
-            );
-            metrics
-                .upload_decode_failure_counter
-                .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-            return Err(reject_report(ReportRejectionReason::DuplicateExtension).await?);
+            if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
+                debug!(
+                    task_id = %task.id(),
+                    report_id = ?report.metadata().id(),
+                    unrecognized_etension_type = ?extension.extension_type(),
+                    "Received report share with unrecognized extension type",
+                );
+                metrics
+                    .upload_decode_failure_counter
+                    .add(1, &[KeyValue::new("type", "unrecognized_extension")]);
+                return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
+            }
+            if extensions
+                .insert(*extension.extension_type(), extension.extension_data())
+                .is_some()
+            {
+                debug!(
+                    task_id = %task.id(),
+                    report_id = ?report.metadata().id(),
+                    "Received report share with duplicate extensions",
+                );
+                metrics
+                    .upload_decode_failure_counter
+                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                return Err(reject_report(ReportRejectionReason::DuplicateExtension).await?);
+            }
         }
 
         let report = LeaderStoredReport::new(
