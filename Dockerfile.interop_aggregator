@@ -1,6 +1,6 @@
 ARG PROFILE=release
 
-FROM rust:1.92.0-alpine AS chef
+FROM rust:1.93.0-alpine AS chef
 ENV CARGO_INCREMENTAL=0
 RUN apk add --no-cache libc-dev cmake make
 RUN cargo install cargo-chef --version 0.1.71 --locked && \
@@ -60,7 +60,7 @@ COPY tools /src/tools
 COPY xtask /src/xtask
 RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries
 
-FROM rust:1.92.0-alpine AS sqlx
+FROM rust:1.93.0-alpine AS sqlx
 ENV CARGO_INCREMENTAL=0
 ARG SQLX_VERSION=0.7.2
 RUN apk add --no-cache libc-dev

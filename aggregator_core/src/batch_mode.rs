@@ -113,10 +113,10 @@ impl AccumulableBatchMode for TimeInterval {
         clock: &C,
         batch_identifier: &Self::BatchIdentifier,
     ) -> Option<bool> {
-        // Note: This assumes the batch_identifier's interval is in 1-second time_precision units.
-        // This is a simplification - in practice, batch identifiers should carry their time_precision
-        // context, but that would require changing the trait interface. This will be fixed in
-        // Issue #4217.
+        // Note: This assumes the batch_identifier's interval is in 1-second time_precision
+        // units. This is a simplification - in practice, batch identifiers should carry their
+        // time_precision context, but that would require changing the trait interface. This
+        // will be fixed in Issue #4217.
         let now_time = clock.now().to_time(&TimePrecision::from_seconds(1));
         Some(batch_identifier.end().is_before(&now_time))
     }

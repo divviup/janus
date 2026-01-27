@@ -157,7 +157,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
-        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#1393): add support for handling only a subset of tasks in a single job
+        // (i.e. sharding).
 
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
@@ -657,7 +658,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     .now()
                                     .is_before(&aggressive_aggregation_time, task.time_precision())
                                 {
-                                    // Report is not old enough to merit a below-minimum size aggregation job.
+                                    // Report is not old enough to merit a below-minimum size
+                                    // aggregation job.
                                     break;
                                 }
                                 // Fall through and create an aggregation job smaller than
@@ -742,7 +744,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    /// Look for combinations of client reports and collection job aggregation parameters that do not
+    /// Look for combinations of client reports and collection job aggregation parameters that
+    /// do not
     /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
     /// be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
@@ -3106,7 +3109,8 @@ mod tests {
         }
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
+        // two aggregation jobs per overlapping collection job. (and there are two such
+        // collection jobs)
         let report_time = report_time
             .sub_duration(&janus_messages::Duration::ONE)
             .unwrap();

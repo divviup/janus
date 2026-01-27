@@ -274,8 +274,9 @@ where
         BatchMode::TimeInterval => {
             let batch_interval = Interval::new(
                 before_timestamp,
-                // Use two time precisions as the interval duration in order to avoid a race condition if
-                // this test happens to run very close to the end of a batch window.
+                // Use two time precisions as the interval duration in order to avoid a race
+                // condition if this test happens to run very close to the end of a batch
+                // window.
                 Duration::from_time_precision_units(2),
             )
             .unwrap();

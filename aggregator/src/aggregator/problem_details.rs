@@ -283,7 +283,8 @@ mod tests {
                         Cow::from([].as_slice())
                     };
 
-                    // Serve the response via mockito, and run it through post_to_helper's error handling.
+                    // Serve the response via mockito, and run it through post_to_helper's
+                    // error handling.
                     let mut server = mockito::Server::new_async().await;
                     let error_mock = server
                         .mock("POST", "/")
@@ -309,7 +310,8 @@ mod tests {
                     .unwrap_err();
                     error_mock.assert_async().await;
 
-                    // Confirm that post_to_helper() correctly parsed the error type from error_handler().
+                    // Confirm that post_to_helper() correctly parsed the error type from
+                    // error_handler().
                     assert_matches!(
                         actual_error,
                         Error::Http(error_response) => {

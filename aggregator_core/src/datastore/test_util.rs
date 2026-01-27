@@ -366,8 +366,8 @@ impl EphemeralDatastoreBuilder {
 
         // Create Postgres DB.
         //
-        // Since this is the first connection we're establishing since the container has been created,
-        // retry this a few times. The database may not be ready yet.
+        // Since this is the first connection we're establishing since the container has been
+        // created, retry this a few times. The database may not be ready yet.
 
         let backoff = ConstantBuilder::default()
             .with_delay(Duration::from_millis(500))
@@ -380,7 +380,8 @@ impl EphemeralDatastoreBuilder {
             .await
             .unwrap();
 
-        tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
+        // automatically stops after Client is dropped
+        tokio::spawn(async move { conn.await.unwrap() });
         client
             .batch_execute(&format!("CREATE DATABASE {db_name}"))
             .await

@@ -27,7 +27,7 @@ anyhow = "1"
 assert_matches = "1"
 async-stream = "0.3"
 async-trait = "0.1"
-aws-lc-rs = "1.15.2"
+aws-lc-rs = "1.15.4"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.6.1"
@@ -36,7 +36,7 @@ cfg-if = "1.0.4"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
-chrono = { version = "0.4.42", default-features = false }
+chrono = { version = "0.4.43", default-features = false }
 clap = { version = "4.5.54", features = ["cargo", "derive", "env"] }
 console-subscriber = "0.5.0"
 constcat = "0.6"
@@ -44,7 +44,7 @@ deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
 educe = { version = "0.6.0", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
-fixed = "1.29"
+fixed = "1.30"
 futures = "0.3.31"
 git-version = "0.3.9"
 hex = "0.4.3"
@@ -72,8 +72,8 @@ opentelemetry-otlp = { version = "0.27", default-features = false, features = ["
 opentelemetry-prometheus = "0.27"
 opentelemetry_sdk = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 pem = "3"
-postgres-protocol = "0.6.9"
-postgres-types = "0.2.11"
+postgres-protocol = "0.6.10"
+postgres-types = "0.2.12"
 pretty_assertions = "1.4.1"
 # Disable default features so that individual workspace crates can choose to re-enable them
 prio = { version = "0.18.1-alpha.2", default-features = false, features = ["experimental"] }
@@ -90,14 +90,14 @@ rstest = "0.26.1"
 rstest_reuse = "0.7.0"
 rustc_version = "0.4.1"
 rustls = "0.23.36"
-rustls-pki-types = "1.13.2"
+rustls-pki-types = "1.14.0"
 sec1 = "0.7"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_test = "1.0.177"
 serde_urlencoded = "0.7.1"
 serde_yaml = "0.9.34"
-signal-hook = "0.4.1"
+signal-hook = "0.4.3"
 signal-hook-tokio = "0.4.0"
 # Disable default features to avoid pulling in drivers for databases we don't use, such as
 # sqlx-mysql which pulls in the vulnerable rsa crate
@@ -114,7 +114,7 @@ tracing-opentelemetry = "0.28"
 tracing-stackdriver = "0.10.0"
 tracing-subscriber = "0.3"
 tokio = { version = "1.49", features = ["full", "tracing"] }
-tokio-postgres = "0.7.15"
+tokio-postgres = "0.7.16"
 tokio-postgres-rustls = "0.13.0"
 tokio-stream = "0.1.18"
 trillium = "0.2.20"
@@ -131,7 +131,7 @@ trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
 trycmd = "0.15.10"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.19.0", features = ["v4"] }
+uuid = { version = "1.20.0", features = ["v4"] }
 wait-timeout = "0.2.1"
 
 [profile.ci]

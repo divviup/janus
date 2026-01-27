@@ -804,8 +804,8 @@ impl HpkeConfiguration {
                 }
             }
         }
-        // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
-        // have seen at least one error.
+        // Unwrap safety: we checked that the list is nonempty, and if we fell through to here,
+        // we must have seen at least one error.
         Err(first_error.unwrap().into())
     }
 }

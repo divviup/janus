@@ -350,7 +350,8 @@ async fn collection_job_success_time_interval() {
     let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
         *test_case.task.id(),
         collection_job_id,
-        *got_collection_job.aggregate_share_id(), // This is chosen by the leader, we have to copy it
+        // This is chosen by the leader, we have to copy it
+        *got_collection_job.aggregate_share_id(),
         Query::new_time_interval(batch_interval),
         aggregation_param,
         batch_interval,

@@ -85,15 +85,15 @@ impl CollectionJobDriver {
     /// Step the provided collection job, for which a lease should have been acquired (though this
     /// should be idempotent). If the collection job runs to completion, the leader share, helper
     /// share, report count and report ID checksum will be written to the `collection_jobs` table,
-    /// and a subsequent request to the collection job URI will yield the aggregate shares. The collect
-    /// job's lease is released, though it won't matter since the job will no longer be eligible to
-    /// be run.
+    /// and a subsequent request to the collection job URI will yield the aggregate shares. The
+    /// collect job's lease is released, though it won't matter since the job will no longer be
+    /// eligible to be run.
     ///
     /// If some error occurs (including a failure getting the helper's aggregate share), neither
-    /// aggregate share is written to the datastore. A subsequent request to the collection job URI
-    /// will not yield a result. The collection job lease will eventually expire, allowing a later run
-    /// of the collection job driver to try again. Both aggregate shares will be recomputed at that
-    /// time.
+    /// aggregate share is written to the datastore. A subsequent request to the collection job
+    /// URI will not yield a result. The collection job lease will eventually expire, allowing a
+    /// later run of the collection job driver to try again. Both aggregate shares will be
+    /// recomputed at that time.
     #[tracing::instrument(skip(self, datastore), err)]
     pub async fn step_collection_job<C: Clock>(
         &self,
@@ -1624,7 +1624,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify: check that the collection job was abandoned, and that it can no longer be acquired.
+        // Verify: check that the collection job was abandoned, and that it can no longer be
+        // acquired.
         let (abandoned_collection_job, leases) = ds
             .run_unnamed_tx(|tx| {
                 let collection_job = collection_job.clone();
@@ -1933,7 +1934,8 @@ mod tests {
 
         mocked_aggregate_share.assert_async().await;
 
-        // Verify: check that the collection job was abandoned, and that it can no longer be acquired.
+        // Verify: check that the collection job was abandoned, and that it can no longer be
+        // acquired.
         ds.run_unnamed_tx(|tx| {
             let collection_job = collection_job.clone();
             Box::pin(async move {

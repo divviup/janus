@@ -143,7 +143,8 @@ where
                 break;
             }
 
-            // Wait until we are able to start at least one worker. (permit will be immediately released)
+            // Wait until we are able to start at least one worker. (permit will be
+            // immediately released)
             //
             // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
             // semaphore is closed, and we never close this semaphore.
@@ -193,7 +194,8 @@ where
                         &[KeyValue::new("status", "error")],
                     );
 
-                    // Go ahead and provide a delay in this error case to ensure we don't tightly loop
+                    // Go ahead and provide a delay in this error case to ensure we don't
+                    // tightly loop
                     // running transactions that will fail without any delay.
                     next_run_instant += self.job_discovery_interval;
                     error!(?error, "Couldn't acquire jobs");
@@ -373,8 +375,9 @@ mod tests {
 
                             let incomplete_jobs = incomplete_jobs
                                 .get(test_state.job_acquire_counter)
-                                // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
-                                // would be impossible to return from Option::unwrap_or_default.
+                                // Clone here so that incomplete_jobs will be Vec<_> and not
+                                // &Vec<_>, which would be impossible to return from
+                                // Option::unwrap_or_default.
                                 .cloned()
                                 .unwrap_or_default();
 

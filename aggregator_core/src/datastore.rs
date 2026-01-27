@@ -4360,8 +4360,8 @@ WHERE task_id = $1
         .transpose()
     }
 
-    /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given [`AggregateShareId`], or
-    /// `None` if no such job exists.
+    /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given
+    /// [`AggregateShareId`], or `None` if no such job exists.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_job_by_id<
         const SEED_SIZE: usize,

@@ -206,7 +206,8 @@ where
         // A> UPDATE batch_aggregations WHERE ord = 1 ... -- Row with ord 1 is locked for update.
         // B> BEGIN;
         // B> UPDATE batch_aggregations WHERE ord = 2 ... -- Row with ord 2 is locked for update.
-        // A> UPDATE batch_aggregations WHERE ord = 2 ... -- A is now blocked waiting for B to finish.
+        // A> UPDATE batch_aggregations WHERE ord = 2 ... -- A is now blocked waiting for B
+        // to finish.
         // B> UPDATE batch_aggregations WHERE ord = 1 ... -- Kaboom!
         //
         // To avoid this, we sort by `batch_identifier` and `ord`.
