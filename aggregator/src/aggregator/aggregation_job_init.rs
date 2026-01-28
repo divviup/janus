@@ -225,7 +225,10 @@ where
                             // Check for unrecognized extension types (§4.6.2.4 step 5 [dap-16]) and
                             // duplicate extensions (§4.6.2.4 step 6 [dap-16]) in a single pass.
                             let mut extensions = HashMap::new();
-                            for extension in plaintext_input_share.private_extensions().iter().chain(prepare_init.report_share().metadata().public_extensions())
+                            for extension in plaintext_input_share
+                                .private_extensions()
+                                .iter()
+                                .chain(prepare_init.report_share().metadata().public_extensions())
                             {
                                 if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
                                     debug!(

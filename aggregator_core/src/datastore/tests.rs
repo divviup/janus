@@ -562,14 +562,17 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             REPORT_TIME_AT_EXPIRY_EDGE,
             Vec::from([
                 // public extensions
-                Extension::new(ExtensionType::Tbd, "public_extension_tbd".into()),
+                Extension::new(ExtensionType::Reserved, "public_extension_tbd".into()),
                 Extension::new(ExtensionType::Taskbind, "public_extension_taskbind".into()),
             ]),
         ),
         (), // public share
         Vec::from([
             // leader private extensions
-            Extension::new(ExtensionType::Tbd, "leader_private_extension_tbd".into()),
+            Extension::new(
+                ExtensionType::Reserved,
+                "leader_private_extension_tbd".into(),
+            ),
             Extension::new(
                 ExtensionType::Taskbind,
                 "leader_private_extension_taskbind".into(),
@@ -2649,7 +2652,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             Role::Leader,
             ReportAggregationState::LeaderInit {
                 public_extensions: Vec::from([Extension::new(
-                    ExtensionType::Tbd,
+                    ExtensionType::Reserved,
                     "public_extension_tbd".into(),
                 )]),
                 public_share: vdaf_transcript.public_share,
@@ -3247,7 +3250,7 @@ async fn create_report_aggregation_from_client_reports_table(
             report_id,
             clock.now_aligned_to_precision(task.time_precision()),
             Vec::from([Extension::new(
-                ExtensionType::Tbd,
+                ExtensionType::Reserved,
                 "public_extension_tbd".into(),
             )]),
         ),

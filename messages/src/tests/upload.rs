@@ -26,7 +26,7 @@ fn roundtrip_report_id() {
 fn roundtrip_extension() {
     roundtrip_encoding(&[
         (
-            Extension::new(ExtensionType::Tbd, Vec::new()),
+            Extension::new(ExtensionType::Reserved, Vec::new()),
             concat!(
                 "0000", // extension_type
                 concat!(
@@ -53,7 +53,7 @@ fn roundtrip_extension() {
 #[test]
 fn roundtrip_extension_type() {
     roundtrip_encoding(&[
-        (ExtensionType::Tbd, "0000"),
+        (ExtensionType::Reserved, "0000"),
         (ExtensionType::Taskbind, "FF00"),
     ])
 }
@@ -80,7 +80,7 @@ fn roundtrip_report_metadata() {
             ReportMetadata::new(
                 ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                 Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
-                Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
             ),
             concat!(
                 "100F0E0D0C0B0A090807060504030201", // report_id
@@ -121,7 +121,7 @@ fn roundtrip_plaintext_input_share() {
         ),
         (
             PlaintextInputShare::new(
-                Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                 Vec::from("4567"),
             ),
             concat!(
@@ -214,7 +214,7 @@ fn roundtrip_report() {
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
-                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                    Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                 ),
                 Vec::from("3210"),
                 HpkeCiphertext::new(
@@ -288,7 +288,7 @@ fn roundtrip_input_share_aad() {
             metadata: ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
-                Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
             ),
             public_share: Vec::from("0123"),
         },
@@ -338,7 +338,7 @@ fn roundtrip_upload_request() {
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321, &TEST_TIME_PRECISION),
-                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                    Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                 ),
                 Vec::from("3210"),
                 HpkeCiphertext::new(

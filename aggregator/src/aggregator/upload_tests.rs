@@ -1007,8 +1007,8 @@ async fn upload_report_duplicate_extensions() {
         clock.now_aligned_to_precision(task.time_precision()),
         random(),
         &hpke_keypair,
-        /* public */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
-        /* leader */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* public */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
         /* helper */ Vec::new(),
     );
 

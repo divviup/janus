@@ -859,7 +859,7 @@ impl Decode for Extension {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ExtensionType {
-    Tbd,
+    Reserved,
     Taskbind,
     Unknown(u16),
 }
@@ -869,14 +869,14 @@ impl ExtensionType {
     const TASKBIND: u16 = 0xFF00;
     fn from_u16(val: u16) -> Self {
         match val {
-            Self::TBD => Self::Tbd,
+            Self::TBD => Self::Reserved,
             Self::TASKBIND => Self::Taskbind,
             other => Self::Unknown(other),
         }
     }
     fn to_u16(self) -> u16 {
         match self {
-            Self::Tbd => Self::TBD,
+            Self::Reserved => Self::TBD,
             Self::Taskbind => Self::TASKBIND,
             Self::Unknown(val) => val,
         }
