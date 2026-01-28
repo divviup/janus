@@ -234,7 +234,7 @@ where
                                     debug!(
                                         task_id = %task.id(),
                                         report_id = ?prepare_init.report_share().metadata().id(),
-                                        unrecognized_etension_type = ?extension.extension_type(),
+                                        unrecognized_extension_type = ?extension.extension_type(),
                                         "Received report share with unrecognized extension type",
                                     );
                                     metrics

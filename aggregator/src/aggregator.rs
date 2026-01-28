@@ -2030,7 +2030,7 @@ impl VdafOps {
                 debug!(
                     task_id = %task.id(),
                     report_id = ?report.metadata().id(),
-                    unrecognized_etension_type = ?extension.extension_type(),
+                    unrecognized_extension_type = ?extension.extension_type(),
                     "Received report share with unrecognized extension type",
                 );
                 metrics

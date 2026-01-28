@@ -333,6 +333,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "missing_prepare_message",
         "missing_or_malformed_taskbind_extension",
         "unexpected_taskbind_extension",
+        "unrecognized_extension",
     ] {
         aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
     }
