@@ -500,8 +500,8 @@ async fn upload_handler() {
         clock.now_aligned_to_precision(task.time_precision()),
         random(),
         &hpke_keypair,
-        /* public */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
-        /* leader */ Vec::from([Extension::new(ExtensionType::Tbd, Vec::new())]),
+        /* public */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
+        /* leader */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
         /* helper */ Vec::new(),
     );
     let mut test_conn = post(task.report_upload_uri().unwrap().path())

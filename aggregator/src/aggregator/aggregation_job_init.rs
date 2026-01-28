@@ -139,7 +139,7 @@ where
                         );
 
                         // If decryption fails, then the aggregator MUST fail with error
-                        // `hpke-decrypt-error`. (§4.4.2.2)
+                        // `hpke-decrypt-error`. (§4.6.2.3 [dap-16])
                         let hpke_keypair = hpke_keypairs.keypair(
                             prepare_init
                                 .report_share()
@@ -222,23 +222,40 @@ where
                                     ReportError::InvalidMessage
                                 })?;
 
-                            // Build map of extension type to extension data, checking for
-                            // duplicates.
+                            // Check for unrecognized extension types (§4.6.2.4 step 5 [dap-16]) and
+                            // duplicate extensions (§4.6.2.4 step 6 [dap-16]) in a single pass.
                             let mut extensions = HashMap::new();
-                            if !plaintext_input_share.private_extensions().iter().chain(prepare_init.report_share().metadata().public_extensions()).all(|extension| {
-                                extensions
+                            for extension in plaintext_input_share
+                                .private_extensions()
+                                .iter()
+                                .chain(prepare_init.report_share().metadata().public_extensions())
+                            {
+                                if matches!(extension.extension_type(), ExtensionType::Unknown(_)) {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        unrecognized_extension_type = ?extension.extension_type(),
+                                        "Received report share with unrecognized extension type",
+                                    );
+                                    metrics
+                                        .aggregate_step_failure_counter
+                                        .add(1, &[KeyValue::new("type", "unrecognized_extension")]);
+                                    return Err(ReportError::InvalidMessage);
+                                }
+                                if extensions
                                     .insert(*extension.extension_type(), extension.extension_data())
-                                    .is_none()
-                            }) {
-                                debug!(
-                                    task_id = %task.id(),
-                                    report_id = ?prepare_init.report_share().metadata().id(),
-                                    "Received report share with duplicate extensions",
-                                );
-                                metrics
-                                    .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                                return Err(ReportError::InvalidMessage);
+                                    .is_some()
+                                {
+                                    debug!(
+                                        task_id = %task.id(),
+                                        report_id = ?prepare_init.report_share().metadata().id(),
+                                        "Received report share with duplicate extensions",
+                                    );
+                                    metrics
+                                        .aggregate_step_failure_counter
+                                        .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                                    return Err(ReportError::InvalidMessage);
+                                }
                             }
 
                             if require_taskbind_extension {
@@ -279,6 +296,7 @@ where
                             Ok(plaintext_input_share)
                         });
 
+                        // Check that the input share can be decoded (§4.6.2.4 step 1 [dap-16])
                         let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                             A::InputShare::get_decoded_with_param(
                                 &(&vdaf, Role::Helper.index().unwrap()),
@@ -339,7 +357,7 @@ where
                             }
                         }
 
-                        // Reject reports from too far in the future.
+                        // Reject reports from too far in the future. (§4.6.2.4 step 2 [dap-16])
                         let shares = shares.and_then(|shares| {
                             if prepare_init
                                 .report_share()
@@ -352,7 +370,7 @@ where
                             Ok(shares)
                         });
 
-                        // Reject reports before the task has started. (§4.6.2.4, item 4)
+                        // Reject reports before the task has started. (§4.6.2.4 step 3 [dap-16])
                         let shares = shares.and_then(|shares| {
                             if let Some(task_start) = task.task_start() {
                                 if prepare_init
@@ -368,7 +386,7 @@ where
                         });
 
                         // Reject reports after the task has expired, which is inclusive
-                        // of the task_end time. (§4.6.2.4, item 5)
+                        // of the task_end time. (§4.6.2.4 step 4 [dap-16])
                         let shares = shares.and_then(|shares| {
                             if let Some(task_end) = task.task_end() {
                                 if prepare_init
@@ -386,7 +404,7 @@ where
                         // Next, the aggregator runs the preparation-state initialization algorithm
                         // for the VDAF associated with the task and computes the first state
                         // transition. [...] If either step fails, then the aggregator MUST fail
-                        // with error `vdaf-prep-error`. (§4.4.2.2)
+                        // with error `vdaf-prep-error`. (§4.6.2 [dap-16])
                         let init_rslt = shares.and_then(|(public_share, input_share)| {
                             trace_span!("VDAF preparation (helper initialization)").in_scope(|| {
                                 vdaf.helper_initialized(

@@ -63,7 +63,7 @@ fn roundtrip_report_share() {
                 metadata: ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
-                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                    Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                 ),
                 public_share: Vec::from("0123"),
                 encrypted_input_share: HpkeCiphertext::new(
@@ -185,7 +185,7 @@ fn roundtrip_prepare_init() {
                     metadata: ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
-                        Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                        Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                     ),
                     public_share: Vec::from("0123"),
                     encrypted_input_share: HpkeCiphertext::new(
@@ -355,7 +355,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                            Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -511,7 +511,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542, &TEST_TIME_PRECISION),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                            Vec::from([Extension::new(ExtensionType::Reserved, Vec::from("0123"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
