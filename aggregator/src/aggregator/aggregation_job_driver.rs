@@ -61,8 +61,8 @@ use crate::{
         aggregation_job_continue::{AggregateContinueMetrics, compute_helper_aggregate_continue},
         aggregation_job_init::{AggregateInitMetrics, compute_helper_aggregate_init},
         aggregation_job_writer::{
-            AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite,
-            WritableReportAggregation,
+            AggregationJobWriter, AggregationJobWriterMetrics, ReportAggregationUpdate,
+            UpdateWrite, WritableReportAggregation,
         },
         batch_mode::CollectableBatchMode,
         error::handle_ping_pong_error,
@@ -1512,8 +1512,7 @@ where
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
-        let aggregation_job =
-            Arc::new(aggregation_job.with_state(AggregationJobState::AwaitingRequest));
+        let aggregation_job_for_compute = Arc::new(aggregation_job);
         let report_aggregations = Arc::new(
             compute_helper_aggregate_init(
                 datastore.clock(),
@@ -1525,10 +1524,24 @@ where
                     self.past_report_clock_skew_histogram.clone(),
                 ),
                 Arc::clone(&task),
-                Arc::clone(&aggregation_job),
+                Arc::clone(&aggregation_job_for_compute),
                 report_aggregations,
             )
             .await?,
+        );
+
+        // Determine the next Helper job state based on whether all reports are terminal.
+        let all_terminal = report_aggregations.iter().all(|ra| ra.is_terminal());
+        let new_state = if all_terminal {
+            AggregationJobState::Finished
+        } else {
+            AggregationJobState::AwaitingRequest
+        };
+        let aggregation_job = Arc::new(
+            aggregation_job_for_compute
+                .as_ref()
+                .clone()
+                .with_state(new_state),
         );
 
         // Write results back to datastore.
@@ -1613,8 +1626,7 @@ where
 
         // Compute the next aggregation step.
         let task = Arc::new(task);
-        let aggregation_job =
-            Arc::new(aggregation_job.with_state(AggregationJobState::AwaitingRequest));
+        let aggregation_job_for_compute = Arc::new(aggregation_job);
         let report_aggregations = Arc::new(
             compute_helper_aggregate_continue(
                 Arc::clone(&vdaf),
@@ -1623,10 +1635,24 @@ where
                     &task_aggregation_counters,
                 ),
                 Arc::clone(&task),
-                Arc::clone(&aggregation_job),
+                Arc::clone(&aggregation_job_for_compute),
                 report_aggregations,
             )
             .await,
+        );
+
+        // Determine the next Helper job state based on whether all reports are terminal.
+        let all_terminal = report_aggregations.iter().all(|ra| ra.is_terminal());
+        let new_state = if all_terminal {
+            AggregationJobState::Finished
+        } else {
+            AggregationJobState::AwaitingRequest
+        };
+        let aggregation_job = Arc::new(
+            aggregation_job_for_compute
+                .as_ref()
+                .clone()
+                .with_state(new_state),
         );
 
         // Write results back to datastore.
