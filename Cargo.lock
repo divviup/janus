@@ -2511,7 +2511,7 @@ dependencies = [
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.7.106",
- "k8s-openapi 0.23.0",
+ "k8s-openapi",
  "kube",
  "mockito",
  "moka",
@@ -2626,7 +2626,7 @@ dependencies = [
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.7.106",
- "k8s-openapi 0.23.0",
+ "k8s-openapi",
  "kube",
  "opentelemetry",
  "postgres-protocol",
@@ -2730,7 +2730,7 @@ dependencies = [
  "http-api-problem",
  "janus_core",
  "janus_messages 0.7.106",
- "k8s-openapi 0.23.0",
+ "k8s-openapi",
  "kube",
  "mockito",
  "prio",
@@ -2781,7 +2781,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.7.106",
- "k8s-openapi 0.23.0",
+ "k8s-openapi",
  "kube",
  "opentelemetry",
  "prio",
@@ -2988,19 +2988,6 @@ dependencies = [
 
 [[package]]
 name = "k8s-openapi"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c8847402328d8301354c94d605481f25a6bdc1ed65471fd96af8eca71141b13"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "serde",
- "serde-value",
- "serde_json",
-]
-
-[[package]]
-name = "k8s-openapi"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05a6d6f3611ad1d21732adbd7a2e921f598af6c92d71ae6e2620da4b67ee1f0d"
@@ -3026,7 +3013,7 @@ version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f96b537b4c4f61fc183594edbecbbefa3037e403feac0701bb24e6eff78e0034"
 dependencies = [
- "k8s-openapi 0.27.0",
+ "k8s-openapi",
  "kube-client",
  "kube-core",
 ]
@@ -3050,7 +3037,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "jsonpath-rust",
- "k8s-openapi 0.27.0",
+ "k8s-openapi",
  "kube-core",
  "pem",
  "rustls",
@@ -3077,7 +3064,7 @@ dependencies = [
  "form_urlencoded",
  "http",
  "jiff",
- "k8s-openapi 0.27.0",
+ "k8s-openapi",
  "serde",
  "serde-value",
  "serde_json",
