@@ -29,6 +29,7 @@ test-util = [
     "janus_aggregator_core/test-util",
     "janus_core/test-util",
     "janus_messages/test-util",
+    "opentelemetry_sdk/testing",
     "dep:testcontainers",
     "dep:trillium-testing",
 ]

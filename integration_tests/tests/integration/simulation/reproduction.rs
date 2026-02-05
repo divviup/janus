@@ -1,7 +1,12 @@
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::{initialize_rustls, test_util::install_test_trace_subscriber, time::TimeExt};
+use janus_core::{
+    initialize_rustls,
+    test_util::install_test_trace_subscriber,
+    time::{DateTimeExt, TimeExt},
+};
 use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+use opentelemetry_sdk::metrics::data::Sum;
 use rand::random;
 
 use crate::simulation::{
@@ -16,41 +21,36 @@ fn successful_collection_time_interval() {
     initialize_rustls();
 
     let collection_job_id = random();
+    let time_precision = TimePrecision::from_seconds(3600);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(3600),
+            time_precision,
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                7200,
-                &TimePrecision::from_seconds(3600),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(7200, &time_precision)),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(3600),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -60,11 +60,8 @@ fn successful_collection_time_interval() {
                 collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(
-                            1_699_999_200,
-                            &TimePrecision::from_seconds(3600),
-                        ),
-                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
+                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+                        Duration::from_seconds(3600, &time_precision),
                     )
                     .unwrap(),
                 ),
@@ -72,7 +69,7 @@ fn successful_collection_time_interval() {
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 4,
             },
             Op::AggregationJobCreator,
@@ -81,11 +78,8 @@ fn successful_collection_time_interval() {
                 collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(
-                            1_699_999_200,
-                            &TimePrecision::from_seconds(3600),
-                        ),
-                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
+                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+                        Duration::from_seconds(3600, &time_precision),
                     )
                     .unwrap(),
                 ),
@@ -94,7 +88,38 @@ fn successful_collection_time_interval() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregator["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]
@@ -103,41 +128,36 @@ fn successful_collection_leader_selected() {
     initialize_rustls();
 
     let collection_job_id = random();
+    let time_precision = TimePrecision::from_seconds(3600);
     let input = Input {
         is_leader_selected: true,
         config: Config {
-            time_precision: TimePrecision::from_seconds(3600),
+            time_precision,
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                7200,
-                &TimePrecision::from_seconds(3600),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(7200, &time_precision)),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(3600),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -150,7 +170,7 @@ fn successful_collection_leader_selected() {
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 4,
             },
             Op::AggregationJobCreator,
@@ -163,7 +183,38 @@ fn successful_collection_leader_selected() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregator["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]
@@ -172,27 +223,22 @@ fn successful_collection_asynchronous() {
     initialize_rustls();
 
     let collection_job_id = random();
+    let time_precision = TimePrecision::from_seconds(3600);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(3600),
+            time_precision,
             min_batch_size: 4,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                7200,
-                &TimePrecision::from_seconds(3600),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(7200, &time_precision)),
             aggregation_mode: AggregationMode::Asynchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 10,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(3600),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -204,7 +250,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -216,7 +262,7 @@ fn successful_collection_asynchronous() {
             Op::LeaderAggregationJobDriver,
             Op::LeaderGarbageCollector,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -231,11 +277,8 @@ fn successful_collection_asynchronous() {
                 collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(
-                            1_699_999_200,
-                            &TimePrecision::from_seconds(3600),
-                        ),
-                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
+                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+                        Duration::from_seconds(3600, &time_precision),
                     )
                     .unwrap(),
                 ),
@@ -243,7 +286,7 @@ fn successful_collection_asynchronous() {
             Op::CollectionJobDriver,
             Op::CollectorPoll { collection_job_id },
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 4,
             },
             Op::AggregationJobCreator,
@@ -257,11 +300,8 @@ fn successful_collection_asynchronous() {
                 collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
-                        Time::from_seconds_since_epoch(
-                            1_699_999_200,
-                            &TimePrecision::from_seconds(3600),
-                        ),
-                        Duration::from_seconds(3600, &TimePrecision::from_seconds(3600)),
+                        Time::from_seconds_since_epoch(1_699_999_200, &time_precision),
+                        Duration::from_seconds(3600, &time_precision),
                     )
                     .unwrap(),
                 ),
@@ -270,7 +310,38 @@ fn successful_collection_asynchronous() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]
@@ -279,27 +350,22 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
     install_test_trace_subscriber();
     initialize_rustls();
 
+    let time_precision = TimePrecision::from_seconds(3600);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(3600),
+            time_precision,
             min_batch_size: 1,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                7200,
-                &TimePrecision::from_seconds(3600),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(7200, &time_precision)),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(3600),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AdvanceTime {
@@ -307,10 +373,8 @@ fn repro_gc_changes_aggregation_job_retry_time_interval() {
             },
             Op::Upload {
                 report_time: START_TIME
-                    .add_timedelta(
-                        &TimeDelta::seconds(3600),
-                        &TimePrecision::from_seconds(3600),
-                    )
+                    .to_time(&time_precision)
+                    .add_timedelta(&TimeDelta::seconds(3600), &time_precision)
                     .unwrap(),
                 count: 1,
             },
@@ -332,27 +396,22 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
     install_test_trace_subscriber();
     initialize_rustls();
 
+    let time_precision = TimePrecision::from_seconds(3600);
     let input = Input {
         is_leader_selected: true,
         config: Config {
-            time_precision: TimePrecision::from_seconds(3600),
+            time_precision,
             min_batch_size: 1,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                7200,
-                &TimePrecision::from_seconds(3600),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(7200, &time_precision)),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(3600),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AdvanceTime {
@@ -360,10 +419,8 @@ fn repro_gc_changes_aggregation_job_retry_leader_selected() {
             },
             Op::Upload {
                 report_time: START_TIME
-                    .add_timedelta(
-                        &TimeDelta::seconds(3600),
-                        &TimePrecision::from_seconds(3600),
-                    )
+                    .to_time(&time_precision)
+                    .add_timedelta(&TimeDelta::seconds(3600), &time_precision)
                     .unwrap(),
                 count: 1,
             },
@@ -385,27 +442,22 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
     install_test_trace_subscriber();
     initialize_rustls();
 
+    let time_precision = TimePrecision::from_seconds(1000);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(1000),
+            time_precision,
             min_batch_size: 100,
             batch_time_window_size: None,
-            report_expiry_age: Some(Duration::from_seconds(
-                4000,
-                &TimePrecision::from_seconds(1000),
-            )),
+            report_expiry_age: Some(Duration::from_seconds(4000, &time_precision)),
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 2,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(1000),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AdvanceTime {
@@ -413,10 +465,8 @@ fn repro_recreate_gcd_batch_job_count_underflow() {
             },
             Op::Upload {
                 report_time: START_TIME
-                    .add_timedelta(
-                        &TimeDelta::seconds(2000),
-                        &TimePrecision::from_seconds(1000),
-                    )
+                    .to_time(&time_precision)
+                    .add_timedelta(&TimeDelta::seconds(2000), &time_precision)
                     .unwrap(),
                 count: 1,
             },
@@ -437,30 +487,28 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
     initialize_rustls();
 
     let collection_job_id = random();
+    let time_precision = TimePrecision::from_seconds(1000);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(1000),
+            time_precision,
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(1000),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
             Op::LeaderAggregationJobDriver,
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -477,8 +525,8 @@ fn repro_abandoned_aggregation_job_batch_mismatch() {
                 collection_job_id,
                 query: Query::TimeInterval(
                     Interval::new(
-                        START_TIME,
-                        Duration::from_seconds(1000, &TimePrecision::from_seconds(1000)),
+                        START_TIME.to_time(&time_precision),
+                        Duration::from_seconds(1000, &time_precision),
                     )
                     .unwrap(),
                 ),
@@ -495,24 +543,22 @@ fn repro_helper_accumulate_on_retried_request() {
     install_test_trace_subscriber();
     initialize_rustls();
 
+    let time_precision = TimePrecision::from_seconds(1000);
     let input = Input {
         is_leader_selected: false,
         config: Config {
-            time_precision: TimePrecision::from_seconds(1000),
+            time_precision,
             min_batch_size: 1,
             batch_time_window_size: None,
             report_expiry_age: None,
             aggregation_mode: AggregationMode::Synchronous,
             min_aggregation_job_size: 1,
             max_aggregation_job_size: 1,
-            late_report_grace_period: Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(1000),
-            ),
+            late_report_grace_period: Duration::from_seconds(3600, &time_precision),
         },
         ops: Vec::from([
             Op::Upload {
-                report_time: START_TIME,
+                report_time: START_TIME.to_time(&time_precision),
                 count: 1,
             },
             Op::AggregationJobCreator,
@@ -525,8 +571,8 @@ fn repro_helper_accumulate_on_retried_request() {
                 collection_job_id: random(),
                 query: Query::TimeInterval(
                     Interval::new(
-                        START_TIME,
-                        Duration::from_seconds(1000, &TimePrecision::from_seconds(1000)),
+                        START_TIME.to_time(&time_precision),
+                        Duration::from_seconds(1000, &time_precision),
                     )
                     .unwrap(),
                 ),

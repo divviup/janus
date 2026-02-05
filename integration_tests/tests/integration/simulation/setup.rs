@@ -36,6 +36,7 @@ use janus_core::{
     Runtime, retries::ExponentialWithTotalDelayBuilder, test_util::runtime::TestRuntime,
     time::MockClock,
 };
+use opentelemetry::metrics::Meter;
 use prio::vdaf::prio3::Prio3Histogram;
 use tokio::net::TcpListener;
 
@@ -70,6 +71,7 @@ impl SimulationAggregator {
         report_writer_runtime: TestRuntime,
         server_runtime: TestRuntime,
         state: &State,
+        meter: &Meter,
     ) -> Self {
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(state.clock.clone()).await);
@@ -80,7 +82,7 @@ impl SimulationAggregator {
             Arc::clone(&datastore),
             state.clock.clone(),
             report_writer_runtime,
-            &state.meter,
+            meter,
             AggregatorConfig {
                 // Set this to 1 because report uploads will be serialized.
                 max_upload_batch_size: 1,
@@ -161,6 +163,7 @@ impl Components {
                 .with_label(LEADER_AGGREGATOR_REPORT_WRITER),
             state.runtime_manager.with_label(LEADER_AGGREGATOR_SERVER),
             state,
+            &state.leader_aggregator_metrics.meter,
         )
         .await;
 
@@ -170,6 +173,7 @@ impl Components {
                 .with_label(HELPER_AGGREGATOR_REPORT_WRITER),
             state.runtime_manager.with_label(HELPER_AGGREGATOR_SERVER),
             state,
+            &state.helper_aggregator_metrics.meter,
         )
         .await;
 
@@ -227,7 +231,7 @@ impl Components {
 
         let leader_garbage_collector = GarbageCollector::new(
             Arc::clone(&leader.datastore),
-            &state.meter,
+            &state.leader_garbage_collector_metrics.meter,
             100,
             100,
             100,
@@ -237,7 +241,7 @@ impl Components {
 
         let helper_garbage_collector = GarbageCollector::new(
             Arc::clone(&helper.datastore),
-            &state.meter,
+            &state.helper_garbage_collector_metrics.meter,
             100,
             100,
             100,
@@ -251,7 +255,7 @@ impl Components {
 
         let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
             Arc::clone(&leader.datastore),
-            state.meter.clone(),
+            state.aggregation_job_creator_metrics.meter.clone(),
             BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             StdDuration::from_secs(0), // unused
             StdDuration::from_secs(0), // unused
@@ -264,7 +268,7 @@ impl Components {
         let leader_aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
             http_request_exponential_backoff(),
-            &state.meter,
+            &state.leader_aggregation_job_driver_metrics.meter,
             BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             TASK_COUNTER_SHARD_COUNT,
             HPKE_CONFIGS_REFRESH_INTERVAL,
@@ -284,7 +288,7 @@ impl Components {
         let helper_aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
             http_request_exponential_backoff(),
-            &state.meter,
+            &state.helper_aggregation_job_driver_metrics.meter,
             BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             TASK_COUNTER_SHARD_COUNT,
             HPKE_CONFIGS_REFRESH_INTERVAL,
@@ -304,7 +308,7 @@ impl Components {
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::new(),
             http_request_exponential_backoff(),
-            &state.meter,
+            &state.collection_job_driver_metrics.meter,
             BATCH_AGGREGATION_SHARD_COUNT.try_into().unwrap(),
             RetryStrategy::new(StdDuration::ZERO, StdDuration::ZERO, 1.0).unwrap(),
             10000,

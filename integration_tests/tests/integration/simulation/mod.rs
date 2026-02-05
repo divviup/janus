@@ -73,10 +73,10 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use janus_core::retries::ExponentialWithTotalDelayBuilder;
-use janus_messages::Time;
 
-const START_TIME: Time = Time::from_time_precision_units(1_700_000_000);
+const START_TIME: DateTime<Utc> = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
 
 mod arbitrary;
 mod bad_client;
