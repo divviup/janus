@@ -510,7 +510,9 @@ mod tests {
         sync::{
             Arc,
             atomic::{AtomicU32, Ordering},
+            mpsc,
         },
+        thread,
         time::{Duration, Instant},
     };
 
@@ -679,15 +681,31 @@ mod tests {
     }
 
     impl RuntimeFlavor {
-        fn run<F: Future>(&self, future: F) -> F::Output {
-            match self {
-                RuntimeFlavor::CurrentThread => RuntimeBuilder::new_current_thread(),
-                RuntimeFlavor::MultiThread => RuntimeBuilder::new_multi_thread(),
-            }
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move { timeout(TEST_TIMEOUT, future).await.unwrap() })
+        fn run<F>(&self, future: F) -> F::Output
+        where
+            F: Future + Send + 'static,
+            F::Output: Send,
+        {
+            let flavor = *self;
+            let (sender, receiver) = mpsc::channel();
+            let join_handle = thread::spawn(move || {
+                let runtime = match flavor {
+                    RuntimeFlavor::CurrentThread => RuntimeBuilder::new_current_thread(),
+                    RuntimeFlavor::MultiThread => RuntimeBuilder::new_multi_thread(),
+                }
+                .enable_all()
+                .build()
+                .unwrap();
+                let output =
+                    runtime.block_on(async move { timeout(TEST_TIMEOUT, future).await.unwrap() });
+                drop(runtime);
+                sender.send(()).unwrap();
+                output
+            });
+            receiver
+                .recv_timeout(TEST_TIMEOUT * 2)
+                .expect("timed out waiting for runtime thread");
+            join_handle.join().unwrap()
         }
     }
 
