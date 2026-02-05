@@ -1373,9 +1373,20 @@ where
                 }),
                 task_aggregation_counters.clone(),
             );
+
+        // Determine the next Leader job state based on whether all reports are terminal.
+        let all_terminal = report_aggregations_to_write
+            .iter()
+            .all(|ra| ra.is_terminal());
+        let new_state = if all_terminal {
+            AggregationJobState::Finished
+        } else {
+            AggregationJobState::Active
+        };
+
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.put(
-            aggregation_job.with_step(new_step),
+            aggregation_job.with_step(new_step).with_state(new_state),
             report_aggregations_to_write,
         )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
