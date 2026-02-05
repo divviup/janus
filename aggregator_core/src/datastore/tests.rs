@@ -1973,11 +1973,6 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .zip(rng().sample_iter(StandardUniform))
         .take(AGGREGATION_JOB_COUNT)
         .collect();
-
-    // Add an awaiting_request aggregation job which can still be acquired
-    let awaiting_request_aggregation_job_id: AggregationJobId = random();
-    task_and_aggregation_job_ids.push((*helper_task.id(), awaiting_request_aggregation_job_id));
-
     task_and_aggregation_job_ids.sort();
     let leader_aggregation_job_ids: Vec<_> = task_and_aggregation_job_ids
         .iter()
@@ -1997,36 +1992,31 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 tx.put_aggregator_task(&leader_task).await.unwrap();
                 tx.put_aggregator_task(&helper_task).await.unwrap();
 
-                try_join_all(
-                    task_and_aggregation_job_ids
-                        .into_iter()
-                        // Remove the awaiting_request job from the list since it needs special
-                        // handling (it's already in AwaitingRequest).
-                        .filter(|(_, id)| *id != awaiting_request_aggregation_job_id)
-                        .map(|(task_id, aggregation_job_id)| async move {
-                            tx.put_aggregation_job(&AggregationJob::<
-                                VERIFY_KEY_LENGTH_PRIO3,
-                                TimeInterval,
-                                Prio3Count,
-                            >::new(
-                                task_id,
-                                aggregation_job_id,
-                                (),
-                                (),
-                                Interval::minimal(
-                                    START_TIME
-                                        .add_duration(&lease_duration)
-                                        .unwrap()
-                                        .add_duration(&lease_duration)
-                                        .unwrap(),
-                                )
-                                .unwrap(),
-                                AggregationJobState::Active,
-                                AggregationJobStep::from(0),
-                            ))
-                            .await
-                        }),
-                )
+                try_join_all(task_and_aggregation_job_ids.into_iter().map(
+                    |(task_id, aggregation_job_id)| async move {
+                        tx.put_aggregation_job(&AggregationJob::<
+                            VERIFY_KEY_LENGTH_PRIO3,
+                            TimeInterval,
+                            Prio3Count,
+                        >::new(
+                            task_id,
+                            aggregation_job_id,
+                            (),
+                            (),
+                            Interval::minimal(
+                                START_TIME
+                                    .add_duration(&lease_duration)
+                                    .unwrap()
+                                    .add_duration(&lease_duration)
+                                    .unwrap(),
+                            )
+                            .unwrap(),
+                            AggregationJobState::Active,
+                            AggregationJobStep::from(0),
+                        ))
+                        .await
+                    },
+                ))
                 .await
                 .unwrap();
 
@@ -2072,14 +2062,14 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 .unwrap();
 
                 // Write an aggregation job that is awaiting a request from the Leader. We
-                // expect to retrieve this one.
+                // don't want to retrieve this one, either.
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH_PRIO3,
                     TimeInterval,
                     Prio3Count,
                 >::new(
                     *helper_task.id(),
-                    awaiting_request_aggregation_job_id,
+                    random(),
                     (),
                     (),
                     Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
@@ -2428,12 +2418,10 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .collect();
     let mut got_aggregation_jobs: Vec<_> = ds
         .run_unnamed_tx(|tx| {
-            let task_count = task_and_aggregation_job_ids.len();
             Box::pin(async move {
                 // This time, we just acquire all jobs in a single go for simplicity -- we've
                 // already tested the maximum acquire count functionality above.
-                // Note: task_and_aggregation_job_ids includes the awaiting_request job.
-                tx.acquire_incomplete_aggregation_jobs(&lease_duration_std, task_count)
+                tx.acquire_incomplete_aggregation_jobs(&lease_duration_std, AGGREGATION_JOB_COUNT)
                     .await
             })
         })

@@ -1994,12 +1994,7 @@ WHERE aggregation_jobs.task_id = $1
 WITH incomplete_jobs AS (
     SELECT aggregation_jobs.id FROM aggregation_jobs
     JOIN tasks ON tasks.id = aggregation_jobs.task_id
-    -- DAP (§4.6.3 [dap-16]) describes the continuation phase where the Leader sends
-    -- AggregationJobContinueReq messages to advance preparation. Helper jobs in
-    -- AWAITING_REQUEST state represent work that has processed one round but needs
-    -- additional Leader requests to complete. These jobs must be acquirable so the
-    -- Helper can respond to incoming continuation requests.
-    WHERE aggregation_jobs.state IN ('ACTIVE', 'AWAITING_REQUEST')
+    WHERE aggregation_jobs.state = 'ACTIVE'
     AND aggregation_jobs.lease_expiry <= $2
     AND UPPER(aggregation_jobs.client_timestamp_interval) >=
         COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,

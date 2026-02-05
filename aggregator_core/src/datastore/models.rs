@@ -517,8 +517,6 @@ pub enum AggregationJobState {
     /// request. Represents the interval between aggregation rounds in DAP's continuation
     /// phase (§4.6.3 [dap-16]). The Helper has sent an AggregationJobResp but some reports
     /// remain in the Continued state awaiting the next AggregationJobContinueReq.
-    ///
-    /// Note: This state will be removed as part of the DAP-16 state model redesign (#4305).
     #[postgres(name = "AWAITING_REQUEST")]
     AwaitingRequest,
     /// All report aggregations have reached a terminal state (Finished or Failed), completing
