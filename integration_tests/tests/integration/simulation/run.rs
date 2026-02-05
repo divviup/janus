@@ -9,11 +9,10 @@ use std::{
 use chrono::TimeDelta;
 use educe::Educe;
 use futures::future::join_all;
-use janus_aggregator::aggregator;
+use janus_aggregator::{aggregator, metrics::test_util::InMemoryMetricInfrastructure};
 use janus_aggregator_core::{
     datastore::models::AggregatorRole,
     task::{AggregatorTask, test_util::Task},
-    test_util::noop_meter,
 };
 use janus_collector::{Collection, CollectionJob, PollResult};
 use janus_core::{
@@ -25,7 +24,7 @@ use janus_messages::{
     CollectionJobId, Time,
     batch_mode::{LeaderSelected, TimeInterval},
 };
-use opentelemetry::metrics::Meter;
+use opentelemetry_sdk::metrics::data::Metric;
 use prio::vdaf::prio3::{Prio3, Prio3Histogram, optimal_chunk_length};
 use quickcheck::TestResult;
 use tokio::time::timeout;
@@ -66,15 +65,20 @@ impl Simulation {
     }
 
     pub(super) fn run(input: Input) -> TestResult {
+        let (test_result, _state_opt) = Self::run_with_metrics(input);
+        test_result
+    }
+
+    pub(super) fn run_with_metrics(input: Input) -> (TestResult, SimulationMetrics) {
         if input.ops.is_empty() {
-            return TestResult::discard();
+            return (TestResult::discard(), SimulationMetrics::default());
         }
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
 
-        let result = tokio_runtime.block_on(async {
+        let (result, metrics) = tokio_runtime.block_on(async {
             let mut simulation = Self::new(&input).await;
             for op in input.ops.iter() {
                 let span = info_span!("operation", op = ?op);
@@ -163,18 +167,23 @@ impl Simulation {
                 .instrument(span)
                 .await;
                 match timeout_result {
-                    Ok(ControlFlow::Break(test_result)) => return test_result,
+                    Ok(ControlFlow::Break(test_result)) => {
+                        return (test_result, SimulationMetrics::default());
+                    }
                     Ok(ControlFlow::Continue(())) => {}
                     Err(error) => {
                         error!("operation timed out");
-                        return TestResult::error(error.to_string());
+                        return (
+                            TestResult::error(error.to_string()),
+                            SimulationMetrics::default(),
+                        );
                     }
                 }
 
                 if simulation.components.leader.inspect_monitor.has_failed()
                     || simulation.components.helper.inspect_monitor.has_failed()
                 {
-                    return TestResult::failed();
+                    return (TestResult::failed(), SimulationMetrics::default());
                 }
             }
 
@@ -182,31 +191,33 @@ impl Simulation {
                 &simulation.state.aggregate_results_time_interval,
                 &simulation.state,
             ) {
-                return TestResult::failed();
+                return (TestResult::failed(), SimulationMetrics::default());
             }
 
             if !check_aggregate_results_valid(
                 &simulation.state.aggregate_results_leader_selected,
                 &simulation.state,
             ) {
-                return TestResult::failed();
+                return (TestResult::failed(), SimulationMetrics::default());
             }
+
+            let metrics = simulation.state.collect_metrics().await;
 
             // `TestRuntimeManager` will panic on drop if any asynchronous task spawned via its
             // labeled runtimes panicked. Drop the `Simulation` struct, which includes this manager,
             // inside `catch_unwind` so we can report failure.
             if catch_unwind(AssertUnwindSafe(move || drop(simulation))).is_err() {
-                return TestResult::failed();
+                return (TestResult::failed(), SimulationMetrics::default());
             }
 
-            TestResult::passed()
+            (TestResult::passed(), metrics)
         });
         if result.is_failure() {
             error!(?input, "failure");
         } else {
             info!(?input, "success");
         }
-        result
+        (result, metrics)
     }
 
     async fn execute_advance_time(&mut self, amount: &TimeDelta) -> ControlFlow<TestResult> {
@@ -532,7 +543,22 @@ impl Simulation {
 pub(super) struct State {
     pub(super) stopper: Stopper,
     pub(super) clock: MockClock,
-    pub(super) meter: Meter,
+    #[educe(Debug(ignore))]
+    pub(super) leader_aggregator_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) helper_aggregator_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) leader_garbage_collector_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) helper_garbage_collector_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) aggregation_job_creator_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) leader_aggregation_job_driver_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) helper_aggregation_job_driver_metrics: InMemoryMetricInfrastructure,
+    #[educe(Debug(ignore))]
+    pub(super) collection_job_driver_metrics: InMemoryMetricInfrastructure,
     #[educe(Debug(ignore))]
     pub(super) runtime_manager: TestRuntimeManager<&'static str>,
     pub(super) vdaf_instance: VdafInstance,
@@ -554,7 +580,14 @@ impl State {
         Self {
             stopper: Stopper::new(),
             clock: MockClock::new(START_TIME.timestamp().try_into().unwrap()),
-            meter: noop_meter(),
+            leader_aggregator_metrics: InMemoryMetricInfrastructure::new(),
+            helper_aggregator_metrics: InMemoryMetricInfrastructure::new(),
+            leader_garbage_collector_metrics: InMemoryMetricInfrastructure::new(),
+            helper_garbage_collector_metrics: InMemoryMetricInfrastructure::new(),
+            aggregation_job_creator_metrics: InMemoryMetricInfrastructure::new(),
+            leader_aggregation_job_driver_metrics: InMemoryMetricInfrastructure::new(),
+            helper_aggregation_job_driver_metrics: InMemoryMetricInfrastructure::new(),
+            collection_job_driver_metrics: InMemoryMetricInfrastructure::new(),
             runtime_manager: TestRuntimeManager::new(),
             vdaf_instance: VdafInstance::Prio3Histogram {
                 length: MAX_REPORTS,
@@ -578,6 +611,29 @@ impl State {
         } else {
             debug!("Too many reports, skipping upload operation");
             None
+        }
+    }
+
+    async fn collect_metrics(&self) -> SimulationMetrics {
+        let leader_aggregator = self.leader_aggregator_metrics.collect().await;
+        let helper_aggregator = self.helper_aggregator_metrics.collect().await;
+        let leader_garbage_collector = self.leader_garbage_collector_metrics.collect().await;
+        let helper_garbage_collector = self.helper_garbage_collector_metrics.collect().await;
+        let aggregation_job_creator = self.aggregation_job_creator_metrics.collect().await;
+        let leader_aggregation_job_driver =
+            self.leader_aggregation_job_driver_metrics.collect().await;
+        let helper_aggregation_job_driver =
+            self.helper_aggregation_job_driver_metrics.collect().await;
+        let collection_job_driver = self.collection_job_driver_metrics.collect().await;
+        SimulationMetrics {
+            leader_aggregator,
+            helper_aggregator,
+            leader_garbage_collector,
+            helper_garbage_collector,
+            aggregation_job_creator,
+            leader_aggregation_job_driver,
+            helper_aggregation_job_driver,
+            collection_job_driver,
         }
     }
 }
@@ -610,4 +666,17 @@ fn check_aggregate_results_valid<B: janus_messages::batch_mode::BatchMode>(
         }
     }
     true
+}
+
+#[derive(Debug, Default)]
+#[allow(unused)] // Not all fields are used by tests yet.
+pub(super) struct SimulationMetrics {
+    pub(super) leader_aggregator: HashMap<String, Metric>,
+    pub(super) helper_aggregator: HashMap<String, Metric>,
+    pub(super) leader_garbage_collector: HashMap<String, Metric>,
+    pub(super) helper_garbage_collector: HashMap<String, Metric>,
+    pub(super) aggregation_job_creator: HashMap<String, Metric>,
+    pub(super) leader_aggregation_job_driver: HashMap<String, Metric>,
+    pub(super) helper_aggregation_job_driver: HashMap<String, Metric>,
+    pub(super) collection_job_driver: HashMap<String, Metric>,
 }

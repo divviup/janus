@@ -6,6 +6,7 @@ use janus_core::{
     time::{DateTimeExt, TimeExt},
 };
 use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+use opentelemetry_sdk::metrics::data::Sum;
 use rand::random;
 
 use crate::simulation::{
@@ -87,7 +88,38 @@ fn successful_collection_time_interval() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregator["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]
@@ -151,7 +183,38 @@ fn successful_collection_leader_selected() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregator["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]
@@ -247,7 +310,38 @@ fn successful_collection_asynchronous() {
             Op::CollectorPoll { collection_job_id },
         ]),
     };
-    assert!(!Simulation::run(input).is_failure());
+    let (test_result, metrics) = Simulation::run_with_metrics(input);
+    assert!(!test_result.is_failure());
+    assert_eq!(
+        metrics.leader_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.helper_aggregation_job_driver["janus_report_aggregation_success_counter"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        7,
+    );
+    assert_eq!(
+        metrics.collection_job_driver["janus_collection_jobs_finished"]
+            .data
+            .as_any()
+            .downcast_ref::<Sum<u64>>()
+            .unwrap()
+            .data_points[0]
+            .value,
+        1,
+    );
 }
 
 #[test]

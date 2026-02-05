@@ -38,8 +38,8 @@ use {
 #[cfg(feature = "prometheus")]
 pub(crate) mod tokio_runtime;
 
-#[cfg(test)]
-pub(crate) mod test_util;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 #[cfg(test)]
 mod tests;
 
