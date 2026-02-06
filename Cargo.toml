@@ -69,7 +69,7 @@ num_enum = "0.7.5"
 ohttp = { version = "0.7.2", default-features = false }
 opentelemetry = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.27", default-features = false, features = ["trace", "metrics", "grpc-tonic"] }
-opentelemetry-prometheus = "0.27"
+opentelemetry-prometheus = "0.31"
 opentelemetry_sdk = { version = "0.27", default-features = false, features = ["trace", "metrics"] }
 pem = "3"
 postgres-protocol = "0.6.10"
@@ -110,7 +110,7 @@ thiserror = "2.0"
 tracing = "0.1.44"
 tracing-chrome = "0.7.2"
 tracing-log = "0.2.0"
-tracing-opentelemetry = "0.28"
+tracing-opentelemetry = "0.31"
 tracing-stackdriver = "0.10.0"
 tracing-subscriber = "0.3"
 tokio = { version = "1.49", features = ["full", "tracing"] }
