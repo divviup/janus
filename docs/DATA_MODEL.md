@@ -198,6 +198,25 @@ graph TD;
     LeaderPollContinue;
     Finished;
     Failed;
+
+    START -- Job creation --> LeaderInit;
+
+    LeaderInit -- Step (async helper) --> LeaderPollInit;
+    LeaderInit -- Step --> LeaderContinue;
+    LeaderInit -- Step --> Finished;
+    LeaderInit -- Step --> Failed;
+    LeaderPollInit -- Step (still processing) --> LeaderPollInit;
+    LeaderPollInit -- Step --> LeaderContinue;
+    LeaderPollInit -- Step --> Finished;
+    LeaderPollInit -- Step --> Failed;
+    LeaderContinue -- Step (async helper) --> LeaderPollContinue;
+    LeaderContinue -- Step --> LeaderContinue;
+    LeaderContinue -- Step --> Finished;
+    LeaderContinue -- Step --> Failed;
+    LeaderPollContinue -- Step (still processing) --> LeaderPollContinue;
+    LeaderPollContinue -- Step --> LeaderContinue;
+    LeaderPollContinue -- Step --> Finished;
+    LeaderPollContinue -- Step --> Failed;
 ```
 
 ### Helper
@@ -210,4 +229,18 @@ graph TD;
     HelperContinueProcessing;
     Finished;
     Failed;
+
+    START -- PUT request --> HelperInitProcessing;
+    START -- PUT reqeust --> Failed;
+
+    HelperInitProcessing -- Local processing --> HelperContinue;
+    HelperInitProcessing -- Local processing --> Finished;
+    HelperInitProcessing -- Local processing --> Failed;
+
+    HelperContinueProcessing -- Local processing --> HelperContinue;
+    HelperContinueProcessing -- Local processing --> Finished;
+    HelperContinueProcessing -- Local processing --> Failed;
+
+    HelperContinue -- POST request --> HelperContinueProcessing;
+    HelperContinue -- POST request --> Failed;
 ```
