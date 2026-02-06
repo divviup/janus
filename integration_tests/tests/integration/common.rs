@@ -21,7 +21,7 @@ use janus_messages::{
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,
-    vdaf::{self, prio3::Prio3},
+    vdaf::{self, dummy, prio3::Prio3},
 };
 use rand::{Rng, random, rng, seq::IteratorRandom as _};
 use tokio::time::{self, sleep};
@@ -545,6 +545,34 @@ pub async fn submit_measurements_and_verify_aggregate(
                 measurements,
                 aggregation_parameter: (),
                 aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
+                .await
+                .unwrap();
+
+            submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
+                vdaf,
+                &test_case,
+                &client_implementation,
+            )
+            .await;
+        }
+        VdafInstance::Fake { rounds } => {
+            let vdaf = dummy::Vdaf::new(*rounds);
+
+            let test_case = AggregationTestCase {
+                measurements: vec![1; total_measurements],
+                aggregation_parameter: dummy::AggregationParam(1),
+                aggregate_result: total_measurements as u64 + 1,
             };
 
             let client_implementation = client_backend

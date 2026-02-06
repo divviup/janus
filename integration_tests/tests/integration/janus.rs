@@ -647,3 +647,87 @@ async fn janus_in_process_sumvec_dp_noise() {
             .all(|x| *x < Field128::modulus() / 4 || *x > Field128::modulus() / 4 * 3)
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_fake_vdaf_4_round_sync() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 4 },
+    ))
+    .await;
+
+    submit_measurements_and_verify_aggregate(
+        "janus_in_process_fake_vdaf_4_round_sync",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_fake_vdaf_4_round_async() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Asynchronous,
+        VdafInstance::Fake { rounds: 4 },
+    ))
+    .await;
+
+    submit_measurements_and_verify_aggregate(
+        "janus_in_process_fake_vdaf_4_round_async",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_fake_vdaf_5_round_sync() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 5 },
+    ))
+    .await;
+
+    submit_measurements_and_verify_aggregate(
+        "janus_in_process_fake_vdaf_5_round_sync",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_fake_vdaf_5_round_async() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        BatchMode::TimeInterval,
+        AggregationMode::Asynchronous,
+        VdafInstance::Fake { rounds: 5 },
+    ))
+    .await;
+
+    submit_measurements_and_verify_aggregate(
+        "janus_in_process_fake_vdaf_5_round_async",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
