@@ -19,16 +19,16 @@ writes those aggregation jobs to the `aggregation_jobs` and
 `report_aggregations` tables. (The `report_aggregations` table stores per-report
 data, while the `aggregation_jobs` table stores per-aggregation-job data.)
 
-Report aggregations are generally written in the `Start` state, and aggregation
-jobs are initially written in the `InProgress` state. If a report happens to
+Report aggregations are generally written in the `LeaderInit` state, and aggregation
+jobs are initially written in the `Active` state. If a report happens to
 fall into a batch that is already collected (due to the related
 `batch_aggregations` being in state `Collected` or `Scrubbed`), it will instead
 be written in the `Failed` state with `BatchCollected` as the reason. If all
 report aggregations fail in this way, the aggregation job will be written in the
 `Finished` state.
 
-The process of writing a non-`Finished` aggregation job will also increase the
-`aggregation_jobs_created` counter for a shard of the batch aggregations
+The process of writing a new non-`Finished` aggregation job will also increase
+the `aggregation_jobs_created` counter for a shard of the batch aggregations
 associated with the aggregation job.
 
 Any reports which are included in an aggregation job are scrubbed, which means
@@ -37,7 +37,7 @@ that the report data included in the `client_reports` table is removed. The
 
 ### Aggregation job stepping
 
-The aggregation job driver steps aggregation jobs. Only `InProgress` aggregation
+The aggregation job driver steps aggregation jobs. Only `Active` aggregation
 jobs are stepped.
 
 Stepping an aggregation job updates the report aggregations with the stepped
@@ -59,7 +59,7 @@ jobs will initially be in the `Start` state.
 ### Collection job stepping
 
 The collection job driver steps collection jobs. Only collection jobs in the
-`Start` state are stepped.
+`Start` or `Poll` state are stepped.
 
 A stepped collection job will not move forward until the relevant batch
 aggregations' `aggregation_jobs_created` & `aggregation_jobs_terminated`
@@ -75,9 +75,13 @@ have not yet been written will have an empty batch aggregation shard in the
 
 The collection job driver then computes its final aggregate share for the
 collection job, and sends an aggregate share request to the Helper to retrieve
-their encrypted aggregate share. This is then stored back to the collection job
-to be retrieved by the Collector. All relevant batch aggregations are then
-scrubbed, which removes all aggregation information from the batch aggregations.
+their encrypted aggregate share. If the helper returns its aggregate share
+immediately, it will be stored in the collection job, to be retrieved by the
+Collector. If the helper doesn't return its aggregate share immediately, then
+the collection job will advance to the `Poll` state, and the collection job
+driver will try fetching the aggregate share later. Once a collection job is
+finished, all relevant batch aggregations are then scrubbed, which removes all
+aggregation information from the batch aggregations.
 
 ## Helper
 
@@ -89,9 +93,20 @@ Leader.
 Report shares are written as scrubbed reports, i.e. without report data. This is
 because the relevant report data is stored with the report aggregations.
 
-It writes aggregation jobs & report aggregations with state tracking identical
+It writes aggregation jobs & report aggregations with state tracking similar
 to that described in the Leader's aggregation job creation/aggregation job
 stepping sections. Batch aggregations are also updated similarly to the Leader.
+
+Depending on whether the task is configured with the synchronous or asynchronous
+aggregation mode, VDAF processing will either be done while handling HTTP
+requests from the leader or separately. If the synchronous mode is enabled,
+aggregation jobs will start in the `AwaitingRequest` state or a terminal state,
+and will either return to the `AwaitingRequest` state or transition to a
+terminal state when handling each request from the Leader. If the asynchronous
+mode is enabled, aggregation jobs will start in the `Active` state or a terminal
+state, transition to the `AwaitingRequest` state or a terminal state after being
+stepped, and transition to the `Active` state again after receiving the next
+request from the Leader.
 
 ### Aggregate share requests
 
@@ -100,3 +115,99 @@ from all relevant batch aggregation shards. These batch aggregation shards are
 then scrubbed; like with the Leader, empty batch aggregation shards are written
 for any currently-nonexistent shards to avoid the possibility of concurrent
 aggregation.
+
+# State Machines
+
+## Aggregation Job
+
+### Leader
+
+```mermaid
+graph TD;
+    START;
+    Active;
+    Finished;
+    Abandoned;
+    Deleted;
+
+    START -- Job creation --> Active;
+
+    Active -- Step --> Active;
+    Active -- Step --> Finished;
+    Active -- Exhaust retries --> Abandoned;
+
+    Active -- DELETE request --> Deleted;
+    Finished -- DELETE request --> Deleted;
+    Abandoned -- DELETE request --> Deleted;
+```
+
+### Helper, Synchronous Mode
+
+```mermaid
+graph TD;
+    START;
+    AwaitingRequest;
+    Finished;
+    Deleted;
+
+    START -- PUT request --> Finished;
+    START -- PUT request --> AwaitingRequest;
+
+    AwaitingRequest -- POST request --> AwaitingRequest;
+    AwaitingRequest -- POST request --> Finished;
+
+    AwaitingRequest -- DELETE request --> Deleted;
+    Finished -- DELETE request --> Deleted;
+```
+
+### Helper, Asynchronous Mode
+
+```mermaid
+graph TD;
+    START;
+    Active;
+    AwaitingRequest;
+    Finished;
+    Abandoned;
+    Deleted;
+
+    START -- PUT request --> Active;
+
+    Active -- Stepped --> AwaitingRequest;
+    Active -- Stepped --> Finished;
+    AwaitingRequest -- POST reqest --> Active;
+
+    Active -- Exhaust retries --> Abandoned;
+
+    Active -- DELETE request --> Deleted;
+    AwaitingRequest -- DELETE request --> Deleted;
+    Finished -- DELETE request --> Deleted;
+    Abandoned -- DELETE request --> Deleted;
+```
+
+## Report Aggregation
+
+### Leader
+
+```mermaid
+graph TD;
+    START;
+    LeaderInit;
+    LeaderContinue;
+    LeaderPollInit;
+    LeaderPollContinue;
+    Finished;
+    Failed;
+```
+
+### Helper
+
+```mermaid
+graph TD;
+    START;
+    HelperInitProcessing;
+    HelperContinue;
+    HelperContinueProcessing;
+    Finished;
+    Failed;
+```
