@@ -8,7 +8,7 @@ use std::cmp::max;
 
 use chrono::TimeDelta;
 use janus_aggregator_core::task::AggregationMode;
-use janus_core::time::{TimeDeltaExt, TimeExt};
+use janus_core::time::{DateTimeExt, TimeDeltaExt, TimeExt};
 use janus_messages::{CollectionJobId, Duration, Interval, Time, taskprov::TimePrecision};
 use quickcheck::{Arbitrary, Gen, empty_shrinker};
 use rand::random;
@@ -93,7 +93,7 @@ struct Context {
 impl Context {
     fn new(config: &Config) -> Self {
         Self {
-            current_time: START_TIME,
+            current_time: START_TIME.to_time(&config.time_precision),
             time_precision: config.time_precision,
             started_collection_job_ids: Vec::new(),
             polled_collection_job_ids: Vec::new(),
@@ -274,12 +274,13 @@ fn arbitrary_report_time(g: &mut Gen, context: &Context) -> Time {
 
 /// Generate a collect start operation, using a time interval query.
 fn arbitrary_collector_start_op_time_interval(g: &mut Gen, context: &Context) -> Op {
+    let start_time = START_TIME.to_time(&context.time_precision);
     let start_to_now = context
         .current_time
-        .difference_as_time_delta(&START_TIME, &context.time_precision)
+        .difference_as_time_delta(&start_time, &context.time_precision)
         .unwrap();
     let random_range = start_to_now.num_seconds() as u64 / context.time_precision.as_seconds() + 10;
-    let start = START_TIME
+    let start = start_time
         .add_duration(&Duration::from_time_precision_units(
             u64::arbitrary(g) % random_range,
         ))
