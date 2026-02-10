@@ -782,6 +782,8 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
     use fixed::types::I1F31;
@@ -812,7 +814,6 @@ mod tests {
         header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     };
     use retry_after::RetryAfter;
-    use std::time::SystemTime;
 
     use crate::{Collection, CollectionJob, Collector, Error, PollResult};
 
