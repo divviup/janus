@@ -1319,18 +1319,18 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.4.18"
+version = "0.4.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29ff1e7ce34595633b7da26cd617c0f48c48bb7b0f000d05a0cc73b4788c1016"
+checksum = "744ab3ee431f5704eabf68291a84a7095eb2194ce07b4b12b2d01758ddb60e72"
 dependencies = [
  "base64 0.22.1",
  "email_address",
- "janus_messages 0.7.55",
+ "janus_messages 0.7.107",
  "log",
  "num-bigint",
  "num-rational",
  "pad-adapter",
- "prio 0.16.7",
+ "prio 0.16.8",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2924,16 +2924,16 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.55"
+version = "0.7.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05ea151826d3dfa95391502d64e847b747a66500dd9d669a823bd0c55e91f331"
+checksum = "6a91c89457fb20412a7ba43a45e1f4b8fcb027808d0b812a7db39ebe6bd73962"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "educe",
  "hex",
  "num_enum",
- "prio 0.16.7",
+ "prio 0.16.8",
  "rand 0.8.5",
  "serde",
  "thiserror 2.0.18",
@@ -4045,9 +4045,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.16.7"
+version = "0.16.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e139374dfbada620828b9736ecef3959c8fea97caa8d9ba39d3e84966380978"
+checksum = "60fc81b965da5029d6a5157537364055a1ef4817247e5d9599721c7fa058a6db"
 dependencies = [
  "aes",
  "bitvec",
@@ -4068,7 +4068,7 @@ dependencies = [
  "sha2",
  "sha3",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
