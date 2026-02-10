@@ -509,8 +509,8 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
 #[postgres(name = "aggregation_job_state")]
 pub enum AggregationJobState {
-    /// Job is being actively processed. This is the initial state for both Leader and Helper
-    /// aggregation jobs. Corresponds to the initialization phase in DAP (§4.6.2 [dap-16]).
+    /// Job is ready for the aggregation job driver to pick up. Corresponds to the
+    /// initialization phase in DAP (§4.6.2 [dap-16]).
     #[postgres(name = "ACTIVE")]
     Active,
     /// Helper has completed processing one request and is waiting for the Leader's next
