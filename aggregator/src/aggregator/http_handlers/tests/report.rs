@@ -1529,10 +1529,10 @@ mod decode_reports_stream_tests {
         let mut stream_bytes = report1.get_encoded().unwrap();
         report2_metadata.encode(&mut stream_bytes).unwrap();
 
-        // Incomplete public_share u32 to trigger UnexpectedEof
-        stream_bytes.extend_from_slice(&[0x00, 0x00, 0x00]);
+        // Very large public_share u32 length prefix to trigger UnexpectedEof
+        stream_bytes.extend_from_slice(&[0xff; 4]);
 
-        // Add more reports, which should all be dropped.
+        // Add more data, which won't be parsed successfully.
         for _ in 0..=10 {
             create_report(
                 &leader_task,

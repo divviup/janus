@@ -8,8 +8,9 @@ use opentelemetry_sdk::{
 };
 use tokio::task::spawn_blocking;
 
+/// Encapsulates an OpenTelemetry exporter, meter provider, and meter, for use in metrics tests.
 #[derive(Clone)]
-pub(crate) struct InMemoryMetricInfrastructure {
+pub struct InMemoryMetricInfrastructure {
     /// The in-memory metric exporter
     pub exporter: InMemoryMetricExporter,
     /// The meter provider.
@@ -21,7 +22,7 @@ pub(crate) struct InMemoryMetricInfrastructure {
 impl InMemoryMetricInfrastructure {
     /// Create an [`InMemoryMetricExporter`], then use it to create an [`SdkMeterProvider`] and
     /// [`Meter`].
-    pub(crate) fn new() -> InMemoryMetricInfrastructure {
+    pub fn new() -> InMemoryMetricInfrastructure {
         let exporter = InMemoryMetricExporter::default();
         let reader = PeriodicReader::builder(exporter.clone(), runtime::Tokio).build();
         let meter_provider = SdkMeterProvider::builder().with_reader(reader).build();
@@ -35,7 +36,7 @@ impl InMemoryMetricInfrastructure {
 
     /// Flush all pending metrics, and return data indexed by metric name. All resource and scope
     /// information is ignored.
-    pub(crate) async fn collect(&self) -> HashMap<String, Metric> {
+    pub async fn collect(&self) -> HashMap<String, Metric> {
         spawn_blocking({
             let meter_provider = self.meter_provider.clone();
             move || meter_provider.force_flush().unwrap()
@@ -55,12 +56,18 @@ impl InMemoryMetricInfrastructure {
     }
 
     /// Shut down the periodic reader.
-    pub(crate) async fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         spawn_blocking({
             let meter_provider = self.meter_provider.clone();
             move || meter_provider.shutdown().unwrap()
         })
         .await
         .unwrap();
+    }
+}
+
+impl Default for InMemoryMetricInfrastructure {
+    fn default() -> Self {
+        Self::new()
     }
 }

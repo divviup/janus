@@ -782,6 +782,8 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
     use fixed::types::I1F31;
@@ -1832,7 +1834,7 @@ mod tests {
         let ref_date_time = Utc.with_ymd_and_hms(2015, 10, 21, 7, 28, 0).unwrap();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
+            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, SystemTime::from(ref_date_time))
         );
         mock_collect_poll_retry_after_date_time.assert_async().await;
     }
