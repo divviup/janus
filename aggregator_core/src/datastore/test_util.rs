@@ -15,7 +15,7 @@ use janus_core::{
     test_util::testcontainers::Postgres,
     time::{Clock, MockClock},
 };
-use rand::{Rng, distr::StandardUniform, random, rng};
+use rand::{RngExt, distr::StandardUniform, random, rng};
 use sqlx::{
     Connection, PgConnection,
     migrate::{Migrate, Migrator},

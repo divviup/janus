@@ -35,7 +35,7 @@ use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
 use prio::codec::Decode as _;
-use rand::{Rng, distr::StandardUniform, rng};
+use rand::{RngExt, distr::StandardUniform, rng};
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs,

@@ -9,7 +9,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId};
-use rand::{distr::StandardUniform, prelude::Distribution};
+use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},

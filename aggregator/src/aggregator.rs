@@ -82,7 +82,7 @@ use prio::{
     flp::gadgets::{Mul, ParallelSum},
     vdaf::prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
 };
-use rand::{Rng, random, rng};
+use rand::{RngExt, random, rng};
 use reqwest::Client;
 use tokio::{select, try_join};
 use tracing::{Level, debug, error, info, warn};

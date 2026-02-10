@@ -35,7 +35,7 @@ use prio::{
     topology::ping_pong::PingPongContinuation,
     vdaf::Aggregatable,
 };
-use rand::{distr::StandardUniform, prelude::Distribution};
+use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 
 use crate::{
