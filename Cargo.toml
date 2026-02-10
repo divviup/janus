@@ -102,7 +102,7 @@ signal-hook-tokio = "0.4.0"
 # https://github.com/divviup/janus/security/dependabot/29
 sqlx = { version = "0.8.6", default-features = false }
 stopper = "0.2.8"
-tempfile = "3.24.0"
+tempfile = "3.25.0"
 testcontainers = "0.26.3"
 thiserror = "2.0"
 tracing = "0.1.44"
