@@ -39,7 +39,7 @@ use prio::{
     topology::ping_pong::PingPongMessage,
     vdaf::{dummy, prio3::Prio3Count},
 };
-use rand::{Rng, distr::StandardUniform, random, rng};
+use rand::{RngExt, distr::StandardUniform, random, rng};
 use tokio::{time::timeout, try_join};
 use url::Url;
 

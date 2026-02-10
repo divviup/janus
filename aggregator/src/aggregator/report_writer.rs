@@ -17,7 +17,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{Runtime, time::Clock};
 use janus_messages::TaskId;
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 use tokio::{
     select,
     sync::{mpsc, oneshot},

@@ -51,7 +51,7 @@ use prio::{
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
-use rand::{Rng, random, rng};
+use rand::{RngExt, random, rng};
 use tokio::{
     time::{self, Instant, MissedTickBehavior, sleep_until},
     try_join,

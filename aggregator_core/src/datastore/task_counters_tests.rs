@@ -1,5 +1,5 @@
 use janus_core::{test_util::install_test_trace_subscriber, time::MockClock, vdaf::VdafInstance};
-use rand::{Rng, random, rng};
+use rand::{RngExt, random, rng};
 
 use crate::{
     datastore::{

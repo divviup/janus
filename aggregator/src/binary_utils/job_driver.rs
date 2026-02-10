@@ -14,7 +14,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{Runtime, time::Clock};
 use opentelemetry::{KeyValue, metrics::Meter};
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 use tokio::{
     sync::{Semaphore, SemaphorePermit},
     time::{self, Instant},

@@ -29,7 +29,7 @@ use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
     TaskId, Time, taskprov::TimePrecision,
 };
-use rand::{Rng, distr::StandardUniform, random, rng};
+use rand::{RngExt, distr::StandardUniform, random, rng};
 use serde_test::{Token, assert_ser_tokens, assert_tokens};
 use trillium::{Handler, Status};
 use trillium_testing::{

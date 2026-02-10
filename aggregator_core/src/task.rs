@@ -15,7 +15,7 @@ use janus_messages::{
     Time, batch_mode, taskprov::TimePrecision,
 };
 use postgres_types::{FromSql, ToSql};
-use rand::{Rng, distr::StandardUniform, random, rng};
+use rand::{RngExt, distr::StandardUniform, random, rng};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use url::Url;
 
@@ -795,7 +795,7 @@ pub mod test_util {
         AggregateShareId, AggregationJobId, AggregationJobStep, CollectionJobId, Duration,
         HpkeConfigId, Role, TaskId, Time, taskprov::TimePrecision,
     };
-    use rand::{Rng, distr::StandardUniform, random, rng};
+    use rand::{RngExt, distr::StandardUniform, random, rng};
     use url::Url;
 
     use crate::{
