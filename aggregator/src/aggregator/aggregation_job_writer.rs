@@ -810,11 +810,6 @@ where
 
     /// Update aggregation job states if all their report aggregations have reached a terminal
     /// state.
-    ///
-    /// This function is called during write operations to automatically transition jobs to
-    /// Finished when all constituent report aggregations are terminal (Finished or Failed).
-    /// This serves as a safety net to ensure jobs reach their terminal state even if they
-    /// weren't transitioned earlier in processing.
     fn update_aggregation_job_state_from_report_aggregations(&mut self) {
         // Update in-memory state of aggregation jobs: any aggregation jobs whose report
         // aggregations are all in a terminal state should be considered Finished (unless the
