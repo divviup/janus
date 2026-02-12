@@ -509,7 +509,7 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
 #[postgres(name = "aggregation_job_state")]
 pub enum AggregationJobState {
-    /// Job is ready for the aggregation job driver to pick up. Corresponds to the
+    /// Job is ready for the aggregation job driver to drive. Corresponds to the
     /// initialization phase in DAP (§4.6.2 [dap-16]).
     #[postgres(name = "ACTIVE")]
     Active,
@@ -520,8 +520,8 @@ pub enum AggregationJobState {
     #[postgres(name = "AWAITING_REQUEST")]
     AwaitingRequest,
     /// All report aggregations have reached a terminal state (Finished or Failed), completing
-    /// the aggregation job lifecycle (§4.6 [dap-16]). Output shares are committed to batch
-    /// buckets for collection. This is a terminal state indicating normal completion.
+    /// the aggregation job lifecycle (§4.6 [dap-16]). Output shares have been committed to
+    /// batch buckets for collection. This is a terminal state indicating normal completion.
     #[postgres(name = "FINISHED")]
     Finished,
     /// Job processing encountered an unrecoverable error and was explicitly abandoned. This is
@@ -531,8 +531,9 @@ pub enum AggregationJobState {
     /// normally.
     #[postgres(name = "ABANDONED")]
     Abandoned,
-    /// Job has been marked for deletion and should not be processed further. This is a terminal
-    /// state used during cleanup.
+    /// Job has been marked for deletion, either by garbage collection or by using the HTTP
+    /// DELETE endpoint, and should not be processed further. This is a terminal state used
+    /// during cleanup.
     #[postgres(name = "DELETED")]
     Deleted,
 }
