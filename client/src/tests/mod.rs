@@ -7,7 +7,8 @@ use janus_core::{
     test_util::install_test_trace_subscriber,
 };
 use janus_messages::{
-    HpkeConfigList, MediaType, Role, Time, UploadRequest, taskprov::TimePrecision,
+    HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, UploadRequest,
+    UploadResponse, taskprov::TimePrecision,
 };
 use prio::{
     codec::Encode,
@@ -269,4 +270,110 @@ async fn unsupported_hpke_algorithms() {
     assert_eq!(hpke_config.get().await.unwrap(), &good_hpke_config);
 
     mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_with_per_report_errors() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    // Create a report to determine its ID so we can create a matching error response
+    let report = client
+        .prepare_report(
+            &true,
+            &Time::from_seconds_since_epoch(100, &client.parameters.time_precision),
+            client.leader_hpke_config.lock().await.get().await.unwrap(),
+            client.helper_hpke_config.lock().await.get().await.unwrap(),
+        )
+        .unwrap();
+    let report_id = *report.metadata().id();
+
+    // Create an UploadResponse with a per-report error
+    let upload_response = UploadResponse::new(&[ReportUploadStatus::new(
+        report_id,
+        ReportError::ReportReplayed,
+    )]);
+    let response_body = upload_response.get_encoded().unwrap();
+
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), UploadResponse::MEDIA_TYPE)
+        .with_body(response_body)
+        .expect(1)
+        .create_async()
+        .await;
+
+    // Upload should fail even though HTTP status is 200
+    let result = client.upload(true).await;
+    assert_matches!(
+        result,
+        Err(Error::Upload(statuses)) => {
+            assert_eq!(statuses.len(), 1);
+            assert_eq!(statuses[0].report_id(), report_id);
+            assert_eq!(statuses[0].error(), ReportError::ReportReplayed);
+        }
+    );
+
+    mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_success_without_response_body() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+
+    // Upload should succeed when HTTP 200 is returned without a response body
+    client.upload(true).await.unwrap();
+
+    mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_success_with_empty_response() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    // Empty UploadResponse (no errors)
+    let upload_response = UploadResponse::new(&[]);
+    let response_body = upload_response.get_encoded().unwrap();
+
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), UploadResponse::MEDIA_TYPE)
+        .with_body(response_body)
+        .expect(1)
+        .create_async()
+        .await;
+
+    // Upload should succeed when HTTP 200 is returned with an empty UploadResponse
+    client.upload(true).await.unwrap();
+
+    mocked_upload.assert_async().await;
 }
