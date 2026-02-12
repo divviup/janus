@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    env::{self},
-    fs::File,
-    process::Command,
-};
+use std::{collections::HashMap, env, fs, process::Command};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser};
@@ -100,8 +95,9 @@ fn build_container_images() -> Result<ContainerImages> {
         return Err(anyhow!("docker buildx bake failed"));
     }
 
-    let file = File::open(&metadata_file_path)?;
-    let metadata: HashMap<String, DockerBakeTargetMetadata> = serde_json::from_reader(file)?;
+    let contents = fs::read_to_string(&metadata_file_path)?;
+    println!("Metadata: {contents}");
+    let metadata: HashMap<String, DockerBakeTargetMetadata> = serde_json::from_str(&contents)?;
 
     let client = metadata
         .get("janus_interop_client_ci")
