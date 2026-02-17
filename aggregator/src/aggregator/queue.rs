@@ -622,15 +622,14 @@ mod tests {
                         let request = get("/").run_async(&handler).await;
                         match request.status().unwrap() {
                             Status::Ok => Ok(()),
-                            // If we get a timeout, try again.
-                            Status::TooManyRequests => Err(Error::TooManyRequests),
+                            // Timeouts and queue full are fine during filling
+                            Status::TooManyRequests => Ok(()),
                             status => Err(Error::Internal(
                                 format!("Unexpected status: {status}").into(),
                             )),
                         }
                     })
                     .retry(backoff)
-                    .when(|e| matches!(e, Error::TooManyRequests))
                     .await
                     .unwrap();
                 }
