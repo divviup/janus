@@ -66,7 +66,7 @@ fn test_docker(cargo_args: CargoArgs) -> Result<()> {
 
 #[derive(Deserialize)]
 struct DockerBakeTargetMetadata {
-    #[serde(rename = "containerimage.config.digest")]
+    #[serde(rename = "containerimage.digest")]
     digest: String,
 }
 
