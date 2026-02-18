@@ -122,5 +122,5 @@ fn new_quick_check() -> QuickCheck {
         .ok()
         .and_then(|arg| arg.parse().ok())
         .unwrap_or(400);
-    quick_check.r#gen(Gen::new(gen_size))
+    quick_check.rng(Gen::new(gen_size))
 }
