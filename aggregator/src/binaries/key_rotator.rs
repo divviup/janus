@@ -93,15 +93,12 @@ mod tests {
 
     use clap::CommandFactory;
     use janus_core::{hpke::HpkeCiphersuite, test_util::roundtrip_encoding};
-    use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, taskprov::TimePrecision};
+    use janus_messages::{HpkeAeadId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
     use super::{Config, KeyRotatorConfig, Options};
     use crate::{
-        aggregator::key_rotator::{
-            HpkeKeyRotatorConfig, default_active_duration, default_expired_duration,
-            default_hpke_ciphersuites, default_pending_duration,
-        },
+        aggregator::key_rotator::HpkeKeyRotatorConfig,
         config::{
             CommonConfig, default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
@@ -115,7 +112,6 @@ mod tests {
 
     #[test]
     fn roundtrip_config() {
-        let time_precision = TimePrecision::from_seconds(random());
         roundtrip_encoding(Config {
             common_config: CommonConfig {
                 database: generate_db_config(),
@@ -126,12 +122,11 @@ mod tests {
                 thread_pool_stack_size: None,
             },
             key_rotator: KeyRotatorConfig {
-                hpke: HpkeKeyRotatorConfig {
-                    // This terribleness will get revisited in Issue #4216.
-                    pending_duration: Duration::from_seconds(random(), &time_precision),
-                    active_duration: Duration::from_seconds(random(), &time_precision),
-                    expired_duration: Duration::from_seconds(random(), &time_precision),
-                    ciphersuites: HashSet::from([
+                hpke: HpkeKeyRotatorConfig::new(
+                    random(),
+                    random(),
+                    random(),
+                    HashSet::from([
                         HpkeCiphersuite::new(
                             HpkeKemId::P256HkdfSha256,
                             HpkeKdfId::HkdfSha256,
@@ -143,7 +138,7 @@ mod tests {
                             HpkeAeadId::Aes256Gcm,
                         ),
                     ]),
-                },
+                ),
             },
         });
     }
@@ -156,17 +151,7 @@ hpke: {}
 "#,
         )
         .unwrap();
-        assert_eq!(
-            config,
-            KeyRotatorConfig {
-                hpke: HpkeKeyRotatorConfig {
-                    pending_duration: default_pending_duration(),
-                    active_duration: default_active_duration(),
-                    expired_duration: default_expired_duration(),
-                    ciphersuites: default_hpke_ciphersuites(),
-                }
-            }
-        )
+        assert_eq!(config, KeyRotatorConfig::default(),)
     }
 
     #[test]
