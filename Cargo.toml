@@ -129,7 +129,7 @@ trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
 trycmd = "1.0.0"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.20.0", features = ["v4"] }
+uuid = { version = "1.21.0", features = ["v4"] }
 wait-timeout = "0.2.1"
 
 [profile.ci]
