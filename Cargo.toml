@@ -80,7 +80,7 @@ prio = { version = "0.18.1-alpha.2", default-features = false, features = ["expe
 prometheus = "0.13.4"
 querystring = "1.1.0"
 quickcheck = { version = "1.0.3", default-features = false }
-quickcheck_macros = "1.1.0"
+quickcheck_macros = "1.2.0"
 rand = "0.9"
 rayon = "1.11.0"
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
