@@ -45,7 +45,7 @@ deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
 educe = { version = "0.6.0", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
 fixed = "1.30"
-futures = "0.3.31"
+futures = "0.3.32"
 git-version = "0.3.9"
 hex = "0.4.3"
 hex-literal = "1.1.0"
