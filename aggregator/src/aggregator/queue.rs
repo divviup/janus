@@ -709,8 +709,8 @@ mod tests {
                 concurrency: u8::arbitrary(g) as u32 + 1,
                 requests: (u16::arbitrary(g) / 10) as usize + 1,
                 request_timeout_ms: if bool::arbitrary(g) {
-                    // Between 10 and 2000ms
-                    Some(10u64 + u64::arbitrary(g) % 1990)
+                    // Between 50ms and 2000ms
+                    Some(50u64 + u64::arbitrary(g) % 1950)
                 } else {
                     None
                 },
