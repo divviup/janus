@@ -129,7 +129,7 @@ trillium-router = "0.4.1"
 trillium-rustls = "0.9"
 trillium-testing = "0.7.0"
 trillium-tokio = "0.4.0"
-trycmd = "0.15.10"
+trycmd = "1.0.0"
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.21.0", features = ["v4"] }
 wait-timeout = "0.2.1"
