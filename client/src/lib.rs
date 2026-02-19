@@ -63,13 +63,17 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, TaskId, Time, UploadRequest, taskprov::TimePrecision,
+    ReportMetadata, ReportUploadStatus, Role, TaskId, Time, UploadRequest, UploadResponse,
+    taskprov::TimePrecision,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
 #[cfg(feature = "ohttp")]
 use ohttp_keys::OhttpKeys;
-use prio::{codec::Encode, vdaf};
+use prio::{
+    codec::{Encode, ParameterizedDecode},
+    vdaf,
+};
 use rand::random;
 use tokio::sync::Mutex;
 use url::Url;
@@ -77,7 +81,6 @@ use url::Url;
 #[cfg(test)]
 mod tests;
 
-// TODO(Issue #4146): need way to convey per-report errors
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid parameter {0}")]
@@ -88,6 +91,8 @@ pub enum Error {
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
     Http(Box<HttpErrorResponse>),
+    #[error("upload failed for {} report(s)", .0.len())]
+    Upload(Vec<ReportUploadStatus>),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("VDAF error: {0}")]
@@ -627,16 +632,24 @@ impl<V: vdaf::Client<16>> Client<V> {
             .reports_resource_uri(&self.parameters.task_id)?;
 
         #[cfg(feature = "ohttp")]
-        let upload_status = self
+        let (upload_status, upload_response) = self
             .upload_with_ohttp(&upload_endpoint, &upload_request)
             .await?;
         #[cfg(not(feature = "ohttp"))]
-        let upload_status = self.put_report(&upload_endpoint, &upload_request).await?;
+        let (upload_status, upload_response) =
+            self.put_report(&upload_endpoint, &upload_request).await?;
 
         if !upload_status.is_success() {
             return Err(Error::Http(Box::new(HttpErrorResponse::from(
                 upload_status,
             ))));
+        }
+
+        if let Some(upload_response) = upload_response {
+            let failed_reports = upload_response.status();
+            if !failed_reports.is_empty() {
+                return Err(Error::Upload(failed_reports.to_vec()));
+            }
         }
 
         Ok(())
@@ -646,8 +659,8 @@ impl<V: vdaf::Client<16>> Client<V> {
         &self,
         upload_endpoint: &Url,
         request_body: &[u8],
-    ) -> Result<StatusCode, Error> {
-        Ok(retry_http_request(
+    ) -> Result<(StatusCode, Option<UploadResponse>), Error> {
+        let response = retry_http_request(
             self.parameters.http_request_retry_parameters.build(),
             || async {
                 self.http_client
@@ -658,19 +671,36 @@ impl<V: vdaf::Client<16>> Client<V> {
                     .await
             },
         )
-        .await?
-        .status())
+        .await?;
+
+        let status = response.status();
+        let upload_response = if response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            == Some(UploadResponse::MEDIA_TYPE)
+        {
+            let body = response.body();
+            Some(UploadResponse::get_decoded_with_param(
+                &body.len(),
+                body.as_ref(),
+            )?)
+        } else {
+            None
+        };
+
+        Ok((status, upload_response))
     }
 
     /// Send a DAP upload request via OHTTP, if the client is configured to use it, or directly if
-    /// not. This is only intended for DAP uploads and so does not handle response bodies.
+    /// not.
     #[cfg(feature = "ohttp")]
     #[tracing::instrument(skip(self, request_body), err)]
     async fn upload_with_ohttp(
         &self,
         upload_endpoint: &Url,
         request_body: &[u8],
-    ) -> Result<StatusCode, Error> {
+    ) -> Result<(StatusCode, Option<UploadResponse>), Error> {
         let ohttp_config = if let Some(ohttp_config) = &self.ohttp_config {
             ohttp_config
         } else {
@@ -750,7 +780,20 @@ impl<V: vdaf::Client<16>> Client<V> {
             ));
         };
 
-        Ok(status)
+        let upload_response = message
+            .header()
+            .iter()
+            .find(|field| field.name() == CONTENT_TYPE.as_str().as_bytes())
+            .and_then(|field| {
+                if field.value() == UploadResponse::MEDIA_TYPE.as_bytes() {
+                    let content = message.content();
+                    UploadResponse::get_decoded_with_param(&content.len(), content).ok()
+                } else {
+                    None
+                }
+            });
+
+        Ok((status, upload_response))
     }
 }
 
