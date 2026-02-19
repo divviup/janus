@@ -413,6 +413,9 @@ pub trait TimeExt: Sized {
 
     /// Returns true if and only if this [`Time`] occurs after `time`.
     fn is_after(&self, time: &Time) -> bool;
+
+    /// Get the number of time precision units as a signed integer, if possible.
+    fn as_signed_time_precision_units(&self) -> Result<i64, Error>;
 }
 
 impl TimeExt for Time {
@@ -520,6 +523,12 @@ impl TimeExt for Time {
 
     fn is_after(&self, time: &Time) -> bool {
         self.as_time_precision_units() > time.as_time_precision_units()
+    }
+
+    fn as_signed_time_precision_units(&self) -> Result<i64, Error> {
+        self.as_time_precision_units()
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("time too large for signed integer"))
     }
 }
 
