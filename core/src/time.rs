@@ -13,6 +13,12 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> DateTime<Utc>;
 
+    /// Get the [`chrono::TimeDelta`] elapsed since the provided time according to this clock's
+    /// current time.
+    fn elapsed(&self, since: DateTime<Utc>) -> TimeDelta {
+        self.now() - since
+    }
+
     /// Get the current time, rounded down to the provided time precision. The answer will
     /// be between now() and now() - time_precision.
     #[cfg(feature = "test-util")]
