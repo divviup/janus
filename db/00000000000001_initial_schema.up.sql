@@ -106,8 +106,8 @@ CREATE TABLE tasks(
     batch_mode                  JSONB NOT NULL,            -- the batch mode in use for this task, along with its parameters
     aggregation_mode            AGGREGATION_MODE,          -- the aggregation mode in use for this task (populated for Helper only)
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
-    task_start                  TIMESTAMP,                 -- the time before which client reports are not accepted
-    task_end                    TIMESTAMP,                 -- the time after which client reports are no longer accepted
+    task_start                  BIGINT,                    -- the time before which client reports are not accepted, in time precision increments
+    task_end                    BIGINT,                    -- the time after which client reports are no longer accepted, in time precision increments
     report_expiry_age           BIGINT,                    -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     min_batch_size              BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision              BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
@@ -133,7 +133,7 @@ CREATE TABLE tasks(
     -- Authentication token used to authenticate messages to the leader from the collector. These
     -- columns are NULL if the task was provisioned by taskprov or if the task's role is helper.
     collector_auth_token_type   AUTH_TOKEN_TYPE,    -- the type of the authentication token
-    collector_auth_token_hash        BYTEA,         -- hash of the token
+    collector_auth_token_hash   BYTEA,              -- hash of the token
     -- The collector_auth_token columns must either both be NULL or both be non-NULL
     CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token_hash IS NULL)),
 

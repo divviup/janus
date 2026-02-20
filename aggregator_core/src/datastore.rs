@@ -745,12 +745,12 @@ ON CONFLICT DO NOTHING",
                     /* task_start */
                     &task
                         .task_start()
-                        .map(|t| t.as_naive_date_time(task.time_precision()))
+                        .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
                     /* task_end */
                     &task
                         .task_end()
-                        .map(|t| t.as_naive_date_time(task.time_precision()))
+                        .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
                     /* report_expiry_age */
                     &task
@@ -856,18 +856,13 @@ UPDATE tasks SET task_end = $1, updated_at = $2, updated_by = $3
             )
             .await?;
 
-        let task_info = self
-            .task_info_for(task_id)
-            .await?
-            .ok_or(Error::MutationTargetNotFound)?;
-
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
                     /* task_end */
                     &task_end
-                        .map(|t| t.as_naive_date_time(&task_info.time_precision))
+                        .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
                     /* updated_at */ &self.clock.now().naive_utc(),
                     /* updated_by */ &self.name,
@@ -940,13 +935,11 @@ FROM tasks",
         let time_precision =
             TimePrecision::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let task_start = row
-            .get::<_, Option<NaiveDateTime>>("task_start")
-            .as_ref()
-            .map(|dt| Time::from_naive_date_time(dt, &time_precision));
+            .get_nullable_bigint_and_convert("task_start")?
+            .map(Time::from_time_precision_units);
         let task_end = row
-            .get::<_, Option<NaiveDateTime>>("task_end")
-            .as_ref()
-            .map(|dt| Time::from_naive_date_time(dt, &time_precision));
+            .get_nullable_bigint_and_convert("task_end")?
+            .map(Time::from_time_precision_units);
         let report_expiry_age = row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(|s| Duration::from_seconds(s, &time_precision));
