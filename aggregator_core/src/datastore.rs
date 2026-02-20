@@ -22,7 +22,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkePrivateKey},
-    time::{Clock, TimeExt},
+    time::{Clock, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -1111,13 +1111,13 @@ WHERE client_reports.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                &task_info.report_expiry_threshold_as_time_precision_units(
+                    &self.clock.now().naive_utc(),
+                )?,
             ],
         )
         .await?
-        .map(|row| {
-            Self::client_report_from_row(vdaf, *task_id, *report_id, row, &task_info.time_precision)
-        })
+        .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
         .transpose()
     }
 
@@ -1155,7 +1155,9 @@ WHERE client_reports.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                &task_info.report_expiry_threshold_as_time_precision_units(
+                    &self.clock.now().naive_utc(),
+                )?,
             ],
         )
         .await?
@@ -1166,7 +1168,6 @@ WHERE client_reports.task_id = $1
                 *task_id,
                 row.get_bytea_and_convert::<ReportId>("report_id")?,
                 row,
-                &task_info.time_precision,
             )
         })
         .collect()
@@ -1177,9 +1178,8 @@ WHERE client_reports.task_id = $1
         task_id: TaskId,
         report_id: ReportId,
         row: Row,
-        time_precision: &TimePrecision,
     ) -> Result<LeaderStoredReport<SEED_SIZE, A>, Error> {
-        let time = Time::from_naive_date_time(&row.get("client_timestamp"), time_precision);
+        let time = Time::from_time_precision_units(row.get_bigint_and_convert("client_timestamp")?);
 
         let encoded_public_extensions: Vec<u8> = row
             .get::<_, Option<_>>("public_extensions")
@@ -1266,7 +1266,8 @@ RETURNING report_id, client_timestamp",
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* limit */ &i64::try_from(limit)?,
@@ -1278,9 +1279,8 @@ RETURNING report_id, client_timestamp",
             .map(|row| {
                 Ok(UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    Time::from_naive_date_time(
-                        &row.get("client_timestamp"),
-                        &task_info.time_precision,
+                    Time::from_time_precision_units(
+                        row.get_bigint_and_convert("client_timestamp")?,
                     ),
                 ))
             })
@@ -1311,12 +1311,6 @@ RETURNING report_id, client_timestamp",
     where
         A: AsyncAggregator<SEED_SIZE> + VdafHasAggregationParameter,
     {
-        // TODO(#224): lock retrieved client_reports rows
-        let task_info = match self.task_info_for(task_id).await? {
-            Some(task_info) => task_info,
-            None => return Ok(Vec::new()),
-        };
-
         // TODO(#225): use get_task_primary_key_and_expiry_threshold as in
         // get_unaggregated_client_reports_for_task
         let stmt = self
@@ -1368,9 +1362,8 @@ FROM unaggregated_client_report_ids",
             .map(|row| {
                 let unaggregated_report = UnaggregatedReport::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    Time::from_naive_date_time(
-                        &row.get("client_timestamp"),
-                        &task_info.time_precision,
+                    Time::from_time_precision_units(
+                        row.get_bigint_and_convert("client_timestamp")?,
                     ),
                 );
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
@@ -1412,7 +1405,8 @@ WHERE client_reports.task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.get_encoded()?,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
@@ -1448,7 +1442,8 @@ WHERE client_reports.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.get_encoded()?,
-                /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                /* threshold */
+                &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                 /* updated_at */ &now,
                 /* updated_by */ &self.name,
             ],
@@ -1476,9 +1471,9 @@ WHERE client_reports.task_id = $1
 SELECT EXISTS(
     SELECT 1 FROM client_reports
     WHERE client_reports.task_id = $1
-      AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
-      AND client_reports.client_timestamp < UPPER($2::TSRANGE)
-      AND client_reports.client_timestamp >= $3
+      AND client_reports.client_timestamp >= $2
+      AND client_reports.client_timestamp < $3
+      AND client_reports.client_timestamp >= $4
       AND client_reports.aggregation_started = FALSE
 ) AS unaggregated_report_exists",
             )
@@ -1488,13 +1483,14 @@ SELECT EXISTS(
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* batch_interval */
-                    &SqlInterval::from_dap_time_interval(
-                        batch_interval,
-                        &task_info.time_precision,
-                    )?,
+                    /* batch_interval start */
+                    &batch_interval.start().as_signed_time_precision_units()?,
+                    /* batch_interval end */
+                    &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                    &task_info.report_expiry_threshold_as_time_precision_units(
+                        &self.clock.now().naive_utc(),
+                    )?,
                 ],
             )
             .await?;
@@ -1521,9 +1517,9 @@ SELECT EXISTS(
 SELECT COUNT(1) AS count
 FROM client_reports
 WHERE client_reports.task_id = $1
-  AND client_reports.client_timestamp >= LOWER($2::TSRANGE)
-  AND client_reports.client_timestamp < UPPER($2::TSRANGE)
-  AND client_reports.client_timestamp >= $3",
+  AND client_reports.client_timestamp >= $2
+  AND client_reports.client_timestamp < $3
+  AND client_reports.client_timestamp >= $4",
             )
             .await?;
         let row = self
@@ -1531,13 +1527,14 @@ WHERE client_reports.task_id = $1
                 &stmt,
                 &[
                     /* task_id */ &task_info.pkey,
-                    /* batch_interval */
-                    &SqlInterval::from_dap_time_interval(
-                        batch_interval,
-                        &task_info.time_precision,
-                    )?,
+                    /* batch_interval start */
+                    &batch_interval.start().as_signed_time_precision_units()?,
+                    /* batch_interval end */
+                    &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                    &task_info.report_expiry_threshold_as_time_precision_units(
+                        &self.clock.now().naive_utc(),
+                    )?,
                 ],
             )
             .await?;
@@ -1659,10 +1656,7 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* task_id */ &task_info.pkey,
                     /* report_id */ report.metadata().id().as_ref(),
                     /* client_timestamp */
-                    &report
-                        .metadata()
-                        .time()
-                        .as_naive_date_time(&task_info.time_precision)?,
+                    &report.metadata().time().as_signed_time_precision_units()?,
                     /* public_extensions */ &encoded_public_extensions,
                     /* public_share */ &encoded_public_share,
                     /* leader_private_extensions */ &encoded_leader_private_extensions,
@@ -1671,7 +1665,8 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                 ],
             )
             .await?,
@@ -1721,7 +1716,8 @@ WHERE task_id = $3
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.as_ref(),
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                 ],
             )
             .await?,
@@ -1731,10 +1727,7 @@ WHERE task_id = $3
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     pub async fn verify_client_report_scrubbed(&self, task_id: &TaskId, report_id: &ReportId) {
-        let task_info = match self.task_info_for(task_id).await.unwrap() {
-            Some(task_info) => task_info,
-            None => panic!("No such task"),
-        };
+        let task_info = self.task_info_for(task_id).await.unwrap().unwrap();
 
         let row = self
             .query_one(
@@ -1751,7 +1744,9 @@ WHERE task_id = $1
                     /* report_id */ report_id.as_ref(),
                     /* threshold */
                     &task_info
-                        .report_expiry_threshold(&self.clock.now().naive_utc())
+                        .report_expiry_threshold_as_time_precision_units(
+                            &self.clock.now().naive_utc(),
+                        )
                         .unwrap(),
                 ],
             )
@@ -1818,11 +1813,12 @@ WHERE client_reports.client_timestamp < $7",
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.as_ref(),
                     /* client_timestamp */
-                    &client_timestamp.as_naive_date_time(&task_info.time_precision)?,
+                    &client_timestamp.as_signed_time_precision_units()?,
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(&now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold_as_time_precision_units(&now)?,
                 ],
             )
             .await?,
@@ -5031,7 +5027,7 @@ AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
 WITH client_reports_to_delete AS (
     SELECT client_reports.id FROM client_reports
     WHERE client_reports.task_id = $1
-        AND client_reports.client_timestamp < $2::TIMESTAMP
+        AND client_reports.client_timestamp < $2
     LIMIT $3
 )
 DELETE FROM client_reports
@@ -5044,7 +5040,9 @@ WHERE client_reports.id = client_reports_to_delete.id",
             &[
                 /* id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                &task_info.report_expiry_threshold_as_time_precision_units(
+                    &self.clock.now().naive_utc(),
+                )?,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -5778,15 +5776,49 @@ impl TaskInfo {
         &self,
         now: &NaiveDateTime,
     ) -> Result<Timestamp<NaiveDateTime>, Error> {
+        self.report_expiry_threshold_internal(now).map(
+            |report_expiry_age| match report_expiry_age {
+                Some(t) => Timestamp::Value(t),
+                None => Timestamp::NegInfinity,
+            },
+        )
+    }
+
+    /// Like [`Self::report_expiry_threshold`], but the value returned is a number of time precision
+    /// units instead of a timestamp, so that it can be compared against database columns that store
+    /// values in that unit. The represented time is at least as long as the report expiry threshold
+    /// in seconds.
+    ///
+    /// Once all the tables in the schema have moved to tracking times in time precision units, this
+    /// method can be renamed to `report_expiry_threshold` and the other two can be deleted (#4206).
+    fn report_expiry_threshold_as_time_precision_units(
+        &self,
+        now: &NaiveDateTime,
+    ) -> Result<i64, Error> {
+        self.report_expiry_threshold_internal(now).map(
+            |report_expiry_age| match report_expiry_age {
+                Some(t) => Time::from_naive_date_time(&t, &self.time_precision)
+                    .as_signed_time_precision_units()
+                    .map_err(|e| Error::User(e.into())),
+                // Return a time in the distant past
+                None => Ok(0),
+            },
+        )?
+    }
+
+    fn report_expiry_threshold_internal(
+        &self,
+        now: &NaiveDateTime,
+    ) -> Result<Option<NaiveDateTime>, Error> {
         match self.report_expiry_age {
             Some(report_expiry_age) => {
                 let report_expiry_threshold =
                     now.checked_sub_signed(report_expiry_age).ok_or_else(|| {
                         Error::TimeOverflow("overflow computing report expiry threshold")
                     })?;
-                Ok(Timestamp::Value(report_expiry_threshold))
+                Ok(Some(report_expiry_threshold))
             }
-            None => Ok(Timestamp::NegInfinity),
+            None => Ok(None),
         }
     }
 }
