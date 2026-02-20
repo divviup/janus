@@ -52,6 +52,11 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust-toolchain }}
+    # Pin a known good Docker version that emits metadata in a format our tools understand (#4375)
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v4
+      with:
+        version: v29.2.1
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
@@ -145,6 +150,11 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
+    # Pin a known good Docker version that emits metadata in a format our tools understand (#4375)
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v4
+      with:
+        version: v29.2.1
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
@@ -171,6 +181,11 @@ jobs:
       DOCKER_BUILDKIT: 1
     steps:
     - uses: actions/checkout@v6
+    # Pin a known good Docker version that emits metadata in a format our tools understand (#4375)
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v4
+      with:
+        version: v29.2.1
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
