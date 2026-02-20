@@ -63,10 +63,29 @@ fn test_docker(cargo_args: CargoArgs) -> Result<()> {
     Ok(())
 }
 
+/// Partial deserialization of docker bake target metadata. Based on the Docker version in use,
+/// either or both of these JSON paths may be defined. See #4375.
 #[derive(Deserialize)]
 struct DockerBakeTargetMetadata {
+    #[serde(rename = "containerimage.config.digest")]
+    config_digest: Option<String>,
     #[serde(rename = "containerimage.digest")]
-    digest: String,
+    digest: Option<String>,
+}
+
+impl DockerBakeTargetMetadata {
+    /// Return an owned copy of whichever of containerimage.config.digest or containerimage.digest
+    /// is defined, preferring the former if both are defined. See #4375.
+    fn digest(&self) -> Result<String> {
+        match (&self.config_digest, &self.digest) {
+            (Some(config_digest), _) => Ok(config_digest.clone()),
+            (None, Some(digest)) => Ok(digest.clone()),
+            _ => Err(anyhow!(
+                "neither containerimage.config.digest or containerimage.digest are defined in \
+                    Docker Bake target metadata"
+            )),
+        }
+    }
 }
 
 /// Janus interop test container image identifiers.
@@ -105,18 +124,15 @@ fn build_container_images() -> Result<ContainerImages> {
     let client = metadata
         .get("janus_interop_client_ci")
         .context("missing metadata for janus_interop_client_ci")?
-        .digest
-        .clone();
+        .digest()?;
     let aggregator = metadata
         .get("janus_interop_aggregator_ci")
         .context("missing metadata for janus_interop_aggregator_ci")?
-        .digest
-        .clone();
+        .digest()?;
     let collector = metadata
         .get("janus_interop_collector_ci")
         .context("missing metadata for janus_interop_collector_ci")?
-        .digest
-        .clone();
+        .digest()?;
 
     Ok(ContainerImages {
         client,
