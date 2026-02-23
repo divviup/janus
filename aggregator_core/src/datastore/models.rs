@@ -498,19 +498,42 @@ impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>>
     }
 }
 
-/// AggregationJobState represents the state of an aggregation job. It corresponds to the
-/// AGGREGATION_JOB_STATE enum in the schema.
+/// AggregationJobState represents the internal operational state of an aggregation job. This
+/// corresponds to the AGGREGATION_JOB_STATE enum in the schema.
+///
+/// These are implementation-specific states used for Janus's internal state management.
+/// DAP §4.6 [dap-16] defines aggregation job completion in terms of individual report
+/// preparation states (Continued, FinishedWithOutbound, Finished, Rejected), not job-level
+/// states. This enum provides operational states for managing the lifecycle of aggregation
+/// jobs within Janus.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
 #[postgres(name = "aggregation_job_state")]
 pub enum AggregationJobState {
+    /// Job is ready for the aggregation job driver to drive. Corresponds to the
+    /// initialization phase in DAP (§4.6.2 [dap-16]).
     #[postgres(name = "ACTIVE")]
     Active,
+    /// Helper has completed processing one request and is waiting for the Leader's next
+    /// request. Represents the interval between aggregation rounds in DAP's continuation
+    /// phase (§4.6.3 [dap-16]). The Helper has sent an AggregationJobResp but some reports
+    /// remain in the Continued state awaiting the next AggregationJobContinueReq.
     #[postgres(name = "AWAITING_REQUEST")]
     AwaitingRequest,
+    /// All report aggregations have reached a terminal state (Finished or Failed), completing
+    /// the aggregation job lifecycle (§4.6 [dap-16]). Output shares have been committed to
+    /// batch buckets for collection. This is a terminal state indicating normal completion.
     #[postgres(name = "FINISHED")]
     Finished,
+    /// Job processing encountered an unrecoverable error and was explicitly abandoned. This is
+    /// an implementation-specific terminal state used for operational issues beyond DAP's
+    /// protocol-level error handling (e.g., excessive lease contention, resource exhaustion).
+    /// Unlike Finished, this indicates the job did not complete the DAP aggregation lifecycle
+    /// normally.
     #[postgres(name = "ABANDONED")]
     Abandoned,
+    /// Job has been marked for deletion, either by garbage collection or by using the HTTP
+    /// DELETE endpoint, and should not be processed further. This is a terminal state used
+    /// during cleanup.
     #[postgres(name = "DELETED")]
     Deleted,
 }
