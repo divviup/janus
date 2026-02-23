@@ -2,7 +2,7 @@
 
 use std::fmt::Debug;
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use janus_core::{time::Clock, vdaf::VdafInstance};
 use janus_messages::{
     AggregationJobId, CollectionJobId, TaskId, batch_mode::BatchMode, taskprov::TimePrecision,
@@ -39,7 +39,7 @@ impl<C: Clock> Transaction<'_, C> {
             Some(task_info) => task_info,
             None => return Ok(None),
         };
-        let now = self.clock.now().naive_utc();
+        let now = self.clock.now();
 
         let stmt = self
             .prepare_cached(
@@ -59,10 +59,10 @@ WHERE collection_jobs.task_id = $1
             WHERE ba.task_id = collection_jobs.task_id
                 AND ba.batch_identifier = collection_jobs.batch_identifier
                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-        '-infinity'::TIMESTAMP)
+        '-infinity'::TIMESTAMP WITH TIME ZONE)
         >= COALESCE(
-            $3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
-            '-infinity'::TIMESTAMP
+            $3::TIMESTAMP WITH TIME ZONE - tasks.report_expiry_age * '1 second'::INTERVAL,
+            '-infinity'::TIMESTAMP WITH TIME ZONE
         )"#,
             )
             .await?;
@@ -99,7 +99,7 @@ WHERE collection_jobs.task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
-        let now = self.clock.now().naive_utc();
+        let now = self.clock.now();
 
         let stmt = self
             .prepare_cached(
@@ -118,10 +118,10 @@ WHERE collection_jobs.task_id = $1
             WHERE ba.task_id = collection_jobs.task_id
                 AND ba.batch_identifier = collection_jobs.batch_identifier
                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-        '-infinity'::TIMESTAMP)
+        '-infinity'::TIMESTAMP WITH TIME ZONE)
         >= COALESCE(
-            $2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
-            '-infinity'::TIMESTAMP
+            $2::TIMESTAMP WITH TIME ZONE - tasks.report_expiry_age * '1 second'::INTERVAL,
+            '-infinity'::TIMESTAMP WITH TIME ZONE
         )"#,
             )
             .await?;
@@ -175,7 +175,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task ID */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -221,7 +221,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task ID */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold(&self.clock.now().naive_utc())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -238,7 +238,7 @@ WHERE aggregation_jobs.task_id = $1
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaybeLease<T> {
     leased: T,
-    pub lease_expiry_time: Timestamp<NaiveDateTime>,
+    pub lease_expiry_time: Timestamp<DateTime<Utc>>,
     pub lease_token: Option<LeaseToken>,
     pub lease_attempts: usize,
 }

@@ -899,7 +899,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             tx.check_timestamp_columns_at_create_time(
                 "client_reports",
                 "test-unaggregated-reports",
-                START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
+                START_TIME.as_date_time(TIME_PRECISION).unwrap(),
                 false,
             )
             .await;
@@ -911,16 +911,13 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
             {
                 let report_id: ReportId =
                     row.get_bytea_and_convert::<ReportId>("report_id").unwrap();
-                let updated_at: chrono::NaiveDateTime = row.get("updated_at");
+                let updated_at: DateTime<Utc> = row.get("updated_at");
                 if report_id == *first_unaggregated_report.metadata().id()
                     || report_id == *second_unaggregated_report.metadata().id()
                 {
-                    assert_eq!(tx.clock.now().naive_utc(), updated_at, "{report_id:?}");
+                    assert_eq!(tx.clock.now(), updated_at, "{report_id:?}");
                 } else {
-                    assert_eq!(
-                        START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
-                        updated_at
-                    );
+                    assert_eq!(START_TIME.as_date_time(TIME_PRECISION).unwrap(), updated_at);
                 }
             }
 
@@ -1665,7 +1662,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
                 .unwrap();
             assert_eq!(
                 unexpired_timestamp,
-                Time::from_naive_date_time(&row.get("client_timestamp"), task.time_precision())
+                Time::from_date_time(row.get("client_timestamp"), *task.time_precision())
             );
 
             Ok(())
@@ -1798,7 +1795,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
             tx.check_timestamp_columns_at_create_time(
                 "aggregation_jobs",
                 "test-update-aggregation-jobs",
-                START_TIME.as_naive_date_time(&TIME_PRECISION).unwrap(),
+                START_TIME.as_date_time(TIME_PRECISION).unwrap(),
                 true,
             )
             .await;
@@ -1940,7 +1937,8 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     install_test_trace_subscriber();
 
     let lease_duration_sec = 300;
-    let lease_duration_std = StdDuration::from_secs(lease_duration_sec);
+    let lease_duration_timedelta = TimeDelta::seconds(lease_duration_sec as i64);
+    let lease_duration_std = lease_duration_timedelta.to_std().unwrap();
     let lease_duration = Duration::from_seconds(lease_duration_sec, &TIME_PRECISION);
 
     let clock = MockClock::new(START_TIMESTAMP);
@@ -2186,8 +2184,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         );
     }
 
-    let want_expiry_time =
-        clock.now().naive_utc() + chrono::Duration::from_std(lease_duration_std).unwrap();
+    let want_expiry_time = clock.now() + lease_duration_timedelta;
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2249,7 +2246,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .iter()
         .map(|lease| {
             assert_eq!(lease.lease_attempts(), 1);
-            (lease.leased().clone(), *lease.lease_expiry_time())
+            (lease.leased().clone(), lease.lease_expiry_time())
         })
         .collect();
     got_aggregation_jobs.sort();
@@ -2321,7 +2318,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 
     const RELEASE_COUNT: usize = 2;
-    const REACQUIRE_DELAY: StdDuration = StdDuration::from_secs(10);
+    const REACQUIRE_DELAY: TimeDelta = TimeDelta::seconds(10);
 
     // Sanity check constants: ensure we release fewer jobs than we're about to acquire to ensure we
     // can acquire them in all in a single call, while leaving headroom to acquire at least one
@@ -2330,20 +2327,20 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     #[allow(clippy::assertions_on_constants)]
     {
         assert!(RELEASE_COUNT < MAXIMUM_ACQUIRE_COUNT);
-        assert!(REACQUIRE_DELAY < lease_duration_std);
+        assert!(REACQUIRE_DELAY < lease_duration_timedelta);
     }
 
     let leases_to_release: Vec<_> = got_leases.into_iter().take(RELEASE_COUNT).collect();
     let mut jobs_to_release: Vec<_> = leases_to_release
         .iter()
-        .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
+        .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
         .collect();
     jobs_to_release.sort();
     ds.run_unnamed_tx(|tx| {
         let leases_to_release = leases_to_release.clone();
         Box::pin(async move {
             for lease in leases_to_release {
-                tx.release_aggregation_job(&lease, Some(&REACQUIRE_DELAY))
+                tx.release_aggregation_job(&lease, Some(&REACQUIRE_DELAY.to_std().unwrap()))
                     .await
                     .unwrap();
             }
@@ -2370,13 +2367,15 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Advance the clock past the reacquire delay, then reacquire the leases we released with a
     // reacquire delay.
-    clock.advance(TimeDelta::try_seconds_unsigned(REACQUIRE_DELAY.as_secs()).unwrap());
+    clock.advance(REACQUIRE_DELAY);
 
     let mut got_aggregation_jobs: Vec<_> = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 tx.acquire_incomplete_aggregation_jobs(
-                    &(lease_duration_std - REACQUIRE_DELAY),
+                    &(lease_duration_timedelta - REACQUIRE_DELAY)
+                        .to_std()
+                        .unwrap(),
                     MAXIMUM_ACQUIRE_COUNT,
                 )
                 .await
@@ -2387,7 +2386,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .into_iter()
         .map(|lease| {
             assert_eq!(lease.lease_attempts(), 1);
-            (lease.leased().clone(), *lease.lease_expiry_time())
+            (lease.leased().clone(), lease.lease_expiry_time())
         })
         .collect();
     got_aggregation_jobs.sort();
@@ -2397,11 +2396,10 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
     // to acquire aggregation jobs again.
-    clock.advance(
-        TimeDelta::try_seconds_unsigned(lease_duration_sec - REACQUIRE_DELAY.as_secs()).unwrap(),
-    );
-    let want_expiry_time =
-        clock.now().naive_utc() + chrono::Duration::from_std(lease_duration_std).unwrap();
+    clock.advance(TimeDelta::seconds(
+        lease_duration_sec as i64 - REACQUIRE_DELAY.num_seconds(),
+    ));
+    let want_expiry_time = clock.now() + lease_duration_timedelta;
     let want_aggregation_jobs: Vec<_> = task_and_aggregation_job_ids
         .iter()
         .map(|(task_id, aggregation_job_id)| {
@@ -2429,7 +2427,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .unwrap()
         .into_iter()
         .map(|lease| {
-            let job = (lease.leased().clone(), *lease.lease_expiry_time());
+            let job = (lease.leased().clone(), lease.lease_expiry_time());
             let expected_attempts = if jobs_to_release.contains(&job) { 1 } else { 2 };
             assert_eq!(lease.lease_attempts(), expected_attempts);
             job
@@ -2443,7 +2441,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // Run: advance time again to release jobs, acquire a single job, modify its lease token
     // to simulate a previously-held lease, and attempt to release it. Verify that releasing
     // fails.
-    clock.advance(TimeDelta::try_seconds_unsigned(lease_duration_std.as_secs()).unwrap());
+    clock.advance(lease_duration_timedelta);
     let lease = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
@@ -2458,7 +2456,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .unwrap();
     let lease_with_random_token = Lease::new(
         lease.leased().clone(),
-        *lease.lease_expiry_time(),
+        lease.lease_expiry_time(),
         random(),
         lease.lease_attempts(),
     );
@@ -2826,10 +2824,10 @@ WHERE client_report_id = $1",
                         )
                         .await
                         .unwrap();
-                    let updated_at: chrono::NaiveDateTime = row.get("updated_at");
+                    let updated_at: DateTime<Utc> = row.get("updated_at");
                     let updated_by: &str = row.get("updated_by");
 
-                    assert_eq!(updated_at, tx.clock.now().naive_utc());
+                    assert_eq!(updated_at, tx.clock.now());
                     assert_eq!(updated_by, "test-put-report-aggregations");
 
                     Ok(report_aggregation)
@@ -2898,10 +2896,10 @@ SELECT updated_at, updated_by FROM report_aggregations
                     )
                     .await
                     .unwrap();
-                let updated_at: chrono::NaiveDateTime = row.get("updated_at");
+                let updated_at: DateTime<Utc> = row.get("updated_at");
                 let updated_by: &str = row.get("updated_by");
 
-                assert_eq!(updated_at, tx.clock.now().naive_utc());
+                assert_eq!(updated_at, tx.clock.now());
                 assert_eq!(updated_by, "test-update-report-aggregation");
 
                 Ok(())
@@ -2971,7 +2969,7 @@ SELECT updated_at, updated_by FROM report_aggregations
                     )
                     .await
                     .unwrap();
-                let client_timestamp = Time::from_naive_date_time(&row.get("client_timestamp"), &TIME_PRECISION);
+                let client_timestamp = Time::from_date_time(row.get("client_timestamp"), TIME_PRECISION);
 
                 assert_eq!(unexpired_report_aggregation.time(), &client_timestamp);
 
@@ -3370,7 +3368,7 @@ async fn create_report_aggregation_from_client_reports_table(
                 .await
                 .unwrap();
             let client_timestamp =
-                Time::from_naive_date_time(&row.get("client_timestamp"), &TIME_PRECISION);
+                Time::from_date_time(row.get("client_timestamp"), TIME_PRECISION);
 
             assert_eq!(
                 unexpired_report_aggregation_metadata.time(),
@@ -3971,7 +3969,7 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
 
             let mut leased_collection_jobs: Vec<_> = leases
                 .iter()
-                .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
+                .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                 .collect();
             leased_collection_jobs.sort();
 
@@ -3991,7 +3989,7 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
                             c.agg_param.get_encoded().unwrap(),
                             0,
                         ),
-                        clock.now().naive_utc() + chrono::Duration::try_seconds(100).unwrap(),
+                        clock.now() + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();
@@ -4544,16 +4542,15 @@ async fn time_interval_collection_job_acquire_release_happy_path(
             for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
                 assert_eq!(acquired_job.leased(), reacquired_job.leased());
                 assert_eq!(
-                    *acquired_job.lease_expiry_time(),
-                    *reacquired_job.lease_expiry_time()
-                        + chrono::Duration::try_seconds(100).unwrap(),
+                    acquired_job.lease_expiry_time(),
+                    reacquired_job.lease_expiry_time() + TimeDelta::seconds(100),
                 );
             }
 
             tx.check_timestamp_columns_at_create_time(
                 "collection_jobs",
                 "test-reacquire-leases",
-                test_start.naive_utc(),
+                test_start,
                 true,
             )
             .await;
@@ -4729,9 +4726,8 @@ async fn leader_selected_collection_job_acquire_release_happy_path(
             for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
                 assert_eq!(acquired_job.leased(), reacquired_job.leased());
                 assert_eq!(
-                    *acquired_job.lease_expiry_time(),
-                    *reacquired_job.lease_expiry_time()
-                        + chrono::Duration::try_seconds(100).unwrap(),
+                    acquired_job.lease_expiry_time(),
+                    reacquired_job.lease_expiry_time() + TimeDelta::seconds(100),
                 );
             }
 
@@ -4965,7 +4961,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
 
             let mut acquired_collection_jobs: Vec<_> = acquired_collection_jobs
                 .iter()
-                .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
+                .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                 .collect();
             acquired_collection_jobs.sort();
 
@@ -4985,7 +4981,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             c.agg_param.get_encoded().unwrap(),
                             0,
                         ),
-                        clock.now().naive_utc() + chrono::Duration::try_seconds(100).unwrap(),
+                        clock.now() + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();
@@ -7990,19 +7986,20 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
             Box::pin(async move {
                 let interval = tx
                     .query_one(
-                        "SELECT '[2020-01-01 10:00, 2020-01-01 10:30)'::tsrange AS interval",
+                        "SELECT '[2020-01-01 10:00+00, 2020-01-01 10:30+00)'::tstzrange AS interval",
                         &[],
                     )
                     .await
                     .unwrap()
                     .get::<_, SqlInterval>("interval");
                 let ref_interval = Interval::new(
-                    Time::from_naive_date_time(
-                        &NaiveDate::from_ymd_opt(2020, 1, 1)
+                    Time::from_date_time(
+                        NaiveDate::from_ymd_opt(2020, 1, 1)
                             .unwrap()
                             .and_hms_opt(10, 0, 0)
-                            .unwrap(),
-                        &TimePrecision::from_seconds(1),
+                            .unwrap()
+                            .and_utc(),
+                        TimePrecision::from_seconds(1),
                     ),
                     Duration::from_chrono(TimeDelta::minutes(30), &TimePrecision::from_seconds(1)),
                 )
@@ -8011,19 +8008,20 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 
                 let interval = tx
                     .query_one(
-                        "SELECT '[1970-02-03 23:00, 1970-02-04 00:00)'::tsrange AS interval",
+                        "SELECT '[1970-02-03 23:00+00, 1970-02-04 00:00+00)'::tstzrange AS interval",
                         &[],
                     )
                     .await
                     .unwrap()
                     .get::<_, SqlInterval>("interval");
                 let ref_interval = Interval::new(
-                    Time::from_naive_date_time(
-                        &NaiveDate::from_ymd_opt(1970, 2, 3)
+                    Time::from_date_time(
+                        NaiveDate::from_ymd_opt(1970, 2, 3)
                             .unwrap()
                             .and_hms_opt(23, 0, 0)
-                            .unwrap(),
-                        &TimePrecision::from_seconds(1),
+                            .unwrap()
+                            .and_utc(),
+                        TimePrecision::from_seconds(1),
                     ),
                     Duration::from_hours(1, &TimePrecision::from_seconds(1)),
                 )
@@ -8032,7 +8030,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 
                 let res = tx
                     .query_one(
-                        "SELECT '[1969-01-01 00:00, 1970-01-01 00:00)'::tsrange AS interval",
+                        "SELECT '[1969-01-01 00:00+00, 1970-01-01 00:00+00)'::tstzrange AS interval",
                         &[],
                     )
                     .await
@@ -8043,19 +8041,20 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
                 let ok = tx
                     .query_one(
                         "--
-SELECT (lower(interval) = '1972-07-21 05:30:00' AND
-    upper(interval) = '1972-07-21 06:00:00' AND
+SELECT (lower(interval) = '1972-07-21 05:30:00+00' AND
+    upper(interval) = '1972-07-21 06:00:00+00' AND
     lower_inc(interval) AND
     NOT upper_inc(interval)) AS ok
-    FROM (VALUES ($1::tsrange)) AS temp (interval)",
+    FROM (VALUES ($1::tstzrange)) AS temp (interval)",
                         &[&SqlInterval::from(
                             Interval::new(
-                                Time::from_naive_date_time(
-                                    &NaiveDate::from_ymd_opt(1972, 7, 21)
+                                Time::from_date_time(
+                                    NaiveDate::from_ymd_opt(1972, 7, 21)
                                         .unwrap()
                                         .and_hms_opt(5, 30, 0)
-                                        .unwrap(),
-                                    &TimePrecision::from_seconds(1),
+                                        .unwrap()
+                                        .and_utc(),
+                                    TimePrecision::from_seconds(1),
                                 ),
                                 Duration::from_chrono(
                                     TimeDelta::minutes(30),
@@ -8073,19 +8072,20 @@ SELECT (lower(interval) = '1972-07-21 05:30:00' AND
                 let ok = tx
                     .query_one(
                         "--
-SELECT (lower(interval) = '2021-10-05 00:00:00' AND
-    upper(interval) = '2021-10-06 00:00:00' AND
+SELECT (lower(interval) = '2021-10-05 00:00:00+00' AND
+    upper(interval) = '2021-10-06 00:00:00+00' AND
     lower_inc(interval) AND
     NOT upper_inc(interval)) AS ok
-    FROM (VALUES ($1::tsrange)) AS temp (interval)",
+    FROM (VALUES ($1::tstzrange)) AS temp (interval)",
                         &[&SqlInterval::from(
                             Interval::new(
-                                Time::from_naive_date_time(
-                                    &NaiveDate::from_ymd_opt(2021, 10, 5)
+                                Time::from_date_time(
+                                    NaiveDate::from_ymd_opt(2021, 10, 5)
                                         .unwrap()
                                         .and_hms_opt(0, 0, 0)
-                                        .unwrap(),
-                                    &TimePrecision::from_seconds(1),
+                                        .unwrap()
+                                        .and_utc(),
+                                    TimePrecision::from_seconds(1),
                                 ),
                                 Duration::from_hours(24, &TimePrecision::from_seconds(1)),
                             )
@@ -8469,14 +8469,13 @@ async fn test_remaining_lease_duration() {
             StdDuration::from_secs(expected),
             Lease::new_dummy(
                 totally_legit_object,
-                DateTime::<Utc>::from_timestamp(expiry_time, 0)
-                    .unwrap()
-                    .naive_utc(),
+                DateTime::<Utc>::from_timestamp(expiry_time, 0).unwrap(),
             )
             .remaining_lease_duration(
                 &DateTime::<Utc>::from_timestamp(current_time, 0).unwrap(),
                 skew
-            )
+            ),
+            "{expiry_time}, {current_time}, {skew}, {expected}",
         );
     }
 }

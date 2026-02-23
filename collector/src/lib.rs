@@ -70,7 +70,7 @@ use std::{
 
 use anyhow::Context;
 pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 pub use credential::PrivateCollectorCredential;
 use educe::Educe;
 pub use janus_core::auth_tokens::AuthenticationToken;
@@ -635,12 +635,10 @@ impl<V: vdaf::Collector> Collector<V> {
             partial_batch_selector: collect_response.partial_batch_selector.clone(),
             report_count: collect_response.report_count,
             interval: (
-                Utc.from_utc_datetime(
-                    &collect_response
-                        .interval
-                        .start()
-                        .as_naive_date_time(&self.time_precision)?,
-                ),
+                collect_response
+                    .interval
+                    .start()
+                    .as_date_time(self.time_precision)?,
                 collect_response
                     .interval
                     .duration()
