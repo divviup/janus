@@ -5763,18 +5763,17 @@ impl TaskInfo {
         &self,
         now: DateTime<Utc>,
     ) -> Result<Timestamp<DateTime<Utc>>, Error> {
-        self.report_expiry_threshold_internal(now).map(
-            |report_expiry_age| match report_expiry_age {
+        self.report_expiry_threshold_internal(now)
+            .map(|threshold| match threshold {
                 Some(t) => Timestamp::Value(t),
                 None => Timestamp::NegInfinity,
-            },
-        )
+            })
     }
 
     /// Like [`Self::report_expiry_threshold`], but the value returned is a number of time precision
     /// units instead of a timestamp, so that it can be compared against database columns that store
-    /// values in that unit. The represented time is at least as long as the report expiry threshold
-    /// in seconds.
+    /// values in that unit. Due to rounding down to the nearest time precision unit, the threshold
+    /// may be up to one time precision earlier than the raw calculated threshold.
     ///
     /// Once all the tables in the schema have moved to tracking times in time precision units, this
     /// method can be renamed to `report_expiry_threshold` and the other two can be deleted (#4206).
@@ -5782,15 +5781,14 @@ impl TaskInfo {
         &self,
         now: DateTime<Utc>,
     ) -> Result<i64, Error> {
-        self.report_expiry_threshold_internal(now).map(
-            |report_expiry_age| match report_expiry_age {
+        self.report_expiry_threshold_internal(now)
+            .map(|threshold| match threshold {
                 Some(t) => Time::from_date_time(t, self.time_precision)
                     .as_signed_time_precision_units()
-                    .map_err(|e| Error::User(e.into())),
-                // Return a time in the distant past
+                    .map_err(|_| Error::TimeOverflow("Time cannot be represented in signed units")),
+                // No expiry, so return the epoch.
                 None => Ok(0),
-            },
-        )?
+            })?
     }
 
     fn report_expiry_threshold_internal(
