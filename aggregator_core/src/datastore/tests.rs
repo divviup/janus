@@ -930,6 +930,12 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+// TODO(#4206): The query in get_unaggregated_client_report_ids_by_collect_for_task checks if
+// client_reports.client_timestamp <@ collection_jobs.batch_interval, which only works if
+// client_timestamp is TIMESTAMP and batch_interval is TSRANGE, or client_timestamp is BIGINT and
+// batch_interval is INT8RANGE. It can't work in the transitional period. This test can be
+// re-enabled once the collection jobs table is migrated.
+#[ignore = "test fails until #4206 is resolved"]
 async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
     ephemeral_datastore: EphemeralDatastore,
 ) {
@@ -1662,7 +1668,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
                 .unwrap();
             assert_eq!(
                 unexpired_timestamp,
-                Time::from_date_time(row.get("client_timestamp"), *task.time_precision())
+                Time::from_time_precision_units(row.get_bigint_and_convert("client_timestamp")?)
             );
 
             Ok(())

@@ -225,8 +225,8 @@ CREATE TABLE client_reports(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                         BIGINT NOT NULL,                 -- task ID the report is associated with
     report_id                       BYTEA NOT NULL,                  -- 16-byte ReportID as defined by the DAP specification
-    -- report timestamp, from client
-    client_timestamp                TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- report timestamp, in increments of task time precision, from client
+    client_timestamp                BIGINT NOT NULL,
 
     public_extensions               BYTEA,                           -- encoded sequence of public Extension messages (opaque DAP messages, populated for unscrubbed reports only)
     public_share                    BYTEA,                           -- encoded public share (opaque VDAF message, populated for unscrubbed reports only)
