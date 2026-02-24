@@ -2205,7 +2205,9 @@ impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
                             .map_err(|_| "interval start must be positive")?,
                     ),
                     Duration::from_time_precision_units(
-                        (end_time - start_time)
+                        end_time
+                            .checked_sub(start_time)
+                            .ok_or("interval end must be >= start")?
                             .try_into()
                             .map_err(|_| "interval duration must be positive")?,
                     ),
@@ -2224,7 +2226,7 @@ impl ToSql for SqlIntervalTimePrecision {
         _: &postgres_types::Type,
         out: &mut bytes::BytesMut,
     ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        // Convert the interval start and end to SQL timestamps.
+        // Convert the interval start and end to values in time precision units.
         if self.0 == Interval::EMPTY {
             empty_range_to_sql(out);
             return Ok(postgres_types::IsNull::No);

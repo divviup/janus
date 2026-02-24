@@ -1,6 +1,6 @@
 -- Load pgcrypto for gen_random_bytes.
 CREATE EXTENSION pgcrypto;
--- Load an extension to allow indexing over both BIGINT and TSRANGE in a multicolumn GiST index.
+-- Load an extension to allow indexing over both BIGINT and INT8RANGE in a multicolumn GiST index.
 CREATE EXTENSION btree_gist;
 
 -- Identifies which aggregator role is being played for this task.
