@@ -2127,7 +2127,7 @@ mod tests {
         match maybe_lease.lease_expiry_time {
             Timestamp::Value(time) => {
                 assert_eq!(
-                    time.and_utc().timestamp() as u64,
+                    time.timestamp() as u64,
                     clock.now().as_seconds_since_epoch() + retry_after_header_value
                 )
             }

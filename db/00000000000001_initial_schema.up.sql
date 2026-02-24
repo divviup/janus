@@ -38,11 +38,12 @@ CREATE TABLE hpke_keys(
 
     -- These columns are mutable.
     state HPKE_KEY_STATE NOT NULL DEFAULT 'PENDING',  -- state of the key
-    last_state_change_at TIMESTAMP NOT NULL,          -- when the key state was last changed. Used for key rotation logic.
+    -- when the key state was last changed. Used for key rotation logic.
+    last_state_change_at TIMESTAMP WITH TIME ZONE NOT NULL,
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 
@@ -59,7 +60,7 @@ CREATE TABLE taskprov_peer_aggregators(
     collector_hpke_config BYTEA NOT NULL,    -- the HPKE config of the collector (encoded HpkeConfig message)
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT taskprov_peer_aggregators_endpoint_and_peer_role_unique UNIQUE(endpoint, peer_role)
@@ -74,7 +75,7 @@ CREATE TABLE taskprov_aggregator_auth_tokens(
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT task_aggregator_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
@@ -90,7 +91,7 @@ CREATE TABLE taskprov_collector_auth_tokens(
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT task_collector_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
@@ -138,8 +139,8 @@ CREATE TABLE tasks(
     CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token_hash IS NULL)),
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 CREATE INDEX task_id_index ON tasks(task_id);
@@ -224,7 +225,8 @@ CREATE TABLE client_reports(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                         BIGINT NOT NULL,                 -- task ID the report is associated with
     report_id                       BYTEA NOT NULL,                  -- 16-byte ReportID as defined by the DAP specification
-    client_timestamp                TIMESTAMP NOT NULL,              -- report timestamp, from client
+    -- report timestamp, from client
+    client_timestamp                TIMESTAMP WITH TIME ZONE NOT NULL,
 
     public_extensions               BYTEA,                           -- encoded sequence of public Extension messages (opaque DAP messages, populated for unscrubbed reports only)
     public_share                    BYTEA,                           -- encoded public share (opaque VDAF message, populated for unscrubbed reports only)
@@ -235,8 +237,8 @@ CREATE TABLE client_reports(
     aggregation_started             BOOLEAN NOT NULL DEFAULT FALSE,  -- has this client report been associated with an aggregation job?
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
@@ -261,18 +263,20 @@ CREATE TABLE aggregation_jobs(
     aggregation_job_id         BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
     aggregation_param          BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     batch_id                   BYTEA NOT NULL,                  -- batch ID (leader-selected only; corresponds to identifier in BatchSelector)
-    client_timestamp_interval  TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
+    -- the minimal interval containing all of client timestamps included in this aggregation job
+    client_timestamp_interval  TSTZRANGE NOT NULL,
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
     step                       INTEGER NOT NULL,                -- current step of the aggregation job
     last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq (helper only)
 
-    lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
+    -- when lease on this aggregation job expires; -infinity implies no current lease
+    lease_expiry             TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMESTAMP WITH TIME ZONE '-infinity',
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT aggregation_jobs_unique_id UNIQUE(task_id, aggregation_job_id),
@@ -304,7 +308,8 @@ CREATE TABLE report_aggregations(
     aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
-    client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
+    -- the client timestamp this report aggregation is associated with
+    client_timestamp    TIMESTAMP WITH TIME ZONE NOT NULL,
     last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
 
@@ -335,8 +340,8 @@ CREATE TABLE report_aggregations(
     error_code  SMALLINT,  -- error code corresponding to a DAP ReportShareError value
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT report_aggregations_unique_ord UNIQUE(task_id, aggregation_job_id, ord),
@@ -359,11 +364,13 @@ CREATE TABLE batch_aggregations(
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                     BIGINT NOT NULL,                   -- the task ID
     batch_identifier            BYTEA NOT NULL,                    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval              TSRANGE,                           -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    batch_interval              TSTZRANGE,
     aggregation_param           BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
     ord                         BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
 
-    client_timestamp_interval   TSRANGE NOT NULL,                  -- the minimal interval containing all of client timestamps included in this batch aggregation
+    -- the minimal interval containing all of client timestamps included in this batch aggregation
+    client_timestamp_interval   TSTZRANGE NOT NULL,
     state                       BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
     aggregate_share             BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
     report_count                BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
@@ -372,8 +379,8 @@ CREATE TABLE batch_aggregations(
     aggregation_jobs_terminated BIGINT,                            -- the number of aggregation jobs that have been terminated (finished or abandoned) for this batch; populated unless the batch aggregation has been scrubbed.
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param, ord),
@@ -398,23 +405,28 @@ CREATE TABLE collection_jobs(
     query                         BYTEA NOT NULL,                 -- encoded batch mode-specific query (corresponds to Query)
     aggregation_param             BYTEA NOT NULL,                 -- the aggregation parameter (opaque VDAF message)
     batch_identifier              BYTEA NOT NULL,                 -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval                TSRANGE,                        -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. Will always match
+    -- batch_identifier.
+    batch_interval                TSTZRANGE,
     state                         COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
     report_count                  BIGINT,                         -- the number of reports included in this collection job (only if in state FINISHED)
-    client_timestamp_interval     TSRANGE,                        -- the minimal interval containing the reports included in this collection job, aligned to the task's time precision (only if in state FINISHED)
+    -- the minimal interval containing the reports included in this collection job, aligned to the
+    -- task's time precision (only if in state FINISHED).
+    client_timestamp_interval     TSTZRANGE,
     helper_aggregate_share        BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share        BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
     aggregate_share_id            BYTEA NOT NULL,                 -- the 16-byte AggregateShareID as defined by DAP
 
     step_attempts  BIGINT NOT NULL DEFAULT 0,  -- the number of attempts to step the collection job without making progress, regardless of whether the lease was successfully released or not
 
-    lease_expiry    TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
+    -- when lease on this collection job expires; -infinity implies no current lease
+    lease_expiry    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMESTAMP WITH TIME ZONE '-infinity',
     lease_token     BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts  BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     -- creation/update records
-    created_at  TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at  TIMESTAMP NOT NULL,  -- when the row was last changed
+    created_at  TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was last changed
     updated_by  TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT collection_jobs_unique_id UNIQUE(task_id, collection_job_id),
@@ -430,7 +442,9 @@ CREATE TABLE aggregate_share_jobs(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                         BIGINT NOT NULL,    -- the task ID being collected
     batch_identifier                BYTEA NOT NULL,     -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval                  TSRANGE,            -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. Will always match
+    -- batch_identifier.
+    batch_interval                  TSTZRANGE,
     aggregation_param               BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
     helper_aggregate_share          BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
     report_count                    BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
@@ -438,7 +452,7 @@ CREATE TABLE aggregate_share_jobs(
     aggregate_share_id              BYTEA NOT NULL,     -- the 16-byte AggregateShareID as defined by DAP
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT aggregate_share_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
@@ -458,12 +472,12 @@ CREATE TABLE outstanding_batches(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id BIGINT NOT NULL, -- the task ID containing the batch
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
-    time_bucket_start TIMESTAMP,
+    time_bucket_start TIMESTAMP WITH TIME ZONE,
 
     state OUTSTANDING_BATCH_STATE NOT NULL DEFAULT 'FILLING',  -- the current state of this outstanding batch
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,  -- when the row was created
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),

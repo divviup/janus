@@ -166,12 +166,12 @@ impl CommonTaskParameters {
         }
         if let Some(task_start) = task_start {
             task_start
-                .as_naive_date_time(&time_precision)
+                .as_date_time(time_precision)
                 .map_err(|_| Error::InvalidParameter("task_start out of range"))?;
         }
         if let Some(task_end) = task_end {
             task_end
-                .as_naive_date_time(&time_precision)
+                .as_date_time(time_precision)
                 .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
         }
         if let (Some(task_start), Some(task_end)) = (task_start, task_end) {

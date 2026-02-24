@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use janus_messages::{Duration, Error, Interval, Time, taskprov::TimePrecision};
 
 /// A clock knows what time it currently is.
@@ -377,11 +377,11 @@ impl DateTimeExt for DateTime<Utc> {
 
 /// Extension methods on [`Time`].
 pub trait TimeExt: Sized {
-    /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
-    fn as_naive_date_time(&self, time_precision: &TimePrecision) -> Result<NaiveDateTime, Error>;
+    /// Convert this [`Time`] into a [`DateTime<Utc>`].
+    fn as_date_time(&self, time_precision: TimePrecision) -> Result<DateTime<Utc>, Error>;
 
-    /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
-    fn from_naive_date_time(time: &NaiveDateTime, time_precision: &TimePrecision) -> Self;
+    /// Convert a [`DateTime<Utc>`] into a [`Time`].
+    fn from_date_time(time: DateTime<Utc>, time_precision: TimePrecision) -> Self;
 
     /// Add the provided timedelta to this time.
     fn add_timedelta(
@@ -425,8 +425,8 @@ pub trait TimeExt: Sized {
 }
 
 impl TimeExt for Time {
-    fn as_naive_date_time(&self, time_precision: &TimePrecision) -> Result<NaiveDateTime, Error> {
-        let seconds = self.as_seconds_since_epoch(time_precision);
+    fn as_date_time(&self, time_precision: TimePrecision) -> Result<DateTime<Utc>, Error> {
+        let seconds = self.as_seconds_since_epoch(&time_precision);
         DateTime::<Utc>::from_timestamp(
             seconds
                 .try_into()
@@ -436,11 +436,10 @@ impl TimeExt for Time {
         .ok_or(Error::IllegalTimeArithmetic(
             "number of seconds is out of range",
         ))
-        .map(|dt| dt.naive_utc())
     }
 
-    fn from_naive_date_time(time: &NaiveDateTime, time_precision: &TimePrecision) -> Self {
-        Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64, time_precision)
+    fn from_date_time(time: DateTime<Utc>, time_precision: TimePrecision) -> Self {
+        Self::from_seconds_since_epoch(time.timestamp() as u64, &time_precision)
     }
 
     fn add_timedelta(

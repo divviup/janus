@@ -8,7 +8,7 @@ use std::{
 };
 
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use educe::Educe;
 use janus_core::{
@@ -592,7 +592,7 @@ impl Distribution<LeaseToken> for StandardUniform {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lease<T> {
     leased: T,
-    lease_expiry_time: NaiveDateTime,
+    lease_expiry_time: DateTime<Utc>,
     lease_token: LeaseToken,
     lease_attempts: usize,
 }
@@ -601,7 +601,7 @@ impl<T> Lease<T> {
     /// Creates a new [`Lease`].
     pub fn new(
         leased: T,
-        lease_expiry_time: NaiveDateTime,
+        lease_expiry_time: DateTime<Utc>,
         lease_token: LeaseToken,
         lease_attempts: usize,
     ) -> Self {
@@ -616,7 +616,7 @@ impl<T> Lease<T> {
     /// Create a new artificial lease with a random lease token, acquired for the first time;
     /// intended for use in unit tests.
     #[cfg(feature = "test-util")]
-    pub fn new_dummy(leased: T, lease_expiry_time: NaiveDateTime) -> Self {
+    pub fn new_dummy(leased: T, lease_expiry_time: DateTime<Utc>) -> Self {
         use rand::random;
         Self {
             leased,
@@ -632,8 +632,8 @@ impl<T> Lease<T> {
     }
 
     /// Returns the lease expiry time associated with this lease.
-    pub fn lease_expiry_time(&self) -> &NaiveDateTime {
-        &self.lease_expiry_time
+    pub fn lease_expiry_time(&self) -> DateTime<Utc> {
+        self.lease_expiry_time
     }
 
     /// Returns the lease token associated with this lease.
@@ -657,7 +657,6 @@ impl<T> Lease<T> {
         StdDuration::from_secs(
             u64::try_from(
                 self.lease_expiry_time
-                    .and_utc()
                     .timestamp()
                     .saturating_sub(current_time.timestamp()),
             )
@@ -2286,7 +2285,7 @@ impl<'a> FromSql<'a> for SqlInterval {
         }
     }
 
-    accepts!(TS_RANGE);
+    accepts!(TSTZ_RANGE);
 }
 
 fn time_to_sql_timestamp(time: Time, time_precision: &TimePrecision) -> Result<i64, Error> {
@@ -2353,7 +2352,7 @@ impl ToSql for SqlInterval {
         Ok(postgres_types::IsNull::No)
     }
 
-    accepts!(TS_RANGE);
+    accepts!(TSTZ_RANGE);
 
     to_sql_checked!();
 }

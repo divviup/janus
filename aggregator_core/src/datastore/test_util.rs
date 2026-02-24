@@ -9,7 +9,7 @@ use std::{
 
 use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ConstantBuilder, Retryable};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::{Manager, Pool, Timeouts};
 use janus_core::{
     test_util::testcontainers::Postgres,
@@ -481,7 +481,7 @@ impl Transaction<'_, MockClock> {
         self.check_timestamp_columns_at_create_time(
             table,
             expected_updated_by,
-            self.clock.now().naive_utc(),
+            self.clock.now(),
             updated_at,
         )
         .await
@@ -496,7 +496,7 @@ impl Transaction<'_, MockClock> {
         &self,
         table: &str,
         expected_updated_by: &str,
-        expected_created_at: NaiveDateTime,
+        expected_created_at: DateTime<Utc>,
         updated_at: bool,
     ) {
         for row in self
@@ -512,17 +512,14 @@ impl Transaction<'_, MockClock> {
         {
             assert_eq!(
                 expected_created_at,
-                row.get::<_, NaiveDateTime>("created_at")
+                row.get::<_, DateTime<Utc>>("created_at")
             );
             // We check the updated_at value against the transaction clock's current time. This only
             // works if the clock is a MockClock, and even then doesn't work in those tests that
             // advance time, but it's a good enough check in most cases that the clock has advanced
             // as expected.
             if updated_at {
-                assert_eq!(
-                    self.clock.now().naive_utc(),
-                    row.get::<_, NaiveDateTime>("updated_at"),
-                );
+                assert_eq!(self.clock.now(), row.get::<_, DateTime<Utc>>("updated_at"),);
             }
             assert_eq!(expected_updated_by, row.get::<_, &str>("updated_by"));
         }

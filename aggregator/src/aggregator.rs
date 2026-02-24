@@ -1873,8 +1873,7 @@ impl VdafOps {
         if let Ok(report_time_dt) = report
             .metadata()
             .time()
-            .as_naive_date_time(task.time_precision())
-            .map(|ndt| ndt.and_utc())
+            .as_date_time(*task.time_precision())
         {
             let clock_skew = report_time_dt.signed_duration_since(now);
             let skew_seconds = clock_skew.num_seconds();

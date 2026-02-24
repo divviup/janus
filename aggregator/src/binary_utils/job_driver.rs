@@ -262,7 +262,7 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::{DateTime, Utc};
     use janus_aggregator_core::{
         datastore::{self, models::Lease},
         test_util::noop_meter,
@@ -299,7 +299,7 @@ mod tests {
         struct IncompleteJob {
             task_id: TaskId,
             job_id: AggregationJobId,
-            lease_expiry: NaiveDateTime,
+            lease_expiry: DateTime<Utc>,
         }
 
         /// Records a job observed by the job stepper closure.
@@ -328,12 +328,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: DateTime::<Utc>::from_timestamp(100, 0).unwrap().naive_utc(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: DateTime::<Utc>::from_timestamp(200, 0).unwrap().naive_utc(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 },
             ]),
             // Second job finder call will be immediately after the first: no more jobs
@@ -345,12 +345,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: DateTime::<Utc>::from_timestamp(300, 0).unwrap().naive_utc(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(300, 0).unwrap(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: DateTime::<Utc>::from_timestamp(400, 0).unwrap().naive_utc(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(400, 0).unwrap(),
                 },
             ]),
         ]));
