@@ -2195,21 +2195,19 @@ impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
                 RangeBound::Exclusive(Some(end_raw)),
             ) => {
                 // These values are the start and end of the interval in time precision units.
-                let start_time = int8_from_sql(start_raw)?;
-                let end_time = int8_from_sql(end_raw)?;
+                let start_time = int8_from_sql(start_raw)?
+                    .try_into()
+                    .map_err(|_| "interval start must be positive")?;
+                let end_time: u64 = int8_from_sql(end_raw)?
+                    .try_into()
+                    .map_err(|_| "interval start must be positive")?;
 
                 Ok(Interval::new(
-                    Time::from_time_precision_units(
-                        start_time
-                            .try_into()
-                            .map_err(|_| "interval start must be positive")?,
-                    ),
+                    Time::from_time_precision_units(start_time),
                     Duration::from_time_precision_units(
                         end_time
                             .checked_sub(start_time)
-                            .ok_or("interval end must be >= start")?
-                            .try_into()
-                            .map_err(|_| "interval duration must be positive")?,
+                            .ok_or("interval end must be >= start")?,
                     ),
                 )?
                 .into())
