@@ -75,7 +75,7 @@ pretty_assertions = "1.4.1"
 # Disable default features so that individual workspace crates can choose to
 # re-enable them
 prio = { version = "0.16.8", default-features = false, features = ["experimental"] }
-prometheus = "0.13.4"
+prometheus = "0.14.0"
 querystring = "1.1.0"
 quickcheck = { version = "1.1.0", default-features = false }
 quickcheck_macros = "1.2.0"
