@@ -26,8 +26,8 @@ use janus_messages::{
     taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
-    Range, RangeBound, empty_range_to_sql, range_from_sql, range_to_sql, timestamp_from_sql,
-    timestamp_to_sql,
+    Range, RangeBound, empty_range_to_sql, int8_from_sql, int8_to_sql, range_from_sql,
+    range_to_sql, timestamp_from_sql, timestamp_to_sql,
 };
 use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
@@ -2151,6 +2151,106 @@ impl OutstandingBatch {
     pub fn size(&self) -> &RangeInclusive<usize> {
         &self.size
     }
+}
+
+/// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL INT8RANGE,
+/// representing time intervals in time precision units.
+///
+/// Once all tables are migrated to time precision units, this type can be renamed to `SqlInterval`
+/// and the other can be deleted.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct SqlIntervalTimePrecision(Interval);
+
+impl From<Interval> for SqlIntervalTimePrecision {
+    fn from(interval: Interval) -> Self {
+        Self(interval)
+    }
+}
+
+impl From<SqlIntervalTimePrecision> for Interval {
+    fn from(value: SqlIntervalTimePrecision) -> Self {
+        value.0
+    }
+}
+
+impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
+    fn from_sql(
+        _: &postgres_types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        match range_from_sql(raw)? {
+            Range::Empty => Ok(Self(Interval::EMPTY)),
+            Range::Nonempty(RangeBound::Inclusive(None), _)
+            | Range::Nonempty(RangeBound::Exclusive(None), _)
+            | Range::Nonempty(_, RangeBound::Inclusive(None))
+            | Range::Nonempty(_, RangeBound::Exclusive(None))
+            | Range::Nonempty(RangeBound::Unbounded, _)
+            | Range::Nonempty(_, RangeBound::Unbounded) => Err("Interval must be bounded".into()),
+            Range::Nonempty(RangeBound::Exclusive(_), _)
+            | Range::Nonempty(_, RangeBound::Inclusive(_)) => {
+                Err("Interval must be half-open".into())
+            }
+            Range::Nonempty(
+                RangeBound::Inclusive(Some(start_raw)),
+                RangeBound::Exclusive(Some(end_raw)),
+            ) => {
+                // These values are the start and end of the interval in time precision units.
+                let start_time = int8_from_sql(start_raw)?
+                    .try_into()
+                    .map_err(|_| "interval start must be positive")?;
+                let end_time: u64 = int8_from_sql(end_raw)?
+                    .try_into()
+                    .map_err(|_| "interval start must be positive")?;
+
+                Ok(Interval::new(
+                    Time::from_time_precision_units(start_time),
+                    Duration::from_time_precision_units(
+                        end_time
+                            .checked_sub(start_time)
+                            .ok_or("interval end must be >= start")?,
+                    ),
+                )?
+                .into())
+            }
+        }
+    }
+
+    accepts!(INT8_RANGE);
+}
+
+impl ToSql for SqlIntervalTimePrecision {
+    fn to_sql(
+        &self,
+        _: &postgres_types::Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        // Convert the interval start and end to values in time precision units.
+        if self.0 == Interval::EMPTY {
+            empty_range_to_sql(out);
+            return Ok(postgres_types::IsNull::No);
+        }
+
+        let start = self.0.start().as_signed_time_precision_units()?;
+        let end = self.0.end().as_signed_time_precision_units()?;
+
+        range_to_sql(
+            |out| {
+                int8_to_sql(start, out);
+                Ok(RangeBound::Inclusive(postgres_protocol::IsNull::No))
+            },
+            |out| {
+                int8_to_sql(end, out);
+                Ok(RangeBound::Exclusive(postgres_protocol::IsNull::No))
+            },
+            out,
+        )?;
+
+        Ok(postgres_types::IsNull::No)
+    }
+
+    accepts!(INT8_RANGE);
+
+    to_sql_checked!();
 }
 
 /// The SQL timestamp epoch is midnight UTC on 2000-01-01. This const represents

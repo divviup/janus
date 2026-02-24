@@ -1,6 +1,6 @@
 -- Load pgcrypto for gen_random_bytes.
 CREATE EXTENSION pgcrypto;
--- Load an extension to allow indexing over both BIGINT and TSRANGE in a multicolumn GiST index.
+-- Load an extension to allow indexing over both BIGINT and INT8RANGE in a multicolumn GiST index.
 CREATE EXTENSION btree_gist;
 
 -- Identifies which aggregator role is being played for this task.
@@ -263,8 +263,9 @@ CREATE TABLE aggregation_jobs(
     aggregation_job_id         BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
     aggregation_param          BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     batch_id                   BYTEA NOT NULL,                  -- batch ID (leader-selected only; corresponds to identifier in BatchSelector)
-    -- the minimal interval containing all of client timestamps included in this aggregation job
-    client_timestamp_interval  TSTZRANGE NOT NULL,
+    -- The minimal interval, in time precision units, containing all of client timestamps included
+    -- in this aggregation job
+    client_timestamp_interval  INT8RANGE NOT NULL,
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
     step                       INTEGER NOT NULL,                -- current step of the aggregation job
     last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq (helper only)

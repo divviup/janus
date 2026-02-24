@@ -175,7 +175,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task ID */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
             ],
         )
         .await?
@@ -221,7 +221,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task ID */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold(self.clock.now())?,
+                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
             ],
         )
         .await?
