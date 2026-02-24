@@ -1960,8 +1960,6 @@ WHERE aggregation_jobs.task_id = $1
         // We generate the token on the DB to allow each acquired job to receive its own distinct
         // token. This is not strictly necessary as we only care about token collisions on a
         // per-row basis.
-        // TODO(timg): problem here: agg job client_timestamp_interval is time precisions
-        // but tasks.report_expiry_age is BIGINT... ah maybe we can do the math in SQL
         let stmt = self
             .prepare_cached(
                 "-- acquire_incomplete_aggregation_jobs()
