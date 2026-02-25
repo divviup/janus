@@ -3755,7 +3755,7 @@ async fn get_collection_jobs_including_or_intersecting_time(
             // Start of both intervals: should get both jobs
             check_jobs_including_time(true, true, now).await;
 
-            // Start of second interval: should get only second job
+            // After first interval: should get only second job
             check_jobs_including_time(
                 false,
                 true,
