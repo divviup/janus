@@ -26,8 +26,7 @@ use janus_messages::{
     taskprov::TimePrecision,
 };
 use postgres_protocol::types::{
-    Range, RangeBound, empty_range_to_sql, int8_from_sql, int8_to_sql, range_from_sql,
-    range_to_sql, timestamp_from_sql, timestamp_to_sql,
+    Range, RangeBound, empty_range_to_sql, int8_from_sql, int8_to_sql, range_from_sql, range_to_sql,
 };
 use postgres_types::{FromSql, ToSql, accepts, to_sql_checked};
 use prio::{
@@ -38,11 +37,7 @@ use prio::{
 use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AsyncAggregator,
-    datastore::{Error, SQL_UNIT_TIME_PRECISION},
-    task,
-};
+use crate::{AsyncAggregator, datastore::Error, task};
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
 // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -2155,25 +2150,22 @@ impl OutstandingBatch {
 
 /// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL INT8RANGE,
 /// representing time intervals in time precision units.
-///
-/// Once all tables are migrated to time precision units, this type can be renamed to `SqlInterval`
-/// and the other can be deleted.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct SqlIntervalTimePrecision(Interval);
+pub struct SqlInterval(Interval);
 
-impl From<Interval> for SqlIntervalTimePrecision {
+impl From<Interval> for SqlInterval {
     fn from(interval: Interval) -> Self {
         Self(interval)
     }
 }
 
-impl From<SqlIntervalTimePrecision> for Interval {
-    fn from(value: SqlIntervalTimePrecision) -> Self {
+impl From<SqlInterval> for Interval {
+    fn from(value: SqlInterval) -> Self {
         value.0
     }
 }
 
-impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
+impl<'a> FromSql<'a> for SqlInterval {
     fn from_sql(
         _: &postgres_types::Type,
         raw: &'a [u8],
@@ -2218,7 +2210,7 @@ impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
     accepts!(INT8_RANGE);
 }
 
-impl ToSql for SqlIntervalTimePrecision {
+impl ToSql for SqlInterval {
     fn to_sql(
         &self,
         _: &postgres_types::Type,
@@ -2249,210 +2241,6 @@ impl ToSql for SqlIntervalTimePrecision {
     }
 
     accepts!(INT8_RANGE);
-
-    to_sql_checked!();
-}
-
-/// The SQL timestamp epoch is midnight UTC on 2000-01-01. This const represents
-/// the Unix epoch seconds (946_684_800) in the context of SQL_UNIT_TIME_PRECISION
-/// and should not be necessary after Issue #4206.
-const SQL_EPOCH_TIME: Time = Time::from_time_precision_units(946_684_800);
-
-/// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct SqlInterval(Interval);
-
-impl SqlInterval {
-    pub fn as_interval(&self) -> Interval {
-        self.0
-    }
-
-    /// Convert an interval from task time precision to SQL time precision.
-    pub fn from_dap_time_interval(
-        interval: &Interval,
-        task_precision: &TimePrecision,
-    ) -> Result<Self, Error> {
-        Ok(Self(Self::convert_time_precision(
-            interval,
-            task_precision,
-            &SQL_UNIT_TIME_PRECISION,
-        )?))
-    }
-
-    /// Convert this SQL interval to task time precision.
-    pub fn to_dap_time_interval(&self, task_precision: &TimePrecision) -> Result<Interval, Error> {
-        Ok(Self::convert_time_precision(
-            &self.0,
-            &SQL_UNIT_TIME_PRECISION,
-            task_precision,
-        )?)
-    }
-
-    /// Convert an interval from one time precision to another. This is deliberately
-    /// private as this is a dangerous conversion.
-    fn convert_time_precision(
-        interval: &Interval,
-        from_precision: &TimePrecision,
-        to_precision: &TimePrecision,
-    ) -> Result<Interval, janus_messages::Error> {
-        // Convert start and duration from source precision to target precision
-        let start_seconds = interval.start().as_seconds_since_epoch(from_precision);
-        let duration_seconds = interval.duration().as_seconds(from_precision);
-
-        let new_start = Time::from_seconds_since_epoch(start_seconds, to_precision);
-        let new_duration = Duration::from_seconds(duration_seconds, to_precision);
-
-        Interval::new(new_start, new_duration)
-    }
-}
-
-impl From<Interval> for SqlInterval {
-    fn from(interval: Interval) -> Self {
-        Self(interval)
-    }
-}
-
-impl From<&Interval> for SqlInterval {
-    fn from(interval: &Interval) -> Self {
-        Self::from(*interval)
-    }
-}
-
-impl<'a> FromSql<'a> for SqlInterval {
-    fn from_sql(
-        _: &postgres_types::Type,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        match range_from_sql(raw)? {
-            Range::Empty => Ok(SqlInterval(Interval::EMPTY)),
-            Range::Nonempty(RangeBound::Inclusive(None), _)
-            | Range::Nonempty(RangeBound::Exclusive(None), _)
-            | Range::Nonempty(_, RangeBound::Inclusive(None))
-            | Range::Nonempty(_, RangeBound::Exclusive(None)) => {
-                Err("Interval cannot represent a timestamp range with a null bound".into())
-            }
-            Range::Nonempty(RangeBound::Unbounded, _)
-            | Range::Nonempty(_, RangeBound::Unbounded) => {
-                Err("Interval cannot represent an unbounded timestamp range".into())
-            }
-            Range::Nonempty(RangeBound::Exclusive(_), _)
-            | Range::Nonempty(_, RangeBound::Inclusive(_)) => Err(Into::into(
-                "Interval can only represent timestamp ranges that are closed at the start \
-                     and open at the end",
-            )),
-            Range::Nonempty(
-                RangeBound::Inclusive(Some(start_raw)),
-                RangeBound::Exclusive(Some(end_raw)),
-            ) => {
-                // These timestamps represent the number of microseconds before (if negative) or
-                // after (if positive) midnight, 1/1/2000.
-                let start_timestamp = timestamp_from_sql(start_raw)?;
-                let end_timestamp = timestamp_from_sql(end_raw)?;
-
-                // Convert from SQL timestamp representation to the internal representation.
-                // Note well that this truncates to SQL_UNIT_TIME_PRECISION, despite the
-                // database storing in microsecond precision.
-                let negative = start_timestamp < 0;
-                let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration = Duration::from_chrono(
-                    chrono::TimeDelta::microseconds(abs_start_us as i64),
-                    &SQL_UNIT_TIME_PRECISION,
-                );
-                let time = if negative {
-                    SQL_EPOCH_TIME
-                        .sub_duration(&abs_start_duration)
-                        .map_err(|_| {
-                            "Interval cannot represent timestamp ranges starting before the Unix \
-                             epoch"
-                        })?
-                } else {
-                    SQL_EPOCH_TIME
-                        .add_duration(&abs_start_duration)
-                        .map_err(|_| "overflow when converting to Interval")?
-                };
-
-                if end_timestamp < start_timestamp {
-                    return Err("timestamp range ends before it starts".into());
-                }
-                let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration = Duration::from_chrono(
-                    chrono::TimeDelta::microseconds(duration_us as i64),
-                    &SQL_UNIT_TIME_PRECISION,
-                );
-
-                Ok(SqlInterval(Interval::new(time, duration)?))
-            }
-        }
-    }
-
-    accepts!(TSTZ_RANGE);
-}
-
-fn time_to_sql_timestamp(time: Time, time_precision: &TimePrecision) -> Result<i64, Error> {
-    // Convert time from time_precision units to absolute seconds since Unix epoch
-    let time_seconds = time.as_seconds_since_epoch(time_precision);
-
-    let sql_epoch_seconds = SQL_EPOCH_TIME.as_seconds_since_epoch(&SQL_UNIT_TIME_PRECISION);
-
-    if time_seconds >= sql_epoch_seconds {
-        let diff_seconds = time_seconds - sql_epoch_seconds;
-        let diff_microseconds = diff_seconds
-            .checked_mul(1_000_000)
-            .ok_or(Error::TimeOverflow(
-                "overflow converting time to microseconds",
-            ))?;
-        Ok(diff_microseconds.try_into()?)
-    } else {
-        let diff_seconds = sql_epoch_seconds - time_seconds;
-        let diff_microseconds = diff_seconds
-            .checked_mul(1_000_000)
-            .ok_or(Error::TimeOverflow(
-                "overflow converting time to microseconds",
-            ))?;
-        Ok(-i64::try_from(diff_microseconds)?)
-    }
-}
-
-impl ToSql for SqlInterval {
-    fn to_sql(
-        &self,
-        _: &postgres_types::Type,
-        out: &mut bytes::BytesMut,
-    ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        // Convert the interval start and end to SQL timestamps.
-        if self.0 == Interval::EMPTY {
-            empty_range_to_sql(out);
-            return Ok(postgres_types::IsNull::No);
-        }
-
-        // Note: The interval should already be in SQL_UNIT_TIME_PRECISION (1 second) units,
-        // and if it isn't, badness ensues. This will stop being an problem as part of
-        // Issue #4206.
-        let start_sql_usec = time_to_sql_timestamp(self.0.start(), &SQL_UNIT_TIME_PRECISION)
-            .map_err(|_| "microsecond timestamp of Interval start overflowed")?;
-        let end_sql_usec = time_to_sql_timestamp(self.0.end(), &SQL_UNIT_TIME_PRECISION)
-            .map_err(|_| "microsecond timestamp of Interval end overflowed")?;
-
-        range_to_sql(
-            |out| {
-                timestamp_to_sql(start_sql_usec, out);
-                Ok(postgres_protocol::types::RangeBound::Inclusive(
-                    postgres_protocol::IsNull::No,
-                ))
-            },
-            |out| {
-                timestamp_to_sql(end_sql_usec, out);
-                Ok(postgres_protocol::types::RangeBound::Exclusive(
-                    postgres_protocol::IsNull::No,
-                ))
-            },
-            out,
-        )?;
-
-        Ok(postgres_types::IsNull::No)
-    }
-
-    accepts!(TSTZ_RANGE);
 
     to_sql_checked!();
 }

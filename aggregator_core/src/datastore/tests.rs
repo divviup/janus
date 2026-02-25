@@ -14,7 +14,7 @@ use std::{
 
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
@@ -56,7 +56,7 @@ use crate::{
             CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval, SqlIntervalTimePrecision,
+            SqlInterval,
         },
         schema_versions_template,
         test_util::{
@@ -8314,135 +8314,6 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
     datastore
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let interval = tx
-                    .query_one(
-                        "SELECT '[2020-01-01 10:00+00, 2020-01-01 10:30+00)'::tstzrange AS interval",
-                        &[],
-                    )
-                    .await
-                    .unwrap()
-                    .get::<_, SqlInterval>("interval");
-                let ref_interval = Interval::new(
-                    Time::from_date_time(
-                        NaiveDate::from_ymd_opt(2020, 1, 1)
-                            .unwrap()
-                            .and_hms_opt(10, 0, 0)
-                            .unwrap()
-                            .and_utc(),
-                        TimePrecision::from_seconds(1),
-                    ),
-                    Duration::from_chrono(TimeDelta::minutes(30), &TimePrecision::from_seconds(1)),
-                )
-                .unwrap();
-                assert_eq!(interval.as_interval(), ref_interval);
-
-                let interval = tx
-                    .query_one(
-                        "SELECT '[1970-02-03 23:00+00, 1970-02-04 00:00+00)'::tstzrange AS interval",
-                        &[],
-                    )
-                    .await
-                    .unwrap()
-                    .get::<_, SqlInterval>("interval");
-                let ref_interval = Interval::new(
-                    Time::from_date_time(
-                        NaiveDate::from_ymd_opt(1970, 2, 3)
-                            .unwrap()
-                            .and_hms_opt(23, 0, 0)
-                            .unwrap()
-                            .and_utc(),
-                        TimePrecision::from_seconds(1),
-                    ),
-                    Duration::from_hours(1, &TimePrecision::from_seconds(1)),
-                )
-                .unwrap();
-                assert_eq!(interval.as_interval(), ref_interval);
-
-                let res = tx
-                    .query_one(
-                        "SELECT '[1969-01-01 00:00+00, 1970-01-01 00:00+00)'::tstzrange AS interval",
-                        &[],
-                    )
-                    .await
-                    .unwrap()
-                    .try_get::<_, SqlInterval>("interval");
-                assert!(res.is_err());
-
-                let ok = tx
-                    .query_one(
-                        "--
-SELECT (lower(interval) = '1972-07-21 05:30:00+00' AND
-    upper(interval) = '1972-07-21 06:00:00+00' AND
-    lower_inc(interval) AND
-    NOT upper_inc(interval)) AS ok
-    FROM (VALUES ($1::tstzrange)) AS temp (interval)",
-                        &[&SqlInterval::from(
-                            Interval::new(
-                                Time::from_date_time(
-                                    NaiveDate::from_ymd_opt(1972, 7, 21)
-                                        .unwrap()
-                                        .and_hms_opt(5, 30, 0)
-                                        .unwrap()
-                                        .and_utc(),
-                                    TimePrecision::from_seconds(1),
-                                ),
-                                Duration::from_chrono(
-                                    TimeDelta::minutes(30),
-                                    &TimePrecision::from_seconds(1),
-                                ),
-                            )
-                            .unwrap(),
-                        )],
-                    )
-                    .await
-                    .unwrap()
-                    .get::<_, bool>("ok");
-                assert!(ok);
-
-                let ok = tx
-                    .query_one(
-                        "--
-SELECT (lower(interval) = '2021-10-05 00:00:00+00' AND
-    upper(interval) = '2021-10-06 00:00:00+00' AND
-    lower_inc(interval) AND
-    NOT upper_inc(interval)) AS ok
-    FROM (VALUES ($1::tstzrange)) AS temp (interval)",
-                        &[&SqlInterval::from(
-                            Interval::new(
-                                Time::from_date_time(
-                                    NaiveDate::from_ymd_opt(2021, 10, 5)
-                                        .unwrap()
-                                        .and_hms_opt(0, 0, 0)
-                                        .unwrap()
-                                        .and_utc(),
-                                    TimePrecision::from_seconds(1),
-                                ),
-                                Duration::from_hours(24, &TimePrecision::from_seconds(1)),
-                            )
-                            .unwrap(),
-                        )],
-                    )
-                    .await
-                    .unwrap()
-                    .get::<_, bool>("ok");
-                assert!(ok);
-
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-}
-
-#[rstest_reuse::apply(schema_versions_template)]
-#[tokio::test]
-async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDatastore) {
-    install_test_trace_subscriber();
-    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
-
-    datastore
-        .run_unnamed_tx(|tx| {
-            Box::pin(async move {
                 // Valid ranges
                 for (sql_literal, time, duration) in [
                     ("[0, 10)", 0, 10),
@@ -8453,7 +8324,7 @@ async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDat
                     ("(10, 20)", 11, 9),
                     ("(10, 20]", 11, 10),
                 ] {
-                    let sql_interval: SqlIntervalTimePrecision = tx
+                    let sql_interval: SqlInterval = tx
                         .query_one(
                             &format!("SELECT '{sql_literal}'::INT8RANGE as interval"),
                             &[],
@@ -8475,7 +8346,7 @@ async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDat
                 tx.query_one("SELECT '[-10, 10)'::INT8RANGE as interval", &[])
                     .await
                     .unwrap()
-                    .try_get::<_, SqlIntervalTimePrecision>("interval")
+                    .try_get::<_, SqlInterval>("interval")
                     .unwrap_err();
 
                 // Rejected by postgres

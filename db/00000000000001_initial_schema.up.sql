@@ -474,7 +474,9 @@ CREATE TABLE outstanding_batches(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id BIGINT NOT NULL, -- the task ID containing the batch
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
-    time_bucket_start TIMESTAMP WITH TIME ZONE,
+    -- Start of the time bucket containing reports in this oustanding batch, in time precision
+    -- units.
+    time_bucket_start BIGINT,
 
     state OUTSTANDING_BATCH_STATE NOT NULL DEFAULT 'FILLING',  -- the current state of this outstanding batch
 
