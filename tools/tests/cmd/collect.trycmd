@@ -4,7 +4,7 @@ Command-line DAP-PPM collector from ISRG's Divvi Up
 
 The default subcommand is "run", which will create a collection job and poll it to completion
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> [COMMAND]
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --time-precision <TIME_PRECISION> --vdaf <VDAF> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> [COMMAND]
 
 Commands:
   run       Create a new collection job and poll it to completion
@@ -25,6 +25,9 @@ DAP Task Parameters:
 
       --leader <LEADER>
           The leader aggregator's endpoint URL
+
+      --time-precision <TIME_PRECISION>
+          The task's time precision, in seconds
 
 Authorization:
       --dap-auth-token <DAP_AUTH_TOKEN>

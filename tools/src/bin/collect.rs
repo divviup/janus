@@ -22,6 +22,7 @@ use janus_core::{
 use janus_messages::{
     CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
+    taskprov::TimePrecision,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
@@ -299,6 +300,9 @@ struct Options {
     /// The leader aggregator's endpoint URL
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
     leader: Url,
+    /// The task's time precision, in seconds
+    #[clap(long, help_heading = "DAP Task Parameters", display_order = 2)]
+    time_precision: u64,
 
     #[clap(flatten)]
     authentication: AuthenticationOptions,
@@ -437,8 +441,7 @@ macro_rules! options_query_dispatch {
             &$options.query.batch_interval_duration,
         ) {
             (Some(batch_interval_start), Some(batch_interval_duration)) => {
-                // Time Precision needs to be provided somehow, fix in #4218.
-                let time_precision = &janus_messages::taskprov::TimePrecision::from_seconds(1);
+                let time_precision = &TimePrecision::from_seconds($options.time_precision);
                 let $query = Query::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(*batch_interval_start, time_precision),
@@ -630,8 +633,7 @@ fn new_collector<V: vdaf::Collector>(
     let (authentication, hpke_keypair) = options.credential()?;
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
-    // Time Precision needs to be provided somehow, fix in #4218.
-    let time_precision = janus_messages::taskprov::TimePrecision::from_seconds(1);
+    let time_precision = TimePrecision::from_seconds(options.time_precision);
     let collector = Collector::builder(
         task_id,
         leader_endpoint,
@@ -775,6 +777,7 @@ mod tests {
             subcommand: None,
             task_id,
             leader: leader.clone(),
+            time_precision: 300,
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -809,6 +812,7 @@ mod tests {
             "1000000",
             "--batch-interval-duration",
             "1000",
+            "--time-precision=300",
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
@@ -834,6 +838,7 @@ mod tests {
                 "1000000",
                 "--batch-interval-duration",
                 "1000",
+                "--time-precision=300",
             ])
             .unwrap_err()
             .kind(),
@@ -889,6 +894,7 @@ mod tests {
             "1000000".to_string(),
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
+            "--time-precision=300".to_string(),
         ]);
 
         #[cfg(feature = "fpvec_bounded_l2")]
@@ -1009,6 +1015,7 @@ mod tests {
             subcommand: None,
             task_id,
             leader: leader.clone(),
+            time_precision: 300,
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1038,6 +1045,7 @@ mod tests {
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
             "count",
+            "--time-precision=300",
         ];
         match Options::try_parse_from(correct_arguments) {
             Ok(got) => assert_eq!(got, expected),
@@ -1056,6 +1064,7 @@ mod tests {
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf=count".to_string(),
+            "--time-precision=300".to_string(),
         ]);
 
         Options::try_parse_from(base_arguments.clone()).unwrap();
@@ -1097,6 +1106,7 @@ mod tests {
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
             "--vdaf=count".to_string(),
+            "--time-precision=300".to_string(),
         ]);
 
         let dap_auth_token: DapAuthToken = random();
@@ -1173,6 +1183,7 @@ mod tests {
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
             "--vdaf=count".to_string(),
+            "--time-precision=300".to_string(),
         ]);
 
         // Missing all credential args entirely.
@@ -1251,6 +1262,7 @@ mod tests {
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
             "--vdaf=count".to_string(),
+            "--time-precision=300".to_string(),
             format!("--authorization-bearer-token={}", bearer_token.as_str()),
             format!("--collector-credential={SAMPLE_COLLECTOR_CREDENTIAL}"),
         ]);
@@ -1284,6 +1296,7 @@ mod tests {
             format!("--dap-auth-token={}", auth_token.as_str()),
             "--vdaf".to_string(),
             "count".to_string(),
+            "--time-precision=300".to_string(),
         ]);
 
         let mut correct_arguments = base_arguments.clone();
@@ -1350,6 +1363,7 @@ mod tests {
             }),
             task_id,
             leader: leader.clone(),
+            time_precision: 300,
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1384,6 +1398,7 @@ mod tests {
             "1000000",
             "--batch-interval-duration",
             "1000",
+            "--time-precision=300",
             "new-job",
         ];
         match Options::try_parse_from(correct_arguments) {
@@ -1409,6 +1424,7 @@ mod tests {
             "1000000",
             "--batch-interval-duration",
             "1000",
+            "--time-precision=300",
             "new-job",
             "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
             &format!("{collection_job_id}"),
@@ -1434,6 +1450,7 @@ mod tests {
             subcommand: Some(Subcommands::PollJob { collection_job_id }),
             task_id,
             leader: leader.clone(),
+            time_precision: 300,
             authentication: AuthenticationOptions {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
@@ -1468,6 +1485,7 @@ mod tests {
             "1000000",
             "--batch-interval-duration",
             "1000",
+            "--time-precision=300",
             "poll-job",
             "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
             &collection_job_id.to_string(),
