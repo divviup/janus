@@ -129,15 +129,15 @@ preceding minor versions.
 Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
-running. CI tests currently use [`kind` 0.29.0][kind-release] and the
-corresponding Kubernetes 1.33 node image
-(kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f).
+running. CI tests currently use [`kind` 0.31.0][kind-release] and the
+corresponding Kubernetes 1.35 node image
+(kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f).
 Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`. To run tests on Docker images, execute
 `cargo xtask test-docker`.
 
-[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.29.0
+[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.31.0
 
 Note that `podman` is not an acceptable substitute for `docker`. There are
 subtle incompatibilities between the two that will cause tests to fail.
