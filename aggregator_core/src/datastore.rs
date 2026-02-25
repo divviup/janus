@@ -1112,7 +1112,7 @@ WHERE client_reports.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1154,7 +1154,7 @@ WHERE client_reports.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1264,7 +1264,7 @@ RETURNING report_id, client_timestamp",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* limit */ &i64::try_from(limit)?,
@@ -1403,7 +1403,7 @@ WHERE client_reports.task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.get_encoded()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
@@ -1440,7 +1440,7 @@ WHERE client_reports.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                &task_info.report_expiry_threshold(now)?,
                 /* updated_at */ &now,
                 /* updated_by */ &self.name,
             ],
@@ -1485,7 +1485,7 @@ SELECT EXISTS(
                     /* batch_interval end */
                     &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1527,7 +1527,7 @@ WHERE client_reports.task_id = $1
                     /* batch_interval end */
                     &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1569,7 +1569,7 @@ WHERE report_aggregations.task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* batch_id */ &batch_id.get_encoded()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1659,7 +1659,7 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1710,7 +1710,7 @@ WHERE task_id = $3
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1736,9 +1736,7 @@ WHERE task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* report_id */ report_id.as_ref(),
                     /* threshold */
-                    &task_info
-                        .report_expiry_threshold_as_time_precision_units(self.clock.now())
-                        .unwrap(),
+                    &task_info.report_expiry_threshold(self.clock.now()).unwrap(),
                 ],
             )
             .await
@@ -1809,7 +1807,7 @@ WHERE client_reports.client_timestamp < $7",
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1850,7 +1848,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1890,7 +1888,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2064,7 +2062,7 @@ WHERE aggregation_jobs.task_id = $4
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2131,7 +2129,7 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2180,7 +2178,7 @@ WHERE aggregation_jobs.task_id = $6
                     /* task_id */ &task_info.pkey,
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2230,7 +2228,7 @@ ORDER BY ord ASC",
                 /* task_id */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2293,7 +2291,7 @@ WHERE report_aggregations.task_id = $1
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* report_id */ &report_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2350,7 +2348,7 @@ WHERE report_aggregations.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2717,7 +2715,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2807,7 +2805,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
                             /* threshold */
-                            &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                            &task_info.report_expiry_threshold(now)?,
                         ],
                     )
                     .await?,
@@ -2873,7 +2871,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
                             /* threshold */
-                            &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                            &task_info.report_expiry_threshold(now)?,
                         ],
                     )
                     .await?,
@@ -2959,7 +2957,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                         .as_date_time(task_info.time_precision)?,
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3009,7 +3007,7 @@ WHERE collection_jobs.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* collection_job_id */ &collection_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3074,7 +3072,7 @@ LIMIT 1",
                 /* batch_identifier */ &batch_identifier.get_encoded()?,
                 /* aggregation_param */ &aggregation_param.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3128,7 +3126,7 @@ WHERE task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* timestamp */ &timestamp.as_signed_time_precision_units()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3177,7 +3175,7 @@ WHERE task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* batch_interval */ &SqlIntervalTimePrecision::from(*batch_interval),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3239,7 +3237,7 @@ WHERE task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* batch_id */ &batch_id.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3291,7 +3289,7 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3448,7 +3446,7 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3598,7 +3596,7 @@ WHERE task_id = $4
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3696,7 +3694,7 @@ WHERE task_id = $8
                     /* task_id */ &task_info.pkey,
                     /* collection_job_id */ &collection_job.id().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3759,7 +3757,7 @@ WHERE task_id = $1
                 /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* ord */ &TryInto::<i64>::try_into(ord)?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3830,7 +3828,7 @@ WHERE task_id = $1
                 /* batch_identifier */ &batch_identifier.get_encoded()?,
                 /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -3902,7 +3900,7 @@ WHERE task_id = $1
                     /* batch_identifier */ &batch_identifier.get_encoded()?,
                     /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -3962,7 +3960,7 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4152,7 +4150,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4228,7 +4226,7 @@ WHERE task_id = $10
                     /* ord */
                     &TryInto::<i64>::try_into(batch_aggregation.ord())?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4279,7 +4277,7 @@ WHERE task_id = $1
                 /* batch_identifier */ &batch_identifier.get_encoded()?,
                 /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4329,7 +4327,7 @@ WHERE task_id = $1
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $3",
+          0) >= $3",
             )
             .await?;
         self.query_opt(
@@ -4391,7 +4389,7 @@ WHERE task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* interval */ &SqlIntervalTimePrecision::from(*interval),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4451,7 +4449,7 @@ WHERE task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* batch_id */ &batch_id.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4501,7 +4499,7 @@ WHERE task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4609,7 +4607,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4712,7 +4710,7 @@ ON CONFLICT(task_id, batch_id) DO UPDATE
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4756,7 +4754,7 @@ WHERE task_id = $1
                     /* time_bucket_start */
                     &time_bucket_start.as_date_time(task_info.time_precision)?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?
@@ -4782,7 +4780,7 @@ WHERE task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?
@@ -4895,7 +4893,7 @@ RETURNING batch_id",
                 /* task_id */ &task_info.pkey,
                 /* min_report_count */ &i64::try_from(min_report_count)?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -4942,7 +4940,7 @@ AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
                     /* task_id */ &task_info.pkey,
                     /* batch_id */ batch_id.as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4982,7 +4980,7 @@ WHERE client_reports.id = client_reports_to_delete.id",
             &[
                 /* id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -5028,7 +5026,7 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -5126,7 +5124,7 @@ SELECT COUNT(1) AS batch_count FROM batches_to_delete",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                     /* limit */ &i64::try_from(limit)?,
                 ],
             )
@@ -5709,53 +5707,21 @@ struct TaskInfo {
 }
 
 impl TaskInfo {
-    /// Computes the report expiry threshold, i.e. the minimum timestamp at which reports will not
-    /// be GC'ed, given the current timestamp.
-    fn report_expiry_threshold(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<Timestamp<DateTime<Utc>>, Error> {
-        self.report_expiry_threshold_internal(now)
-            .map(|threshold| match threshold {
-                Some(t) => Timestamp::Value(t),
-                None => Timestamp::NegInfinity,
-            })
-    }
-
-    /// Like [`Self::report_expiry_threshold`], but the value returned is a number of time precision
-    /// units instead of a timestamp, so that it can be compared against database columns that store
-    /// values in that unit. Due to rounding down to the nearest time precision unit, the threshold
-    /// may be up to one time precision earlier than the raw calculated threshold.
-    ///
-    /// Once all the tables in the schema have moved to tracking times in time precision units, this
-    /// method can be renamed to `report_expiry_threshold` and the other two can be deleted (#4206).
-    fn report_expiry_threshold_as_time_precision_units(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<i64, Error> {
-        self.report_expiry_threshold_internal(now)
-            .map(|threshold| match threshold {
-                Some(t) => Time::from_date_time(t, self.time_precision)
-                    .as_signed_time_precision_units()
-                    .map_err(|_| Error::TimeOverflow("Time cannot be represented in signed units")),
-                // No expiry, so return the epoch.
-                None => Ok(0),
-            })?
-    }
-
-    fn report_expiry_threshold_internal(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, Error> {
+    /// Computes the report expiry threshold, i.e. the minimum time at which reports will not be
+    /// GC'ed, given the current time. Due to rounding down to the nearest time precision unit, the
+    /// threshold may be up to one time precision earlier than the raw calculated threshold.
+    fn report_expiry_threshold(&self, now: DateTime<Utc>) -> Result<i64, Error> {
         match self.report_expiry_age {
-            Some(report_expiry_age) => {
-                let report_expiry_threshold =
-                    now.checked_sub_signed(report_expiry_age).ok_or_else(|| {
-                        Error::TimeOverflow("overflow computing report expiry threshold")
-                    })?;
-                Ok(Some(report_expiry_threshold))
-            }
-            None => Ok(None),
+            Some(report_expiry_age) => Time::from_date_time(
+                now.checked_sub_signed(report_expiry_age).ok_or_else(|| {
+                    Error::TimeOverflow("overflow computing report expiry threshold")
+                })?,
+                self.time_precision,
+            )
+            .as_signed_time_precision_units()
+            .map_err(|_| Error::TimeOverflow("Time cannot be represented in signed units")),
+            // No expiry, so return the epoch.
+            None => Ok(0),
         }
     }
 }
