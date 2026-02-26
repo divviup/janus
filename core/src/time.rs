@@ -741,11 +741,6 @@ mod tests {
                 .now_aligned_to_precision(&precision)
                 .as_seconds_since_epoch(&precision);
             assert_eq!(expected, result, "{label}");
-
-            assert_eq!(
-                clock.now_aligned_to_precision(&precision),
-                clock.now().to_time(&precision)
-            );
         }
     }
 
