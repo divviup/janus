@@ -56,7 +56,7 @@ use crate::{
             CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval,
+            SqlInterval, SqlIntervalTimePrecision,
         },
         schema_versions_template,
         test_util::{
@@ -8426,6 +8426,70 @@ SELECT (lower(interval) = '2021-10-05 00:00:00+00' AND
                     .unwrap()
                     .get::<_, bool>("ok");
                 assert!(ok);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                // Valid ranges
+                for (sql_literal, time, duration) in [
+                    ("[0, 10)", 0, 10),
+                    ("[100, 101)", 100, 1),
+                    // These ranges don't match the half-open ones we exclusively use for Intervals
+                    // but postgres will represent them as half-open ranges when queried.
+                    ("[10, 20]", 10, 11),
+                    ("(10, 20)", 11, 9),
+                    ("(10, 20]", 11, 10),
+                ] {
+                    let sql_interval: SqlIntervalTimePrecision = tx
+                        .query_one(
+                            &format!("SELECT '{sql_literal}'::INT8RANGE as interval"),
+                            &[],
+                        )
+                        .await
+                        .unwrap()
+                        .get("interval");
+                    assert_eq!(
+                        Interval::from(sql_interval),
+                        Interval::new(
+                            Time::from_time_precision_units(time),
+                            Duration::from_time_precision_units(duration)
+                        )
+                        .unwrap()
+                    );
+                }
+
+                // Rejected by FromSql
+                tx.query_one(&format!("SELECT '[-10, 10)'::INT8RANGE as interval"), &[])
+                    .await
+                    .unwrap()
+                    .try_get::<_, SqlIntervalTimePrecision>("interval")
+                    .unwrap_err();
+
+                // Rejected by postgres
+                for (sql_literal, description) in
+                    [("[10, -10)", "negative end"), ("[10, 1)", "end < start")]
+                {
+                    println!("test case {description}");
+                    tx.query_one(
+                        &format!("SELECT '{sql_literal}'::INT8RANGE as interval"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+                }
 
                 Ok(())
             })
