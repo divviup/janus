@@ -417,7 +417,8 @@ mod tests {
 
                     // Client report artifacts.
                     let client_timestamp = clock
-                        .now_aligned_to_precision(task.time_precision())
+                        .now()
+                        .to_time(task.time_precision())
                         .sub_duration(&Duration::ONE)
                         .unwrap();
                     let report_share = ReportShare::new(

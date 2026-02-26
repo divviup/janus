@@ -132,7 +132,7 @@ async fn upload() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     aggregator
@@ -162,7 +162,7 @@ async fn upload() {
     // is stored.
     let mutated_report = create_report_custom(
         &leader_task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         *report.metadata().id(),
         &hpke_keypair,
         Vec::new(),
@@ -224,7 +224,7 @@ async fn upload_batch() {
         create_report(
             &task.leader_view().unwrap(),
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         )
     })
     .take(BATCH_SIZE)
@@ -285,7 +285,7 @@ async fn upload_wrong_hpke_config_id() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     let unused_hpke_config_id =
@@ -466,7 +466,7 @@ async fn upload_report_for_collected_batch() {
     let report = create_report(
         &task.leader_view().unwrap(),
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Insert a collection job for the batch interval including our report.
@@ -569,7 +569,7 @@ async fn upload_report_task_not_started() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Try to upload the report, verify that we get the expected error.
@@ -622,7 +622,7 @@ async fn upload_report_task_ended() {
     .await;
 
     let precision = TimePrecision::from_seconds(100);
-    let task_end_time = clock.now_aligned_to_precision(&precision);
+    let task_end_time = clock.now().to_time(&precision);
 
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -706,7 +706,7 @@ async fn upload_report_report_expired() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Advance the clock to expire the report.
@@ -786,7 +786,7 @@ async fn upload_report_faulty_encryption() {
     // Encrypt with the wrong key.
     let report = create_report_custom(
         &task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         random(),
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
         Vec::new(),
@@ -849,7 +849,7 @@ async fn upload_report_public_share_decode_failure() {
     let mut report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     report = Report::new(
         report.metadata().clone(),
@@ -914,7 +914,7 @@ async fn upload_report_leader_input_share_decode_failure() {
     let mut report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     report = Report::new(
         report.metadata().clone(),
@@ -1004,7 +1004,7 @@ async fn upload_report_duplicate_extensions() {
     // Duplicate extensions
     let report = create_report_custom(
         &task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         random(),
         &hpke_keypair,
         /* public */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
@@ -1078,7 +1078,7 @@ async fn upload_report_unrecognized_extension() {
     // Report with unrecognized extension type in public extensions
     let report_public = create_report_custom(
         &task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         random(),
         &hpke_keypair,
         /* public */ Vec::from([Extension::new(ExtensionType::Unknown(0x1234), Vec::new())]),
@@ -1102,7 +1102,7 @@ async fn upload_report_unrecognized_extension() {
     // Report with unrecognized extension type in private extensions
     let report_private = create_report_custom(
         &task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         random(),
         &hpke_keypair,
         /* public */ Vec::new(),
@@ -1171,7 +1171,7 @@ async fn upload_report_decode_failure() {
     let report = create_report(
         &task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Create a stream that yields this decode error (simulating what decode_reports_stream does)

@@ -10,7 +10,9 @@ use janus_aggregator_core::{
     },
 };
 use janus_core::{
-    auth_tokens::test_util::WithAuthenticationToken, test_util::run_vdaf, time::Clock as _,
+    auth_tokens::test_util::WithAuthenticationToken,
+    test_util::run_vdaf,
+    time::{Clock as _, DateTimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -54,7 +56,7 @@ async fn aggregation_job_get_ready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -169,7 +171,7 @@ async fn aggregation_job_get_unready() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -282,7 +284,7 @@ async fn aggregation_job_get_wrong_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -387,7 +389,7 @@ async fn aggregation_job_get_missing_step() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(
@@ -486,7 +488,7 @@ async fn aggregation_job_get_sync() {
 
     let report_metadata = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript = run_vdaf(

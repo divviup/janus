@@ -10,7 +10,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     initialize_rustls,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, MockClock, TimeDeltaExt as _, TimeExt as _},
+    time::{Clock, DateTimeExt, MockClock, TimeDeltaExt as _, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -107,7 +107,7 @@ async fn upload_handler() {
     let report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
@@ -155,7 +155,7 @@ async fn upload_handler() {
     // Verify that new reports using an existing report ID are also accepted as a duplicate.
     let duplicate_id_report = create_report_custom(
         &leader_task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         *accepted_report_id,
         &hpke_keypair,
         Vec::new(),
@@ -183,17 +183,17 @@ async fn upload_handler() {
         create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         ),
         create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         ),
         create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         ),
     ];
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
@@ -214,7 +214,8 @@ async fn upload_handler() {
         ReportMetadata::new(
             random(),
             clock
-                .now_aligned_to_precision(task.time_precision())
+                .now()
+                .to_time(task.time_precision())
                 .sub_timedelta(
                     &TimeDelta::try_seconds_unsigned(REPORT_EXPIRY_AGE + 30000).unwrap(),
                     task.time_precision(),
@@ -277,7 +278,8 @@ async fn upload_handler() {
 
     // Reports from the future should be rejected.
     let bad_report_time = clock
-        .now_aligned_to_precision(task.time_precision())
+        .now()
+        .to_time(task.time_precision())
         .add_duration(&Duration::from_time_precision_units(2))
         .unwrap();
     let bad_report = Report::new(
@@ -318,7 +320,8 @@ async fn upload_handler() {
     .with_time_precision(*task.time_precision())
     .with_task_end(Some(
         clock
-            .now_aligned_to_precision(task.time_precision())
+            .now()
+            .to_time(task.time_precision())
             .add_duration(&Duration::ONE)
             .unwrap(),
     ))
@@ -332,7 +335,8 @@ async fn upload_handler() {
         &leader_task_end_soon,
         &hpke_keypair,
         clock
-            .now_aligned_to_precision(task.time_precision())
+            .now()
+            .to_time(task.time_precision())
             .add_duration(&Duration::from_seconds(
                 task.time_precision().as_seconds() * 2,
                 task.time_precision(),
@@ -359,7 +363,7 @@ async fn upload_handler() {
     let mut bad_public_share_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     bad_public_share_report = Report::new(
         bad_public_share_report.metadata().clone(),
@@ -391,7 +395,7 @@ async fn upload_handler() {
     // Reject reports which are not decryptable.
     let undecryptable_report = create_report_custom(
         &leader_task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         *accepted_report_id,
         // Encrypt report with some arbitrary key that has the same ID as an existing one.
         &HpkeKeypair::test_with_id(*hpke_keypair.config().id()),
@@ -419,7 +423,7 @@ async fn upload_handler() {
     let mut bad_leader_input_share_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     bad_leader_input_share_report = Report::new(
         bad_leader_input_share_report.metadata().clone(),
@@ -497,7 +501,7 @@ async fn upload_handler() {
     clock.advance(TimeDelta::seconds(1));
     let dupe_ext_report = create_report_custom(
         &leader_task,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         random(),
         &hpke_keypair,
         /* public */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
@@ -555,14 +559,15 @@ async fn upload_handler_mixed_success_failure() {
     let valid_report_1 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     let expired_report = Report::new(
         ReportMetadata::new(
             random(),
             clock
-                .now_aligned_to_precision(task.time_precision())
+                .now()
+                .to_time(task.time_precision())
                 .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
                 .unwrap()
                 .sub_duration(&Duration::from_seconds(REPORT_EXPIRY_AGE, &time_precision))
@@ -579,7 +584,7 @@ async fn upload_handler_mixed_success_failure() {
     let invalid_hpke_report = Report::new(
         ReportMetadata::new(
             random(),
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
             Vec::new(),
         ),
         valid_report_1.public_share().to_vec(),
@@ -600,7 +605,7 @@ async fn upload_handler_mixed_success_failure() {
     let valid_report_2 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     // Upload all four reports in a single batch
@@ -676,7 +681,8 @@ async fn upload_handler_task_not_started() {
     .with_time_precision(time_precision)
     .with_task_start(Some(
         clock
-            .now_aligned_to_precision(&time_precision)
+            .now()
+            .to_time(&time_precision)
             .add_duration(&Duration::ONE) // Add one time precision interval
             .unwrap()
             .add_duration(&Duration::ONE) // Add another to be clearly in the future
@@ -696,7 +702,7 @@ async fn upload_handler_task_not_started() {
     let early_report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
@@ -751,7 +757,7 @@ async fn upload_handler_helper() {
     let report = create_report(
         &helper_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
 
     let mut test_conn = post(task.report_upload_uri().unwrap().path())
@@ -845,7 +851,7 @@ async fn upload_handler_error_fanout() {
     let report: Report = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     let response = client
         .post(url.clone())
@@ -892,7 +898,7 @@ async fn upload_handler_error_fanout() {
                     let report = create_report(
                         &leader_task,
                         &hpke_keypair,
-                        clock.now_aligned_to_precision(&time_precision),
+                        clock.now().to_time(&time_precision),
                     );
                     let response = client
                         .post(url)
@@ -952,7 +958,7 @@ async fn upload_client_early_disconnect() {
     let report_1 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     let encoded_report_1 = UploadRequest::from_slice(&[report_1])
         .get_encoded()
@@ -960,7 +966,7 @@ async fn upload_client_early_disconnect() {
     let report_2 = create_report(
         &leader_task,
         &hpke_keypair,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
     );
     let encoded_report_2 = UploadRequest::from_slice(&[report_2])
         .get_encoded()
@@ -1233,7 +1239,7 @@ async fn upload_client_http11_bulk() {
         let report = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
         let encoded = report.get_encoded().unwrap();
         let chunk_length_line = format!("{:x}\r\n", encoded.len());
@@ -1364,7 +1370,7 @@ mod decode_reports_stream_tests {
         let report = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
         let encoded = report.get_encoded().unwrap();
         let body = Cursor::new(encoded);
@@ -1398,12 +1404,12 @@ mod decode_reports_stream_tests {
         let report1 = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
         let report2 = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
         let mut encoded = report1.get_encoded().unwrap();
         encoded.extend_from_slice(&report2.get_encoded().unwrap());
@@ -1445,7 +1451,7 @@ mod decode_reports_stream_tests {
         let report = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
         let mut encoded = report.get_encoded().unwrap();
         encoded.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
@@ -1516,14 +1522,11 @@ mod decode_reports_stream_tests {
         let report1 = create_report(
             &leader_task,
             &hpke_keypair,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
         );
 
-        let report2_metadata = ReportMetadata::new(
-            random(),
-            clock.now_aligned_to_precision(task.time_precision()),
-            vec![],
-        );
+        let report2_metadata =
+            ReportMetadata::new(random(), clock.now().to_time(task.time_precision()), vec![]);
 
         // Build stream: [valid report] [valid metadata + incomplete body] [valid reports..]
         let mut stream_bytes = report1.get_encoded().unwrap();
@@ -1537,7 +1540,7 @@ mod decode_reports_stream_tests {
             create_report(
                 &leader_task,
                 &hpke_keypair,
-                clock.now_aligned_to_precision(task.time_precision()),
+                clock.now().to_time(task.time_precision()),
             )
             .encode(&mut stream_bytes)
             .unwrap();
@@ -1611,7 +1614,7 @@ mod decode_reports_stream_tests {
                 create_report(
                     &leader_task,
                     &hpke_keypair,
-                    clock.now_aligned_to_precision(task.time_precision()),
+                    clock.now().to_time(task.time_precision()),
                 )
             })
             .collect::<Vec<_>>();
