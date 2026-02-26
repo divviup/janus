@@ -2,11 +2,10 @@ use std::iter;
 
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use janus_core::time::{Clock, DateTimeExt as _, IntervalExt as _, TimeExt as _};
+use janus_core::time::Clock;
 use janus_messages::{
     Interval, Query, TaskId, Time,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 
 use crate::{
@@ -57,15 +56,6 @@ pub trait AccumulableBatchMode: BatchMode {
 
     /// Get the default value of the partial batch identifier, if applicable.
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
-
-    /// Determine if the batch is expected to be garbage-collected, based on the identifier.
-    /// `Some(true)` and `Some(false)` indicate the expected result, and `None` indicates that the
-    /// answer cannot be determined based on the batch identifier alone (for e.g. the
-    /// leader-selected batch mode).
-    fn is_batch_garbage_collected<C: Clock>(
-        clock: &C,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Option<bool>;
 }
 
 #[async_trait]
@@ -110,18 +100,6 @@ impl AccumulableBatchMode for TimeInterval {
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
         Some(&())
     }
-
-    fn is_batch_garbage_collected<C: Clock>(
-        clock: &C,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Option<bool> {
-        // Note: This assumes the batch_identifier's interval is in 1-second time_precision
-        // units. This is a simplification - in practice, batch identifiers should carry their
-        // time_precision context, but that would require changing the trait interface. This
-        // will be fixed in Issue #4217.
-        let now_time = clock.now().to_time(&TimePrecision::from_seconds(1));
-        Some(batch_identifier.end().is_before(&now_time))
-    }
 }
 
 #[async_trait]
@@ -164,10 +142,6 @@ impl AccumulableBatchMode for LeaderSelected {
     }
 
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
-        None
-    }
-
-    fn is_batch_garbage_collected<C: Clock>(_: &C, _: &Self::BatchIdentifier) -> Option<bool> {
         None
     }
 }
