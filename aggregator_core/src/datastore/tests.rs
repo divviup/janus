@@ -8472,7 +8472,7 @@ async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDat
                 }
 
                 // Rejected by FromSql
-                tx.query_one(&format!("SELECT '[-10, 10)'::INT8RANGE as interval"), &[])
+                tx.query_one("SELECT '[-10, 10)'::INT8RANGE as interval", &[])
                     .await
                     .unwrap()
                     .try_get::<_, SqlIntervalTimePrecision>("interval")
