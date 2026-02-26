@@ -415,8 +415,7 @@ async fn run(
         QueryKind::TimeInterval => {
             let batch_interval_start = start_timestamp
                 .to_time(&TimePrecision::from_seconds(TIME_PRECISION))
-                .as_time_precision_units()
-                * TIME_PRECISION;
+                .as_seconds_since_epoch(&TimePrecision::from_seconds(TIME_PRECISION));
             // Span the aggregation over two time precisions, just in case our measurements
             // spilled over a batch boundary.
             let batch_interval_duration = TIME_PRECISION * 2;
