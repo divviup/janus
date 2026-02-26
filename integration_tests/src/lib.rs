@@ -10,7 +10,6 @@ use janus_messages::{TaskId, taskprov::TimePrecision};
 use url::Url;
 
 pub mod client;
-pub mod daphne;
 pub mod interop_api;
 pub mod janus;
 

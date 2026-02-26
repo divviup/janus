@@ -31,6 +31,7 @@ use url::Url;
 /// different configuration customizations.
 pub enum TestContext {
     /// Aggregators are running in a virtual network, like a Docker network or a Kind cluster.
+    #[allow(dead_code)]
     VirtualNetwork,
     /// Aggregators are running natively on the same host as the test driver.
     Host,
@@ -351,9 +352,8 @@ pub async fn submit_measurements_and_verify_aggregate(
     (leader_port, helper_port): (u16, u16),
     client_backend: &ClientBackend<'_>,
 ) {
-    // We generate exactly one batch's worth of measurement uploads to work around an issue in
-    // Daphne at time of writing.
-    let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
+    // Generate one batch worth of measurements.
+    let total_measurements = usize::try_from(task_parameters.min_batch_size).unwrap();
 
     match &task_parameters.vdaf {
         VdafInstance::Prio3Count => {
