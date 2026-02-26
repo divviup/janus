@@ -31,6 +31,7 @@ use url::Url;
 /// different configuration customizations.
 pub enum TestContext {
     /// Aggregators are running in a virtual network, like a Docker network or a Kind cluster.
+    #[allow(dead_code)]
     VirtualNetwork,
     /// Aggregators are running natively on the same host as the test driver.
     Host,
