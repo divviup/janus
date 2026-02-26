@@ -18,7 +18,7 @@ use janus_aggregator_core::{
         },
     },
 };
-use janus_core::time::{Clock, IntervalExt};
+use janus_core::time::{Clock, IntervalExt, TimeExt};
 use janus_messages::{
     AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
     batch_mode::LeaderSelected,
@@ -117,11 +117,9 @@ where
                 .map(|batch_time_window_size| {
                     // While everything is in units of the time precision, we still have to
                     // bucket things by the batch_time_window_size.
-                    let batch_window_units = batch_time_window_size.as_time_precision_units();
-                    Time::from_time_precision_units(
-                        (report.client_timestamp().as_time_precision_units() / batch_window_units)
-                            * batch_window_units,
-                    )
+                    report
+                        .client_timestamp()
+                        .to_batch_interval_start(batch_time_window_size)
                 });
         let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {

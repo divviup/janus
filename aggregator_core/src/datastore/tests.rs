@@ -7448,16 +7448,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 } => {
                     // Compute the batch time bucket start by rounding down to
                     // batch_time_window_size
-                    let batch_window_units = batch_time_window_size.as_time_precision_units();
-                    let time_bucket_start = Time::from_time_precision_units(
-                        (client_timestamps[0].as_time_precision_units() / batch_window_units)
-                            * batch_window_units,
-                    );
+                    let time_bucket_start =
+                        client_timestamps[0].to_batch_interval_start(*batch_time_window_size);
                     let same_bucket = client_timestamps.iter().all(|ts| {
-                        Time::from_time_precision_units(
-                            (ts.as_time_precision_units() / batch_window_units)
-                                * batch_window_units,
-                        ) == time_bucket_start
+                        ts.to_batch_interval_start(*batch_time_window_size) == time_bucket_start
                     });
                     assert!(
                         same_bucket,

@@ -47,7 +47,7 @@ pub enum BatchMode {
         /// If present, reports will be separated into different batches by timestamp, such that
         /// the client timestamp interval duration will not exceed this value. The minimum and
         /// maximum allowed report timestamps for each batch will be multiples of this value as
-        /// well. This must be a multiple of the task's time precision.
+        /// well.
         ///
         /// This is an implementation-specific configuration parameter, and not part of the query
         /// type as defined in DAP.
