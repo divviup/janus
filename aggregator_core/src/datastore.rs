@@ -3318,8 +3318,7 @@ WHERE task_id = $1
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
-        let client_timestamp_interval: Option<SqlInterval> =
-            row.get("client_timestamp_interval");
+        let client_timestamp_interval: Option<SqlInterval> = row.get("client_timestamp_interval");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
         let aggregate_share_id = AggregateShareId::get_decoded(row.get("aggregate_share_id"))?;
@@ -3638,8 +3637,7 @@ WHERE task_id = $4
                 leader_aggregate_share,
             } => {
                 let report_count = Some(i64::try_from(*report_count)?);
-                let client_timestamp_interval =
-                    Some(SqlInterval::from(*client_timestamp_interval));
+                let client_timestamp_interval = Some(SqlInterval::from(*client_timestamp_interval));
                 let leader_aggregate_share = Some(leader_aggregate_share.get_encoded()?);
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
