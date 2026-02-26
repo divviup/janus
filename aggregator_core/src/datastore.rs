@@ -33,7 +33,7 @@ use janus_messages::{
     taskprov::TimePrecision,
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
-use models::SqlIntervalTimePrecision;
+use models::SqlInterval;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -1913,7 +1913,7 @@ WHERE aggregation_jobs.task_id = $1
         row: &Row,
     ) -> Result<AggregationJob<SEED_SIZE, B, A>, Error> {
         let client_timestamp_interval = row
-            .get::<_, SqlIntervalTimePrecision>("client_timestamp_interval")
+            .get::<_, SqlInterval>("client_timestamp_interval")
             .into();
 
         let mut job = AggregationJob::new(
@@ -2121,7 +2121,7 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
                     /* batch_id */
                     &aggregation_job.partial_batch_identifier().get_encoded()?,
                     /* client_timestamp_interval */
-                    &SqlIntervalTimePrecision::from(*aggregation_job.client_timestamp_interval()),
+                    &SqlInterval::from(*aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
                     /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */ &aggregation_job.last_request_hash(),
@@ -3173,7 +3173,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* batch_interval */ &SqlIntervalTimePrecision::from(*batch_interval),
+                /* batch_interval */ &SqlInterval::from(*batch_interval),
                 /* threshold */
                 &task_info.report_expiry_threshold(self.clock.now())?,
             ],
@@ -3318,8 +3318,7 @@ WHERE task_id = $1
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
-        let client_timestamp_interval: Option<SqlIntervalTimePrecision> =
-            row.get("client_timestamp_interval");
+        let client_timestamp_interval: Option<SqlInterval> = row.get("client_timestamp_interval");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
         let aggregate_share_id = AggregateShareId::get_decoded(row.get("aggregate_share_id"))?;
@@ -3399,7 +3398,7 @@ WHERE task_id = $1
         let now = self.clock.now();
 
         let batch_interval = B::to_batch_interval(collection_job.batch_identifier())
-            .map(|interval| SqlIntervalTimePrecision::from(*interval));
+            .map(|interval| SqlInterval::from(*interval));
 
         let stmt = self
             .prepare_cached(
@@ -3638,8 +3637,7 @@ WHERE task_id = $4
                 leader_aggregate_share,
             } => {
                 let report_count = Some(i64::try_from(*report_count)?);
-                let client_timestamp_interval =
-                    Some(SqlIntervalTimePrecision::from(*client_timestamp_interval));
+                let client_timestamp_interval = Some(SqlInterval::from(*client_timestamp_interval));
                 let leader_aggregate_share = Some(leader_aggregate_share.get_encoded()?);
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
@@ -4024,7 +4022,7 @@ WHERE task_id = $1
         }
 
         let client_timestamp_interval = row
-            .get::<_, SqlIntervalTimePrecision>("client_timestamp_interval")
+            .get::<_, SqlInterval>("client_timestamp_interval")
             .into();
         let state: BatchAggregationStateCode = row.get("state");
         let state = match state {
@@ -4090,7 +4088,7 @@ WHERE task_id = $1
         let now = self.clock.now();
 
         let batch_interval = B::to_batch_interval(batch_aggregation.batch_identifier())
-            .map(|interval| SqlIntervalTimePrecision::from(*interval));
+            .map(|interval| SqlInterval::from(*interval));
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
         let stmt = self
@@ -4137,7 +4135,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                     &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     /* client_timestamp_interval */
-                    &SqlIntervalTimePrecision::from(*batch_aggregation.client_timestamp_interval()),
+                    &SqlInterval::from(*batch_aggregation.client_timestamp_interval()),
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4207,7 +4205,7 @@ WHERE task_id = $10
                 &stmt,
                 &[
                     /* client_timestamp_interval */
-                    &SqlIntervalTimePrecision::from(*batch_aggregation.client_timestamp_interval()),
+                    &SqlInterval::from(*batch_aggregation.client_timestamp_interval()),
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4387,7 +4385,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* interval */ &SqlIntervalTimePrecision::from(*interval),
+                /* interval */ &SqlInterval::from(*interval),
                 /* threshold */
                 &task_info.report_expiry_threshold(self.clock.now())?,
             ],
@@ -4559,7 +4557,7 @@ WHERE task_id = $1
         };
         let now = self.clock.now();
         let batch_interval = B::to_batch_interval(aggregate_share_job.batch_identifier())
-            .map(|interval| SqlIntervalTimePrecision::from(*interval));
+            .map(|interval| SqlInterval::from(*interval));
 
         let stmt = self
             .prepare_cached(
@@ -4705,7 +4703,7 @@ ON CONFLICT(task_id, batch_id) DO UPDATE
                     /* time_bucket_start */
                     &time_bucket_start
                         .as_ref()
-                        .map(|t| t.as_date_time(task_info.time_precision))
+                        .map(|t| t.as_signed_time_precision_units())
                         .transpose()?,
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
@@ -4752,7 +4750,7 @@ WHERE task_id = $1
                 &[
                     /* task_id */ &task_info.pkey,
                     /* time_bucket_start */
-                    &time_bucket_start.as_date_time(task_info.time_precision)?,
+                    &time_bucket_start.as_signed_time_precision_units()?,
                     /* threshold */
                     &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
