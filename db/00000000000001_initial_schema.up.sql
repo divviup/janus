@@ -365,13 +365,14 @@ CREATE TABLE batch_aggregations(
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                     BIGINT NOT NULL,                   -- the task ID
     batch_identifier            BYTEA NOT NULL,                    -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. (will always match batch_identifier)
-    batch_interval              TSTZRANGE,
+    -- batch interval, as an INT8RANGE, in time precision units.
+    -- Populated only for time-interval tasks. Will always match batch_identifier.
+    batch_interval              INT8RANGE,
     aggregation_param           BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
     ord                         BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
-
-    -- the minimal interval containing all of client timestamps included in this batch aggregation
-    client_timestamp_interval   TSTZRANGE NOT NULL,
+    -- The minimal interval, in time precision units, containing all of client timestamps included
+    -- in this batch aggregation.
+    client_timestamp_interval   INT8RANGE NOT NULL,
     state                       BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
     aggregate_share             BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
     report_count                BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
@@ -406,14 +407,14 @@ CREATE TABLE collection_jobs(
     query                         BYTEA NOT NULL,                 -- encoded batch mode-specific query (corresponds to Query)
     aggregation_param             BYTEA NOT NULL,                 -- the aggregation parameter (opaque VDAF message)
     batch_identifier              BYTEA NOT NULL,                 -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. Will always match
-    -- batch_identifier.
-    batch_interval                TSTZRANGE,
+    -- Batch interval, as an INT8RANGE, in time precision units.
+    -- Populated only for time-interval tasks. Will always match batch_identifier.
+    batch_interval                INT8RANGE,
     state                         COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
     report_count                  BIGINT,                         -- the number of reports included in this collection job (only if in state FINISHED)
-    -- the minimal interval containing the reports included in this collection job, aligned to the
-    -- task's time precision (only if in state FINISHED).
-    client_timestamp_interval     TSTZRANGE,
+    -- The minimal interval, in time precision units, containing the reports included in this
+    -- collection job. Populated only if in state FINISHED.
+    client_timestamp_interval     INT8RANGE,
     helper_aggregate_share        BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share        BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
     aggregate_share_id            BYTEA NOT NULL,                 -- the 16-byte AggregateShareID as defined by DAP
@@ -443,9 +444,9 @@ CREATE TABLE aggregate_share_jobs(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                         BIGINT NOT NULL,    -- the task ID being collected
     batch_identifier                BYTEA NOT NULL,     -- encoded batch mode-specific batch identifier (corresponds to identifier in BatchSelector)
-    -- batch interval, as a TSTZRANGE, populated only for time-interval tasks. Will always match
-    -- batch_identifier.
-    batch_interval                  TSTZRANGE,
+    -- Batch interval, in time precision units, containing the reports included in this aggregate
+    -- share. Populated only for time-interval tasks. Will always match batch_identifier.
+    batch_interval                  INT8RANGE,
     aggregation_param               BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
     helper_aggregate_share          BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
     report_count                    BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share

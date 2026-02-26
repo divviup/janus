@@ -55,7 +55,7 @@ use self::models::{
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
     HpkeKeyState, HpkeKeypair, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, UnaggregatedReport,
+    ReportAggregationState, ReportAggregationStateCode, UnaggregatedReport,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -1112,7 +1112,7 @@ WHERE client_reports.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1154,7 +1154,7 @@ WHERE client_reports.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1264,7 +1264,7 @@ RETURNING report_id, client_timestamp",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* limit */ &i64::try_from(limit)?,
@@ -1403,7 +1403,7 @@ WHERE client_reports.task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.get_encoded()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
@@ -1440,7 +1440,7 @@ WHERE client_reports.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* report_id */ &report_id.get_encoded()?,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                &task_info.report_expiry_threshold(now)?,
                 /* updated_at */ &now,
                 /* updated_by */ &self.name,
             ],
@@ -1485,7 +1485,7 @@ SELECT EXISTS(
                     /* batch_interval end */
                     &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1527,7 +1527,7 @@ WHERE client_reports.task_id = $1
                     /* batch_interval end */
                     &batch_interval.end().as_signed_time_precision_units()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1569,7 +1569,7 @@ WHERE report_aggregations.task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* batch_id */ &batch_id.get_encoded()?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                    &task_info.report_expiry_threshold(self.clock.now())?,
                 ],
             )
             .await?;
@@ -1659,7 +1659,7 @@ ON CONFLICT(task_id, report_id) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1710,7 +1710,7 @@ WHERE task_id = $3
                     /* task_id */ &task_info.pkey,
                     /* report_id */ &report_id.as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1736,9 +1736,7 @@ WHERE task_id = $1
                     /* task_id */ &task_info.pkey,
                     /* report_id */ report_id.as_ref(),
                     /* threshold */
-                    &task_info
-                        .report_expiry_threshold_as_time_precision_units(self.clock.now())
-                        .unwrap(),
+                    &task_info.report_expiry_threshold(self.clock.now()).unwrap(),
                 ],
             )
             .await
@@ -1809,7 +1807,7 @@ WHERE client_reports.client_timestamp < $7",
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -1850,7 +1848,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task_id */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -1890,7 +1888,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2064,7 +2062,7 @@ WHERE aggregation_jobs.task_id = $4
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2131,7 +2129,7 @@ ON CONFLICT(task_id, aggregation_job_id) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2180,7 +2178,7 @@ WHERE aggregation_jobs.task_id = $6
                     /* task_id */ &task_info.pkey,
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2230,7 +2228,7 @@ ORDER BY ord ASC",
                 /* task_id */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2293,7 +2291,7 @@ WHERE report_aggregations.task_id = $1
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* report_id */ &report_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2350,7 +2348,7 @@ WHERE report_aggregations.task_id = $1
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -2717,7 +2715,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -2807,7 +2805,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
                             /* threshold */
-                            &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                            &task_info.report_expiry_threshold(now)?,
                         ],
                     )
                     .await?,
@@ -2873,7 +2871,7 @@ ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
                             /* updated_at */ &now,
                             /* updated_by */ &self.name,
                             /* threshold */
-                            &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                            &task_info.report_expiry_threshold(now)?,
                         ],
                     )
                     .await?,
@@ -2959,7 +2957,7 @@ WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                         .as_date_time(task_info.time_precision)?,
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* threshold */
-                    &task_info.report_expiry_threshold_as_time_precision_units(now)?,
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3000,7 +2998,7 @@ WHERE collection_jobs.task_id = $1
            WHERE batch_aggregations.task_id = collection_jobs.task_id
              AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
              AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $3",
+          0) >= $3",
             )
             .await?;
         self.query_opt(
@@ -3020,7 +3018,6 @@ WHERE collection_jobs.task_id = $1
                 *task_id,
                 batch_identifier,
                 *collection_job_id,
-                &task_info.time_precision,
                 &row,
             )
         })
@@ -3064,7 +3061,7 @@ WHERE collection_jobs.task_id = $1
            WHERE batch_aggregations.task_id = collection_jobs.task_id
              AND batch_aggregations.batch_identifier = collection_jobs.batch_identifier
              AND batch_aggregations.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $4
+          0) >= $4
 LIMIT 1",
             )
             .await?;
@@ -3087,7 +3084,6 @@ LIMIT 1",
                 *task_id,
                 batch_identifier.clone(),
                 collection_job_id,
-                &task_info.time_precision,
                 &row,
             )
         })
@@ -3106,7 +3102,6 @@ LIMIT 1",
         task_id: &TaskId,
         timestamp: &Time,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // TODO(#1553): write unit test
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3121,7 +3116,7 @@ SELECT
     leader_aggregate_share, aggregate_share_id
 FROM collection_jobs
 WHERE task_id = $1
-  AND batch_interval @> $2::TIMESTAMP WITH TIME ZONE
+  AND batch_interval @> $2::BIGINT
   AND LOWER(batch_interval) >= $3",
             )
             .await?;
@@ -3129,7 +3124,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* timestamp */ &timestamp.as_date_time(task_info.time_precision)?,
+                /* timestamp */ &timestamp.as_signed_time_precision_units()?,
                 /* threshold */
                 &task_info.report_expiry_threshold(self.clock.now())?,
             ],
@@ -3138,16 +3133,8 @@ WHERE task_id = $1
         .into_iter()
         .map(|row| {
             let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(
-                vdaf,
-                *task_id,
-                batch_identifier,
-                collection_job_id,
-                &task_info.time_precision,
-                &row,
-            )
+            let collection_job_id = row.get_bytea_and_convert("collection_job_id")?;
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
         .collect()
     }
@@ -3164,7 +3151,6 @@ WHERE task_id = $1
         task_id: &TaskId,
         batch_interval: &Interval,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // TODO(#1553): write unit test
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3187,8 +3173,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* batch_interval */
-                &SqlInterval::from_dap_time_interval(batch_interval, &task_info.time_precision)?,
+                /* batch_interval */ &SqlIntervalTimePrecision::from(*batch_interval),
                 /* threshold */
                 &task_info.report_expiry_threshold(self.clock.now())?,
             ],
@@ -3204,7 +3189,6 @@ WHERE task_id = $1
                 *task_id,
                 batch_identifier,
                 collection_job_id,
-                &task_info.time_precision,
                 &row,
             )
         })
@@ -3223,7 +3207,6 @@ WHERE task_id = $1
         task_id: &TaskId,
         batch_id: &BatchId,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, LeaderSelected, A>>, Error> {
-        // TODO(#1553): write unit test
         let task_info = match self.task_info_for(task_id).await? {
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
@@ -3245,7 +3228,7 @@ WHERE task_id = $1
            WHERE ba.task_id = collection_jobs.task_id
              AND ba.batch_identifier = collection_jobs.batch_identifier
              AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $3",
+          0) >= $3",
             )
             .await?;
         self.query(
@@ -3262,14 +3245,7 @@ WHERE task_id = $1
         .map(|row| {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(
-                vdaf,
-                *task_id,
-                *batch_id,
-                collection_job_id,
-                &task_info.time_precision,
-                &row,
-            )
+            Self::collection_job_from_row(vdaf, *task_id, *batch_id, collection_job_id, &row)
         })
         .collect()
     }
@@ -3305,7 +3281,7 @@ WHERE task_id = $1
            WHERE ba.task_id = collection_jobs.task_id
              AND ba.batch_identifier = collection_jobs.batch_identifier
              AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $2",
+          0) >= $2",
             )
             .await?;
         self.query(
@@ -3322,14 +3298,7 @@ WHERE task_id = $1
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
             let batch_identifier = B::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-            Self::collection_job_from_row(
-                vdaf,
-                *task_id,
-                batch_identifier,
-                collection_job_id,
-                &task_info.time_precision,
-                &row,
-            )
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
         .collect()
     }
@@ -3343,14 +3312,14 @@ WHERE task_id = $1
         task_id: TaskId,
         batch_identifier: B::BatchIdentifier,
         collection_job_id: CollectionJobId,
-        time_precision: &TimePrecision,
         row: &Row,
     ) -> Result<CollectionJob<SEED_SIZE, B, A>, Error> {
         let query = Query::<B>::get_decoded(row.get("query"))?;
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
-        let client_timestamp_interval: Option<SqlInterval> = row.get("client_timestamp_interval");
+        let client_timestamp_interval: Option<SqlIntervalTimePrecision> =
+            row.get("client_timestamp_interval");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
         let aggregate_share_id = AggregateShareId::get_decoded(row.get("aggregate_share_id"))?;
@@ -3370,7 +3339,7 @@ WHERE task_id = $1
                     .ok_or_else(|| Error::DbState(
                         "collection job in state FINISHED but client_timestamp_interval is NULL".to_string())
                     )?
-                    .to_dap_time_interval(time_precision)?;
+                    .into();
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -3430,10 +3399,7 @@ WHERE task_id = $1
         let now = self.clock.now();
 
         let batch_interval = B::to_batch_interval(collection_job.batch_identifier())
-            .map(|interval| {
-                SqlInterval::from_dap_time_interval(interval, &task_info.time_precision)
-            })
-            .transpose()?;
+            .map(|interval| SqlIntervalTimePrecision::from(*interval));
 
         let stmt = self
             .prepare_cached(
@@ -3458,7 +3424,7 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                WHERE ba.task_id = collection_jobs.task_id
                  AND ba.batch_identifier = collection_jobs.batch_identifier
                  AND ba.aggregation_param = collection_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP WITH TIME ZONE) < $12",
+              0) < $12",
             )
             .await?;
 
@@ -3479,7 +3445,8 @@ ON CONFLICT(task_id, collection_job_id) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3519,11 +3486,8 @@ WITH incomplete_jobs AS (
                WHERE ba.task_id = collection_jobs.task_id
                  AND ba.batch_identifier = collection_jobs.batch_identifier
                  AND ba.aggregation_param = collection_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP WITH TIME ZONE)
-          >= COALESCE(
-                 $4::TIMESTAMP WITH TIME ZONE - tasks.report_expiry_age * '1 second'::INTERVAL,
-                 '-infinity'::TIMESTAMP WITH TIME ZONE
-             )
+              0)
+          >= COALESCE(($6 - tasks.report_expiry_age) / tasks.time_precision, 0)
     FOR UPDATE OF collection_jobs SKIP LOCKED LIMIT $5
 )
 UPDATE collection_jobs SET
@@ -3549,8 +3513,9 @@ RETURNING
                 /* lease_expiry */ &lease_expiry_time,
                 /* updated_at */ &now,
                 /* updated_by */ &self.name,
-                /* now */ &now,
+                /* lease_expiry */ &now,
                 /* limit */ &maximum_acquire_count,
+                /* now (seconds) */ &now.timestamp(),
             ],
         )
         .await?
@@ -3616,7 +3581,7 @@ WHERE task_id = $4
            WHERE ba.task_id = collection_jobs.task_id
              AND ba.batch_identifier = collection_jobs.batch_identifier
              AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $8",
+          0) >= $8",
             )
             .await?;
         check_single_row_mutation(
@@ -3630,7 +3595,8 @@ WHERE task_id = $4
                     /* collection_job_id */ &lease.leased().collection_job_id().as_ref(),
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3672,10 +3638,8 @@ WHERE task_id = $4
                 leader_aggregate_share,
             } => {
                 let report_count = Some(i64::try_from(*report_count)?);
-                let client_timestamp_interval = Some(SqlInterval::from_dap_time_interval(
-                    client_timestamp_interval,
-                    &task_info.time_precision,
-                )?);
+                let client_timestamp_interval =
+                    Some(SqlIntervalTimePrecision::from(*client_timestamp_interval));
                 let leader_aggregate_share = Some(leader_aggregate_share.get_encoded()?);
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
@@ -3712,7 +3676,7 @@ WHERE task_id = $8
            WHERE ba.task_id = collection_jobs.task_id
              AND ba.batch_identifier = collection_jobs.batch_identifier
              AND ba.aggregation_param = collection_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $10",
+          0) >= $10",
             )
             .await?;
 
@@ -3729,7 +3693,8 @@ WHERE task_id = $8
                     /* updated_by */ &self.name,
                     /* task_id */ &task_info.pkey,
                     /* collection_job_id */ &collection_job.id().as_ref(),
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -3803,7 +3768,6 @@ WHERE task_id = $1
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
                 ord,
-                &task_info.time_precision,
                 row,
             )
         })
@@ -3876,7 +3840,6 @@ WHERE task_id = $1
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
                 row.get_bigint_and_convert("ord")?,
-                &task_info.time_precision,
                 row,
             )
         })
@@ -4013,7 +3976,6 @@ WHERE task_id = $1
                 batch_identifier,
                 aggregation_param,
                 ord,
-                &task_info.time_precision,
                 row,
             )
         })
@@ -4030,7 +3992,6 @@ WHERE task_id = $1
         batch_identifier: B::BatchIdentifier,
         aggregation_param: A::AggregationParam,
         ord: u64,
-        time_precision: &TimePrecision,
         row: Row,
     ) -> Result<BatchAggregation<SEED_SIZE, B, A>, Error> {
         #[allow(clippy::type_complexity)]
@@ -4063,8 +4024,8 @@ WHERE task_id = $1
         }
 
         let client_timestamp_interval = row
-            .get::<_, SqlInterval>("client_timestamp_interval")
-            .to_dap_time_interval(time_precision)?;
+            .get::<_, SqlIntervalTimePrecision>("client_timestamp_interval")
+            .into();
         let state: BatchAggregationStateCode = row.get("state");
         let state = match state {
             BatchAggregationStateCode::Aggregating => {
@@ -4129,10 +4090,7 @@ WHERE task_id = $1
         let now = self.clock.now();
 
         let batch_interval = B::to_batch_interval(batch_aggregation.batch_identifier())
-            .map(|interval| {
-                SqlInterval::from_dap_time_interval(interval, &task_info.time_precision)
-            })
-            .transpose()?;
+            .map(|interval| SqlIntervalTimePrecision::from(*interval));
         let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
 
         let stmt = self
@@ -4179,10 +4137,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                     &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     /* client_timestamp_interval */
-                    &SqlInterval::from_dap_time_interval(
-                        batch_aggregation.client_timestamp_interval(),
-                        &task_info.time_precision,
-                    )?,
+                    &SqlIntervalTimePrecision::from(*batch_aggregation.client_timestamp_interval()),
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4194,7 +4149,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
                     /* created_at */ &now,
                     /* updated_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4221,7 +4177,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param, ord) DO UPDATE
 
         let stmt = self
             .prepare_cached(
-                "-- update_batch_aggregations()
+                "-- update_batch_aggregation()
 UPDATE batch_aggregations
 SET
     client_timestamp_interval = $1,
@@ -4234,16 +4190,16 @@ SET
     updated_at = $8,
     updated_by = $9
 WHERE task_id = $10
-  AND batch_identifier = $11
-  AND aggregation_param = $12
-  AND ord = $13
-  AND GREATEST(
-          UPPER($1::TSTZRANGE),
-          (SELECT MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval)))
-           FROM batch_aggregations ba
-           WHERE ba.task_id = batch_aggregations.task_id
-             AND ba.batch_identifier = batch_aggregations.batch_identifier
-             AND ba.aggregation_param = batch_aggregations.aggregation_param)) >= $14",
+    AND batch_identifier = $11
+    AND aggregation_param = $12
+    AND ord = $13
+    AND GREATEST(UPPER($1::INT8RANGE), (
+        SELECT MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval)))
+        FROM batch_aggregations ba
+        WHERE ba.task_id = batch_aggregations.task_id
+            AND ba.batch_identifier = batch_aggregations.batch_identifier
+            AND ba.aggregation_param = batch_aggregations.aggregation_param
+    )) >= $14",
             )
             .await?;
         check_single_row_mutation(
@@ -4251,10 +4207,7 @@ WHERE task_id = $10
                 &stmt,
                 &[
                     /* client_timestamp_interval */
-                    &SqlInterval::from_dap_time_interval(
-                        batch_aggregation.client_timestamp_interval(),
-                        &task_info.time_precision,
-                    )?,
+                    &SqlIntervalTimePrecision::from(*batch_aggregation.client_timestamp_interval()),
                     /* state */ &batch_aggregation.state().state_code(),
                     /* aggregate_share */ &encoded_state_values.aggregate_share,
                     /* report_count */ &encoded_state_values.report_count,
@@ -4272,7 +4225,8 @@ WHERE task_id = $10
                     &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */
                     &TryInto::<i64>::try_into(batch_aggregation.ord())?,
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4313,7 +4267,7 @@ WHERE task_id = $1
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $4",
+          0) >= $4",
             )
             .await?;
         self.query_opt(
@@ -4373,7 +4327,7 @@ WHERE task_id = $1
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $3",
+          0) >= $3",
             )
             .await?;
         self.query_opt(
@@ -4433,8 +4387,7 @@ WHERE task_id = $1
             &stmt,
             &[
                 /* task_id */ &task_info.pkey,
-                /* interval */
-                &SqlInterval::from_dap_time_interval(interval, &task_info.time_precision)?,
+                /* interval */ &SqlIntervalTimePrecision::from(*interval),
                 /* threshold */
                 &task_info.report_expiry_threshold(self.clock.now())?,
             ],
@@ -4487,7 +4440,7 @@ WHERE task_id = $1
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $3",
+          0) >= $3",
             )
             .await?;
         self.query(
@@ -4538,7 +4491,7 @@ WHERE task_id = $1
            WHERE ba.task_id = aggregate_share_jobs.task_id
              AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
              AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-          '-infinity'::TIMESTAMP WITH TIME ZONE) >= $2",
+          0) >= $2",
             )
             .await?;
         self.query(
@@ -4606,10 +4559,7 @@ WHERE task_id = $1
         };
         let now = self.clock.now();
         let batch_interval = B::to_batch_interval(aggregate_share_job.batch_identifier())
-            .map(|interval| {
-                SqlInterval::from_dap_time_interval(interval, &task_info.time_precision)
-            })
-            .transpose()?;
+            .map(|interval| SqlIntervalTimePrecision::from(*interval));
 
         let stmt = self
             .prepare_cached(
@@ -4635,7 +4585,7 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                WHERE ba.task_id = aggregate_share_jobs.task_id
                  AND ba.batch_identifier = aggregate_share_jobs.batch_identifier
                  AND ba.aggregation_param = aggregate_share_jobs.aggregation_param),
-              '-infinity'::TIMESTAMP WITH TIME ZONE) < $11",
+              0) < $11",
             )
             .await?;
         check_insert(
@@ -4656,7 +4606,8 @@ ON CONFLICT(task_id, batch_identifier, aggregation_param) DO UPDATE
                     /* checksum */ &aggregate_share_job.checksum().get_encoded()?,
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4758,7 +4709,8 @@ ON CONFLICT(task_id, batch_id) DO UPDATE
                         .transpose()?,
                     /* created_at */ &now,
                     /* updated_by */ &self.name,
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -4987,7 +4939,8 @@ AND EXISTS(SELECT 1 FROM non_gc_batches WHERE batch_identifier = $2)",
                 &[
                     /* task_id */ &task_info.pkey,
                     /* batch_id */ batch_id.as_ref(),
-                    /* threshold */ &task_info.report_expiry_threshold(now)?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(now)?,
                 ],
             )
             .await?,
@@ -5027,7 +4980,7 @@ WHERE client_reports.id = client_reports_to_delete.id",
             &[
                 /* id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -5073,7 +5026,7 @@ WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
             &[
                 /* task_id */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -5741,7 +5694,7 @@ SELECT id, report_expiry_age, time_precision FROM tasks WHERE tasks.task_id = $1
 }
 
 /// Represents cached information about a task.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TaskInfo {
     /// The task's artificial primary key, corresponding to the tasks.id column.
     pkey: i64,
@@ -5754,53 +5707,21 @@ struct TaskInfo {
 }
 
 impl TaskInfo {
-    /// Computes the report expiry threshold, i.e. the minimum timestamp at which reports will not
-    /// be GC'ed, given the current timestamp.
-    fn report_expiry_threshold(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<Timestamp<DateTime<Utc>>, Error> {
-        self.report_expiry_threshold_internal(now)
-            .map(|threshold| match threshold {
-                Some(t) => Timestamp::Value(t),
-                None => Timestamp::NegInfinity,
-            })
-    }
-
-    /// Like [`Self::report_expiry_threshold`], but the value returned is a number of time precision
-    /// units instead of a timestamp, so that it can be compared against database columns that store
-    /// values in that unit. Due to rounding down to the nearest time precision unit, the threshold
-    /// may be up to one time precision earlier than the raw calculated threshold.
-    ///
-    /// Once all the tables in the schema have moved to tracking times in time precision units, this
-    /// method can be renamed to `report_expiry_threshold` and the other two can be deleted (#4206).
-    fn report_expiry_threshold_as_time_precision_units(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<i64, Error> {
-        self.report_expiry_threshold_internal(now)
-            .map(|threshold| match threshold {
-                Some(t) => Time::from_date_time(t, self.time_precision)
-                    .as_signed_time_precision_units()
-                    .map_err(|_| Error::TimeOverflow("Time cannot be represented in signed units")),
-                // No expiry, so return the epoch.
-                None => Ok(0),
-            })?
-    }
-
-    fn report_expiry_threshold_internal(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, Error> {
+    /// Computes the report expiry threshold, i.e. the minimum time at which reports will not be
+    /// GC'ed, given the current time. Due to rounding down to the nearest time precision unit, the
+    /// threshold may be up to one time precision earlier than the raw calculated threshold.
+    fn report_expiry_threshold(&self, now: DateTime<Utc>) -> Result<i64, Error> {
         match self.report_expiry_age {
-            Some(report_expiry_age) => {
-                let report_expiry_threshold =
-                    now.checked_sub_signed(report_expiry_age).ok_or_else(|| {
-                        Error::TimeOverflow("overflow computing report expiry threshold")
-                    })?;
-                Ok(Some(report_expiry_threshold))
-            }
-            None => Ok(None),
+            Some(report_expiry_age) => Time::from_date_time(
+                now.checked_sub_signed(report_expiry_age).ok_or_else(|| {
+                    Error::TimeOverflow("overflow computing report expiry threshold")
+                })?,
+                self.time_precision,
+            )
+            .as_signed_time_precision_units()
+            .map_err(|_| Error::TimeOverflow("Time cannot be represented in signed units")),
+            // No expiry, so return the epoch.
+            None => Ok(0),
         }
     }
 }

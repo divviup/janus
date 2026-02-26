@@ -39,7 +39,7 @@ impl<C: Clock> Transaction<'_, C> {
             Some(task_info) => task_info,
             None => return Ok(None),
         };
-        let now = self.clock.now();
+        let now = self.clock.now().timestamp();
 
         let stmt = self
             .prepare_cached(
@@ -59,11 +59,7 @@ WHERE collection_jobs.task_id = $1
             WHERE ba.task_id = collection_jobs.task_id
                 AND ba.batch_identifier = collection_jobs.batch_identifier
                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-        '-infinity'::TIMESTAMP WITH TIME ZONE)
-        >= COALESCE(
-            $3::TIMESTAMP WITH TIME ZONE - tasks.report_expiry_age * '1 second'::INTERVAL,
-            '-infinity'::TIMESTAMP WITH TIME ZONE
-        )"#,
+        0) >= COALESCE(($3 - tasks.report_expiry_age) / tasks.time_precision, 0)"#,
             )
             .await?;
 
@@ -99,7 +95,7 @@ WHERE collection_jobs.task_id = $1
             Some(task_info) => task_info,
             None => return Ok(Vec::new()),
         };
-        let now = self.clock.now();
+        let now = self.clock.now().timestamp();
 
         let stmt = self
             .prepare_cached(
@@ -118,11 +114,7 @@ WHERE collection_jobs.task_id = $1
             WHERE ba.task_id = collection_jobs.task_id
                 AND ba.batch_identifier = collection_jobs.batch_identifier
                 AND ba.aggregation_param = collection_jobs.aggregation_param),
-        '-infinity'::TIMESTAMP WITH TIME ZONE)
-        >= COALESCE(
-            $2::TIMESTAMP WITH TIME ZONE - tasks.report_expiry_age * '1 second'::INTERVAL,
-            '-infinity'::TIMESTAMP WITH TIME ZONE
-        )"#,
+        0) >= COALESCE(($2 - tasks.report_expiry_age) / tasks.time_precision, 0)"#,
             )
             .await?;
 
@@ -175,7 +167,7 @@ WHERE aggregation_jobs.task_id = $1
                 /* task ID */ &task_info.pkey,
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?
@@ -221,7 +213,7 @@ WHERE aggregation_jobs.task_id = $1
             &[
                 /* task ID */ &task_info.pkey,
                 /* threshold */
-                &task_info.report_expiry_threshold_as_time_precision_units(self.clock.now())?,
+                &task_info.report_expiry_threshold(self.clock.now())?,
             ],
         )
         .await?

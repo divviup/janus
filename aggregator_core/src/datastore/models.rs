@@ -2200,7 +2200,7 @@ impl<'a> FromSql<'a> for SqlIntervalTimePrecision {
                     .map_err(|_| "interval start must be positive")?;
                 let end_time: u64 = int8_from_sql(end_raw)?
                     .try_into()
-                    .map_err(|_| "interval start must be positive")?;
+                    .map_err(|_| "interval end must be positive")?;
 
                 Ok(Interval::new(
                     Time::from_time_precision_units(start_time),

@@ -3058,12 +3058,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // TODO(#4206): The query in get_unaggregated_client_report_ids_by_collect_for_task checks if
-    // client_reports.client_timestamp <@ collection_jobs.batch_interval, which only works if
-    // client_timestamp is TIMESTAMP and batch_interval is TSRANGE, or client_timestamp is BIGINT
-    // and batch_interval is INT8RANGE. It can't work in the transitional period. This test can be
-    // re-enabled once the collection jobs table is migrated.
-    #[ignore = "test fails until #4206 is resolved"]
     async fn create_aggregation_jobs_for_time_interval_task_with_param() {
         install_test_trace_subscriber();
         let clock = MockClock::default();

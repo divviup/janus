@@ -439,7 +439,12 @@ impl TimeExt for Time {
     }
 
     fn from_date_time(time: DateTime<Utc>, time_precision: TimePrecision) -> Self {
-        Self::from_seconds_since_epoch(time.timestamp() as u64, &time_precision)
+        Self::from_seconds_since_epoch(
+            time.timestamp()
+                .try_into()
+                .expect("timestamp cannot be converted to u64"),
+            &time_precision,
+        )
     }
 
     fn add_timedelta(

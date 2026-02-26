@@ -649,7 +649,6 @@ async fn janus_in_process_sumvec_dp_noise() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "test fails until #4206 is resolved"]
 async fn janus_in_process_fake_vdaf_4_round_sync() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -671,7 +670,6 @@ async fn janus_in_process_fake_vdaf_4_round_sync() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "test fails until #4206 is resolved"]
 async fn janus_in_process_fake_vdaf_4_round_async() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -693,7 +691,6 @@ async fn janus_in_process_fake_vdaf_4_round_async() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "test fails until #4206 is resolved"]
 async fn janus_in_process_fake_vdaf_5_round_sync() {
     install_test_trace_subscriber();
     initialize_rustls();
@@ -715,7 +712,6 @@ async fn janus_in_process_fake_vdaf_5_round_sync() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "test fails until #4206 is resolved"]
 async fn janus_in_process_fake_vdaf_5_round_async() {
     install_test_trace_subscriber();
     initialize_rustls();

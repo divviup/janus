@@ -56,7 +56,7 @@ use crate::{
             CollectionJobState, CollectionJobStateCode, HpkeKeyState, HpkeKeypair,
             LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
             ReportAggregationMetadata, ReportAggregationMetadataState, ReportAggregationState,
-            SqlInterval,
+            SqlInterval, SqlIntervalTimePrecision,
         },
         schema_versions_template,
         test_util::{
@@ -930,12 +930,6 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-// TODO(#4206): The query in get_unaggregated_client_report_ids_by_collect_for_task checks if
-// client_reports.client_timestamp <@ collection_jobs.batch_interval, which only works if
-// client_timestamp is TIMESTAMP and batch_interval is TSRANGE, or client_timestamp is BIGINT and
-// batch_interval is INT8RANGE. It can't work in the transitional period. This test can be
-// re-enabled once the collection jobs table is migrated.
-#[ignore = "test fails until #4206 is resolved"]
 async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
     ephemeral_datastore: EphemeralDatastore,
 ) {
@@ -3663,6 +3657,336 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn get_collection_jobs_including_or_intersecting_time(
+    ephemeral_datastore: EphemeralDatastore,
+) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::default();
+    let now = Time::from_date_time(clock.now(), TIME_PRECISION);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let task = TaskBuilder::new(
+        task::BatchMode::TimeInterval,
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
+    .with_time_precision(TIME_PRECISION)
+    .build()
+    .leader_view()
+    .unwrap();
+    let first_batch_interval = Interval::new(
+        now,
+        Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+    )
+    .unwrap();
+    let second_batch_interval = Interval::new(
+        now,
+        Duration::from_seconds(2 * TIME_PRECISION_SECONDS, &TIME_PRECISION),
+    )
+    .unwrap();
+    let aggregation_param = dummy::AggregationParam(13);
+
+    ds.run_tx("test-put-collection-job", |tx| {
+        let task = task.clone();
+        Box::pin(async move {
+            tx.put_aggregator_task(&task).await.unwrap();
+
+            let first_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                Query::new_time_interval(first_batch_interval),
+                aggregation_param,
+                first_batch_interval,
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&first_collection_job).await.unwrap();
+
+            let second_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                Query::new_time_interval(second_batch_interval),
+                aggregation_param,
+                second_batch_interval,
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&second_collection_job).await.unwrap();
+
+            let check_jobs_including_time =
+                async |want_first_job: bool, want_second_job: bool, time: Time| {
+                    let mut saw_first_job = false;
+                    let mut saw_second_job = false;
+                    for job in tx
+                        .get_collection_jobs_including_time(
+                            &dummy::Vdaf::default(),
+                            task.id(),
+                            &time,
+                        )
+                        .await
+                        .unwrap()
+                    {
+                        if job.id() == first_collection_job.id() {
+                            saw_first_job = true;
+                        } else if job.id() == second_collection_job.id() {
+                            saw_second_job = true;
+                        } else {
+                            panic!("unexpected collection job {job:?}");
+                        }
+                    }
+                    assert_eq!(want_first_job, saw_first_job);
+                    assert_eq!(want_second_job, saw_second_job);
+                };
+
+            // Before either interval: should get no job
+            check_jobs_including_time(
+                false,
+                false,
+                now.sub_duration(&Duration::from_seconds(
+                    TIME_PRECISION_SECONDS,
+                    &TIME_PRECISION,
+                ))
+                .unwrap(),
+            )
+            .await;
+
+            // Start of both intervals: should get both jobs
+            check_jobs_including_time(true, true, now).await;
+
+            // After first interval: should get only second job
+            check_jobs_including_time(
+                false,
+                true,
+                now.add_duration(&Duration::from_seconds(
+                    TIME_PRECISION_SECONDS,
+                    &TIME_PRECISION,
+                ))
+                .unwrap(),
+            )
+            .await;
+
+            // End of second interval: should get no jobs
+            check_jobs_including_time(
+                false,
+                false,
+                now.sub_duration(&Duration::from_seconds(
+                    2 * TIME_PRECISION_SECONDS,
+                    &TIME_PRECISION,
+                ))
+                .unwrap(),
+            )
+            .await;
+
+            let check_jobs_intersecting_interval =
+                async |want_first_job: bool, want_second_job: bool, interval: Interval| {
+                    let mut saw_first_job = false;
+                    let mut saw_second_job = false;
+                    for job in tx
+                        .get_collection_jobs_intersecting_interval(
+                            &dummy::Vdaf::default(),
+                            task.id(),
+                            &interval,
+                        )
+                        .await
+                        .unwrap()
+                    {
+                        if job.id() == first_collection_job.id() {
+                            saw_first_job = true;
+                        } else if job.id() == second_collection_job.id() {
+                            saw_second_job = true;
+                        } else {
+                            panic!("unexpected collection job {job:?}");
+                        }
+                    }
+                    assert_eq!(want_first_job, saw_first_job);
+                    assert_eq!(want_second_job, saw_second_job);
+                };
+
+            // Interval before either interval: should get no jobs
+            check_jobs_intersecting_interval(
+                false,
+                false,
+                Interval::new(
+                    now.sub_duration(&Duration::from_seconds(
+                        3 * TIME_PRECISION_SECONDS,
+                        &TIME_PRECISION,
+                    ))
+                    .unwrap(),
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+            )
+            .await;
+
+            // Interval within both intervals: should get both jobs
+            check_jobs_intersecting_interval(
+                true,
+                true,
+                Interval::new(
+                    now,
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+            )
+            .await;
+
+            // Interval outside first interval, inside second interval: should get only second job
+            check_jobs_intersecting_interval(
+                false,
+                true,
+                Interval::new(
+                    now.add_duration(&Duration::from_seconds(
+                        TIME_PRECISION_SECONDS,
+                        &TIME_PRECISION,
+                    ))
+                    .unwrap(),
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+            )
+            .await;
+
+            // Interval past second interval: should get no jobs
+            check_jobs_intersecting_interval(
+                false,
+                false,
+                Interval::new(
+                    now.add_duration(&Duration::from_seconds(
+                        3 * TIME_PRECISION_SECONDS,
+                        &TIME_PRECISION,
+                    ))
+                    .unwrap(),
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+            )
+            .await;
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn get_collection_jobs_by_batch_id(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::default();
+    let now = Time::from_date_time(clock.now(), TIME_PRECISION);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let task = TaskBuilder::new(
+        task::BatchMode::LeaderSelected {
+            batch_time_window_size: None,
+        },
+        AggregationMode::Synchronous,
+        VdafInstance::Fake { rounds: 1 },
+    )
+    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE_DURATION))
+    .with_time_precision(TIME_PRECISION)
+    .build()
+    .leader_view()
+    .unwrap();
+    let aggregation_param = dummy::AggregationParam(13);
+
+    ds.run_tx("test-put-collection-job", |tx| {
+        let task = task.clone();
+        Box::pin(async move {
+            tx.put_aggregator_task(&task).await.unwrap();
+
+            let first_collection_job = CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                Query::new_leader_selected(),
+                aggregation_param,
+                random(),
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&first_collection_job).await.unwrap();
+            // We must insert a batch aggregation so that the query can work out a client timestamp
+            // interval to check report expiry against. It doesn't matter what its
+            // BatchAggregationState is.
+            tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                *task.id(),
+                *first_collection_job.batch_identifier(),
+                aggregation_param,
+                0,
+                Interval::new(
+                    now,
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+                BatchAggregationState::Scrubbed,
+            ))
+            .await
+            .unwrap();
+
+            let second_collection_job = CollectionJob::<0, LeaderSelected, dummy::Vdaf>::new(
+                *task.id(),
+                random(),
+                random(),
+                Query::new_leader_selected(),
+                aggregation_param,
+                random(),
+                CollectionJobState::Start,
+            );
+            tx.put_collection_job(&second_collection_job).await.unwrap();
+            tx.put_batch_aggregation(&BatchAggregation::<0, LeaderSelected, dummy::Vdaf>::new(
+                *task.id(),
+                *second_collection_job.batch_identifier(),
+                aggregation_param,
+                0,
+                Interval::new(
+                    now,
+                    Duration::from_seconds(TIME_PRECISION_SECONDS, &TIME_PRECISION),
+                )
+                .unwrap(),
+                BatchAggregationState::Scrubbed,
+            ))
+            .await
+            .unwrap();
+
+            let check_jobs = async |want_first_job: bool,
+                                    want_second_job: bool,
+                                    batch_id: BatchId| {
+                let mut saw_first_job = false;
+                let mut saw_second_job = false;
+                for job in tx
+                    .get_collection_jobs_by_batch_id(&dummy::Vdaf::default(), task.id(), &batch_id)
+                    .await
+                    .unwrap()
+                {
+                    if job.id() == first_collection_job.id() {
+                        saw_first_job = true;
+                    } else if job.id() == second_collection_job.id() {
+                        saw_second_job = true;
+                    } else {
+                        panic!("unexpected collection job {job:?}");
+                    }
+                }
+                assert_eq!(want_first_job, saw_first_job);
+                assert_eq!(want_second_job, saw_second_job);
+            };
+
+            check_jobs(true, false, *first_collection_job.batch_id()).await;
+            check_jobs(false, true, *second_collection_job.batch_id()).await;
+            check_jobs(false, false, random()).await;
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
     // Setup: write collection jobs to the datastore.
     install_test_trace_subscriber();
@@ -4014,8 +4338,12 @@ async fn run_collection_job_acquire_test_case<B: TestBatchModeExt>(
 #[tokio::test]
 async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let clock = MockClock::new(0);
+    let clock = MockClock::default();
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
+    let now = Time::from_date_time(clock.now(), TIME_PRECISION);
+    let three_hundred_seconds_later = now
+        .add_duration(&Duration::from_seconds(300, &TIME_PRECISION))
+        .unwrap();
 
     let task_id = random();
     let other_task_id = random();
@@ -4035,18 +4363,14 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
         .collect();
     let reports = Vec::from([
         // First collection job
-        LeaderStoredReport::new_dummy(task_id, Time::from_time_precision_units(0)),
+        LeaderStoredReport::new_dummy(task_id, now),
         // Second collection job
-        LeaderStoredReport::new_dummy(
-            task_id,
-            Time::from_seconds_since_epoch(300, &TIME_PRECISION),
-        ),
+        LeaderStoredReport::new_dummy(task_id, three_hundred_seconds_later),
         // Other task collection job
-        LeaderStoredReport::new_dummy(other_task_id, Time::from_time_precision_units(0)),
+        LeaderStoredReport::new_dummy(other_task_id, now),
     ]);
-    let batch_interval = Interval::minimal(Time::from_time_precision_units(0)).unwrap();
-    let second_batch_interval =
-        Interval::minimal(Time::from_seconds_since_epoch(300, &TIME_PRECISION)).unwrap();
+    let batch_interval = Interval::minimal(now).unwrap();
+    let second_batch_interval = Interval::minimal(three_hundred_seconds_later).unwrap();
     let aggregation_jobs = Vec::from([
         // First collection job
         AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
@@ -4054,7 +4378,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(now).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4064,7 +4388,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::minimal(Time::from_seconds_since_epoch(300, &TIME_PRECISION)).unwrap(),
+            Interval::minimal(three_hundred_seconds_later).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -4074,7 +4398,7 @@ async fn get_collection_job_maybe_leases(ephemeral_datastore: EphemeralDatastore
             random(),
             dummy::AggregationParam(0),
             (),
-            Interval::minimal(Time::from_time_precision_units(0)).unwrap(),
+            Interval::minimal(now).unwrap(),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         ),
@@ -8102,6 +8426,70 @@ SELECT (lower(interval) = '2021-10-05 00:00:00+00' AND
                     .unwrap()
                     .get::<_, bool>("ok");
                 assert!(ok);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_interval_sql_time_precision(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                // Valid ranges
+                for (sql_literal, time, duration) in [
+                    ("[0, 10)", 0, 10),
+                    ("[100, 101)", 100, 1),
+                    // These ranges don't match the half-open ones we exclusively use for Intervals
+                    // but postgres will represent them as half-open ranges when queried.
+                    ("[10, 20]", 10, 11),
+                    ("(10, 20)", 11, 9),
+                    ("(10, 20]", 11, 10),
+                ] {
+                    let sql_interval: SqlIntervalTimePrecision = tx
+                        .query_one(
+                            &format!("SELECT '{sql_literal}'::INT8RANGE as interval"),
+                            &[],
+                        )
+                        .await
+                        .unwrap()
+                        .get("interval");
+                    assert_eq!(
+                        Interval::from(sql_interval),
+                        Interval::new(
+                            Time::from_time_precision_units(time),
+                            Duration::from_time_precision_units(duration)
+                        )
+                        .unwrap()
+                    );
+                }
+
+                // Rejected by FromSql
+                tx.query_one("SELECT '[-10, 10)'::INT8RANGE as interval", &[])
+                    .await
+                    .unwrap()
+                    .try_get::<_, SqlIntervalTimePrecision>("interval")
+                    .unwrap_err();
+
+                // Rejected by postgres
+                for (sql_literal, description) in
+                    [("[10, -10)", "negative end"), ("[10, 1)", "end < start")]
+                {
+                    println!("test case {description}");
+                    tx.query_one(
+                        &format!("SELECT '{sql_literal}'::INT8RANGE as interval"),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+                }
 
                 Ok(())
             })
