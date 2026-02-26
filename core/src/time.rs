@@ -261,12 +261,6 @@ pub trait DateTimeExt {
     /// Returns true if and only if this [`DateTime<Utc>`] occurs before the given [`Time`].
     fn is_before(&self, time: &Time, time_precision: &TimePrecision) -> bool;
 
-    /// Compute the start of the batch interval containing this DateTime, given the task time
-    /// precision.
-    fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error>
-    where
-        Self: Sized;
-
     /// Get the difference between this [`DateTime<Utc>`] and the provided `other` [`Time`].
     /// Returns `self - other`. `self` must be after `other`.
     fn difference_as_time_delta(
@@ -329,25 +323,6 @@ impl DateTimeExt for DateTime<Utc> {
 
     fn is_before(&self, time: &Time, time_precision: &TimePrecision) -> bool {
         self.as_seconds_since_epoch() < time.as_seconds_since_epoch(time_precision)
-    }
-
-    fn to_batch_interval_start(&self, time_precision: &TimePrecision) -> Result<Self, Error> {
-        let seconds = self.timestamp() as u64;
-        let rem = seconds.checked_rem(time_precision.as_seconds()).ok_or(
-            Error::IllegalTimeArithmetic("remainder would overflow/underflow"),
-        )?;
-        let aligned_seconds = seconds
-            .checked_sub(rem)
-            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))?;
-        DateTime::<Utc>::from_timestamp(
-            aligned_seconds
-                .try_into()
-                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
-            0,
-        )
-        .ok_or(Error::IllegalTimeArithmetic(
-            "number of seconds is out of range",
-        ))
     }
 
     fn difference_as_time_delta(
@@ -422,6 +397,21 @@ pub trait TimeExt: Sized {
 
     /// Get the number of time precision units as a signed integer, if possible.
     fn as_signed_time_precision_units(&self) -> Result<i64, Error>;
+
+    /// Compute the start of the batch interval containing this `Time`, given the duration of the
+    /// batch intervals in the task. For example:
+    ///
+    /// ```no-compile
+    /// assert_eq!(
+    ///     Time::from_time_precision_units(17)
+    ///         .to_batch_interval_start(Duration::from_time_precision_units(4)),
+    ///     Time::from_time_precision_units(16),
+    /// );
+    /// ```
+    ///
+    /// This is irrespective of whatever time precision the two values are in. But for the
+    /// computation to be meaningful, they should use the same time precision.
+    fn to_batch_interval_start(&self, batch_interval_duration: Duration) -> Self;
 }
 
 impl TimeExt for Time {
@@ -540,6 +530,13 @@ impl TimeExt for Time {
             .try_into()
             .map_err(|_| Error::IllegalTimeArithmetic("time too large for signed integer"))
     }
+
+    fn to_batch_interval_start(&self, batch_interval_duration: Duration) -> Self {
+        let batch_interval_units = batch_interval_duration.as_time_precision_units();
+        Self::from_time_precision_units(
+            (self.as_time_precision_units() / batch_interval_units) * batch_interval_units,
+        )
+    }
 }
 
 /// Extension methods on [`Interval`].
@@ -588,7 +585,7 @@ mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 
-    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt};
+    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
@@ -762,6 +759,22 @@ mod tests {
                 expected_secs,
                 "{label}: timestamp mismatch"
             );
+        }
+    }
+
+    #[test]
+    fn time_to_batch_interval_start() {
+        for (label, time_in, expected) in [
+            ("aligned", 16, 16),
+            ("not aligned bigger than batch interval", 17, 16),
+            ("not aligned smaller than batch interval", 15, 0),
+        ] {
+            assert_eq!(
+                Time::from_time_precision_units(time_in)
+                    .to_batch_interval_start(Duration::from_time_precision_units(16)),
+                Time::from_time_precision_units(expected),
+                "{label}: failure"
+            )
         }
     }
 

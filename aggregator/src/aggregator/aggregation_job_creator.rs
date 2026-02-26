@@ -952,7 +952,7 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskId, Time,
+        ReportMetadata, Role, TaskId,
         batch_mode::{LeaderSelected, TimeInterval},
         taskprov::TimePrecision,
     };
@@ -2847,13 +2847,8 @@ mod tests {
         let report_time_1 = report_time_2.sub_duration(&batch_time_window_size).unwrap();
 
         // Compute the bucketed time bucket starts for querying outstanding batches
-        let batch_window_units = batch_time_window_size.as_time_precision_units();
-        let bucket_time_1 = Time::from_time_precision_units(
-            (report_time_1.as_time_precision_units() / batch_window_units) * batch_window_units,
-        );
-        let bucket_time_2 = Time::from_time_precision_units(
-            (report_time_2.as_time_precision_units() / batch_window_units) * batch_window_units,
-        );
+        let bucket_time_1 = report_time_1.to_batch_interval_start(batch_time_window_size);
+        let bucket_time_2 = report_time_2.to_batch_interval_start(batch_time_window_size);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = HpkeKeypair::test();
 
