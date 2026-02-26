@@ -21,8 +21,8 @@ pub const VERIFY_KEY_LENGTH_PRIO3: usize = 32;
 /// of the VDAF specification.
 pub const VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128: usize = 32;
 
-/// Private use algorithm ID for a customized version of Prio3SumVec. This value was chosen for
-/// interoperability with Daphne.
+/// Private use algorithm ID for a customized version of Prio3SumVec. This codepoint is not
+/// registered with IANA.
 const ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128: u32 = 0xFFFF_1003;
 
 /// Computes the VDAF "application context", which is an opaque byte string used by many VDAF

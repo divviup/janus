@@ -351,9 +351,8 @@ pub async fn submit_measurements_and_verify_aggregate(
     (leader_port, helper_port): (u16, u16),
     client_backend: &ClientBackend<'_>,
 ) {
-    // We generate exactly one batch's worth of measurement uploads to work around an issue in
-    // Daphne at time of writing.
-    let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
+    // Generate two batches' worth of measurements.
+    let total_measurements = usize::try_from(task_parameters.min_batch_size).unwrap() * 2;
 
     match &task_parameters.vdaf {
         VdafInstance::Prio3Count => {
