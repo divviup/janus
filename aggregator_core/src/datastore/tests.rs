@@ -1537,7 +1537,7 @@ async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    let client_timestamp = clock.now_aligned_to_precision(task.time_precision());
+    let client_timestamp = clock.now().to_time(task.time_precision());
 
     ds.run_tx("test-put-report-share", |tx| {
         let task = task.clone();
@@ -1636,7 +1636,7 @@ WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
     // Advance the clock well past the report expiry age.
     let doubled = REPORT_EXPIRY_AGE.add(&REPORT_EXPIRY_AGE).unwrap();
     clock.advance(doubled);
-    let unexpired_timestamp = clock.now_aligned_to_precision(task.time_precision());
+    let unexpired_timestamp = clock.now().to_time(task.time_precision());
 
     // Make a "new" scrubbed report with the same ID, but which is not expired. It should get
     // upserted, replacing the effectively GCed report.
@@ -1903,7 +1903,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         let unexpired_aggregation_job = leader_aggregation_job
             .clone()
             .with_client_timestamp_interval(
-                Interval::minimal(clock.now_aligned_to_precision(&TIME_PRECISION)).unwrap(),
+                Interval::minimal(clock.now().to_time(&TIME_PRECISION)).unwrap(),
             );
         Box::pin(async move {
             tx.put_aggregation_job(&unexpired_aggregation_job)
@@ -3246,7 +3246,7 @@ async fn create_report_aggregation_from_client_reports_table(
         *task.id(),
         ReportMetadata::new(
             report_id,
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
             Vec::from([Extension::new(
                 ExtensionType::Reserved,
                 "public_extension_tbd".into(),
@@ -3287,7 +3287,7 @@ async fn create_report_aggregation_from_client_reports_table(
         *task.id(),
         *aggregation_job.id(),
         report_id,
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         0,
         state,
     );
@@ -8744,7 +8744,7 @@ async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
         *task.id(),
         ReportMetadata::new(
             random(),
-            clock.now_aligned_to_precision(task.time_precision()),
+            clock.now().to_time(task.time_precision()),
             Vec::new(),
         ),
         (),

@@ -680,7 +680,7 @@ mod tests {
     use janus_core::{
         auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER, test_util::WithAuthenticationToken},
         test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-        time::{Clock, MockClock, TimeExt as _},
+        time::{Clock, DateTimeExt, MockClock, TimeExt as _},
         vdaf::VdafInstance,
     };
     use janus_messages::{
@@ -1099,7 +1099,8 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now_aligned_to_precision(test_case.task.time_precision())
+                                .now()
+                                .to_time(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap(),
                             Vec::new(),
@@ -1115,7 +1116,8 @@ mod tests {
                             random(),
                             test_case
                                 .clock
-                                .now_aligned_to_precision(test_case.task.time_precision())
+                                .now()
+                                .to_time(test_case.task.time_precision())
                                 .add_duration(test_case.task.tolerable_clock_skew())
                                 .unwrap()
                                 .add_duration(&Duration::ONE)
@@ -1162,7 +1164,7 @@ mod tests {
 
         let clock = MockClock::default();
         let time_precision = TimePrecision::from_seconds(100);
-        let task_end_time = clock.now_aligned_to_precision(&time_precision);
+        let task_end_time = clock.now().to_time(&time_precision);
 
         let task = TaskBuilder::new(
             BatchMode::TimeInterval,
@@ -1303,7 +1305,8 @@ mod tests {
         let clock = MockClock::default();
         let time_precision = TimePrecision::from_seconds(100);
         let task_start_time = clock
-            .now_aligned_to_precision(&time_precision)
+            .now()
+            .to_time(&time_precision)
             .sub_duration(&Duration::from_seconds(1000, &time_precision))
             .unwrap();
 

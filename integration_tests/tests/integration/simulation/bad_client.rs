@@ -20,7 +20,7 @@ use janus_core::{
     initialize_rustls,
     retries::retry_http_request,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
-    time::{Clock, RealClock},
+    time::{Clock, DateTimeExt, RealClock},
     vdaf::{VERIFY_KEY_LENGTH_PRIO3, VdafInstance, vdaf_application_context, vdaf_dp_strategies},
 };
 use janus_messages::{
@@ -437,7 +437,7 @@ async fn bad_client_report_validity() {
         .with_prebound_server(server)
         .spawn(handler);
 
-    let report_time = clock.now_aligned_to_precision(task.time_precision());
+    let report_time = clock.now().to_time(task.time_precision());
     upload_replay_report(0, &task, &vdaf, &report_time, &http_client)
         .await
         .unwrap();

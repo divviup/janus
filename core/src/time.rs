@@ -18,14 +18,6 @@ pub trait Clock: 'static + Clone + Debug + Sync + Send {
     fn elapsed(&self, since: DateTime<Utc>) -> TimeDelta {
         self.now() - since
     }
-
-    /// Get the current time, rounded down to the provided time precision. The answer will
-    /// be between now() and now() - time_precision.
-    #[cfg(feature = "test-util")]
-    fn now_aligned_to_precision(&self, time_precision: &TimePrecision) -> Time {
-        let seconds = self.now().timestamp() as u64;
-        Time::from_seconds_since_epoch(seconds, time_precision)
-    }
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
@@ -585,7 +577,7 @@ mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
     use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
 
-    use crate::time::{Clock, DateTimeExt, IntervalExt, MockClock, TimeDeltaExt, TimeExt};
+    use crate::time::{DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt};
 
     const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
@@ -723,24 +715,6 @@ mod tests {
                 }
                 None => assert!(result.is_err(), "{label}"),
             }
-        }
-    }
-
-    #[test]
-    fn now_aligned_to_precision() {
-        for (label, timestamp, timestamp_precision, expected) in [
-            ("aligned", 1533415320, 60, 1533415320),
-            ("off by 1", 1533415321, 60, 1533415320),
-            ("aligned large", 1533414000, 6000, 1533414000),
-            ("off by 100", 1533414100, 6000, 1533414000),
-        ] {
-            let clock = MockClock::new(timestamp);
-            let precision = TimePrecision::from_seconds(timestamp_precision);
-
-            let result = clock
-                .now_aligned_to_precision(&precision)
-                .as_seconds_since_epoch(&precision);
-            assert_eq!(expected, result, "{label}");
         }
     }
 

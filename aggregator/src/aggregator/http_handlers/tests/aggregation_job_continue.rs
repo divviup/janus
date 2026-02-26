@@ -73,7 +73,7 @@ async fn aggregate_continue_sync() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -100,7 +100,7 @@ async fn aggregate_continue_sync() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(
@@ -126,7 +126,7 @@ async fn aggregate_continue_sync() {
     let past_clock = MockClock::new(task.time_precision().as_seconds() / 2);
     let report_metadata_2 = ReportMetadata::new(
         random(),
-        past_clock.now_aligned_to_precision(task.time_precision()),
+        past_clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_2 = run_vdaf(
@@ -415,7 +415,7 @@ async fn aggregate_continue_async() {
     // report_share_0 is a "happy path" report.
     let report_metadata_0 = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_0 = run_vdaf(
@@ -442,7 +442,7 @@ async fn aggregate_continue_async() {
     // report_share_1 is omitted by the leader's request.
     let report_metadata_1 = ReportMetadata::new(
         random(),
-        clock.now_aligned_to_precision(task.time_precision()),
+        clock.now().to_time(task.time_precision()),
         Vec::new(),
     );
     let transcript_1 = run_vdaf(

@@ -12,7 +12,7 @@ use janus_core::{
     auth_tokens::test_util::WithAuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
     report_id::ReportIdChecksumExt,
-    time::Clock,
+    time::{Clock, DateTimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -130,7 +130,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     let request = AggregateShareReq::new(
         BatchSelector::new_time_interval(
             Interval::new(
-                clock.now_aligned_to_precision(task.time_precision()),
+                clock.now().to_time(task.time_precision()),
                 // Collect request will be rejected because batch interval is too small
                 Duration::from_seconds(task.time_precision().as_seconds() - 1, &time_precision),
             )
