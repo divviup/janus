@@ -7,7 +7,6 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
-    time::TimeExt,
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -160,18 +159,18 @@ impl CommonTaskParameters {
         // memory as unsigned. Reject values that are too large. (perhaps these should be
         // represented by different types?)
         if let Some(report_expiry_age) = report_expiry_age {
-            if report_expiry_age > Duration::from_seconds(i64::MAX as u64, &time_precision) {
-                return Err(Error::InvalidParameter("report_expiry_age too large"));
-            }
+            report_expiry_age
+                .as_signed_time_precision_units()
+                .map_err(|_| Error::InvalidParameter("report_expiry_age too large"))?;
         }
         if let Some(task_start) = task_start {
             task_start
-                .as_date_time(time_precision)
+                .as_signed_time_precision_units()
                 .map_err(|_| Error::InvalidParameter("task_start out of range"))?;
         }
         if let Some(task_end) = task_end {
             task_end
-                .as_date_time(time_precision)
+                .as_signed_time_precision_units()
                 .map_err(|_| Error::InvalidParameter("task_end out of range"))?;
         }
         if let (Some(task_start), Some(task_end)) = (task_start, task_end) {
