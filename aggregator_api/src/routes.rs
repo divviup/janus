@@ -7,6 +7,7 @@ use std::{
 use anyhow::Context;
 use aws_lc_rs::digest::{SHA256, digest};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::TimeDelta;
 use janus_aggregator_core::{
     SecretBytes,
     datastore::{
@@ -467,7 +468,7 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.aggregation_mode,
         req.verify_key_init,
         req.collector_hpke_config,
-        req.report_expiry_age,
+        req.report_expiry_age.map(|d| TimeDelta::seconds(d)),
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
     )

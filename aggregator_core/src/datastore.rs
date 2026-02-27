@@ -66,12 +66,6 @@ use crate::{
     taskprov::PeerAggregator,
 };
 
-/// A "unit" time precision representing 1 second, used for SQL timestamp conversions.
-/// SQL timestamps are stored as microseconds but we convert them to/from seconds.
-/// All intervals are normalized to this precision when storing to/reading from the database.
-/// This is an interim change until Issue #4206.
-const SQL_UNIT_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
-
 pub mod leases;
 pub mod models;
 pub mod task_counters;
@@ -5419,8 +5413,8 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         let peer_role: AggregatorRole = peer_aggregator_row.get("peer_role");
         let aggregation_mode: Option<AggregationMode> = peer_aggregator_row.get("aggregation_mode");
         let report_expiry_age = peer_aggregator_row
-            .get_nullable_bigint_and_convert("report_expiry_age")?
-            .map(|s| Duration::from_seconds(s, &SQL_UNIT_TIME_PRECISION));
+            .get::<_, Option<i64>>("report_expiry_age")
+            .map(TimeDelta::seconds);
         let collector_hpke_config =
             HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
 
@@ -5511,11 +5505,7 @@ ON CONFLICT DO NOTHING",
                     /* aggregation_mode */ &peer_aggregator.aggregation_mode(),
                     /* verify_key_init */ &encrypted_verify_key_init,
                     /* report_expiry_age */
-                    &peer_aggregator
-                        .report_expiry_age()
-                        .map(|d| d.as_seconds(&SQL_UNIT_TIME_PRECISION))
-                        .map(i64::try_from)
-                        .transpose()?,
+                    &peer_aggregator.report_expiry_age().map(|d| d.num_seconds()),
                     /* collector_hpke_config */
                     &peer_aggregator.collector_hpke_config().get_encoded()?,
                     /* created_at */ &self.clock.now(),
