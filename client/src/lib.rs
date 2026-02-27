@@ -43,9 +43,6 @@
 use std::io::Cursor;
 use std::{convert::Infallible, fmt::Debug, sync::Arc, time::SystemTimeError};
 
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-
 use backon::BackoffBuilder;
 #[cfg(feature = "ohttp")]
 use bhttp::{ControlData, Message, Mode};
@@ -78,7 +75,10 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+};
 use url::Url;
 
 #[cfg(test)]
@@ -844,9 +844,7 @@ impl<V: vdaf::Client<16>> UploadSession<V> {
     pub async fn close(mut self) -> Result<UploadStats, Error> {
         // Drop the sender so the background task sees the channel close.
         self.sender.take();
-        self.handle
-            .await
-            .expect("upload session task panicked")
+        self.handle.await.expect("upload session task panicked")
     }
 }
 
