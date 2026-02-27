@@ -624,14 +624,19 @@ impl<V: vdaf::Client<16>> Client<V> {
         T: TryInto<Time> + Debug + Clone,
         Error: From<<T as TryInto<Time>>::Error>,
     {
+        let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
+            async { self.leader_hpke_config.lock().await.get().await.cloned() },
+            async { self.helper_hpke_config.lock().await.get().await.cloned() },
+        )?;
+
         let mut reports = Vec::new();
 
         for (measurement, time) in measurements.iter() {
             reports.push(self.prepare_report(
                 measurement,
                 &time.clone().try_into()?,
-                self.leader_hpke_config.lock().await.get().await?,
-                self.helper_hpke_config.lock().await.get().await?,
+                &leader_hpke_config,
+                &helper_hpke_config,
             )?);
         }
 
@@ -908,10 +913,10 @@ where
                     break;
                 }
 
-                let leader_hpke_config =
-                    client.leader_hpke_config.lock().await.get().await?.clone();
-                let helper_hpke_config =
-                    client.helper_hpke_config.lock().await.get().await?.clone();
+                let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
+                    async { client.leader_hpke_config.lock().await.get().await.cloned() },
+                    async { client.helper_hpke_config.lock().await.get().await.cloned() },
+                )?;
 
                 let mut reports = Vec::with_capacity(batch.len());
                 for (measurement, time) in batch.drain(..) {
