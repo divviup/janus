@@ -207,10 +207,16 @@ pub(crate) struct PatchHpkeConfigReq {
 #[educe(Debug)]
 pub(crate) struct TaskprovPeerAggregatorResp {
     #[educe(Debug(method(std::fmt::Display::fmt)))]
+    /// URL relative to which the peer aggregator's DAP API is found.
     pub(crate) endpoint: Url,
+    /// DAP protocol role this peer plays.
     pub(crate) peer_role: Role,
+    /// HPKE public key and configuration to which to send aggregate shares for tasks provisioned
+    /// with this peer.
     pub(crate) collector_hpke_config: HpkeConfig,
-    pub(crate) report_expiry_age: Option<Duration>,
+    /// GC expiry age to use for tasks provisioned with this peer, in seconds. GC disabled if set
+    /// to `None`.
+    pub(crate) report_expiry_age: Option<i64>,
 }
 
 impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
@@ -220,20 +226,31 @@ impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
             endpoint: value.endpoint().clone(),
             peer_role: *value.peer_role(),
             collector_hpke_config: value.collector_hpke_config().clone(),
-            report_expiry_age: value.report_expiry_age().cloned(),
+            report_expiry_age: value.report_expiry_age().map(|d| d.num_seconds()),
         }
     }
 }
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct PostTaskprovPeerAggregatorReq {
+    /// URL relative to which the peer aggregator's DAP API is found.
     pub(crate) endpoint: Url,
+    /// DAP protocol role this peer plays.
     pub(crate) peer_role: Role,
+    /// Aggregation mode that will be used for tasks provisioned with this peer.
     pub(crate) aggregation_mode: Option<AggregationMode>,
+    /// HPKE public key and configuration to which to send aggregate shares for tasks provisioned
+    /// with this peer.
     pub(crate) collector_hpke_config: HpkeConfig,
+    /// Shared secret for generating VDAF verification keys when provisioning tasks with this peer.
     pub(crate) verify_key_init: VerifyKeyInit,
-    pub(crate) report_expiry_age: Option<Duration>,
+    /// GC expiry age to use for tasks provisioned with this peer, in seconds. GC disabled if set
+    /// to `None`.
+    pub(crate) report_expiry_age: Option<i64>,
+    /// Auth tokens used for authenticating Leader to Helper requests.
     pub(crate) aggregator_auth_tokens: Vec<AuthenticationToken>,
+    /// Auth tokens used for authenticating Collector to Leader requests. It should be empty if the
+    /// peer aggregator is the Leader.
     pub(crate) collector_auth_tokens: Vec<AuthenticationToken>,
 }
 

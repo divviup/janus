@@ -6,9 +6,10 @@ use aws_lc_rs::{
     hkdf::{HKDF_SHA256, KeyType, Salt},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::TimeDelta;
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
-use janus_messages::{Duration, HpkeConfig, Role, TaskId};
+use janus_messages::{HpkeConfig, Role, TaskId};
 use rand::{distr::StandardUniform, prelude::Distribution};
 use serde::{
     Deserialize, Serialize, Serializer,
@@ -127,7 +128,7 @@ pub struct PeerAggregator {
 
     /// How long reports exist until they're eligible for GC. Set to None for no GC. This value is
     /// copied into the definition for a provisioned task.
-    report_expiry_age: Option<Duration>,
+    report_expiry_age: Option<TimeDelta>,
 
     /// Auth tokens used for authenticating Leader to Helper requests.
     aggregator_auth_tokens: Vec<AuthenticationToken>,
@@ -145,7 +146,7 @@ impl PeerAggregator {
         aggregation_mode: Option<AggregationMode>,
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: HpkeConfig,
-        report_expiry_age: Option<Duration>,
+        report_expiry_age: Option<TimeDelta>,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
     ) -> anyhow::Result<Self> {
@@ -195,8 +196,8 @@ impl PeerAggregator {
     }
 
     /// Retrieve the report expiry age that each task will be configured with.
-    pub fn report_expiry_age(&self) -> Option<&Duration> {
-        self.report_expiry_age.as_ref()
+    pub fn report_expiry_age(&self) -> Option<TimeDelta> {
+        self.report_expiry_age
     }
 
     /// Retrieve the [`AuthenticationToken`]s used for authenticating leader to helper requests.
@@ -290,8 +291,9 @@ pub fn taskprov_task_id(encoded_task_config: &[u8]) -> TaskId {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use chrono::TimeDelta;
     use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair};
-    use janus_messages::{Duration, HpkeConfig, Role};
+    use janus_messages::{HpkeConfig, Role};
     use rand::random;
     use url::Url;
 
@@ -307,7 +309,7 @@ pub mod test_util {
         aggregation_mode: Option<AggregationMode>,
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: HpkeConfig,
-        report_expiry_age: Option<Duration>,
+        report_expiry_age: Option<TimeDelta>,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
     }
@@ -351,7 +353,7 @@ pub mod test_util {
             self
         }
 
-        pub fn with_report_expiry_age(mut self, report_expiry_age: Option<Duration>) -> Self {
+        pub fn with_report_expiry_age(mut self, report_expiry_age: Option<TimeDelta>) -> Self {
             self.report_expiry_age = report_expiry_age;
             self
         }
