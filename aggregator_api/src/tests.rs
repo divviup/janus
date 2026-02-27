@@ -78,7 +78,7 @@ async fn get_config() {
     assert_body_contains!(
         conn,
         concat!(
-            r#""protocol":"DAP-09","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
+            r#""protocol":"DAP-16","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""batch_modes":["TimeInterval","LeaderSelected"],"#,
             r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","#,
