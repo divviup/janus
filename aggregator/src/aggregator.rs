@@ -1,7 +1,7 @@
 //! Common functionality for DAP aggregators.
 
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::Debug,
     panic,
@@ -99,7 +99,7 @@ use crate::{
         },
         batch_mode::{CollectableBatchMode, UploadableBatchMode},
         error::{
-            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason,
+            BatchMismatch, OptOutReason, ReportRejection, ReportRejectionReason, UploadError,
             handle_ping_pong_error,
         },
         report_writer::{ReportWriteBatcher, WritableReport},
@@ -1812,22 +1812,20 @@ impl VdafOps {
                         Ok(_) => {
                             // Report succeeded, no status entry needed
                         }
-                        Err(e) => match e.borrow() {
-                            Error::ReportRejected(rejection) => {
-                                status.push(ReportUploadStatus::new(
-                                    *rejection.report_id(),
-                                    rejection.reason().report_error(),
-                                ));
-                            }
-                            _ => {
-                                // We've had an unexpected error from handle_uploaded_report. We
-                                // cannot format a ReportUploadStatus, we need to fail here, but
-                                // also resolve all remaining futures (ignoring their statuses)
-                                // so we can safely return this error.
-                                futures.for_each(|_| async { }).await;
-                                return Err(e);
-                            }
-                        },
+                        Err(UploadError::ReportRejected(rejection)) => {
+                            status.push(ReportUploadStatus::new(
+                                *rejection.report_id(),
+                                rejection.reason().report_error(),
+                            ));
+                        }
+                        Err(UploadError::Internal(e)) => {
+                            // We've had an unexpected error from handle_uploaded_report. We
+                            // cannot format a ReportUploadStatus, we need to fail here, but
+                            // also resolve all remaining futures (ignoring their statuses)
+                            // so we can safely return this error.
+                            futures.for_each(|_| async { }).await;
+                            return Err(e);
+                        }
                     }
                 },
 
@@ -1847,28 +1845,28 @@ impl VdafOps {
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report: &Report,
-    ) -> Result<(), Arc<Error>>
+    ) -> Result<(), UploadError>
     where
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
         B: UploadableBatchMode,
     {
-        // Shorthand function for generating an Error::ReportRejected with proper parameters and
-        // recording it in the report_writer.
+        // Shorthand function for generating an UploadError::ReportRejected with proper parameters
+        // and recording it in the report_writer.
         let reject_report = |reason| {
             let report_id = *report.metadata().id();
             let report_time = *report.metadata().time();
             async move {
                 let rejection = ReportRejection::new(*task.id(), report_id, report_time, reason);
                 report_writer.write_rejection(rejection).await;
-                Ok::<_, Arc<Error>>(Arc::new(Error::ReportRejected(rejection)))
+                Ok::<_, UploadError>(UploadError::ReportRejected(rejection))
             }
         };
 
         let now = clock.now();
         let report_deadline = now
             .add_duration(task.tolerable_clock_skew(), task.time_precision())
-            .map_err(|err| Arc::new(Error::from(err)))?;
+            .map_err(|err| UploadError::Internal(Arc::new(Error::from(err))))?;
 
         if let Ok(report_time_dt) = report
             .metadata()
@@ -1920,7 +1918,7 @@ impl VdafOps {
                 .metadata()
                 .time()
                 .add_duration(report_expiry_age)
-                .map_err(|err| Arc::new(Error::from(err)))?;
+                .map_err(|err| UploadError::Internal(Arc::new(Error::from(err))))?;
             if clock
                 .now()
                 .is_after(&report_expiry_time, task.time_precision())
@@ -1955,7 +1953,7 @@ impl VdafOps {
             report.public_share().to_vec(),
         )
         .get_encoded()
-        .map_err(|e| Arc::new(Error::MessageEncode(e)))?;
+        .map_err(|e| UploadError::Internal(Arc::new(Error::MessageEncode(e))))?;
 
         // Retrieve the HPKE key indicated by the report & verify that it is known.
         let hpke_keypair =
