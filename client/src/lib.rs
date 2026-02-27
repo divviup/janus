@@ -110,6 +110,10 @@ pub enum Error {
     TimeConversion(#[from] SystemTimeError),
     #[error("upload session closed unexpectedly")]
     SessionClosed,
+    #[error("put called after close")]
+    PutAfterClose,
+    #[error("upload session task failed")]
+    UploadTaskFailed,
     #[cfg(feature = "ohttp")]
     #[error("OHTTP error: {0}")]
     Ohttp(#[from] ohttp::Error),
@@ -833,7 +837,7 @@ impl<V: vdaf::Client<16>> UploadSession<V> {
     pub async fn put(&self, measurement: V::Measurement, time: Time) -> Result<(), Error> {
         self.sender
             .as_ref()
-            .expect("put called after close")
+            .ok_or(Error::PutAfterClose)?
             .send((measurement, time))
             .await
             .map_err(|_| Error::SessionClosed)
@@ -844,7 +848,7 @@ impl<V: vdaf::Client<16>> UploadSession<V> {
     pub async fn close(mut self) -> Result<UploadStats, Error> {
         // Drop the sender so the background task sees the channel close.
         self.sender.take();
-        self.handle.await.expect("upload session task panicked")
+        self.handle.await.map_err(|_| Error::UploadTaskFailed)?
     }
 }
 
@@ -854,8 +858,8 @@ where
     V::Measurement: Send,
 {
     /// Create a streaming upload session. Measurements sent via [`UploadSession::put`] are
-    /// batched into groups of up to `batch_size` and uploaded to the leader as each batch fills.
-    /// Any partial batch remaining when [`UploadSession::close`] is called will be flushed.
+    /// split into groups of up to `group_size` and uploaded to the leader as each group fills.
+    /// Any partial group remaining when [`UploadSession::close`] is called will be flushed.
     ///
     /// ```no_run
     /// # use janus_client::{Client, UploadStats};
@@ -885,8 +889,8 @@ where
     /// assert_eq!(stats.reports_uploaded, 250);
     /// # }
     /// ```
-    pub fn upload_session(&self, batch_size: usize) -> UploadSession<V> {
-        let (sender, mut receiver) = mpsc::channel::<(V::Measurement, Time)>(batch_size);
+    pub fn upload_session(&self, group_size: usize) -> UploadSession<V> {
+        let (sender, mut receiver) = mpsc::channel::<(V::Measurement, Time)>(group_size);
         let client = self.clone();
 
         let handle = tokio::spawn(async move {
@@ -894,11 +898,11 @@ where
                 reports_uploaded: 0,
                 requests_made: 0,
             };
-            let mut batch = Vec::with_capacity(batch_size);
+            let mut batch = Vec::with_capacity(group_size);
 
             loop {
                 // Block until at least one measurement arrives, or the channel closes.
-                let count = receiver.recv_many(&mut batch, batch_size).await;
+                let count = receiver.recv_many(&mut batch, group_size).await;
                 if count == 0 {
                     // Channel closed, no more measurements.
                     break;
