@@ -57,7 +57,7 @@ impl BinaryOptions for Options {
 ///   hpke: {}
 /// "#;
 ///
-/// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: Config = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn default_config() {
-        let config = serde_yaml::from_str::<KeyRotatorConfig>(
+        let config = yaml_serde::from_str::<KeyRotatorConfig>(
             r#"---
 hpke: {}
 "#,
@@ -156,11 +156,11 @@ hpke: {}
 
     #[test]
     fn documentation_config_examples() {
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/basic_config/key_rotator.yaml"
         ))
         .unwrap();
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/advanced_config/key_rotator.yaml"
         ))
         .unwrap();

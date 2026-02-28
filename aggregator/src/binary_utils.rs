@@ -52,7 +52,7 @@ use crate::{
 pub fn read_config<Config: BinaryConfig>(options: &CommonBinaryOptions) -> Result<Config> {
     let config_content = fs::read_to_string(&options.config_file)
         .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
-    serde_yaml::from_str(&config_content)
+    yaml_serde::from_str(&config_content)
         .with_context(|| format!("couldn't parse config file {:?}", options.config_file))
 }
 

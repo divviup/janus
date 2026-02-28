@@ -154,7 +154,7 @@ async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut c
 
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the binary under test on the command line.
-    let serialized = serde_yaml::to_string(&config).unwrap();
+    let serialized = yaml_serde::to_string(&config).unwrap();
     let config_path = spawn_blocking(move || {
         let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
         config_temp_file.write_all(serialized.as_bytes()).unwrap();

@@ -120,7 +120,7 @@ impl BinaryOptions for Options {
 /// collection_job_retry_delay_exponential_factor: 1.25
 /// "#;
 ///
-/// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: Config = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,11 +236,11 @@ mod tests {
 
     #[test]
     fn documentation_config_examples() {
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/basic_config/collection_job_driver.yaml"
         ))
         .unwrap();
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/advanced_config/collection_job_driver.yaml"
         ))
         .unwrap();
