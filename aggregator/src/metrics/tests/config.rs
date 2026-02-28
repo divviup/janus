@@ -4,7 +4,7 @@ use crate::metrics::{
 
 #[test]
 fn metrics_configuration_serde() {
-    let config = serde_yaml::from_str::<MetricsConfiguration>("---").unwrap();
+    let config = yaml_serde::from_str::<MetricsConfiguration>("---").unwrap();
     assert_eq!(
         config,
         MetricsConfiguration {
@@ -13,7 +13,7 @@ fn metrics_configuration_serde() {
         }
     );
 
-    let config = serde_yaml::from_str::<MetricsConfiguration>(
+    let config = yaml_serde::from_str::<MetricsConfiguration>(
         "---
 exporter:
   prometheus:
@@ -32,7 +32,7 @@ exporter:
         }
     );
 
-    let config = serde_yaml::from_str::<MetricsConfiguration>(
+    let config = yaml_serde::from_str::<MetricsConfiguration>(
         "---
 exporter:
   otlp:

@@ -67,7 +67,7 @@ reqwest = { workspace = true, features = ["json"] }
 rustls.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
-serde_yaml.workspace = true
+yaml_serde.workspace = true
 stopper = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }

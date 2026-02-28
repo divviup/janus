@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn vdaf_deserialization_backwards_compatibility_fpvec_bounded_l2() {
         assert_eq!(
-            serde_yaml::from_str::<VdafInstance>(
+            yaml_serde::from_str::<VdafInstance>(
                 "---
 !Prio3FixedPointBoundedL2VecSum
 bitsize: BitSize16
@@ -839,7 +839,7 @@ length: 10"
     #[test]
     fn vdaf_deserialization_backwards_compatibility() {
         assert_matches!(
-            serde_yaml::from_str(
+            yaml_serde::from_str(
                 "---
 !Prio3Sum
 max_measurement: 4096"
@@ -849,7 +849,7 @@ max_measurement: 4096"
             })
         );
         assert_matches!(
-            serde_yaml::from_str(
+            yaml_serde::from_str(
                 "---
 !Prio3Histogram
 length: 4
@@ -862,7 +862,7 @@ chunk_length: 2"
             })
         );
         assert_eq!(
-            serde_yaml::from_str::<VdafInstance>(
+            yaml_serde::from_str::<VdafInstance>(
                 "---
 !Prio3SumVec
 bits: 2
