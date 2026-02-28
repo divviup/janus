@@ -82,6 +82,14 @@ impl Duration {
         self.0
     }
 
+    /// Get the raw number of time_precision units as a signed integer, failing if the duration is
+    /// too big.
+    pub fn as_signed_time_precision_units(&self) -> Result<i64, Error> {
+        self.0
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))
+    }
+
     /// Convert this [`Duration`] into a [`chrono::TimeDelta`].
     ///
     /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
@@ -199,9 +207,16 @@ impl Time {
     }
 
     /// Get the raw number of time_precision units since the Unix epoch.
-    /// This is primarily for testing and internal use.
     pub fn as_time_precision_units(&self) -> u64 {
         self.0
+    }
+
+    /// Get the raw number of time_precision units as a signed integer, failing if the duration is
+    /// too big.
+    pub fn as_signed_time_precision_units(&self) -> Result<i64, Error> {
+        self.as_time_precision_units()
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("time too large for signed integer"))
     }
 }
 

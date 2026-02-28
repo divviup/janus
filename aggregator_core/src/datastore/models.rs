@@ -15,7 +15,7 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{self, HpkeCiphersuite},
     report_id::ReportIdChecksumExt,
-    time::{IntervalExt, TimeExt},
+    time::IntervalExt,
     vdaf::VdafInstance,
 };
 use janus_messages::{
