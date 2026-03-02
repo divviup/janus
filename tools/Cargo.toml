@@ -23,7 +23,7 @@ prio.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 serde_json.workspace = true
-serde_yaml.workspace = true
+yaml_serde.workspace = true
 tokio.workspace = true
 tracing = { workspace = true }
 tracing-log = { workspace = true }

@@ -343,7 +343,7 @@ impl Command {
                 .await?;
 
                 if *echo_tasks {
-                    let tasks_yaml = serde_yaml::to_string(&written_tasks)
+                    let tasks_yaml = yaml_serde::to_string(&written_tasks)
                         .context("couldn't serialize tasks to YAML")?;
                     println!("{tasks_yaml}");
                 }
@@ -716,7 +716,7 @@ async fn provision_tasks<C: Clock>(
         let task_file_contents = fs::read_to_string(tasks_file)
             .await
             .with_context(|| format!("couldn't read tasks file {tasks_file:?}"))?;
-        serde_yaml::from_str(&task_file_contents)
+        yaml_serde::from_str(&task_file_contents)
             .with_context(|| format!("couldn't parse tasks file {tasks_file:?}"))?
     };
 
@@ -1459,7 +1459,7 @@ mod tests {
         // Write tasks to a temporary file.
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
-            .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
+            .write_all(yaml_serde::to_string(&tasks).unwrap().as_ref())
             .unwrap();
         let tasks_path = tasks_file.into_temp_path();
 
@@ -1564,7 +1564,7 @@ mod tests {
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
-            .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
+            .write_all(yaml_serde::to_string(&tasks).unwrap().as_ref())
             .unwrap();
 
         super::provision_tasks(&ds, &tasks_file.into_temp_path(), false, false)
@@ -1592,7 +1592,7 @@ mod tests {
         let mut replacement_tasks_file = NamedTempFile::new().unwrap();
         replacement_tasks_file
             .write_all(
-                serde_yaml::to_string(&[&replacement_task])
+                yaml_serde::to_string(&[&replacement_task])
                     .unwrap()
                     .as_ref(),
             )
@@ -1800,11 +1800,11 @@ mod tests {
 
     #[test]
     fn documentation_config_examples() {
-        serde_yaml::from_str::<ConfigFile>(include_str!(
+        yaml_serde::from_str::<ConfigFile>(include_str!(
             "../../../docs/samples/basic_config/janus_cli.yaml"
         ))
         .unwrap();
-        serde_yaml::from_str::<ConfigFile>(include_str!(
+        yaml_serde::from_str::<ConfigFile>(include_str!(
             "../../../docs/samples/advanced_config/janus_cli.yaml"
         ))
         .unwrap();

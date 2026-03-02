@@ -59,7 +59,7 @@ pub enum Error {
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
-    #[serde(default, with = "serde_yaml::with::singleton_map")]
+    #[serde(default, with = "yaml_serde::with::singleton_map")]
     pub exporter: Option<MetricsExporterConfiguration>,
 
     /// Configuration to expose metrics from the Tokio asynchronous runtime.

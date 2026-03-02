@@ -307,7 +307,7 @@ where
 /// batch_aggregation_shard_count: 32
 /// "#;
 ///
-/// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: Config = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 ///
 /// Configuration serving the aggregator API relative to the DAP API:
@@ -331,7 +331,7 @@ where
 ///   enabled: false
 /// "#;
 ///
-/// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: Config = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn config_no_aggregator_api() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn config_garbage_collection() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -677,7 +677,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn config_taskprov() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -738,7 +738,7 @@ mod tests {
         };
 
         assert_aggregator_configs_match(
-            &serde_yaml::from_str::<Config>(
+            &yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn config_aggregator_api_listen_address() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -797,7 +797,7 @@ mod tests {
     #[test]
     fn config_aggregator_api_path_prefix() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -824,7 +824,7 @@ mod tests {
     #[test]
     fn config_aggregator_mutually_exclusive() {
         assert_matches!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -846,7 +846,7 @@ mod tests {
     #[test]
     fn config_aggregator_api_missing_parameters() {
         assert_matches!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     database:
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn documentation_config_examples() {
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -898,7 +898,7 @@ mod tests {
         );
 
         assert_aggregator_configs_match(
-            &serde_yaml::from_str::<Config>(
+            &yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -927,7 +927,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -955,7 +955,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -983,7 +983,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -1011,7 +1011,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<Config>(
+            yaml_serde::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -1038,11 +1038,11 @@ mod tests {
             )),
         );
 
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/basic_config/aggregator.yaml"
         ))
         .unwrap();
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/advanced_config/aggregator.yaml"
         ))
         .unwrap();

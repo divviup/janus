@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn valid_dap_auth_token() {
-        serde_yaml::from_str::<AuthenticationToken>(
+        yaml_serde::from_str::<AuthenticationToken>(
             "{type: \"DapAuth\", token: \"correct-horse-battery-staple-!@#$\"}",
         )
         .unwrap();
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn valid_bearer_token() {
-        serde_yaml::from_str::<AuthenticationToken>(
+        yaml_serde::from_str::<AuthenticationToken>(
             "{type: \"Bearer\", token: \"AAAAAAA~-_/A===\"}",
         )
         .unwrap();
@@ -488,21 +488,21 @@ mod tests {
 
     #[test]
     fn reject_invalid_auth_token_dap_auth() {
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"DapAuth\", token: \"\\x0b\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"DapAuth\", token: \"\\x0b\"}")
             .unwrap_err();
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"DapAuth\", token: \"\\x00\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"DapAuth\", token: \"\\x00\"}")
             .unwrap_err();
     }
 
     #[test]
     fn reject_invalid_auth_token_bearer() {
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"é\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"é\"}")
             .unwrap_err();
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"^\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"^\"}")
             .unwrap_err();
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"=\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"=\"}")
             .unwrap_err();
-        serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"AAAA==AAA\"}")
+        yaml_serde::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"AAAA==AAA\"}")
             .unwrap_err();
     }
 
@@ -533,7 +533,7 @@ mod tests {
     #[case::dap_auth(r#"{ type: "DapAuth", hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ" }"#)]
     #[test]
     fn serde_aggregator_token_hash_valid(#[case] yaml: &str) {
-        serde_yaml::from_str::<AuthenticationTokenHash>(yaml).unwrap();
+        yaml_serde::from_str::<AuthenticationTokenHash>(yaml).unwrap();
     }
 
     #[rstest::rstest]
@@ -547,7 +547,7 @@ mod tests {
     )]
     #[test]
     fn serde_aggregator_token_hash_invalid(#[case] yaml: &str) {
-        serde_yaml::from_str::<AuthenticationTokenHash>(yaml).unwrap_err();
+        yaml_serde::from_str::<AuthenticationTokenHash>(yaml).unwrap_err();
     }
 
     #[test]

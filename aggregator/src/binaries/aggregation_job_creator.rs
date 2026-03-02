@@ -70,7 +70,7 @@ impl BinaryOptions for Options {
 /// max_aggregation_job_size: 500
 /// "#;
 ///
-/// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
+/// let _decoded: Config = yaml_serde::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,11 +162,11 @@ mod tests {
 
     #[test]
     fn documentation_config_examples() {
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/basic_config/aggregation_job_creator.yaml"
         ))
         .unwrap();
-        serde_yaml::from_str::<Config>(include_str!(
+        yaml_serde::from_str::<Config>(include_str!(
             "../../../docs/samples/advanced_config/aggregation_job_creator.yaml"
         ))
         .unwrap();

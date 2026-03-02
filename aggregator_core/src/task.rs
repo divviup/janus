@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn deserialize_docs_sample_tasks() {
-        serde_yaml::from_str::<Vec<AggregatorTask>>(include_str!("../../docs/samples/tasks.yaml"))
+        yaml_serde::from_str::<Vec<AggregatorTask>>(include_str!("../../docs/samples/tasks.yaml"))
             .unwrap();
     }
 
@@ -1912,13 +1912,13 @@ mod tests {
             })
         );
         assert_matches!(
-            serde_yaml::from_str("!LeaderSelected {}"),
+            yaml_serde::from_str("!LeaderSelected {}"),
             Ok(BatchMode::LeaderSelected {
                 batch_time_window_size: None,
             })
         );
         assert_matches!(
-            serde_yaml::from_str(
+            yaml_serde::from_str(
                 "---
 !LeaderSelected
   batch_time_window_size: 3600"

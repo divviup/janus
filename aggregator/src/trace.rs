@@ -58,7 +58,7 @@ pub struct TraceConfiguration {
     #[serde(default)]
     pub tokio_console_config: TokioConsoleConfiguration,
     /// Configuration for OpenTelemetry traces, with a choice of exporters.
-    #[serde(default, with = "serde_yaml::with::singleton_map")]
+    #[serde(default, with = "yaml_serde::with::singleton_map")]
     pub open_telemetry_config: Option<OpenTelemetryTraceConfiguration>,
     /// Flag to write tracing spans and events to JSON files. This is compatible with Chrome's
     /// trace viewer, available at `chrome://tracing`, and [Perfetto](https://ui.perfetto.dev).
