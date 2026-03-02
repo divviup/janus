@@ -988,26 +988,38 @@ async fn aggregate_shares_delete<C: Clock>(
     Ok(())
 }
 
-/// Check the request's Content-Type header, and return an error if it is missing or not equal to
-/// the expected value.
-fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
+/// Check the request's Content-Type header, and return an error if its MIME essence or its
+/// `message` parameter do not match those in the expected value. The header may have other
+/// parameters in it; this function does not check them.
+fn validate_content_type(conn: &Conn, expected_header: &str) -> Result<(), Error> {
+    let expected_mime: Mime = expected_header
+        .parse()
+        .map_err(|_| Error::Internal("failed to parse expected Content-Type header".into()))?;
+
     let content_type = conn
         .request_headers()
         .get(KnownHeaderName::ContentType)
         .ok_or_else(|| Error::BadRequest("no Content-Type header".into()))?;
 
-    let mime_str = content_type.as_str().ok_or(Error::BadRequest(
-        format!("invalid Content-Type header: {content_type}").into(),
-    ))?;
-
-    let mime: Mime = mime_str
+    // For whatever, reason, HeaderValue::as_str doesn't work when content types include parameters
+    // so we get the value bytes and parse into a `Mime` ourselves.
+    let request_mime: Mime = str::from_utf8(content_type.as_ref())
+        .map_err(|_| {
+            Error::BadRequest(format!("invalid Content-Type header: {content_type}").into())
+        })?
         .parse()
         .context("failed to parse Content-Type header")
         .map_err(|e| Error::BadRequest(e.into()))?;
 
-    if mime.essence_str() != expected_media_type {
+    if request_mime.essence_str() != expected_mime.essence_str() {
         return Err(Error::BadRequest(
-            format!("unexpected Content-Type header: {mime}").into(),
+            format!("unexpected essence in Content-Type header: {request_mime}").into(),
+        ));
+    }
+
+    if request_mime.get_param("message") != expected_mime.get_param("message") {
+        return Err(Error::BadRequest(
+            format!("unexpected message parameter in Content-Type header: {request_mime}").into(),
         ));
     }
 

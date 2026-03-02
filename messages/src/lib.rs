@@ -1183,7 +1183,7 @@ impl HpkeConfigList {
 }
 
 impl MediaType for HpkeConfigList {
-    const MEDIA_TYPE: &'static str = "application/dap-hpke-config-list";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=hpke-config-list";
 }
 
 impl Encode for HpkeConfigList {
@@ -1372,10 +1372,6 @@ impl Report {
     }
 }
 
-impl MediaType for Report {
-    const MEDIA_TYPE: &'static str = "application/dap-report";
-}
-
 impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.metadata.encode(bytes)?;
@@ -1418,7 +1414,7 @@ pub struct UploadRequest {
 
 impl UploadRequest {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-upload-req";
+    pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-req";
 
     pub fn new(reports: Vec<Report>) -> Self {
         Self { reports }
@@ -1507,7 +1503,7 @@ pub struct UploadResponse {
 
 impl UploadResponse {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-upload-resp";
+    pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-resp";
 
     pub fn new(statuses: &[ReportUploadStatus]) -> Self {
         Self {
@@ -1640,7 +1636,7 @@ impl<B: BatchMode> CollectionJobReq<B> {
 }
 
 impl<B: BatchMode> MediaType for CollectionJobReq<B> {
-    const MEDIA_TYPE: &'static str = "application/dap-collection-job-req";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=collection-job-req";
 }
 
 impl<B: BatchMode> Encode for CollectionJobReq<B> {
@@ -1800,7 +1796,7 @@ pub struct CollectionJobResp<B: BatchMode> {
 }
 
 impl<B: BatchMode> MediaType for CollectionJobResp<B> {
-    const MEDIA_TYPE: &'static str = "application/dap-collection-job-resp";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=collection-job-resp";
 }
 
 impl<B: BatchMode> Encode for CollectionJobResp<B> {
@@ -2390,7 +2386,7 @@ impl<B: BatchMode> AggregationJobInitializeReq<B> {
 }
 
 impl<B: BatchMode> MediaType for AggregationJobInitializeReq<B> {
-    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-init-req";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregation-job-init-req";
 }
 
 impl<B: BatchMode> Encode for AggregationJobInitializeReq<B> {
@@ -2511,7 +2507,7 @@ impl AggregationJobContinueReq {
 }
 
 impl MediaType for AggregationJobContinueReq {
-    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregation-job-continue-req";
 }
 
 impl Encode for AggregationJobContinueReq {
@@ -2547,7 +2543,7 @@ pub struct AggregationJobResp {
 
 impl MediaType for AggregationJobResp {
     /// The media type associated with this protocol message.
-    const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregation-job-resp";
 }
 
 impl Encode for AggregationJobResp {
@@ -2694,7 +2690,7 @@ impl<B: BatchMode> AggregateShareReq<B> {
 }
 
 impl<B: BatchMode> MediaType for AggregateShareReq<B> {
-    const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-req";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregate-share-req";
 }
 
 impl<B: BatchMode> Encode for AggregateShareReq<B> {
@@ -2754,7 +2750,7 @@ impl AggregateShare {
 }
 
 impl MediaType for AggregateShare {
-    const MEDIA_TYPE: &'static str = "application/dap-aggregate-share";
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=aggregate-share";
 }
 
 impl Encode for AggregateShare {

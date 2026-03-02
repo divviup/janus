@@ -64,7 +64,7 @@ async fn upload_handler() {
         }
         assert_eq!(test_conn.status(), Some(Status::Ok));
 
-        assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+        assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
         let body = &take_response_body(test_conn).await;
         let expected_content_len = format!("{}", body.len());
         let len_str = expected_content_len.as_str();
@@ -626,7 +626,7 @@ async fn upload_handler_mixed_success_failure() {
 
     // Should get HTTP 200 OK even with mixed results
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
 
     // Parse the response
     let body = take_response_body(&mut test_conn).await;
@@ -717,7 +717,7 @@ async fn upload_handler_task_not_started() {
 
     // Should get HTTP 200 OK but with TaskNotStarted error in response
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/dap-upload-resp");
+    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
 
     let body = take_response_body(&mut test_conn).await;
     let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
@@ -985,7 +985,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Content-Length: {}\r\n\r\n",
         encoded_report_1.len(),
     );
@@ -1008,7 +1008,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Content-Length: 1000\r\n\r\n"
     );
     client_socket
@@ -1023,7 +1023,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -1052,7 +1052,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -1224,7 +1224,7 @@ async fn upload_client_http11_bulk() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
