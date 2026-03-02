@@ -5414,7 +5414,11 @@ SELECT ord, type, token FROM taskprov_collector_auth_tokens
         let aggregation_mode: Option<AggregationMode> = peer_aggregator_row.get("aggregation_mode");
         let report_expiry_age = peer_aggregator_row
             .get::<_, Option<i64>>("report_expiry_age")
-            .map(TimeDelta::seconds);
+            .map(|d| {
+                TimeDelta::try_seconds(d)
+                    .ok_or_else(|| Error::TimeOverflow("report expiry age too big for timedelta"))
+            })
+            .transpose()?;
         let collector_hpke_config =
             HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
 

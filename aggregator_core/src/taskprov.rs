@@ -156,6 +156,12 @@ impl PeerAggregator {
         if peer_role == Role::Leader && aggregation_mode.is_none() {
             return Err(anyhow!("missing aggregation_mode"));
         }
+        if let Some(age) = report_expiry_age
+            && age.num_seconds().is_negative()
+        {
+            return Err(anyhow!("report_expiry_age must be positive"));
+        }
+
         Ok(Self {
             endpoint,
             peer_role,

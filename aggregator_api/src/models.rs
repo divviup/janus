@@ -246,7 +246,7 @@ pub(crate) struct PostTaskprovPeerAggregatorReq {
     pub(crate) verify_key_init: VerifyKeyInit,
     /// GC expiry age to use for tasks provisioned with this peer, in seconds. GC disabled if set
     /// to `None`.
-    pub(crate) report_expiry_age: Option<i64>,
+    pub(crate) report_expiry_age: Option<u64>,
     /// Auth tokens used for authenticating Leader to Helper requests.
     pub(crate) aggregator_auth_tokens: Vec<AuthenticationToken>,
     /// Auth tokens used for authenticating Collector to Leader requests. It should be empty if the
