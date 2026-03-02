@@ -62,7 +62,7 @@ jobs:
       with:
         key: ${{ steps.os-version.outputs.release }}
     - name: Expose GitHub Runtime
-      uses: crazy-max/ghaction-github-runtime@v3
+      uses: crazy-max/ghaction-github-runtime@v4
     - name: Build minimal janus_messages
       run: cargo build --profile ci --package janus_messages --no-default-features
     - name: Build janus_core
