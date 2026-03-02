@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 fpvec_bounded_l2 = ["dep:fixed", "prio/experimental"]
 test-util = [
     "dep:assert_matches",
+    "dep:axum",
     "dep:k8s-openapi",
     "dep:mockito",
     "dep:quickcheck",
@@ -27,6 +28,7 @@ test-util = [
     "dep:tokio-stream",
     "dep:tracing-log",
     "dep:tracing-subscriber",
+    "dep:trillium",
     "dep:trillium-testing",
     "janus_messages/test-util",
     "kube/ws",
@@ -77,7 +79,8 @@ tokio-stream = { workspace = true, features = ["net"], optional = true }
 tracing = { workspace = true }
 tracing-log = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"], optional = true }
-trillium.workspace = true
+axum = { workspace = true, optional = true }
+trillium = { workspace = true, optional = true }
 trillium-testing = { workspace = true, optional = true }
 url = { workspace = true }
 

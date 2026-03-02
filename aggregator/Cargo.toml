@@ -23,7 +23,6 @@ otlp = [
 prometheus = [
     "dep:opentelemetry-prometheus",
     "dep:prometheus",
-    "dep:trillium-prometheus",
 ]
 test-util = [
     "janus_aggregator_core/test-util",
@@ -31,7 +30,6 @@ test-util = [
     "janus_messages/test-util",
     "opentelemetry_sdk/testing",
     "dep:testcontainers",
-    "dep:trillium-testing",
 ]
 
 [dependencies]
@@ -40,6 +38,7 @@ assert_matches = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 aws-lc-rs = { workspace = true }
+axum = { workspace = true, features = ["macros"] }
 backon = { workspace = true }
 base64.workspace = true
 bytes.workspace = true
@@ -92,22 +91,15 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tokio-postgres-rustls = { workspace = true }
+tokio-util.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = ["cors", "trace"] }
 tracing = { workspace = true }
 tracing-chrome = { workspace = true }
 tracing-log = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 tracing-stackdriver = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt", "json"] }
-trillium.workspace = true
-trillium-api.workspace = true
-trillium-caching-headers.workspace = true
-trillium-head.workspace = true
-trillium-macros = "0.0.6"
-trillium-opentelemetry.workspace = true
-trillium-prometheus = { workspace = true, optional = true }
-trillium-router.workspace = true
-trillium-testing = { workspace = true, optional = true }
-trillium-tokio.workspace = true
 url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
 
@@ -122,7 +114,6 @@ quickcheck_macros = { workspace = true }
 rstest.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "test-util"] } # ensure this remains compatible with the non-dev dependency
-trillium-testing.workspace = true
 trycmd = { workspace = true }
 wait-timeout = { workspace = true }
 

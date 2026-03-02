@@ -1,11 +1,14 @@
 use std::time::Duration;
 
+use axum::response::{IntoResponse, Response};
+use http::{
+    HeaderValue, StatusCode,
+    header::{CONTENT_TYPE, RETRY_AFTER},
+};
 use janus_messages::{
     AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
 };
 use serde::Serialize;
-use trillium::{Conn, KnownHeaderName, Status};
-use trillium_api::ApiConnExt;
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
@@ -38,11 +41,11 @@ impl<'a> ProblemDocument<'a> {
     /// If the error is defined in DAP, use [`Self::new_dap`] instead.
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc9457
-    pub fn new(type_: &'static str, title: &'static str, status: Status) -> Self {
+    pub fn new(type_: &'static str, title: &'static str, status: StatusCode) -> Self {
         Self {
             type_,
             title,
-            status: status.into(),
+            status: status.as_u16(),
             taskid: None,
             detail: None,
             aggregation_job_id: None,
@@ -56,12 +59,7 @@ impl<'a> ProblemDocument<'a> {
         Self::new(
             error_type.type_uri(),
             error_type.description(),
-            // Per the Errors section of the protocol, error responses corresponding to an "abort"
-            // in the protocol should use HTTP status code 400 Bad Request unless explicitly
-            // specified otherwise.
-            //
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.2
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
         )
     }
 
@@ -99,46 +97,49 @@ impl<'a> ProblemDocument<'a> {
             ..self
         }
     }
-}
 
-pub trait ProblemDetailsConnExt {
-    /// Send a response containing a JSON-encoded problem details document for the given
-    /// DAP-specific problem document, and set the appropriate HTTP status code.
-    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self;
-}
+    /// Returns the HTTP status code for this problem document.
+    pub fn status_code(&self) -> StatusCode {
+        StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    }
 
-impl ProblemDetailsConnExt for Conn {
-    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
-        self.with_status(problem_document.status)
-            .with_response_header(
-                KnownHeaderName::ContentType,
-                PROBLEM_DETAILS_JSON_MEDIA_TYPE,
-            )
-            .with_json(problem_document)
+    /// Converts this problem document into an axum [`Response`].
+    pub fn into_response_with_retry_after(&self, retry_after: Option<Duration>) -> Response {
+        let body = serde_json::to_vec(self).unwrap_or_default();
+        let mut response = (
+            self.status_code(),
+            [(
+                CONTENT_TYPE,
+                HeaderValue::from_static(PROBLEM_DETAILS_JSON_MEDIA_TYPE),
+            )],
+            body,
+        )
+            .into_response();
+        if let Some(retry_after) = retry_after {
+            response.headers_mut().insert(
+                RETRY_AFTER,
+                HeaderValue::from_str(&retry_after.as_secs().to_string()).unwrap(),
+            );
+        }
+        response
     }
 }
 
-pub trait RetryAfterConnExt {
-    fn with_retry_after(self, retry_after: Duration) -> Self;
-}
-
-impl RetryAfterConnExt for Conn {
-    fn with_retry_after(self, retry_after: Duration) -> Self {
-        self.with_response_header(
-            KnownHeaderName::RetryAfter,
-            retry_after.as_secs().to_string(),
-        )
+impl IntoResponse for &ProblemDocument<'_> {
+    fn into_response(self) -> Response {
+        self.into_response_with_retry_after(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, sync::Arc};
+    use std::sync::Arc;
 
     use assert_matches::assert_matches;
+    use axum::{Router, body::to_bytes, routing::post};
     use bytes::Bytes;
     use futures::future::join_all;
-    use http::Method;
+    use http::{Method, StatusCode};
     use janus_aggregator_core::{TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
     use janus_core::{
         initialize_rustls,
@@ -153,8 +154,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Client;
-    use trillium::Status;
-    use trillium_testing::{assert_headers, assert_status, prelude::post};
+    use tower::ServiceExt;
 
     use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
 
@@ -276,22 +276,20 @@ mod tests {
             .map(|test_case| {
                 let request_histogram = request_histogram.clone();
                 async move {
-                    // Run the handler implementation of the given error, and capture its response.
+                    use axum::response::IntoResponse;
+                    // Convert the error to an axum response and capture status/body.
                     let error_factory = Arc::new(test_case.error_factory);
                     let error = error_factory();
-                    let mut test_conn = post("/").run_async(&error).await;
-                    let body = if let Some(body) = test_conn.take_response_body() {
-                        body.into_bytes().await.unwrap()
-                    } else {
-                        Cow::from([].as_slice())
-                    };
+                    let response = error.into_response();
+                    let status = response.status();
+                    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
                     // Serve the response via mockito, and run it through post_to_helper's
                     // error handling.
                     let mut server = mockito::Server::new_async().await;
                     let error_mock = server
                         .mock("POST", "/")
-                        .with_status(test_conn.status().unwrap() as u16 as usize)
+                        .with_status(status.as_u16() as usize)
                         .with_header("Content-Type", "application/problem+json")
                         .with_body(body)
                         .create_async()
@@ -329,11 +327,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_after_header() {
+        use axum::response::IntoResponse;
         // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
         for error in [Error::TooManyRequests, Error::RequestTimeout] {
-            let test_conn = post("/").run_async(&error).await;
-            assert_status!(test_conn, Status::TooManyRequests);
-            assert_headers!(test_conn, "Retry-After" => "30");
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("Retry-After")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "30"
+            );
         }
     }
 }

@@ -7,16 +7,15 @@
 
 use std::hash::Hash;
 
+use axum::{extract::MatchedPath, middleware::Next, response::Response};
 use educe::Educe;
+use http::Request;
 use prio::{
     codec::{Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
     vdaf::{Aggregator, AggregatorWithNoise},
 };
-use tracing::{Instrument, Span, debug, info_span};
-use trillium::{Conn, Handler, Status};
-use trillium_macros::Handler;
-use trillium_router::RouterConnExt;
+use tracing::{Instrument, debug, info_span};
 
 pub mod batch_mode;
 pub mod datastore;
@@ -111,39 +110,21 @@ pub trait VdafHasAggregationParameter {}
 #[cfg(feature = "test-util")]
 impl VdafHasAggregationParameter for prio::vdaf::dummy::Vdaf {}
 
-pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
-    InstrumentedHandler(handler)
-}
-
-struct InstrumentedHandlerSpan(Span);
-
-#[derive(Handler)]
-struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
-
-impl<H: Handler> InstrumentedHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let route = conn.route().expect("no route in conn").to_string();
-        let method = conn.method();
-        let span = info_span!("endpoint", route, %method);
-        conn.insert_state(InstrumentedHandlerSpan(span.clone()));
-        self.0.run(conn).instrument(span).await
-    }
-
-    async fn before_send(&self, mut conn: Conn) -> Conn {
-        if let Some(span) = conn.take_state::<InstrumentedHandlerSpan>() {
-            let conn = self.0.before_send(conn).instrument(span.0.clone()).await;
-            span.0.in_scope(|| {
-                let status = conn
-                    .status()
-                    .as_ref()
-                    .map_or("unknown", Status::canonical_reason);
-                debug!(status, "Finished handling request");
-            });
-            conn
-        } else {
-            self.0.before_send(conn).await
-        }
-    }
+/// Axum middleware that instruments request handlers with tracing spans.
+pub async fn instrumented(request: Request<axum::body::Body>, next: Next) -> Response {
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let method = request.method().clone();
+    let span = info_span!("endpoint", route, %method);
+    let response = next.run(request).instrument(span.clone()).await;
+    span.in_scope(|| {
+        let status = response.status().canonical_reason().unwrap_or("unknown");
+        debug!(status, "Finished handling request");
+    });
+    response
 }
 
 /// These boundaries are intended to be able to capture the length of short-lived operations

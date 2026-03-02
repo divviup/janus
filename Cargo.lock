@@ -496,11 +496,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "021e862c184ae977658b36c4500f7feac3221ca5da43e3f25bd04ab6c79a29b5"
 dependencies = [
  "axum-core 0.5.2",
+ "axum-macros",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "itoa",
  "matchit 0.8.4",
  "memchr",
@@ -509,10 +513,15 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper 1.0.2",
+ "tokio",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -552,6 +561,18 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "axum-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "604fde5e028fea851ce1d8570bbdc034bec850d157f7569d10f347d06808c05c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1454,16 +1475,6 @@ checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "etag"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b3d0661a2ccddc26cba0b834e9b717959ed6fdd76c7129ee159c170a875bf44"
-dependencies = [
- "str-buf",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -2578,6 +2589,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.4",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2636,22 +2648,15 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tokio-util",
+ "tower 0.5.2",
+ "tower-http",
  "tracing",
  "tracing-chrome",
  "tracing-log",
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
- "trillium",
- "trillium-api",
- "trillium-caching-headers",
- "trillium-head",
- "trillium-macros 0.0.6",
- "trillium-opentelemetry",
- "trillium-prometheus",
- "trillium-router",
- "trillium-testing",
- "trillium-tokio",
  "trycmd",
  "url",
  "uuid",
@@ -2667,10 +2672,12 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.4",
  "base64 0.22.1",
  "educe",
  "futures",
  "git-version",
+ "http",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
@@ -2683,12 +2690,9 @@ dependencies = [
  "serde_test",
  "thiserror 2.0.18",
  "tokio",
+ "tower 0.5.2",
+ "tower-http",
  "tracing",
- "trillium",
- "trillium-api",
- "trillium-opentelemetry",
- "trillium-router",
- "trillium-testing",
  "url",
 ]
 
@@ -2700,6 +2704,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.4",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2737,11 +2742,9 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
+ "tower 0.5.2",
  "tracing",
  "tracing-log",
- "trillium",
- "trillium-macros 0.0.6",
- "trillium-router",
  "url",
  "yaml_serde",
 ]
@@ -2808,6 +2811,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "aws-lc-rs",
+ "axum 0.8.4",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -3638,12 +3642,6 @@ dependencies = [
  "prost 0.13.1",
  "tonic 0.12.3",
 ]
-
-[[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1b6902ff63b32ef6c489e8048c5e253e2e4a803ea3ea7e783914536eb15c52"
 
 [[package]]
 name = "opentelemetry_sdk"
@@ -5431,12 +5429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "str-buf"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceb97b7225c713c2fd4db0153cb6b3cab244eb37900c3f634ed4d43310d8c34"
-
-[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6169,17 +6161,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-caching-headers"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531cab8c8b475e6d575491d96178d8d0e1265b8fdb4cd27cc3b7db18a38d8eeb"
-dependencies = [
- "etag",
- "httpdate",
- "trillium",
-]
-
-[[package]]
 name = "trillium-client"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6209,15 +6190,6 @@ checksum = "683796aeee40649ad14ef91d90c4963ffeea3ff283edfb9b0ea750eea03c40c0"
 dependencies = [
  "cidr",
  "log",
- "trillium",
-]
-
-[[package]]
-name = "trillium-head"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc125c6f329f4c7d26688ebb551f84ad6e03460094dd2f03f06f35b292aee474"
-dependencies = [
  "trillium",
 ]
 
@@ -6263,30 +6235,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "trillium-opentelemetry"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b5e36d8e79ad6b8858715b9342b4d761d936dcd884f5680ecfb15c0076fa46a"
-dependencies = [
- "opentelemetry",
- "opentelemetry-semantic-conventions",
- "trillium",
- "trillium-macros 0.0.6",
-]
-
-[[package]]
-name = "trillium-prometheus"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
-dependencies = [
- "prometheus",
- "tracing",
- "trillium",
- "trillium-router",
 ]
 
 [[package]]
@@ -6369,7 +6317,6 @@ dependencies = [
  "trillium-http",
  "trillium-macros 0.0.6",
  "trillium-server-common",
- "trillium-tokio",
  "url",
 ]
 
@@ -7354,12 +7301,6 @@ dependencies = [
  "serde_json",
  "tempfile",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "927da81e25be1e1a2901d59b81b37dd2efd1fc9c9345a55007f09bf5a2d3ee03"
 
 [[package]]
 name = "yaml_serde"
