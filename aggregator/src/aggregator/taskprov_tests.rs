@@ -188,7 +188,11 @@ where
                 .add_duration(&task_duration)
                 .unwrap(),
         ))
-        .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
+        .with_report_expiry_age(
+            peer_aggregator
+                .report_expiry_age()
+                .map(|d| Duration::from_chrono(d, &time_precision)),
+        )
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(time_precision)
         .with_taskprov_task_info(task_config.task_info().to_vec())

@@ -860,6 +860,10 @@ impl<C: Clock> Aggregator<C> {
             .task_start()
             .add_duration(task_config.task_duration())?;
 
+        let report_expiry_age = peer_aggregator
+            .report_expiry_age()
+            .map(|a| Duration::from_chrono(a, task_config.time_precision()));
+
         let task = Arc::new(
             AggregatorTask::new(
                 *task_id,
@@ -869,7 +873,7 @@ impl<C: Clock> Aggregator<C> {
                 vdaf_verify_key,
                 Some(*task_config.task_start()),
                 Some(task_end),
-                peer_aggregator.report_expiry_age().cloned(),
+                report_expiry_age,
                 u64::from(*task_config.min_batch_size()),
                 *task_config.time_precision(),
                 /* tolerable clock skew */

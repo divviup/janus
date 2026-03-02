@@ -8,6 +8,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::aead::AES_128_GCM;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::TimeDelta;
 use clap::Parser;
 use itertools::Itertools;
 use janus_aggregator_api::git_revision;
@@ -22,12 +23,12 @@ use janus_core::{
     cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
     hpke::HpkeKeypair,
     initialize_rustls,
-    time::{Clock, RealClock},
+    time::{Clock, RealClock, TimeDeltaExt},
     vdaf_dispatch,
 };
 use janus_messages::{
-    AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
-    HpkeKemId, Role, TaskId,
+    AggregationJobId, CollectionJobId, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+    Role, TaskId,
     batch_mode::{LeaderSelected, TimeInterval},
     codec::Encode as _,
 };
@@ -154,9 +155,9 @@ enum Command {
         collector_hpke_config_file: PathBuf,
 
         /// The age after which reports are considered expired & will be deleted permanently from
-        /// the datastore, in time precision units.
+        /// the datastore, in seconds.
         #[arg(long)]
-        report_expiry_age_units: Option<u64>,
+        report_expiry_age_s: Option<u64>,
 
         /// The aggregator auth token, which must be in the format `bearer:value` or `dap:value`.
         #[arg(long, env = "AGGREGATOR_AUTH_TOKEN", hide_env_values = true)]
@@ -289,7 +290,7 @@ impl Command {
                 aggregation_mode,
                 verify_key_init,
                 collector_hpke_config_file,
-                report_expiry_age_units,
+                report_expiry_age_s,
                 aggregator_auth_token,
                 collector_auth_token,
             } => {
@@ -301,10 +302,6 @@ impl Command {
                 )
                 .await?;
 
-                // Parse flags into proper types.
-                let report_expiry_age =
-                    report_expiry_age_units.map(Duration::from_time_precision_units);
-
                 add_taskprov_peer_aggregator(
                     &datastore,
                     command_line_options.dry_run,
@@ -313,7 +310,7 @@ impl Command {
                     *aggregation_mode,
                     *verify_key_init,
                     collector_hpke_config_file,
-                    report_expiry_age,
+                    *report_expiry_age_s,
                     aggregator_auth_token,
                     collector_auth_token.as_ref(),
                 )
@@ -669,10 +666,13 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
     aggregation_mode: Option<AggregationMode>,
     verify_key_init: VerifyKeyInit,
     collector_hpke_config_file: &Path,
-    report_expiry_age: Option<Duration>,
+    report_expiry_age: Option<u64>,
     aggregator_auth_token: &AuthenticationToken,
     collector_auth_token: Option<&AuthenticationToken>,
 ) -> Result<()> {
+    let report_expiry_age = report_expiry_age
+        .map(TimeDelta::try_seconds_unsigned)
+        .transpose()?;
     let collector_hpke_config = {
         let bytes = fs::read(collector_hpke_config_file).await?;
         HpkeConfig::get_decoded(&bytes)?
@@ -1015,6 +1015,7 @@ mod tests {
 
     use aws_lc_rs::aead::{AES_128_GCM, UnboundKey};
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use chrono::TimeDelta;
     use clap::CommandFactory;
     use janus_aggregator_core::{
         datastore::{Datastore, models::HpkeKeyState, test_util::ephemeral_datastore},
@@ -1026,12 +1027,11 @@ mod tests {
         hpke::HpkeKeypair,
         initialize_rustls,
         test_util::{kubernetes, roundtrip_encoding},
-        time::RealClock,
+        time::{RealClock, TimeDeltaExt},
         vdaf::{VdafInstance, vdaf_dp_strategies},
     };
     use janus_messages::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
-        codec::Encode, taskprov::TimePrecision,
+        HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, codec::Encode,
     };
     use prio::codec::Decode;
     use rand::random;
@@ -1316,7 +1316,7 @@ mod tests {
         aggregation_mode: Option<AggregationMode>,
         verify_key_init: VerifyKeyInit,
         collector_hpke_config: &HpkeConfig,
-        report_expiry_age: Option<Duration>,
+        report_expiry_age: Option<u64>,
         aggregator_auth_token: &AuthenticationToken,
         collector_auth_token: Option<&AuthenticationToken>,
     ) {
@@ -1360,10 +1360,7 @@ mod tests {
         .unwrap()
         .config()
         .clone();
-        let report_expiry_age = Some(Duration::from_seconds(
-            3600,
-            &TimePrecision::from_seconds(1),
-        ));
+        let report_expiry_age = Some(3600);
         let aggregator_auth_token = random();
         let collector_auth_token = random();
 
@@ -1387,7 +1384,7 @@ mod tests {
             aggregation_mode,
             verify_key_init,
             collector_hpke_config,
-            report_expiry_age,
+            report_expiry_age.map(|d| TimeDelta::try_seconds_unsigned(d).unwrap()),
             Vec::from([aggregator_auth_token]),
             Vec::from([collector_auth_token]),
         )
@@ -1432,10 +1429,7 @@ mod tests {
             .unwrap()
             .config()
             .clone(),
-            Some(Duration::from_seconds(
-                3600,
-                &TimePrecision::from_seconds(1),
-            )),
+            Some(3600),
             &random(),
             Some(&random()),
         )

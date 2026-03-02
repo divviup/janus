@@ -7,6 +7,7 @@ use std::{
 use anyhow::Context;
 use aws_lc_rs::digest::{SHA256, digest};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::TimeDelta;
 use janus_aggregator_core::{
     SecretBytes,
     datastore::{
@@ -16,7 +17,11 @@ use janus_aggregator_core::{
     task::{AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
 };
-use janus_core::{auth_tokens::AuthenticationTokenHash, hpke::HpkeKeypair, time::Clock};
+use janus_core::{
+    auth_tokens::AuthenticationTokenHash,
+    hpke::HpkeKeypair,
+    time::{Clock, TimeDeltaExt},
+};
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
     batch_mode::Code as SupportedBatchMode,
@@ -467,7 +472,9 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         req.aggregation_mode,
         req.verify_key_init,
         req.collector_hpke_config,
-        req.report_expiry_age,
+        req.report_expiry_age
+            .map(|d| TimeDelta::try_seconds_unsigned(d).map_err(|e| Error::BadRequest(e.into())))
+            .transpose()?,
         req.aggregator_auth_tokens,
         req.collector_auth_tokens,
     )
