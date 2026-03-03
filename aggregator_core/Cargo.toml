@@ -29,7 +29,6 @@ base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 clap.workspace = true
-deadpool = { workspace = true, features = ["rt_tokio_1"] }
 deadpool-postgres = { workspace = true }
 educe.workspace = true
 futures = { workspace = true }

@@ -19,7 +19,6 @@ use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
 use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
-use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
 use janus_aggregator_api::git_revision;
@@ -118,7 +117,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
     let _ = (|| async { pool.get().await })
         .retry(backoff)
         .when(|error| match error {
-            PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
+            PoolError::Timeout(_) | PoolError::Backend(_) => {
                 debug!(?error, "transient error connecting to database");
                 true
             }

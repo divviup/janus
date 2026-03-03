@@ -411,7 +411,7 @@ impl EphemeralDatastoreBuilder {
         let cfg = Config::from_str(&connection_string).unwrap();
         let conn_mgr = Manager::new(cfg, NoTls);
         let pool = Pool::builder(conn_mgr)
-            .runtime(deadpool::Runtime::Tokio1)
+            .runtime(deadpool_postgres::Runtime::Tokio1)
             .timeouts(Timeouts {
                 wait: self.database_pool_wait_timeout,
                 create: self.database_pool_create_timeout,
