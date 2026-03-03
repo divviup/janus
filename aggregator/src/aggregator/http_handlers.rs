@@ -1,4 +1,9 @@
-use std::{collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration};
+use std::{
+    collections::VecDeque,
+    io::Cursor,
+    sync::Arc,
+    time::{Duration as StdDuration, Instant},
+};
 
 use anyhow::Context;
 use axum::{
@@ -17,7 +22,7 @@ use futures::{
 };
 use http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES,
+    BYTES_HISTOGRAM_BOUNDARIES, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
     taskprov::taskprov_task_id,
 };
@@ -36,7 +41,10 @@ use janus_messages::{
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
-use opentelemetry::metrics::{Counter, Meter};
+use opentelemetry::{
+    KeyValue,
+    metrics::{Counter, Histogram, Meter},
+};
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
@@ -311,10 +319,11 @@ impl IntoResponse for EmptyBody {
 }
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
-    "/tasks/:task_id/aggregation_jobs/:aggregation_job_id";
-pub(crate) static COLLECTION_JOB_ROUTE: &str = "/tasks/:task_id/collection_jobs/:collection_job_id";
+    "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}";
+pub(crate) static COLLECTION_JOB_ROUTE: &str =
+    "/tasks/{task_id}/collection_jobs/{collection_job_id}";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
-    "/tasks/:task_id/aggregate_shares/:aggregate_share_id";
+    "/tasks/{task_id}/aggregate_shares/{aggregate_share_id}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -329,7 +338,15 @@ pub struct HelperAggregationRequestQueue {
 /// Shared application state for the aggregator.
 pub struct AggregatorState<C: Clock> {
     pub aggregator: Arc<Aggregator<C>>,
-    pub response_counter: Counter<u64>,
+}
+
+/// HTTP server metrics, layered as an `Extension` on all routes.
+#[derive(Clone)]
+struct HttpMetrics {
+    response_counter: Counter<u64>,
+    request_duration: Histogram<f64>,
+    request_body_size: Histogram<f64>,
+    response_body_size: Histogram<f64>,
 }
 
 pub struct AggregatorHandlerBuilder<'a, C>
@@ -398,25 +415,40 @@ where
             .transpose()?
             .map(Arc::new);
 
-        let response_counter = self.meter
-            .u64_counter("janus_aggregator_responses")
-            .with_description(
-                "Count of requests handled by the aggregator, by method, route, and response status.",
-            )
-            .with_unit("{request}")
-            .build();
-
-        let request_duration_histogram = self
-            .meter
-            .f64_histogram("janus_http_request_duration")
-            .with_description("Duration of HTTP requests handled by the aggregator.")
-            .with_unit("s")
-            .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
-            .build();
+        let http_metrics = Arc::new(HttpMetrics {
+            response_counter: self
+                .meter
+                .u64_counter("janus_aggregator_responses")
+                .with_description(
+                    "Count of requests handled by the aggregator, by method, route, and response status.",
+                )
+                .with_unit("{request}")
+                .build(),
+            request_duration: self
+                .meter
+                .f64_histogram("http.server.request.duration")
+                .with_description("Duration of HTTP server requests.")
+                .with_unit("s")
+                .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+            request_body_size: self
+                .meter
+                .f64_histogram("http.server.request.body_size")
+                .with_description("Size of HTTP server request bodies.")
+                .with_unit("By")
+                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+            response_body_size: self
+                .meter
+                .f64_histogram("http.server.response.body_size")
+                .with_description("Size of HTTP server response bodies.")
+                .with_unit("By")
+                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+        });
 
         let state = Arc::new(AggregatorState {
             aggregator: Arc::clone(&self.aggregator),
-            response_counter: response_counter.clone(),
         });
 
         // CORS layers for public endpoints
@@ -438,7 +470,7 @@ where
         let router = Router::new()
             .route("/hpke_config", get(hpke_config::<C>).layer(hpke_cors))
             .route(
-                "/tasks/:task_id/reports",
+                "/tasks/{task_id}/reports",
                 post(upload::<C>).layer(upload_cors),
             )
             .route(
@@ -460,7 +492,8 @@ where
                     .get(aggregate_shares_get::<C>)
                     .delete(aggregate_shares_delete::<C>),
             )
-            .layer(middleware::from_fn(status_counter_middleware))
+            .layer(middleware::from_fn(http_metrics_middleware))
+            .layer(axum::Extension(http_metrics))
             .with_state(state);
 
         // If there's a helper queue, wrap the aggregation job routes with queue middleware
@@ -475,16 +508,29 @@ where
     }
 }
 
-/// Middleware that counts responses by method, route, and error code.
-async fn status_counter_middleware(request: Request<Body>, next: Next) -> Response {
+/// Middleware that records HTTP server metrics (response counter, request duration, body sizes).
+async fn http_metrics_middleware(
+    axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
     let method = request.method().to_string();
     let route = request
         .extensions()
         .get::<MatchedPath>()
-        .map(|p| p.as_str().to_string())
+        .map(|p| p.as_str().trim_start_matches('/').to_string())
         .unwrap_or_else(|| "unknown".to_string());
+    let request_body_size = request
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
 
+    let start = Instant::now();
     let response = next.run(request).await;
+    let duration = start.elapsed().as_secs_f64();
+    let status_code = response.status().as_u16().to_string();
 
     let error_code = response
         .extensions()
@@ -498,9 +544,44 @@ async fn status_counter_middleware(request: Request<Body>, next: Next) -> Respon
             }
         });
 
-    // Note: we'd need the counter from state here. For now this is a placeholder.
-    // The actual counter will be accessed through state.
-    let _ = (method, route, error_code);
+    let response_body_size = response
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    // janus_aggregator_responses counter
+    metrics.response_counter.add(
+        1,
+        &[
+            KeyValue::new("method", method.clone()),
+            KeyValue::new("route", route.clone()),
+            KeyValue::new("error_code", error_code),
+        ],
+    );
+
+    // http.server.request.duration histogram (OTel semantic conventions)
+    let mut duration_attrs = vec![
+        KeyValue::new("http.route", route.clone()),
+        KeyValue::new("http.request.method", method),
+        KeyValue::new("http.response.status_code", status_code),
+    ];
+    if !error_code.is_empty() {
+        duration_attrs.push(KeyValue::new("error.type", error_code));
+    }
+    metrics.request_duration.record(duration, &duration_attrs);
+
+    // http.server.request.body_size histogram
+    metrics.request_body_size.record(
+        request_body_size,
+        &[KeyValue::new("http.route", route.clone())],
+    );
+
+    // http.server.response.body_size histogram
+    metrics
+        .response_body_size
+        .record(response_body_size, &[KeyValue::new("http.route", route)]);
 
     response
 }
@@ -604,13 +685,17 @@ async fn upload<C: Clock>(
     headers: HeaderMap,
     Path(task_id): Path<String>,
     State(state): State<Arc<AggregatorState<C>>>,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, Error> {
     validate_content_type(&headers, UploadRequest::MEDIA_TYPE)?;
 
     let task_id: TaskId = task_id
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+
+    let body = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|_| Error::ClientDisconnected)?;
 
     let response = match state
         .aggregator

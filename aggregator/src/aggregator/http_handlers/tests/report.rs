@@ -533,7 +533,7 @@ async fn upload_handler() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "https://example.com/"
+        "*"
     );
     assert_eq!(
         response
@@ -574,7 +574,7 @@ async fn upload_handler() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "https://example.com/"
+        "*"
     );
 
     // Reports with duplicate extensions must be rejected

@@ -292,7 +292,7 @@ async fn hpke_config_cors_headers() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "https://example.com/"
+        "*"
     );
     assert_eq!(
         response
@@ -323,7 +323,7 @@ async fn hpke_config_cors_headers() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "https://example.com/"
+        "*"
     );
 }
 

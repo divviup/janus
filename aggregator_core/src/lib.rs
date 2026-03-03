@@ -133,6 +133,12 @@ pub const TIME_HISTOGRAM_BOUNDARIES: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
 ];
 
+/// These boundaries are intended to be used with measurements having the unit of "bytes".
+pub const BYTES_HISTOGRAM_BOUNDARIES: &[f64] = &[
+    1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
+    1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
+];
+
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use std::sync::Arc;
