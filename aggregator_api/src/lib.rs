@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use git_version::git_version;
-use http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
+use http::{HeaderValue, StatusCode, header::CONTENT_TYPE as CONTENT_TYPE_HEADER};
 use janus_aggregator_core::datastore::{self, Datastore};
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
@@ -31,7 +31,7 @@ pub struct Config {
 }
 
 /// Content type
-const CONTENT_TYPE_STR: &str = "application/vnd.janus.aggregator+json;version=0.1";
+pub const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
 
 /// These boundaries are intended to be used with measurements having the unit of "bytes".
 pub const BYTES_HISTOGRAM_BOUNDARIES: &[f64] = &[
@@ -61,17 +61,17 @@ pub fn aggregator_api_handler<C: Clock>(
         .route("/task_ids", get(get_task_ids::<C>))
         .route("/tasks", post(post_task::<C>))
         .route(
-            "/tasks/:task_id",
+            "/tasks/{task_id}",
             get(get_task::<C>)
                 .patch(patch_task::<C>)
                 .delete(delete_task::<C>),
         )
         .route(
-            "/tasks/:task_id/metrics/uploads",
+            "/tasks/{task_id}/metrics/uploads",
             get(get_task_upload_metrics::<C>),
         )
         .route(
-            "/tasks/:task_id/metrics/aggregations",
+            "/tasks/{task_id}/metrics/aggregations",
             get(get_task_aggregation_metrics::<C>),
         )
         .route(
@@ -79,7 +79,7 @@ pub fn aggregator_api_handler<C: Clock>(
             get(get_hpke_configs::<C>).put(put_hpke_config::<C>),
         )
         .route(
-            "/hpke_configs/:config_id",
+            "/hpke_configs/{config_id}",
             get(get_hpke_config::<C>)
                 .patch(patch_hpke_config::<C>)
                 .delete(delete_hpke_config::<C>),
@@ -122,24 +122,35 @@ async fn auth_check<C: Clock>(
 /// Middleware that validates and replaces Content-Type/Accept headers.
 async fn replace_mime_types<C: Clock>(
     State(_state): State<Arc<ApiState<C>>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let headers = request.headers();
 
     // Content-Type should either be the versioned API, or nothing for GET/DELETE
-    let content_type = headers.get(CONTENT_TYPE).map(|v| v.to_str().unwrap_or(""));
+    let content_type = headers
+        .get(CONTENT_TYPE_HEADER)
+        .map(|v| v.to_str().unwrap_or(""));
     match content_type {
-        Some(CONTENT_TYPE_STR) | None => {}
+        Some(CONTENT_TYPE) => {
+            // Replace the versioned API content-type with application/json so axum's
+            // Json extractor can parse request bodies.
+            request.headers_mut().insert(
+                CONTENT_TYPE_HEADER,
+                HeaderValue::from_static("application/json"),
+            );
+        }
+        None => {}
         Some(_) => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
     }
 
     // Accept should always be the versioned API
-    let accept = headers
+    let accept = request
+        .headers()
         .get(http::header::ACCEPT)
         .map(|v| v.to_str().unwrap_or(""));
     match accept {
-        Some(CONTENT_TYPE_STR) => {}
+        Some(CONTENT_TYPE) => {}
         _ => return StatusCode::NOT_ACCEPTABLE.into_response(),
     }
 
@@ -148,7 +159,7 @@ async fn replace_mime_types<C: Clock>(
     // API responses should always have versioned API content type
     response
         .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE_STR));
+        .insert(CONTENT_TYPE_HEADER, HeaderValue::from_static(CONTENT_TYPE));
 
     response
 }

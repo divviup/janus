@@ -451,13 +451,6 @@ pub mod test_util {
         }
     }
 
-    impl WithAuthenticationToken for trillium_testing::TestConn {
-        fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication();
-            self.with_request_header(header, value)
-        }
-    }
-
     /// Extension trait to fluently match on authentication tokens with a [`mockito::Mock`].
     pub trait MatchAuthenticationToken {
         /// Matches on requests which include a header and value matching

@@ -1,8 +1,10 @@
 use std::{iter, sync::Arc};
 
 use assert_matches::assert_matches;
+use axum::body::Body;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::future::try_join_all;
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     SecretBytes,
     datastore::{
@@ -31,11 +33,8 @@ use janus_messages::{
 };
 use rand::{Rng, distr::StandardUniform, random, rng};
 use serde_test::{Token, assert_ser_tokens, assert_tokens};
-use trillium::{Handler, Status};
-use trillium_testing::{
-    Url, assert_body_contains, assert_response, assert_status,
-    prelude::{delete, get, patch, post, put},
-};
+use tower::ServiceExt;
+use url::Url;
 
 use crate::{
     CONTENT_TYPE, Config, aggregator_api_handler,
@@ -48,7 +47,7 @@ use crate::{
 
 const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";
 
-async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<MockClock>>) {
+async fn setup_api_test() -> (axum::Router, EphemeralDatastore, Arc<Datastore<MockClock>>) {
     install_test_trace_subscriber();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
@@ -69,22 +68,35 @@ async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<Mo
 #[tokio::test]
 async fn get_config() {
     let (handler, ..) = setup_api_test().await;
-    let mut conn = get("/")
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
-    assert_body_contains!(
-        conn,
-        concat!(
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        body.contains(concat!(
             r#""protocol":"DAP-16","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""batch_modes":["TimeInterval","LeaderSelected"],"#,
             r#""features":["TokenHash","UploadMetrics","TimeBucketedLeaderSelected","#,
             r#""PureDpDiscreteLaplace","AggregationJobMetrics"],"#,
             r#""software_name":"Janus","software_version":""#,
-        )
+        )),
+        "{body}"
     );
 }
 
@@ -127,64 +139,91 @@ async fn get_task_ids() {
     }
 
     // Verify: we can get the task IDs we wrote back from the API.
-    assert_response!(
-        get("/task_ids")
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
-        response_for(&task_ids),
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/task_ids")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body, response_for(&task_ids).as_bytes());
 
     // Verify: the lower_bound is respected, if specified.
-    assert_response!(
-        get(format!(
-            "/task_ids?pagination_token={}",
-            task_ids.first().unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::Ok,
-        response_for(&task_ids[1..]),
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/task_ids?pagination_token={}",
+                task_ids.first().unwrap()
+            ))
+            .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+            .header("accept", CONTENT_TYPE)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body, response_for(&task_ids[1..]).as_bytes());
 
     // Verify: if the lower bound is large enough, nothing is returned.
     // (also verifies the "last" response will not include a pagination token)
-    assert_response!(
-        get(format!(
-            "/task_ids?pagination_token={}",
-            task_ids.last().unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::Ok,
-        response_for(&[]),
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/task_ids?pagination_token={}",
+                task_ids.last().unwrap()
+            ))
+            .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+            .header("accept", CONTENT_TYPE)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body, response_for(&[]).as_bytes());
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        get("/task_ids")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/task_ids")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     // Verify: requests without the Accept header are denied.
-    assert_response!(
-        get("/task_ids")
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .run_async(&handler)
-            .await,
-        Status::NotAcceptable,
-        ""
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/task_ids")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
@@ -216,16 +255,19 @@ async fn post_task_bad_role() {
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
-    assert_response!(
-        post("/tasks")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -257,16 +299,19 @@ async fn post_task_unauthorized() {
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
-    assert_response!(
-        post("/tasks")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            // no Authorization header
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                // no Authorization header
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// Test the POST /tasks endpoint, with a helper task with no optional fields defined
@@ -298,19 +343,21 @@ async fn post_task_helper_no_optional_fields() {
         aggregator_auth_token: None,
         collector_auth_token_hash: None,
     };
-    let mut conn = post("/tasks")
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let mut got_task_resp: TaskResp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -386,16 +433,19 @@ async fn post_task_helper_with_aggregator_auth_token() {
         aggregator_auth_token: Some(aggregator_auth_token),
         collector_auth_token_hash: None,
     };
-    assert_response!(
-        post("/tasks")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -431,19 +481,21 @@ async fn post_task_idempotence() {
     };
 
     let post_task = || async {
-        let mut conn = post("/tasks")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await;
-        assert_status!(conn, Status::Ok);
+        let response = handler
+            .clone()
+            .oneshot(
+                Request::post("/tasks")
+                    .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                    .header("accept", CONTENT_TYPE)
+                    .header("content-type", CONTENT_TYPE)
+                    .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         serde_json::from_slice::<TaskResp>(
-            &conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap(),
         )
@@ -469,14 +521,19 @@ async fn post_task_idempotence() {
 
     // Mutate the PostTaskReq and re-send it.
     req.min_batch_size = 332;
-    let conn = post("/tasks")
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Conflict);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 /// Test the POST /tasks endpoint, with a leader task with all of the optional fields provided.
@@ -510,19 +567,21 @@ async fn post_task_leader_all_optional_fields() {
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
         collector_auth_token_hash: Some(collector_auth_token_hash.clone()),
     };
-    let mut conn = post("/tasks")
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let got_task_resp: TaskResp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -597,16 +656,19 @@ async fn post_task_leader_no_aggregator_auth_token() {
         collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
 
-    assert_response!(
-        post("/tasks")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/tasks")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[rstest::rstest]
@@ -630,17 +692,20 @@ async fn get_task(#[case] role: Role) {
 
     // Verify: getting the task returns the expected result.
     let want_task_resp = TaskResp::try_from(&task).unwrap();
-    let mut conn = get(format!("/tasks/{}", task.id()))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}", task.id()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let got_task_resp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -648,25 +713,31 @@ async fn get_task(#[case] role: Role) {
     assert_eq!(want_task_resp, got_task_resp);
 
     // Verify: getting a nonexistent task returns NotFound.
-    assert_response!(
-        get(format!("/tasks/{}", random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NotFound,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}", random::<TaskId>()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        get(format!("/tasks/{}", task.id()))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}", task.id()))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -695,15 +766,18 @@ async fn delete_task() {
         .unwrap();
 
     // Verify: deleting a task succeeds (and actually deletes the task).
-    assert_response!(
-        delete(format!("/tasks/{}", &task_id))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete(format!("/tasks/{}", &task_id))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
@@ -715,36 +789,45 @@ async fn delete_task() {
     .unwrap();
 
     // Verify: deleting a task twice returns NoContent.
-    assert_response!(
-        delete(format!("/tasks/{}", &task_id))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete(format!("/tasks/{}", &task_id))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Verify: deleting an arbitrary nonexistent task ID returns NoContent.
-    assert_response!(
-        delete(format!("/tasks/{}", &random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete(format!("/tasks/{}", &random::<TaskId>()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        delete(format!("/tasks/{}", &task_id))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        ""
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete(format!("/tasks/{}", &task_id))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[rstest::rstest]
@@ -772,18 +855,21 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with empty body does nothing.
     let want_task_resp = TaskResp::try_from(&task).unwrap();
-    let mut conn = patch(format!("/tasks/{}", task.id()))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body("{}")
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/tasks/{}", task.id()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let got_task_resp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -799,18 +885,21 @@ async fn patch_task(#[case] role: Role) {
     );
 
     // Verify: patching the task with a null task end time returns the expected result.
-    let mut conn = patch(format!("/tasks/{task_id}"))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body(r#"{"task_end": null}"#)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/tasks/{task_id}"))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(r#"{"task_end": null}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let got_task_resp: TaskResp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -824,18 +913,21 @@ async fn patch_task(#[case] role: Role) {
 
     // Verify: patching the task with a task end time returns the expected result.
     let expected_time = Some(Time::from_seconds_since_epoch(2000, &time_precision));
-    let mut conn = patch(format!("/tasks/{task_id}"))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_body(r#"{"task_end": 20}"#)
-        .run_async(&handler)
-        .await;
-    assert_status!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/tasks/{task_id}"))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(r#"{"task_end": 20}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let got_task_resp: TaskResp = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -848,27 +940,33 @@ async fn patch_task(#[case] role: Role) {
     assert_eq!(task.unwrap().task_end(), expected_time.as_ref());
 
     // Verify: patching a nonexistent task returns NotFound.
-    assert_response!(
-        patch(format!("/tasks/{}", random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_body("{}")
-            .run_async(&handler)
-            .await,
-        Status::NotFound,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/tasks/{}", random::<TaskId>()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        patch(format!("/tasks/{task_id}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_body("{}")
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/tasks/{task_id}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -895,14 +993,26 @@ async fn get_task_upload_metrics() {
         .unwrap();
 
     // Verify: requesting metrics on a fresh task returns zeroes.
-    assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
-        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::default())).unwrap(),
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body,
+        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::default()))
+            .unwrap()
+            .as_bytes()
     );
 
     // Verify: requesting metrics on a task returns the correct result.
@@ -915,39 +1025,56 @@ async fn get_task_upload_metrics() {
     })
     .await
     .unwrap();
-    assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body,
         serde_json::to_string(&GetTaskUploadMetricsResp(
             TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 22, 12, 0)
         ))
-        .unwrap(),
+        .unwrap()
+        .as_bytes()
     );
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
-    assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NotFound,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        get(format!("/tasks/{}/metrics/uploads", &task_id))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{}/metrics/uploads", &task_id))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -974,17 +1101,28 @@ async fn get_task_aggregation_metrics() {
         .unwrap();
 
     // Verify: requesting metrics on a fresh task returns zeroes.
-    assert_response!(
-        get(format!("/tasks/{task_id}/metrics/aggregations"))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{task_id}/metrics/aggregations"))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body,
         serde_json::to_string(&GetTaskAggregationMetricsResp(
             TaskAggregationCounter::default()
         ))
-        .unwrap(),
+        .unwrap()
+        .as_bytes()
     );
 
     // Verify: requesting metrics on a task returns the correct result.
@@ -999,62 +1137,82 @@ async fn get_task_aggregation_metrics() {
     })
     .await
     .unwrap();
-    assert_response!(
-        get(format!("/tasks/{task_id}/metrics/aggregations"))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{task_id}/metrics/aggregations"))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        body,
         serde_json::to_string(&GetTaskAggregationMetricsResp(
             TaskAggregationCounter::default()
                 .with_success(15)
                 .with_helper_hpke_decrypt_failure(100)
         ))
-        .unwrap(),
+        .unwrap()
+        .as_bytes()
     );
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
-    assert_response!(
-        get(format!(
-            "/tasks/{}/metrics/aggregations",
-            &random::<TaskId>()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::NotFound,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/tasks/{}/metrics/aggregations",
+                &random::<TaskId>()
+            ))
+            .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+            .header("accept", CONTENT_TYPE)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        get(format!("/tasks/{task_id}/metrics/aggregations"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(format!("/tasks/{task_id}/metrics/aggregations"))
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn get_hpke_configs() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let mut conn = get("/hpke_configs")
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/hpke_configs")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let resp: Vec<HpkeConfigResp> = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -1084,18 +1242,21 @@ async fn get_hpke_configs() {
     .await
     .unwrap();
 
-    let mut conn = get("/hpke_configs")
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/hpke_configs")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let mut resp: Vec<HpkeConfigResp> = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -1117,14 +1278,17 @@ async fn get_hpke_configs() {
     assert_eq!(resp, expected);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        put("/hpke_configs")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::put("/hpke_configs")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1132,36 +1296,47 @@ async fn get_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     // Verify: non-existent key.
-    assert_response!(
-        get("/hpke_configs/123")
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NotFound
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/hpke_configs/123")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: overflow u8.
-    assert_response!(
-        get("/hpke_configs/1234310294")
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/hpke_configs/1234310294")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        put("/hpke_configs/123")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::put("/hpke_configs/123")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     let keypair1_id: u8 = random();
     let keypair1 = HpkeKeypair::test_with_id(HpkeConfigId::from(keypair1_id));
@@ -1190,18 +1365,21 @@ async fn get_hpke_config() {
         (keypair1, HpkeKeyState::Pending),
         (keypair2, HpkeKeyState::Active),
     ] {
-        let mut conn = get(format!("/hpke_configs/{}", key.config().id()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await;
-        assert_response!(conn, Status::Ok);
+        let response = handler
+            .clone()
+            .oneshot(
+                Request::get(format!("/hpke_configs/{}", key.config().id()))
+                    .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                    .header("accept", CONTENT_TYPE)
+                    .header("content-type", CONTENT_TYPE)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         let resp: HpkeConfigResp = serde_json::from_slice(
-            &conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap(),
         )
@@ -1221,20 +1399,21 @@ async fn put_hpke_config() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     // No custom parameters.
-    let mut key1_resp = put("/hpke_configs")
-        .with_request_body("{}")
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-
-    assert_response!(key1_resp, Status::Created);
+    let key1_response = handler
+        .clone()
+        .oneshot(
+            Request::put("/hpke_configs")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(key1_response.status(), StatusCode::CREATED);
     let key1: HpkeConfigResp = serde_json::from_slice(
-        &key1_resp
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(key1_response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -1246,20 +1425,21 @@ async fn put_hpke_config() {
         kdf_id: Some(HpkeKdfId::HkdfSha512),
         aead_id: Some(HpkeAeadId::ChaCha20Poly1305),
     };
-    let mut key2_resp = put("/hpke_configs")
-        .with_request_body(serde_json::to_vec(&key2_req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-
-    assert_response!(key1_resp, Status::Created);
+    let key2_response = handler
+        .clone()
+        .oneshot(
+            Request::put("/hpke_configs")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&key2_req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(key2_response.status(), StatusCode::CREATED);
     let key2: HpkeConfigResp = serde_json::from_slice(
-        &key2_resp
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(key2_response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -1296,14 +1476,17 @@ async fn put_hpke_config() {
     );
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        put("/hpke_configs")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::put("/hpke_configs")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1315,51 +1498,62 @@ async fn patch_hpke_config() {
     };
 
     // Verify: non-existent key.
-    assert_response!(
-        patch("/hpke_configs/123")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NotFound
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch("/hpke_configs/123")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify: overflow u8.
-    assert_response!(
-        patch("/hpke_configs/1234310294")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch("/hpke_configs/1234310294")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Verify: invalid body.
-    assert_response!(
-        patch("/hpke_configs/1234310294")
-            .with_request_body("{}")
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::UnprocessableEntity
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch("/hpke_configs/1234310294")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        patch("/hpke_configs/123")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch("/hpke_configs/123")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
@@ -1369,14 +1563,19 @@ async fn patch_hpke_config() {
     .await
     .unwrap();
 
-    let conn = patch(format!("/hpke_configs/{}", keypair.config().id()))
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::patch(format!("/hpke_configs/{}", keypair.config().id()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     let got_key = ds
         .run_unnamed_tx(|tx| {
@@ -1398,39 +1597,47 @@ async fn delete_hpke_config() {
     };
 
     // Verify: non-existent key.
-    assert_response!(
-        delete("/hpke_configs/123")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/hpke_configs/123")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Verify: overflow u8.
-    assert_response!(
-        delete("/hpke_configs/1234310294")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::BadRequest
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/hpke_configs/1234310294")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        delete("/hpke_configs/123")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/hpke_configs/123")
+                .header("accept", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     let keypair = HpkeKeypair::test();
     ds.run_unnamed_tx(|tx| {
@@ -1440,13 +1647,19 @@ async fn delete_hpke_config() {
     .await
     .unwrap();
 
-    let conn = delete(format!("/hpke_configs/{}", keypair.config().id()))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::NoContent);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete(format!("/hpke_configs/{}", keypair.config().id()))
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     assert_eq!(
         ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_hpke_keypairs().await }))
@@ -1484,18 +1697,21 @@ async fn get_taskprov_peer_aggregator() {
     .unwrap();
 
     // List all.
-    let mut conn = get("/taskprov/peer_aggregators")
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::Ok);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/taskprov/peer_aggregators")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let mut resp: Vec<TaskprovPeerAggregatorResp> = serde_json::from_slice(
-        &conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap(),
     )
@@ -1521,14 +1737,18 @@ async fn get_taskprov_peer_aggregator() {
     assert_eq!(resp, expected);
 
     // Missing authorization.
-    assert_response!(
-        get("/taskprov/peer_aggregators")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/taskprov/peer_aggregators")
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1553,20 +1773,22 @@ async fn post_taskprov_peer_aggregator() {
         collector_auth_tokens: Vec::from(leader.collector_auth_tokens()),
     };
 
-    let mut conn = post("/taskprov/peer_aggregators")
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await;
-    assert_response!(conn, Status::Created);
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/taskprov/peer_aggregators")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
         serde_json::from_slice::<TaskprovPeerAggregatorResp>(
-            &conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap(),
         )
@@ -1584,27 +1806,33 @@ async fn post_taskprov_peer_aggregator() {
     );
 
     // Can't insert the same aggregator.
-    assert_response!(
-        post("/taskprov/peer_aggregators")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Conflict
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/taskprov/peer_aggregators")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 
     // Missing authorization.
-    assert_response!(
-        post("/taskprov/peer_aggregators")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::post("/taskprov/peer_aggregators")
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1631,16 +1859,19 @@ async fn delete_taskprov_peer_aggregator() {
     };
 
     // Delete target.
-    assert_response!(
-        delete("/taskprov/peer_aggregators")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/taskprov/peer_aggregators")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(serde_json::to_vec(&req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     assert_eq!(
         ds.run_unnamed_tx(|tx| {
@@ -1652,32 +1883,39 @@ async fn delete_taskprov_peer_aggregator() {
     );
 
     // Non-existent target.
-    assert_response!(
-        delete("/taskprov/peer_aggregators")
-            .with_request_body(
-                serde_json::to_vec(&DeleteTaskprovPeerAggregatorReq {
-                    endpoint: Url::parse("https://doesnt-exist.example.com/").unwrap(),
-                    peer_role: Role::Leader,
-                })
-                .unwrap()
-            )
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NoContent
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/taskprov/peer_aggregators")
+                .header("authorization", format!("Bearer {AUTH_TOKEN}"))
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::from(
+                    serde_json::to_vec(&DeleteTaskprovPeerAggregatorReq {
+                        endpoint: Url::parse("https://doesnt-exist.example.com/").unwrap(),
+                        peer_role: Role::Leader,
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Missing authorization.
-    assert_response!(
-        delete("/taskprov/peer_aggregators")
-            .with_request_header("Accept", CONTENT_TYPE)
-            .with_request_header("Content-Type", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized
-    );
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::delete("/taskprov/peer_aggregators")
+                .header("accept", CONTENT_TYPE)
+                .header("content-type", CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[test]

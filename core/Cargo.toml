@@ -28,8 +28,6 @@ test-util = [
     "dep:tokio-stream",
     "dep:tracing-log",
     "dep:tracing-subscriber",
-    "dep:trillium",
-    "dep:trillium-testing",
     "janus_messages/test-util",
     "kube/ws",
     "prio/test-util",
@@ -80,8 +78,6 @@ tracing = { workspace = true }
 tracing-log = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"], optional = true }
 axum = { workspace = true, optional = true }
-trillium = { workspace = true, optional = true }
-trillium-testing = { workspace = true, optional = true }
 url = { workspace = true }
 
 [dev-dependencies]

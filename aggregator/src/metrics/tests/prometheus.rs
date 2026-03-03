@@ -1,7 +1,8 @@
 use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
 
+use axum::body::Body;
 use backon::BackoffBuilder;
-use http::StatusCode;
+use http::{Request, StatusCode};
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
     retries::{retry_http_request, test_util::test_http_request_exponential_backoff},
@@ -13,8 +14,6 @@ use prometheus::{
     Registry,
     proto::{Metric, MetricType},
 };
-use axum::body::Body;
-use http::Request;
 use tower::ServiceExt;
 
 use crate::{

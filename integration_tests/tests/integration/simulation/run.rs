@@ -9,7 +9,9 @@ use std::{
 use chrono::TimeDelta;
 use educe::Educe;
 use futures::future::join_all;
-use janus_aggregator::{aggregator, metrics::test_util::InMemoryMetricInfrastructure};
+use janus_aggregator::{
+    aggregator, binary_utils::Stopper, metrics::test_util::InMemoryMetricInfrastructure,
+};
 use janus_aggregator_core::{
     datastore::models::AggregatorRole,
     task::{AggregatorTask, test_util::Task},
@@ -29,7 +31,6 @@ use prio::vdaf::prio3::{Prio3, Prio3Histogram, optimal_chunk_length};
 use quickcheck::TestResult;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, info, info_span, warn};
-use janus_aggregator::binary_utils::Stopper;
 
 use crate::simulation::{
     START_TIME,

@@ -607,7 +607,9 @@ fn initialize_rayon(stack_size: Option<usize>) -> Result<(), ThreadPoolBuildErro
 mod tests {
     use std::fs;
 
+    use axum::body::Body;
     use clap::CommandFactory;
+    use http::{Request, StatusCode};
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
     use janus_core::test_util::{
         install_test_trace_subscriber,
@@ -615,10 +617,8 @@ mod tests {
     };
     use opentelemetry_sdk::metrics::data::Gauge;
     use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
-    use tracing_subscriber::{EnvFilter, reload};
-    use axum::body::Body;
-    use http::{Request, StatusCode};
     use tower::ServiceExt;
+    use tracing_subscriber::{EnvFilter, reload};
 
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,

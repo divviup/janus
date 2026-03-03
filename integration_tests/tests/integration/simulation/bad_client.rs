@@ -3,7 +3,9 @@ use std::{net::Ipv4Addr, sync::Arc};
 use assert_matches::assert_matches;
 use backon::BackoffBuilder;
 use http::header::CONTENT_TYPE;
-use janus_aggregator::aggregator::http_handlers::AggregatorHandlerBuilder;
+use janus_aggregator::{
+    aggregator::http_handlers::AggregatorHandlerBuilder, binary_utils::Stopper,
+};
 use janus_aggregator_core::{
     datastore::{
         models::HpkeKeyState, task_counters::TaskUploadCounter, test_util::ephemeral_datastore,
@@ -39,7 +41,6 @@ use prio::{
 };
 use rand::{Rng, distr::StandardUniform, random, rng};
 use tokio::net::TcpListener;
-use janus_aggregator::binary_utils::Stopper;
 use url::Url;
 
 use crate::simulation::{http_request_exponential_backoff, run::MAX_REPORTS};

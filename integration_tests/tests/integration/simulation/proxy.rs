@@ -18,20 +18,22 @@ pub(super) fn wrap_with_fault_injection(router: Router) -> (Router, FaultInjecto
 
     let eb = Arc::clone(&error_before);
     let ea = Arc::clone(&error_after);
-    let wrapped = router.layer(middleware::from_fn(move |request: Request, next: middleware::Next| {
-        let eb = Arc::clone(&eb);
-        let ea = Arc::clone(&ea);
-        async move {
-            if *eb.lock().unwrap() {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    let wrapped = router.layer(middleware::from_fn(
+        move |request: Request, next: middleware::Next| {
+            let eb = Arc::clone(&eb);
+            let ea = Arc::clone(&ea);
+            async move {
+                if *eb.lock().unwrap() {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                let response = next.run(request).await;
+                if *ea.lock().unwrap() {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                response
             }
-            let response = next.run(request).await;
-            if *ea.lock().unwrap() {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            response
-        }
-    }));
+        },
+    ));
 
     (wrapped, controller)
 }
@@ -68,39 +70,41 @@ pub(super) fn wrap_with_inspect(router: Router) -> (Router, InspectMonitor) {
         failure: Arc::clone(&failure),
     };
 
-    let wrapped = router.layer(middleware::from_fn(move |request: Request, next: middleware::Next| {
-        let failure = Arc::clone(&failure);
-        let is_aggregate_shares = request.uri().path().ends_with("/aggregate_shares");
-        async move {
-            let response = next.run(request).await;
-            let status = response.status();
+    let wrapped = router.layer(middleware::from_fn(
+        move |request: Request, next: middleware::Next| {
+            let failure = Arc::clone(&failure);
+            let is_aggregate_shares = request.uri().path().ends_with("/aggregate_shares");
+            async move {
+                let response = next.run(request).await;
+                let status = response.status();
 
-            if status.is_server_error() {
-                error!(?status, "server error");
-                *failure.lock().unwrap() = true;
-            }
-            if status == StatusCode::CONFLICT {
-                error!("409 Conflict response");
-                *failure.lock().unwrap() = true;
-            }
-            if is_aggregate_shares {
-                // Collect the body to inspect it, then reconstruct the response
-                let (parts, body) = response.into_parts();
-                let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
-                    .await
-                    .unwrap_or_default();
-                static REGEX: LazyLock<Regex> = LazyLock::new(|| {
-                    Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
-                });
-                if REGEX.is_match(&bytes) {
-                    error!("batch mismatch response");
+                if status.is_server_error() {
+                    error!(?status, "server error");
                     *failure.lock().unwrap() = true;
                 }
-                return http::Response::from_parts(parts, Body::from(bytes)).into_response();
+                if status == StatusCode::CONFLICT {
+                    error!("409 Conflict response");
+                    *failure.lock().unwrap() = true;
+                }
+                if is_aggregate_shares {
+                    // Collect the body to inspect it, then reconstruct the response
+                    let (parts, body) = response.into_parts();
+                    let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
+                        .await
+                        .unwrap_or_default();
+                    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+                        Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
+                    });
+                    if REGEX.is_match(&bytes) {
+                        error!("batch mismatch response");
+                        *failure.lock().unwrap() = true;
+                    }
+                    return http::Response::from_parts(parts, Body::from(bytes)).into_response();
+                }
+                response
             }
-            response
-        }
-    }));
+        },
+    ));
 
     (wrapped, monitor)
 }

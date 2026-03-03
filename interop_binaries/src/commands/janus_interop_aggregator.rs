@@ -161,9 +161,7 @@ async fn add_task_endpoint(
     }
 }
 
-async fn ready_endpoint(
-    State(state): State<InteropAggregatorState>,
-) -> impl IntoResponse {
+async fn ready_endpoint(State(state): State<InteropAggregatorState>) -> impl IntoResponse {
     let client = reqwest::Client::new();
     for peer in &state.health_check_peers {
         if client.get(peer.as_str()).send().await.is_err() {
@@ -173,9 +171,7 @@ async fn ready_endpoint(
     Json(json!({})).into_response()
 }
 
-async fn endpoint_for_task(
-    State(state): State<InteropAggregatorState>,
-) -> impl IntoResponse {
+async fn endpoint_for_task(State(state): State<InteropAggregatorState>) -> impl IntoResponse {
     Json(EndpointResponse {
         status: "success",
         endpoint: state.dap_serving_prefix.clone(),
@@ -187,7 +183,11 @@ async fn proxy_handler(
     State(state): State<InteropAggregatorState>,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    let path = request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
     let url = format!("{}{path}", state.proxy_url);
 
     let method = request.method().clone();
@@ -249,18 +249,13 @@ fn make_handler(
     // Build routes for the test API
     let test_routes = Router::new()
         .route("/internal/test/ready", post(ready_endpoint))
-        .route(
-            "/internal/test/endpoint_for_task",
-            post(endpoint_for_task),
-        )
+        .route("/internal/test/endpoint_for_task", post(endpoint_for_task))
         .route("/internal/test/add_task", post(add_task_endpoint));
 
     // Build the proxy fallback for DAP requests
     let proxy_routes = Router::new().fallback(proxy_handler);
 
-    test_routes
-        .merge(proxy_routes)
-        .with_state(state)
+    test_routes.merge(proxy_routes).with_state(state)
 }
 
 #[derive(Debug, Parser)]

@@ -52,7 +52,6 @@ use prio::{
 };
 use rand::random;
 use tokio::time::timeout;
-use crate::binary_utils::Stopper;
 
 use crate::{
     aggregator::{
@@ -63,7 +62,7 @@ use crate::{
             assert_task_aggregation_counter, generate_helper_report_share,
         },
     },
-    binary_utils::job_driver::JobDriver,
+    binary_utils::{Stopper, job_driver::JobDriver},
     cache::HpkeKeypairCache,
 };
 

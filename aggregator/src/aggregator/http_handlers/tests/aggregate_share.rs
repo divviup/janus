@@ -1,5 +1,7 @@
 use assert_matches::assert_matches;
+use axum::{Router, body::Body};
 use futures::future::try_join_all;
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
     datastore::models::{BatchAggregation, BatchAggregationState},
@@ -26,11 +28,7 @@ use prio::{
     vdaf::dummy,
 };
 use serde_json::json;
-use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{
-    TestConn, assert_headers,
-    prelude::{delete, get, put},
-};
+use tower::ServiceExt;
 
 use crate::aggregator::{
     error::BatchMismatch,
@@ -41,20 +39,24 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,
     request: &AggregateShareReq<B>,
     aggregate_share_id: &AggregateShareId,
-    handler: &impl Handler,
-) -> TestConn {
-    put(task
-        .aggregate_shares_uri(aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_authentication_token(task.aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateShareReq::<B>::MEDIA_TYPE,
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(handler)
-    .await
+    handler: &Router,
+) -> http::Response<Body> {
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(task.aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            task.aggregate_shares_uri(aggregate_share_id)
+                .unwrap()
+                .path(),
+        )
+        .header("content-type", AggregateShareReq::<B>::MEDIA_TYPE)
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    handler.clone().oneshot(req).await.unwrap()
 }
 
 #[tokio::test]
@@ -85,7 +87,7 @@ async fn aggregate_share_request_to_leader() {
         ReportIdChecksum::default(),
     );
 
-    let mut test_conn = put_aggregate_share_request(
+    let mut response = put_aggregate_share_request(
         &task,
         &request,
         &AggregateShareId::from([0u8; 16]),
@@ -93,11 +95,11 @@ async fn aggregate_share_request_to_leader() {
     )
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             "title": "An endpoint received a message with an unknown task ID.",
             "taskid": format!("{}", task.id()),
@@ -143,7 +145,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
 
     // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
     // small.)
-    let mut test_conn = put_aggregate_share_request(
+    let mut response = put_aggregate_share_request(
         &task,
         &request,
         &AggregateShareId::from([0u8; 16]),
@@ -151,11 +153,11 @@ async fn aggregate_share_request_invalid_batch_interval() {
     )
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
             "title": "The batch implied by the query is invalid.",
             "taskid": format!("{}", task.id()),
@@ -163,7 +165,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     );
 
     // Test that a request for a too-old batch fails.
-    let test_conn = put_aggregate_share_request(
+    let response = put_aggregate_share_request(
         &task,
         &AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -178,7 +180,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     )
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -211,7 +213,7 @@ async fn aggregate_share_request() {
         ReportIdChecksum::default(),
     );
 
-    let mut test_conn = put_aggregate_share_request(
+    let mut response = put_aggregate_share_request(
         &task,
         &request,
         &AggregateShareId::from([0u8; 16]),
@@ -219,11 +221,11 @@ async fn aggregate_share_request() {
     )
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
             "taskid": format!("{}", task.id()),
@@ -351,7 +353,7 @@ async fn aggregate_share_request() {
         5,
         ReportIdChecksum::default(),
     );
-    let mut test_conn = put_aggregate_share_request(
+    let mut response = put_aggregate_share_request(
         &task,
         &request,
         &AggregateShareId::from([0u8; 16]),
@@ -359,11 +361,11 @@ async fn aggregate_share_request() {
     )
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
             "taskid": format!("{}", task.id()),
@@ -413,7 +415,7 @@ async fn aggregate_share_request() {
             expected_report_count: interval_3_report_count + interval_4_report_count,
         },
     ] {
-        let mut test_conn = put_aggregate_share_request(
+        let mut response = put_aggregate_share_request(
             &task,
             &misaligned_request.request,
             &AggregateShareId::from([0u8; 16]),
@@ -422,8 +424,8 @@ async fn aggregate_share_request() {
         .await;
 
         assert_eq!(
-            test_conn.status(),
-            Some(Status::BadRequest),
+            response.status(),
+            StatusCode::BAD_REQUEST,
             "{}",
             misaligned_request.name
         );
@@ -436,9 +438,9 @@ async fn aggregate_share_request() {
             peer_report_count: misaligned_request.request.report_count(),
         };
         assert_eq!(
-            take_problem_details(&mut test_conn).await,
+            take_problem_details(&mut response).await,
             json!({
-                "status": Status::BadRequest as u16,
+                "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
                 "title": "Leader and helper disagree on reports aggregated in a batch.",
                 "taskid": format!("{}", task.id()),
@@ -489,7 +491,7 @@ async fn aggregate_share_request() {
         // Request the aggregate share multiple times. If the request parameters don't change,
         // then there is no query count violation and all requests should succeed.
         for iteration in 0..3 {
-            let mut test_conn = put_aggregate_share_request(
+            let mut response = put_aggregate_share_request(
                 &task,
                 &request,
                 &AggregateShareId::from([0u8; 16]),
@@ -498,16 +500,21 @@ async fn aggregate_share_request() {
             .await;
 
             assert_eq!(
-                test_conn.status(),
-                Some(Status::Ok),
+                response.status(),
+                StatusCode::OK,
                 "test case: {label:?}, iteration: {iteration}"
             );
-            assert_headers!(
-                &test_conn,
-                "content-type" => (AggregateShareMessage::MEDIA_TYPE)
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-type")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                AggregateShareMessage::MEDIA_TYPE,
             );
             let aggregate_share_resp: AggregateShareMessage =
-                decode_response_body(&mut test_conn).await;
+                decode_response_body(&mut response).await;
 
             let aggregate_share = hpke::open(
                 task.collector_hpke_keypair(),
@@ -592,18 +599,18 @@ async fn aggregate_share_request() {
         20,
         ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
     );
-    let mut test_conn = put_aggregate_share_request(
+    let mut response = put_aggregate_share_request(
         &task,
         &all_batch_request,
         &AggregateShareId::from([0u8; 16]),
         &handler,
     )
     .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
             "title": "The queried batch overlaps with a previously queried batch.",
             "taskid": format!("{}", task.id()),
@@ -638,18 +645,18 @@ async fn aggregate_share_request() {
             ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
         ),
     ] {
-        let mut test_conn = put_aggregate_share_request(
+        let mut response = put_aggregate_share_request(
             &task,
             &query_count_violation_request,
             &AggregateShareId::from([0u8; 16]),
             &handler,
         )
         .await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
-            take_problem_details(&mut test_conn).await,
+            take_problem_details(&mut response).await,
             json!({
-                "status": Status::BadRequest as u16,
+                "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "batch has already been collected with another aggregation parameter",
@@ -726,16 +733,16 @@ async fn aggregate_share_request_duplicate_with_different_id() {
     let aggregate_share_id_2 = AggregateShareId::from([2u8; 16]);
 
     // First request with aggregate_share_id_1 should succeed
-    let test_conn =
+    let response =
         put_aggregate_share_request(&task, &request, &aggregate_share_id_1, &handler).await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Second request with same parameters but different aggregate share ID should fail
-    let test_conn =
+    let response =
         put_aggregate_share_request(&task, &request, &aggregate_share_id_2, &handler).await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -805,38 +812,57 @@ async fn aggregate_share_request_get_poll_after_put() {
 
     // Send the request. We'll ignore the details of the response and check that polling still
     // works.
-    let test_conn =
+    let response =
         put_aggregate_share_request(&task, &request, &aggregate_share_id, &handler).await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Try to GET the first ID again. It should be OK.
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    let test_conn = get(task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_request_header(header, value)
-    .run_async(&handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get(
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
+            .header(header, value)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Ensure it's idempotent.
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    let mut test_conn = get(task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_request_header(header, value)
-    .run_async(&handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let mut response = handler
+        .clone()
+        .oneshot(
+            Request::get(
+                task.aggregate_shares_uri(&aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
+            .header(header, value)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregateShareMessage::MEDIA_TYPE)
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        AggregateShareMessage::MEDIA_TYPE,
     );
-    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
 
     hpke::open(
         task.collector_hpke_keypair(),
@@ -854,15 +880,23 @@ async fn aggregate_share_request_get_poll_after_put() {
 
     // We should be able to delete it
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    let test_conn = delete(
-        task.aggregate_shares_uri(&aggregate_share_id)
-            .unwrap()
-            .path(),
-    )
-    .with_request_header(header, value)
-    .run_async(&handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::NoContent));
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(
+                    task.aggregate_shares_uri(&aggregate_share_id)
+                        .unwrap()
+                        .path(),
+                )
+                .header(header, value)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -890,21 +924,28 @@ async fn aggregate_share_request_get_unrecognized_id() {
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    let mut test_conn = get(task
-        .aggregate_shares_uri(&nonexistent_aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_request_header(header, value)
-    .run_async(&handler)
-    .await;
+    let mut response = handler
+        .clone()
+        .oneshot(
+            Request::get(
+                task.aggregate_shares_uri(&nonexistent_aggregate_share_id)
+                    .unwrap()
+                    .path(),
+            )
+            .header(header, value)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::NotFound));
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify it returns the correct problem document
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::NotFound as u16,
+            "status": 404,
             "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),
@@ -938,22 +979,30 @@ async fn aggregate_share_delete_nonexistant() {
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
     let (header, value) = task.aggregator_auth_token().request_authentication();
-    let mut test_conn = delete(
-        task.aggregate_shares_uri(&nonexistent_aggregate_share_id)
-            .unwrap()
-            .path(),
-    )
-    .with_request_header(header, value)
-    .run_async(&handler)
-    .await;
+    let mut response = handler
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(
+                    task.aggregate_shares_uri(&nonexistent_aggregate_share_id)
+                        .unwrap()
+                        .path(),
+                )
+                .header(header, value)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::NotFound));
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Verify it returns the correct problem document
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::NotFound as u16,
+            "status": 404,
             "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),

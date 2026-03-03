@@ -962,10 +962,9 @@ mod tests {
     };
     use rand::random;
     use tokio::{task, time, try_join};
-    use crate::binary_utils::Stopper;
 
     use super::AggregationJobCreator;
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
+    use crate::{aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT, binary_utils::Stopper};
 
     #[tokio::test]
     async fn aggregation_job_creator() {

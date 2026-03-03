@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use http::StatusCode;
 use janus_aggregator_core::task::{AggregationMode, BatchMode, test_util::TaskBuilder};
 use janus_core::{report_id::ReportIdChecksumExt, vdaf::VdafInstance};
 use janus_messages::{
@@ -11,8 +12,6 @@ use prio::{
     vdaf::dummy,
 };
 use rand::random;
-use trillium::Status;
-use trillium_testing::assert_status;
 
 use crate::aggregator::{
     aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
@@ -95,11 +94,11 @@ async fn helper_aggregation_report_share_replay() {
     );
 
     // Make aggregation job initialization requests, and check the prepare step results.
-    let mut test_conn =
+    let mut response =
         put_aggregation_job(&task, &aggregation_job_id_1, &agg_init_req_1, &handler).await;
-    assert_status!(test_conn, Status::Created);
+    assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_1 =
-        AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
+        AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
     let prepare_resps_1 = assert_matches!(
         agg_init_resp_1,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -113,11 +112,11 @@ async fn helper_aggregation_report_share_replay() {
         PrepareStepResult::Continue { .. }
     );
 
-    let mut test_conn =
+    let mut response =
         put_aggregation_job(&task, &aggregation_job_id_2, &agg_init_req_2, &handler).await;
-    assert_status!(test_conn, Status::Created);
+    assert_eq!(response.status(), StatusCode::CREATED);
     let agg_init_resp_2 =
-        AggregationJobResp::get_decoded(take_response_body(&mut test_conn).await.as_ref()).unwrap();
+        AggregationJobResp::get_decoded(take_response_body(&mut response).await.as_ref()).unwrap();
     let prepare_resps_2 = assert_matches!(
         agg_init_resp_2,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -133,21 +132,21 @@ async fn helper_aggregation_report_share_replay() {
 
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum
     // match those in the requests.
-    let test_conn = put_aggregate_share_request(
+    let response = put_aggregate_share_request(
         &task,
         &agg_share_req_1,
         &AggregateShareId::from([0u8; 16]),
         &handler,
     )
     .await;
-    assert_status!(test_conn, 200);
+    assert_eq!(response.status(), StatusCode::OK);
 
-    let test_conn = put_aggregate_share_request(
+    let response = put_aggregate_share_request(
         &task,
         &agg_share_req_2,
         &AggregateShareId::from([0u8; 16]),
         &handler,
     )
     .await;
-    assert_status!(test_conn, 200);
+    assert_eq!(response.status(), StatusCode::OK);
 }

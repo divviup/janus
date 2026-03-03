@@ -363,6 +363,8 @@ pub mod test_util {
 mod tests {
     use std::sync::Arc;
 
+    use axum::{Router, body::Body};
+    use http::{Request, StatusCode};
     use janus_aggregator_core::{
         datastore::{
             Datastore,
@@ -394,8 +396,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use trillium::{Handler, Status};
-    use trillium_testing::prelude::delete;
+    use tower::ServiceExt;
 
     use crate::aggregator::{
         aggregation_job_continue::test_util::{
@@ -421,7 +422,7 @@ mod tests {
         aggregation_parameter: V::AggregationParam,
         first_continue_request: AggregationJobContinueReq,
         first_continue_response: Option<AggregationJobResp>,
-        handler: Box<dyn Handler>,
+        handler: Router,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
@@ -542,7 +543,7 @@ mod tests {
             aggregation_parameter,
             first_continue_request,
             first_continue_response: None,
-            handler: Box::new(handler),
+            handler,
             _ephemeral_datastore: ephemeral_datastore,
         }
     }
@@ -606,7 +607,7 @@ mod tests {
             &aggregation_job_id,
             &request,
             &handler,
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             "An endpoint received a message with an unknown task ID.",
             None,
@@ -637,19 +638,24 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn = delete(
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let mut req = Request::delete(
             task.aggregation_job_uri(&aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
-        .with_authentication_token(task.aggregator_auth_token())
-        .run_async(&handler)
-        .await;
+        .body(Body::empty())
+        .unwrap();
+        for (key, value) in &headers {
+            req.headers_mut().insert(key.clone(), value.clone());
+        }
+        let mut response = handler.clone().oneshot(req).await.unwrap();
 
         assert_eq!(
-            take_problem_details(&mut test_conn).await,
+            take_problem_details(&mut response).await,
             json!({
-                "status": Status::BadRequest as u16,
+                "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
@@ -676,7 +682,7 @@ mod tests {
             &test_case.aggregation_job_id,
             &step_zero_request,
             &test_case.handler,
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
             Some("aggregation job cannot be advanced to step 0"),
@@ -770,7 +776,7 @@ mod tests {
             &test_case.aggregation_job_id,
             &modified_request,
             &test_case.handler,
-            Status::Conflict,
+            StatusCode::CONFLICT,
         )
         .await;
 
@@ -851,7 +857,7 @@ mod tests {
             &test_case.aggregation_job_id,
             &past_step_request,
             &test_case.handler,
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
             None,
@@ -879,7 +885,7 @@ mod tests {
             &test_case.aggregation_job_id,
             &future_step_request,
             &test_case.handler,
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
             None,
@@ -894,18 +900,23 @@ mod tests {
 
         // Delete the aggregation job. This should be idempotent.
         for _ in 0..2 {
-            let test_conn = delete(
+            let mut headers = http::HeaderMap::new();
+            headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+            let mut req = Request::delete(
                 test_case
                     .task
                     .aggregation_job_uri(&test_case.aggregation_job_id, None)
                     .unwrap()
                     .path(),
             )
-            .with_authentication_token(test_case.task.aggregator_auth_token())
-            .run_async(&test_case.handler)
-            .await;
+            .body(Body::empty())
+            .unwrap();
+            for (key, value) in &headers {
+                req.headers_mut().insert(key.clone(), value.clone());
+            }
+            let response = test_case.handler.clone().oneshot(req).await.unwrap();
 
-            assert_eq!(test_conn.status(), Some(Status::NoContent),);
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
         }
 
         test_case
@@ -949,7 +960,7 @@ mod tests {
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
-                "status": Status::Gone as u16,
+                "status": StatusCode::GONE.as_u16(),
                 "type": "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
                 "title": "The aggregation job has been deleted.",
                 "taskid": format!("{}", test_case.task.id()),
@@ -963,7 +974,7 @@ mod tests {
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.handler,
-            Status::Gone,
+            StatusCode::GONE,
             "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
             "The aggregation job has been deleted.",
             None,
