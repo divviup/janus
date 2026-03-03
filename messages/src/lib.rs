@@ -1413,9 +1413,6 @@ pub struct UploadRequest {
 }
 
 impl UploadRequest {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-req";
-
     pub fn new(reports: Vec<Report>) -> Self {
         Self { reports }
     }
@@ -1429,6 +1426,10 @@ impl UploadRequest {
     pub fn reports(&self) -> &[Report] {
         &self.reports
     }
+}
+
+impl MediaType for UploadRequest {
+    const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-req";
 }
 
 impl Encode for UploadRequest {

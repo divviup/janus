@@ -68,7 +68,6 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 
-use anyhow::Context;
 pub use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 use chrono::{DateTime, Duration, Utc};
 pub use credential::PrivateCollectorCredential;
@@ -76,7 +75,7 @@ use educe::Educe;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair},
-    http::{HttpErrorResponse, ReqwestAuthenticationToken},
+    http::{HttpErrorResponse, ReqwestAuthenticationToken, check_content_type},
     retries::{
         ExponentialWithTotalDelayBuilder, http_request_exponential_backoff, retry_http_request,
     },
@@ -89,7 +88,6 @@ use janus_messages::{
     batch_mode::{BatchMode, TimeInterval},
     taskprov::TimePrecision,
 };
-use mime::Mime;
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -582,18 +580,9 @@ impl<V: vdaf::Collector> Collector<V> {
             return Ok(PollResult::NotReady(retry_after_opt));
         }
 
-        let content_type = response
-            .headers()
-            .get(CONTENT_TYPE)
-            .ok_or(Error::BadContentType(None))?;
-        let mime: Mime = content_type
-            .to_str()?
-            .parse()
-            .context("failed to parse Content-Type header")
+        check_content_type::<CollectionJobResp<TimeInterval>>(response.headers())
             .map_err(|e| Error::BadResponse(e.into()))?;
-        if mime.essence_str() != CollectionJobResp::<TimeInterval>::MEDIA_TYPE {
-            return Err(Error::BadContentType(Some(content_type.clone())));
-        }
+
         let collect_response = CollectionJobResp::<B>::get_decoded(body)?;
 
         let aggregate_shares = [

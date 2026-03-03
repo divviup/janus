@@ -646,7 +646,7 @@ where
                 .transpose()?;
             let body = http_response.body();
             let resp = if !body.is_empty() {
-                check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+                check_content_type::<AggregationJobResp>(http_response.headers())
                     .map_err(|e| Error::BadContentType(e.into()))?;
 
                 Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
@@ -860,7 +860,7 @@ where
             .transpose()?;
         let body = http_response.body();
         let resp = if !body.is_empty() {
-            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+            check_content_type::<AggregationJobResp>(http_response.headers())
                 .map_err(|e| Error::BadContentType(e.into()))?;
             Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
         } else {
@@ -961,7 +961,7 @@ where
             .transpose()?;
         let body = http_response.body();
         let resp = if !body.is_empty() {
-            check_content_type(http_response.headers(), AggregationJobResp::MEDIA_TYPE)
+            check_content_type::<AggregationJobResp>(http_response.headers())
                 .map_err(|e| Error::BadContentType(e.into()))?;
             Some(AggregationJobResp::get_decoded(body).map_err(Error::MessageDecode)?)
         } else {

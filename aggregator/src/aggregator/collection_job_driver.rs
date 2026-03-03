@@ -445,7 +445,7 @@ impl CollectionJobDriver {
             return Ok(());
         };
 
-        check_content_type(response_headers, AggregateShare::MEDIA_TYPE)
+        check_content_type::<AggregateShare>(response_headers)
             .map_err(|e| Error::BadContentType(e.into()))?;
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up. Scrub the batch aggregations, as we are now done with them, too.

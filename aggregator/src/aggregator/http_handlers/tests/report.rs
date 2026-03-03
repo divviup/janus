@@ -14,7 +14,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
     UploadResponse, taskprov::TimePrecision,
 };
