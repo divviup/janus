@@ -133,6 +133,7 @@ pub mod garbage_collector;
 pub mod http_handlers;
 pub mod key_rotator;
 pub mod problem_details;
+#[allow(dead_code)]
 mod queue;
 pub mod report_writer;
 #[cfg(test)]

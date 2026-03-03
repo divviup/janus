@@ -465,7 +465,7 @@ where
 
         // Build the aggregation job routes, optionally with queue middleware
         let aggregation_job_put = put(aggregation_jobs_put::<C>);
-        let aggregation_job_post = post(aggregation_jobs_post::<C>);
+        let _aggregation_job_post = post(aggregation_jobs_post::<C>);
 
         let router = Router::new()
             .route("/hpke_config", get(hpke_config::<C>).layer(hpke_cors))

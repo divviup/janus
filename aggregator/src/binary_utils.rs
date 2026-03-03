@@ -50,6 +50,12 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Stopper(CancellationToken);
 
+impl Default for Stopper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Stopper {
     pub fn new() -> Self {
         Self(CancellationToken::new())
@@ -85,6 +91,12 @@ pub struct CloneCounterObserver {
 pub struct CloneCounter {
     count: Arc<std::sync::atomic::AtomicUsize>,
     notify: Arc<tokio::sync::Notify>,
+}
+
+impl Default for CloneCounterObserver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CloneCounterObserver {

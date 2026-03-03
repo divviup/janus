@@ -503,9 +503,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use axum::{
-        Router, body::Body, extract::State, response::IntoResponse, routing::get as get_route,
-    };
+    use axum::{Router, body::Body, extract::State, routing::get as get_route};
     use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
     use futures::{Future, future::join_all};
     use http::{Request, StatusCode};
