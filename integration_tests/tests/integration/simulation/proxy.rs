@@ -1,78 +1,42 @@
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::sync::{Arc, LazyLock, Mutex};
 
+use axum::{Router, body::Body, extract::Request, middleware, response::IntoResponse};
+use http::StatusCode;
 use regex::bytes::Regex;
 use tracing::error;
-use trillium::{Conn, Handler, Status};
-use trillium_macros::Handler;
 
-/// A [`Handler`] wrapper that can be configured to drop requests or responses.
-#[derive(Handler)]
-pub(super) struct FaultInjectorHandler<H> {
-    #[handler(except = [run, before_send, name])]
-    inner: H,
+/// Wraps an axum Router with fault injection middleware. Returns the wrapped router and a
+/// controller to toggle faults.
+pub(super) fn wrap_with_fault_injection(router: Router) -> (Router, FaultInjector) {
+    let error_before = Arc::new(Mutex::new(false));
+    let error_after = Arc::new(Mutex::new(false));
 
-    /// Flag to inject an error before request handling. This will skip running the wrapped
-    /// `Handler`.
-    error_before: Arc<Mutex<bool>>,
+    let controller = FaultInjector {
+        error_before: Arc::clone(&error_before),
+        error_after: Arc::clone(&error_after),
+    };
 
-    /// Flag to inject an error after request handling. This will drop the response and replace it
-    /// with an error response.
-    error_after: Arc<Mutex<bool>>,
+    let eb = Arc::clone(&error_before);
+    let ea = Arc::clone(&error_after);
+    let wrapped = router.layer(middleware::from_fn(move |request: Request, next: middleware::Next| {
+        let eb = Arc::clone(&eb);
+        let ea = Arc::clone(&ea);
+        async move {
+            if *eb.lock().unwrap() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            let response = next.run(request).await;
+            if *ea.lock().unwrap() {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            response
+        }
+    }));
+
+    (wrapped, controller)
 }
 
-impl<H> FaultInjectorHandler<H> {
-    pub fn new(handler: H) -> Self {
-        Self {
-            inner: handler,
-            error_before: Arc::new(Mutex::new(false)),
-            error_after: Arc::new(Mutex::new(false)),
-        }
-    }
-
-    pub fn controller(&self) -> FaultInjector {
-        FaultInjector {
-            error_before: Arc::clone(&self.error_before),
-            error_after: Arc::clone(&self.error_after),
-        }
-    }
-}
-
-struct FaultInjectorMarker;
-
-impl<H: Handler> FaultInjectorHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        conn.insert_state(FaultInjectorMarker);
-        if *self.error_before.lock().unwrap() {
-            conn.with_status(Status::InternalServerError)
-        } else {
-            self.inner.run(conn).await
-        }
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        let mut conn = self.inner.before_send(conn).await;
-        if conn.state::<FaultInjectorMarker>().is_some() && *self.error_after.lock().unwrap() {
-            conn.set_status(Status::InternalServerError);
-            let header_names = conn
-                .response_headers()
-                .iter()
-                .map(|(name, _)| name.to_owned())
-                .collect::<Vec<_>>();
-            conn.response_headers_mut().remove_all(header_names);
-            conn.set_body("");
-        }
-        conn
-    }
-
-    fn name(&self) -> Cow<'static, str> {
-        format!("FaultInjectorHandler({})", std::any::type_name::<H>()).into()
-    }
-}
-
-/// This controls a [`FaultInjectorHandler`].
+/// This controls fault injection middleware.
 pub(super) struct FaultInjector {
     error_before: Arc<Mutex<bool>>,
     error_after: Arc<Mutex<bool>>,
@@ -85,92 +49,60 @@ impl FaultInjector {
         *self.error_after.lock().unwrap() = false;
     }
 
-    /// Inject an error before request handling. This will skip running the wrapped `Handler`.
+    /// Inject an error before request handling.
     pub fn error_before(&self) {
         *self.error_before.lock().unwrap() = true;
     }
 
-    /// Inject an error after request handling. This will drop the response and replace it with an
-    /// error response.
+    /// Inject an error after request handling.
     pub fn error_after(&self) {
         *self.error_after.lock().unwrap() = true;
     }
 }
 
-/// A [`Handler`] wrapper that inspects request and response bodies, in order to trigger test
-/// failures.
-#[derive(Handler)]
-pub(super) struct InspectHandler<H> {
-    #[handler(except = [run, before_send, name])]
-    inner: H,
-    failure: Arc<Mutex<bool>>,
-}
+/// Wraps an axum Router with inspection middleware. Returns the wrapped router and a monitor
+/// to check for failures.
+pub(super) fn wrap_with_inspect(router: Router) -> (Router, InspectMonitor) {
+    let failure = Arc::new(Mutex::new(false));
+    let monitor = InspectMonitor {
+        failure: Arc::clone(&failure),
+    };
 
-impl<H> InspectHandler<H> {
-    pub fn new(handler: H) -> Self {
-        Self {
-            inner: handler,
-            failure: Arc::new(Mutex::new(false)),
-        }
-    }
+    let wrapped = router.layer(middleware::from_fn(move |request: Request, next: middleware::Next| {
+        let failure = Arc::clone(&failure);
+        let is_aggregate_shares = request.uri().path().ends_with("/aggregate_shares");
+        async move {
+            let response = next.run(request).await;
+            let status = response.status();
 
-    pub fn monitor(&self) -> InspectMonitor {
-        InspectMonitor {
-            failure: Arc::clone(&self.failure),
-        }
-    }
-}
-
-struct InspectMarker;
-
-impl<H: Handler> InspectHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        conn.insert_state(InspectMarker);
-        self.inner.run(conn).await
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        let mut conn = self.inner.before_send(conn).await;
-        if conn.state::<InspectMarker>().is_some() {
-            if let Some(status) = conn.status() {
-                if status.is_server_error() {
-                    error!(?status, "server error");
-                    *self.failure.lock().unwrap() = true;
-                }
+            if status.is_server_error() {
+                error!(?status, "server error");
+                *failure.lock().unwrap() = true;
             }
-            if conn.status() == Some(Status::Conflict) {
+            if status == StatusCode::CONFLICT {
                 error!("409 Conflict response");
-                *self.failure.lock().unwrap() = true;
+                *failure.lock().unwrap() = true;
             }
-            if conn.path().ends_with("/aggregate_shares") {
-                inspect_response_body(&mut conn, |bytes| {
-                    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
-                        Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
-                    });
-                    if REGEX.is_match(bytes) {
-                        error!("batch mismatch response");
-                        *self.failure.lock().unwrap() = true;
-                    }
-                })
-                .await;
+            if is_aggregate_shares {
+                // Collect the body to inspect it, then reconstruct the response
+                let (parts, body) = response.into_parts();
+                let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
+                static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+                    Regex::new("urn:ietf:params:ppm:dap:error:batchMismatch").unwrap()
+                });
+                if REGEX.is_match(&bytes) {
+                    error!("batch mismatch response");
+                    *failure.lock().unwrap() = true;
+                }
+                return http::Response::from_parts(parts, Body::from(bytes)).into_response();
             }
+            response
         }
-        conn
-    }
+    }));
 
-    fn name(&self) -> Cow<'static, str> {
-        format!("InspectHandler({})", std::any::type_name::<H>()).into()
-    }
-}
-
-/// Takes the response body from a connection, runs the provided closure on it, and replaces the
-/// response body. If no body has been set yet, the closure is not run.
-async fn inspect_response_body(conn: &mut Conn, f: impl Fn(&[u8])) {
-    if let Some(body) = conn.take_response_body() {
-        let bytes = body.into_bytes().await.unwrap();
-        f(&bytes);
-        conn.set_body(bytes);
-    }
+    (wrapped, monitor)
 }
 
 pub(super) struct InspectMonitor {

@@ -29,7 +29,7 @@ use prio::vdaf::prio3::{Prio3, Prio3Histogram, optimal_chunk_length};
 use quickcheck::TestResult;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, info, info_span, warn};
-use trillium_tokio::Stopper;
+use janus_aggregator::binary_utils::Stopper;
 
 use crate::simulation::{
     START_TIME,

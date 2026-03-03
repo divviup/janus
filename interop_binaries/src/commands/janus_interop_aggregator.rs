@@ -1,9 +1,10 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
+use axum::{Json, Router, body::Body, extract::State, response::IntoResponse, routing::post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
-use futures::future::try_join_all;
+use http::{Request, StatusCode};
 use janus_aggregator::{
     binary_utils::{BinaryOptions, CommonBinaryOptions, janus_main},
     config::{BinaryConfig, CommonConfig},
@@ -21,17 +22,21 @@ use janus_messages::{Duration, HpkeConfig, Time, taskprov::TimePrecision};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use trillium::{Conn, Handler, Status};
-use trillium_api::{ApiConnExt, Json, api};
-use trillium_proxy::{Client, Proxy, upstream::IntoUpstreamSelector};
-use trillium_router::Router;
-use trillium_tokio::ClientConfig;
 use url::Url;
 
 use crate::{
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole,
     status::{ERROR, SUCCESS},
 };
+
+#[derive(Clone)]
+struct InteropAggregatorState {
+    datastore: Arc<Datastore<RealClock>>,
+    proxy_url: String,
+    http_client: reqwest::Client,
+    dap_serving_prefix: String,
+    health_check_peers: Vec<Url>,
+}
 
 #[derive(Debug, Serialize)]
 struct EndpointResponse {
@@ -131,68 +136,131 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-async fn make_handler(
+async fn add_task_endpoint(
+    State(state): State<InteropAggregatorState>,
+    request: Result<Json<AggregatorAddTaskRequest>, axum::extract::rejection::JsonRejection>,
+) -> impl IntoResponse {
+    let Json(request) = match request {
+        Ok(r) => r,
+        Err(err) => {
+            return Json(AddTaskResponse {
+                status: ERROR.to_string(),
+                error: Some(format!("{err}")),
+            });
+        }
+    };
+    match handle_add_task(&state.datastore, request).await {
+        Ok(()) => Json(AddTaskResponse {
+            status: SUCCESS.to_string(),
+            error: None,
+        }),
+        Err(e) => Json(AddTaskResponse {
+            status: ERROR.to_string(),
+            error: Some(format!("{e:?}")),
+        }),
+    }
+}
+
+async fn ready_endpoint(
+    State(state): State<InteropAggregatorState>,
+) -> impl IntoResponse {
+    let client = reqwest::Client::new();
+    for peer in &state.health_check_peers {
+        if client.get(peer.as_str()).send().await.is_err() {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    }
+    Json(json!({})).into_response()
+}
+
+async fn endpoint_for_task(
+    State(state): State<InteropAggregatorState>,
+) -> impl IntoResponse {
+    Json(EndpointResponse {
+        status: "success",
+        endpoint: state.dap_serving_prefix.clone(),
+    })
+}
+
+/// Simple reverse proxy handler that forwards requests to the aggregator.
+async fn proxy_handler(
+    State(state): State<InteropAggregatorState>,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    let path = request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let url = format!("{}{path}", state.proxy_url);
+
+    let method = request.method().clone();
+    let headers = request.headers().clone();
+    let body = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    let mut builder = state.http_client.request(
+        reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap(),
+        &url,
+    );
+    for (name, value) in headers.iter() {
+        if name != "host" {
+            builder = builder.header(name.as_str(), value.as_bytes());
+        }
+    }
+    builder = builder.body(body);
+
+    let resp = match builder.send().await {
+        Ok(resp) => resp,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap();
+    let resp_headers = resp.headers().clone();
+    let body = match resp.bytes().await {
+        Ok(body) => body,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+
+    let mut response = (status, body.to_vec()).into_response();
+    for (name, value) in resp_headers.iter() {
+        if let (Ok(name), Ok(value)) = (
+            http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+            http::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    response
+}
+
+fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     dap_serving_prefix: String,
     aggregator_address: SocketAddr,
     health_check_peers: Vec<Url>,
-) -> anyhow::Result<impl Handler> {
-    let upstream = format!("http://{aggregator_address}/").into_upstream();
-    let proxy_handler = Proxy::new(
-        Client::new(ClientConfig::default()).with_default_pool(),
-        upstream,
-    );
-    let health_check_client = Client::new(ClientConfig::default()).with_default_pool();
+) -> Router {
+    let state = InteropAggregatorState {
+        datastore,
+        proxy_url: format!("http://{aggregator_address}"),
+        http_client: reqwest::Client::new(),
+        dap_serving_prefix: dap_serving_prefix.clone(),
+        health_check_peers,
+    };
 
-    let handler = Router::new()
-        .post("internal/test/ready", move |conn: Conn| {
-            let health_check_peers = health_check_peers.clone();
-            let health_check_client = health_check_client.clone();
-            async move {
-                let result: Result<_, anyhow::Error> =
-                    try_join_all(health_check_peers.iter().map(|peer| {
-                        let client = health_check_client.clone();
-                        async move {
-                            let _ = client.get(peer.as_str()).await?.success()?;
-                            Ok(())
-                        }
-                    }))
-                    .await;
-                match result {
-                    Ok(_) => conn.with_json(&json!({})),
-                    Err(_) => conn.with_status(Status::ServiceUnavailable),
-                }
-            }
-        })
-        .post(
-            "internal/test/endpoint_for_task",
-            Json(EndpointResponse {
-                status: "success",
-                endpoint: dap_serving_prefix.clone(),
-            }),
+    // Build routes for the test API
+    let test_routes = Router::new()
+        .route("/internal/test/ready", post(ready_endpoint))
+        .route(
+            "/internal/test/endpoint_for_task",
+            post(endpoint_for_task),
         )
-        .post(
-            "internal/test/add_task",
-            api(
-                move |_conn: &mut Conn, Json(request): Json<AggregatorAddTaskRequest>| {
-                    let datastore = Arc::clone(&datastore);
-                    async move {
-                        match handle_add_task(&datastore, request).await {
-                            Ok(()) => Json(AddTaskResponse {
-                                status: SUCCESS.to_string(),
-                                error: None,
-                            }),
-                            Err(e) => Json(AddTaskResponse {
-                                status: ERROR.to_string(),
-                                error: Some(format!("{e:?}")),
-                            }),
-                        }
-                    }
-                },
-            ),
-        )
-        .all(format!("{dap_serving_prefix}/*"), proxy_handler);
-    Ok(handler)
+        .route("/internal/test/add_task", post(add_task_endpoint));
+
+    // Build the proxy fallback for DAP requests
+    let proxy_routes = Router::new().fallback(proxy_handler);
+
+    test_routes
+        .merge(proxy_routes)
+        .with_state(state)
 }
 
 #[derive(Debug, Parser)]
@@ -259,22 +327,14 @@ impl Options {
             |ctx| async move {
                 ctx.datastore.put_hpke_key().await.unwrap();
 
-                // Run an HTTP server with both the DAP aggregator endpoints and the
-                // interoperation test
-                // endpoints.
                 let handler = make_handler(
                     Arc::new(ctx.datastore),
                     ctx.config.dap_serving_prefix,
                     ctx.config.aggregator_address,
                     ctx.config.health_check_peers,
-                )
-                .await?;
-                trillium_tokio::config()
-                    .with_host(&ctx.config.listen_address.ip().to_string())
-                    .with_port(ctx.config.listen_address.port())
-                    .without_signals()
-                    .run_async(handler)
-                    .await;
+                );
+                let listener = tokio::net::TcpListener::bind(ctx.config.listen_address).await?;
+                axum::serve(listener, handler).await?;
 
                 Ok(())
             },

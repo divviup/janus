@@ -43,7 +43,7 @@ use tokio::net::TcpListener;
 use crate::simulation::{
     http_request_exponential_backoff,
     model::Input,
-    proxy::{FaultInjector, FaultInjectorHandler, InspectHandler, InspectMonitor},
+    proxy::{FaultInjector, InspectMonitor, wrap_with_fault_injection, wrap_with_inspect},
     run::State,
 };
 
@@ -104,20 +104,20 @@ impl SimulationAggregator {
         .build()
         .unwrap();
 
-        let inspect_handler = InspectHandler::new(aggregator_handler);
-        let inspect_monitor = inspect_handler.monitor();
+        let (router, inspect_monitor) = wrap_with_inspect(aggregator_handler);
+        let (router, fault_injector) = wrap_with_fault_injection(router);
 
-        let fault_injector_handler = FaultInjectorHandler::new(inspect_handler);
-        let fault_injector = fault_injector_handler.controller();
-
-        let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let socket_address = server.local_addr().unwrap();
-        let aggregator_future = trillium_tokio::config()
-            .with_stopper(state.stopper.clone())
-            .without_signals()
-            .with_prebound_server(server)
-            .run_async(fault_injector_handler);
-        server_runtime.spawn(aggregator_future);
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let socket_address = listener.local_addr().unwrap();
+        let stopper = state.stopper.clone();
+        server_runtime.spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async move {
+                    stopper.cancelled().await;
+                })
+                .await
+                .unwrap();
+        });
 
         SimulationAggregator {
             _ephemeral_datastore: ephemeral_datastore,
