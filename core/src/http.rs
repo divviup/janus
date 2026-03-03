@@ -3,10 +3,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use http::{StatusCode, header::RETRY_AFTER};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
-use janus_messages::problem_type::DapProblemType;
+use janus_messages::{MediaType, problem_type::DapProblemType};
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
@@ -146,25 +146,35 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
     Ok(None)
 }
 
-/// Return OK if there is a Content-Type header and it matches the expected value.
-pub fn check_content_type(
-    headers: &http::HeaderMap,
-    expected: &'static str,
-) -> Result<(), anyhow::Error> {
-    let content_type = headers
-        .get(CONTENT_TYPE)
-        .ok_or(anyhow!("Content-Type header not found"))?;
-    let mime: Mime = content_type
-        .to_str()?
+/// Return OK if there is a Content-Type header and it matches the MIME essence and "message"
+/// parameter of the expected value.
+pub fn check_content_type<M: MediaType>(headers: &http::HeaderMap) -> Result<(), anyhow::Error> {
+    check_content_type_value::<M>(
+        headers
+            .get(CONTENT_TYPE)
+            .ok_or(anyhow!("Content-Type header not found"))?
+            .to_str()?
+            .parse()
+            .map_err(|e| anyhow!("failed to parse Content-Type header: {e}"))?,
+    )
+}
+
+pub fn check_content_type_value<M: MediaType>(content_type: Mime) -> Result<(), anyhow::Error> {
+    let expected_mime: Mime = M::MEDIA_TYPE
         .parse()
-        .map_err(|e| anyhow!("failed to parse Content-Type header: {e}"))?;
-    if mime.essence_str() != expected {
+        .context("failed to parse expected Content-Type header")?;
+
+    if content_type.essence_str() != expected_mime.essence_str() {
         return Err(anyhow!(
-            "unexpected Content-Type header {} != {}",
-            mime.essence_str(),
-            expected
+            "unexpected MIME essence in Content-Type header {content_type}"
         ));
-    };
+    }
+    if content_type.get_param("message") != expected_mime.get_param("message") {
+        return Err(anyhow!(
+            "unexpected message parameter in Content-Type header: {content_type}"
+        ));
+    }
+
     Ok(())
 }
 

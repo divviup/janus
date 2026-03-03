@@ -19,7 +19,7 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::extract_bearer_token,
+    http::{check_content_type_value, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -673,7 +673,7 @@ async fn upload<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<EncodedBody<UploadResponse>, ArcError> {
-    validate_content_type(conn, UploadRequest::MEDIA_TYPE).map_err(Arc::new)?;
+    validate_content_type::<UploadRequest>(conn).map_err(Arc::new)?;
 
     let task_id = parse_task_id(conn).map_err(Arc::new)?;
 
@@ -719,10 +719,7 @@ async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
-    validate_content_type(
-        conn,
-        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-    )?;
+    validate_content_type::<AggregationJobInitializeReq<TimeInterval>>(conn)?;
 
     let task_id = parse_task_id(conn)?;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
@@ -758,7 +755,7 @@ async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
-    validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
+    validate_content_type::<AggregationJobContinueReq>(conn)?;
 
     let task_id = parse_task_id(conn)?;
     let aggregation_job_id = parse_aggregation_job_id(conn)?;
@@ -851,7 +848,7 @@ async fn collection_jobs_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<(), Error> {
-    validate_content_type(conn, CollectionJobReq::<TimeInterval>::MEDIA_TYPE)?;
+    validate_content_type::<CollectionJobReq<TimeInterval>>(conn)?;
 
     let task_id = parse_task_id(conn)?;
     let collection_job_id = parse_collection_job_id(conn)?;
@@ -924,7 +921,7 @@ async fn aggregate_shares_put<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
 ) -> Result<EncodedBody<AggregateShare>, Error> {
-    validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
+    validate_content_type::<AggregateShareReq<TimeInterval>>(conn)?;
 
     let task_id = parse_task_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
@@ -988,30 +985,26 @@ async fn aggregate_shares_delete<C: Clock>(
     Ok(())
 }
 
-/// Check the request's Content-Type header, and return an error if it is missing or not equal to
-/// the expected value.
-fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
+/// Check the request's Content-Type header, and return an error if its MIME essence or its
+/// `message` parameter do not match those expected for messages of type `M`. The header may have
+/// other parameters in it; this function does not check them.
+fn validate_content_type<M: MediaType>(conn: &Conn) -> Result<(), Error> {
     let content_type = conn
         .request_headers()
         .get(KnownHeaderName::ContentType)
         .ok_or_else(|| Error::BadRequest("no Content-Type header".into()))?;
 
-    let mime_str = content_type.as_str().ok_or(Error::BadRequest(
-        format!("invalid Content-Type header: {content_type}").into(),
-    ))?;
-
-    let mime: Mime = mime_str
+    // For whatever, reason, HeaderValue::as_str doesn't work when content types include parameters
+    // so we get the value bytes and parse into a `Mime` ourselves.
+    let request_mime: Mime = str::from_utf8(content_type.as_ref())
+        .map_err(|_| {
+            Error::BadRequest(format!("invalid Content-Type header: {content_type}").into())
+        })?
         .parse()
         .context("failed to parse Content-Type header")
         .map_err(|e| Error::BadRequest(e.into()))?;
 
-    if mime.essence_str() != expected_media_type {
-        return Err(Error::BadRequest(
-            format!("unexpected Content-Type header: {mime}").into(),
-        ));
-    }
-
-    Ok(())
+    check_content_type_value::<M>(request_mime).map_err(|e| Error::BadRequest(e.into()))
 }
 
 /// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter
