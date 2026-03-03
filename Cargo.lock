@@ -1291,9 +1291,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.4.81"
+version = "0.4.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d790e84d97de10a1c1e50bada0d2acc683b9be48ac0745047ef56d826d9717b"
+checksum = "a752aeadd4a8fee3e745047aae585962840eaca0cb98d0b5170aae6d070e958b"
 dependencies = [
  "base64 0.22.1",
  "email_address",
@@ -4229,7 +4229,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
