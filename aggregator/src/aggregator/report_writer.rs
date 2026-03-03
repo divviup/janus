@@ -28,7 +28,7 @@ use tracing::{debug, error};
 use crate::aggregator::{
     Error,
     batch_mode::UploadableBatchMode,
-    error::{ReportRejection, ReportRejectionReason},
+    error::{ReportRejection, ReportRejectionReason, UploadError},
 };
 
 type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
@@ -85,10 +85,10 @@ impl<C: Clock> ReportWriteBatcher<C> {
     /// Save a report to the database.
     ///
     /// This function waits for and returns the result of the batch write.
-    pub async fn write_report(
+    pub(crate) async fn write_report(
         &self,
         report_writer: Box<dyn ReportWriter<C>>,
-    ) -> Result<(), Arc<Error>> {
+    ) -> Result<(), UploadError> {
         // Send report to be written.
         // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
         let (result_tx, result_rx) = oneshot::channel();
@@ -99,7 +99,13 @@ impl<C: Clock> ReportWriteBatcher<C> {
 
         // Await the result of writing the report.
         // Unwrap safety: rslt_tx is always sent on before being dropped, and is never closed.
-        result_rx.await.unwrap()
+        result_rx
+            .await
+            .unwrap()
+            .map_err(|arc_err| match arc_err.as_ref() {
+                Error::ReportRejected(rejection) => UploadError::ReportRejected(*rejection),
+                _ => UploadError::Internal(arc_err),
+            })
     }
 
     #[tracing::instrument(
