@@ -57,13 +57,13 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
-use trillium_tokio::{CloneCounterObserver, Stopper};
 
 use crate::{
     aggregator::{
         aggregation_job_writer::{AggregationJobWriter, InitialWrite},
         batch_creator::BatchCreator,
     },
+    binary_utils::{CloneCounterObserver, Stopper},
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
 

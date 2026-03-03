@@ -506,6 +506,8 @@ where
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use axum::{Router, body::Body};
+    use http::{Request, header};
     use janus_aggregator_core::{
         AsyncAggregator,
         task::{AggregatorTask, test_util::Task},
@@ -525,8 +527,7 @@ pub mod test_util {
         vdaf::{self},
     };
     use rand::random;
-    use trillium::{Handler, KnownHeaderName};
-    use trillium_testing::{TestConn, prelude::put};
+    use tower::ServiceExt;
 
     use crate::aggregator::test_util::generate_helper_report_share;
 
@@ -645,20 +646,31 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         aggregation_job: &AggregationJobInitializeReq<B>,
-        handler: &impl Handler,
-    ) -> TestConn {
-        put(task
-            .aggregation_job_uri(aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_authentication_token(task.aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<B>::MEDIA_TYPE,
-        )
-        .with_request_body(aggregation_job.get_encoded().unwrap())
-        .run_async(handler)
-        .await
+        handler: &Router,
+    ) -> http::Response<Body> {
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let mut request = Request::builder()
+            .method("PUT")
+            .uri(
+                task.aggregation_job_uri(aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .header(
+                header::CONTENT_TYPE,
+                AggregationJobInitializeReq::<B>::MEDIA_TYPE,
+            )
+            .body(Body::from(aggregation_job.get_encoded().unwrap()))
+            .unwrap();
+        *request.headers_mut() = headers;
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            AggregationJobInitializeReq::<B>::MEDIA_TYPE
+                .parse()
+                .unwrap(),
+        );
+        handler.clone().oneshot(request).await.unwrap()
     }
 }
 

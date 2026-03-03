@@ -15,7 +15,7 @@ use http::StatusCode;
 use janus_aggregator_core::{
     SecretBytes,
     datastore::{
-        self, Datastore,
+        self,
         task_counters::{TaskAggregationCounter, TaskUploadCounter},
     },
     task::{AggregatorTask, AggregatorTaskParameters},

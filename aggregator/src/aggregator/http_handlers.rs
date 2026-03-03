@@ -7,7 +7,7 @@ use axum::{
     extract::{MatchedPath, Path, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use futures::{
     stream::Stream,
 };
 use http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE};
-use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
     TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
@@ -37,10 +36,7 @@ use janus_messages::{
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Histogram, Meter},
-};
+use opentelemetry::metrics::{Counter, Meter};
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
@@ -61,10 +57,10 @@ const CORS_PREFLIGHT_CACHE_AGE: StdDuration = StdDuration::from_secs(24 * 60 * 6
 const RATE_LIMIT_RETRY_AFTER: StdDuration = StdDuration::from_secs(30);
 
 /// Implement IntoResponse for Error, converting DAP errors to problem details responses.
-impl IntoResponse for Error {
-    fn into_response(self) -> Response {
+impl Error {
+    fn to_response(&self) -> Response {
         let error_code = self.error_code();
-        let response = match &self {
+        let response = match self {
             Error::InvalidConfiguration(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::MessageDecode(_) => {
                 (&ProblemDocument::new_dap(DapProblemType::InvalidMessage)).into_response()
@@ -230,12 +226,16 @@ impl IntoResponse for Error {
     }
 }
 
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        self.to_response()
+    }
+}
+
 impl IntoResponse for ArcError {
     fn into_response(self) -> Response {
         let error: &Error = &self;
-        // Clone the error data needed for the response. Since we can't consume the Arc,
-        // we format the error into a response directly.
-        error.clone().into_response()
+        error.to_response()
     }
 }
 
@@ -612,14 +612,17 @@ async fn upload<C: Clock>(
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
 
-    let response = state
+    let response = match state
         .aggregator
         .handle_upload(
             &task_id,
             decode_reports_stream(futures::io::Cursor::new(body.to_vec())),
         )
         .await
-        .map_err(|e| (*e).clone())?;
+    {
+        Ok(response) => response,
+        Err(arc_err) => return Ok(ArcError::from(arc_err).into_response()),
+    };
 
     let mut resp = EncodedBody::new(response, UploadResponse::MEDIA_TYPE)
         .with_status(StatusCode::OK)
@@ -1065,7 +1068,6 @@ pub mod test_util {
     use std::sync::Arc;
 
     use axum::{Router, body::to_bytes, response::Response};
-    use http::StatusCode;
     use janus_aggregator_core::{
         datastore::{
             Datastore,

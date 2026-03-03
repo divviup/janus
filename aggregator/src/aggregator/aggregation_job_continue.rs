@@ -205,6 +205,8 @@ where
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use assert_matches::assert_matches;
+    use axum::{Router, body::Body};
+    use http::{Request, StatusCode, header};
     use janus_aggregator_core::task::test_util::Task;
     use janus_core::auth_tokens::test_util::WithAuthenticationToken;
     use janus_messages::{
@@ -212,8 +214,7 @@ pub mod test_util {
     };
     use prio::codec::Encode;
     use serde_json::json;
-    use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{TestConn, assert_headers, assert_status, prelude::post};
+    use tower::ServiceExt;
 
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
 
@@ -221,42 +222,55 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &impl Handler,
-    ) -> TestConn {
-        post(
-            task.aggregation_job_uri(aggregation_job_id, None)
-                .unwrap()
-                .path(),
-        )
-        .with_authentication_token(task.aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobContinueReq::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(handler)
-        .await
+        handler: &Router,
+    ) -> http::Response<Body> {
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        headers.insert(
+            header::CONTENT_TYPE,
+            AggregationJobContinueReq::MEDIA_TYPE.parse().unwrap(),
+        );
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(
+                task.aggregation_job_uri(aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .body(Body::from(request.get_encoded().unwrap()))
+            .unwrap();
+        *req.headers_mut() = headers;
+        handler.clone().oneshot(req).await.unwrap()
     }
 
     pub async fn post_aggregation_job_and_decode(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &impl Handler,
+        handler: &Router,
     ) -> Option<AggregationJobResp> {
-        let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        let mut response = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        let length: Option<usize> = test_conn
-            .response_headers()
-            .get_str(KnownHeaderName::ContentLength)
+        let length: Option<usize> = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
             .map(|s| s.parse())
             .transpose()
             .unwrap();
 
         if length.is_some_and(|l| l > 0) {
-            assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-            assert_status!(&test_conn, Status::Accepted);
-            Some(decode_response_body::<AggregationJobResp>(&mut test_conn).await)
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-type")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                AggregationJobResp::MEDIA_TYPE,
+            );
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            Some(decode_response_body::<AggregationJobResp>(&mut response).await)
         } else {
             let expected_location = format!(
                 "/tasks/{}/aggregation_jobs/{}?step={}",
@@ -264,8 +278,25 @@ pub mod test_util {
                 aggregation_job_id,
                 request.step(),
             );
-            assert_headers!(&test_conn, "retry-after" => "2", "location" => (expected_location.as_str()));
-            assert_status!(&test_conn, Status::Ok);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("retry-after")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "2",
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("location")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                expected_location,
+            );
+            assert_eq!(response.status(), StatusCode::OK);
             None
         }
     }
@@ -274,28 +305,28 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &impl Handler,
-        want_status: Status,
-    ) -> TestConn {
-        let test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        handler: &Router,
+        want_status: StatusCode,
+    ) -> http::Response<Body> {
+        let response = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(want_status, test_conn.status().unwrap());
+        assert_eq!(want_status, response.status());
 
-        test_conn
+        response
     }
 
     pub async fn post_aggregation_job_expecting_error(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &impl Handler,
-        want_status: Status,
+        handler: &Router,
+        want_status: StatusCode,
         want_error_type: &str,
         want_error_title: &str,
         want_detail: Option<&str>,
         want_aggregation_job_id: Option<&AggregationJobId>,
     ) {
-        let mut test_conn = post_aggregation_job_expecting_status(
+        let mut response = post_aggregation_job_expecting_status(
             task,
             aggregation_job_id,
             request,
@@ -305,7 +336,7 @@ pub mod test_util {
         .await;
 
         let mut expected_problem_details = json!({
-            "status": want_status as u16,
+            "status": want_status.as_u16(),
             "type": want_error_type,
             "title": want_error_title,
             "taskid": format!("{}", task.id()),
@@ -322,7 +353,7 @@ pub mod test_util {
         });
 
         assert_eq!(
-            take_problem_details(&mut test_conn).await,
+            take_problem_details(&mut response).await,
             expected_problem_details,
         );
     }

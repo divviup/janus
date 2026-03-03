@@ -155,7 +155,7 @@ pub enum Error {
 }
 
 /// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
-/// `trillium::Handler`.
+/// `IntoResponse`.
 #[derive(Clone)]
 pub(crate) struct ArcError(Arc<Error>);
 

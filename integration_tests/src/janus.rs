@@ -17,7 +17,7 @@ use janus_aggregator::{
         },
         key_rotator::{self, Config as KeyRotatorConfig, Options as KeyRotatorOptions},
     },
-    binary_utils::{BinaryContext, CommonBinaryOptions},
+    binary_utils::{BinaryContext, CommonBinaryOptions, Stopper},
     config::{
         CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
     },
@@ -38,7 +38,6 @@ use janus_interop_binaries::{
 use janus_messages::Role;
 #[cfg(feature = "testcontainer")]
 use testcontainers::{ContainerRequest, ImageExt, runners::AsyncRunner};
-use trillium_tokio::Stopper;
 
 #[cfg(feature = "testcontainer")]
 use crate::interop_api;

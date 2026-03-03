@@ -8,7 +8,6 @@ use std::{
 };
 
 use axum::{
-    body::Body,
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},

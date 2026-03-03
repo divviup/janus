@@ -8,12 +8,11 @@ use opentelemetry::metrics::Meter;
 use serde::{Deserialize, Serialize};
 use tokio::time::interval;
 use tracing::{error, info};
-use trillium_tokio::Stopper;
 
 use super::aggregator::GarbageCollectorConfig;
 use crate::{
     aggregator::garbage_collector::GarbageCollector,
-    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, Stopper},
     config::{BinaryConfig, CommonConfig},
 };
 
