@@ -136,7 +136,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use axum::{Router, body::to_bytes, routing::post};
+    use axum::body::to_bytes;
     use bytes::Bytes;
     use futures::future::join_all;
     use http::{Method, StatusCode};
@@ -154,7 +154,6 @@ mod tests {
     };
     use rand::random;
     use reqwest::Client;
-    use tower::ServiceExt;
 
     use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
 

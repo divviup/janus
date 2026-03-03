@@ -933,7 +933,7 @@ mod tests {
         vdaf::dummy,
     };
     use rand::random;
-    use trillium_tokio::Stopper;
+    use crate::binary_utils::Stopper;
 
     use crate::{
         aggregator::{

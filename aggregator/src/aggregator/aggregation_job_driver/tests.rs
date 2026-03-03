@@ -52,7 +52,7 @@ use prio::{
 };
 use rand::random;
 use tokio::time::timeout;
-use trillium_tokio::Stopper;
+use crate::binary_utils::Stopper;
 
 use crate::{
     aggregator::{

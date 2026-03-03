@@ -962,7 +962,7 @@ mod tests {
     };
     use rand::random;
     use tokio::{task, time, try_join};
-    use trillium_tokio::Stopper;
+    use crate::binary_utils::Stopper;
 
     use super::AggregationJobCreator;
     use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;

@@ -47,7 +47,7 @@ use crate::{
 
 /// A cancellation token used to signal shutdown. Wraps `CancellationToken` and provides an API
 /// compatible with the former `trillium_tokio::Stopper`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Stopper(CancellationToken);
 
 impl Stopper {
@@ -57,6 +57,11 @@ impl Stopper {
 
     pub fn stop(&self) {
         self.0.cancel();
+    }
+
+    /// Returns a future that completes when `stop()` is called.
+    pub async fn cancelled(&self) {
+        self.0.cancelled().await;
     }
 
     /// Runs the given future to completion, unless this stopper is stopped first. Returns `Some`
@@ -611,8 +616,9 @@ mod tests {
     use opentelemetry_sdk::metrics::data::Gauge;
     use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
     use tracing_subscriber::{EnvFilter, reload};
-    use trillium::Status;
-    use trillium_testing::prelude::*;
+    use axum::body::Body;
+    use http::{Request, StatusCode};
+    use tower::ServiceExt;
 
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
@@ -634,8 +640,12 @@ mod tests {
         let (_, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let test_conn = get("/healthz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let response = handler
+            .clone()
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -643,30 +653,44 @@ mod tests {
         let (_filter, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let mut test_conn = get("/traceconfigz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let mut response = handler
+            .clone()
+            .oneshot(Request::get("/traceconfigz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            String::from_utf8_lossy(&take_response_body(&mut response).await),
             "info",
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("debug")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("debug"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            String::from_utf8_lossy(&take_response_body(&mut response).await),
             "debug",
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("!@($*$#)")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("!@($*$#)"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("invalid filter:")
         );
     }
@@ -677,20 +701,29 @@ mod tests {
         let (_, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let mut test_conn = get("/traceconfigz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::InternalServerError));
+        let mut response = handler
+            .clone()
+            .oneshot(Request::get("/traceconfigz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("failed to get current filter:")
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("debug")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::InternalServerError));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("debug"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("failed to update filter:")
         );
     }

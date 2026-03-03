@@ -13,8 +13,9 @@ use prometheus::{
     Registry,
     proto::{Metric, MetricType},
 };
-use trillium::Handler;
-use trillium_testing::prelude::get;
+use axum::body::Body;
+use http::Request;
+use tower::ServiceExt;
 
 use crate::{
     aggregator::{http_handlers::AggregatorHandlerBuilder, test_util::default_aggregator_config},
@@ -85,7 +86,7 @@ async fn http_metrics() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     datastore.put_hpke_key().await.unwrap();
-    let mut handler = AggregatorHandlerBuilder::new(
+    let handler = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -97,10 +98,11 @@ async fn http_metrics() {
     .build()
     .unwrap();
 
-    // Call init to finish setting up metrics.
-    handler.init(&mut "testing".into()).await;
-
-    get("/hpke_config").run_async(&handler).await;
+    handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
 
     let metric_families = registry
         .gather()
