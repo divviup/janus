@@ -228,7 +228,7 @@ async fn proxy_handler(
             http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
             http::header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
-            response.headers_mut().insert(name, value);
+            response.headers_mut().append(name, value);
         }
     }
     response
