@@ -75,7 +75,10 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+};
 use url::Url;
 
 #[cfg(test)]
@@ -105,6 +108,12 @@ pub enum Error {
     UnexpectedServerResponse(&'static str),
     #[error("time conversion error: {0}")]
     TimeConversion(#[from] SystemTimeError),
+    #[error("upload session closed unexpectedly")]
+    SessionClosed,
+    #[error("put called after close")]
+    PutAfterClose,
+    #[error("upload session task failed")]
+    UploadTaskFailed,
     #[cfg(feature = "ohttp")]
     #[error("OHTTP error: {0}")]
     Ohttp(#[from] ohttp::Error),
@@ -615,17 +624,27 @@ impl<V: vdaf::Client<16>> Client<V> {
         T: TryInto<Time> + Debug + Clone,
         Error: From<<T as TryInto<Time>>::Error>,
     {
+        let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
+            async { self.leader_hpke_config.lock().await.get().await.cloned() },
+            async { self.helper_hpke_config.lock().await.get().await.cloned() },
+        )?;
+
         let mut reports = Vec::new();
 
         for (measurement, time) in measurements.iter() {
             reports.push(self.prepare_report(
                 measurement,
                 &time.clone().try_into()?,
-                self.leader_hpke_config.lock().await.get().await?,
-                self.helper_hpke_config.lock().await.get().await?,
+                &leader_hpke_config,
+                &helper_hpke_config,
             )?);
         }
 
+        self.upload_reports(reports).await
+    }
+
+    /// Encode a batch of prepared [`Report`]s and upload them to the leader.
+    async fn upload_reports(&self, reports: Vec<Report>) -> Result<(), Error> {
         let upload_request = UploadRequest::new(reports).get_encoded()?;
         let upload_endpoint = self
             .parameters
@@ -794,6 +813,134 @@ impl<V: vdaf::Client<16>> Client<V> {
             });
 
         Ok((status, upload_response))
+    }
+}
+
+/// Statistics from a completed [`UploadSession`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadStats {
+    pub reports_uploaded: u64,
+    pub requests_made: u64,
+}
+
+/// An active upload session that accepts measurements and uploads them in batches.
+///
+/// Created via [`Client::upload_session`]. Measurements sent through [`put`](Self::put) are
+/// collected into batches of up to `batch_size` and uploaded concurrently with measurement
+/// production.
+///
+/// Call [`close`](Self::close) when done to flush remaining measurements and retrieve upload
+/// statistics.
+pub struct UploadSession<V: vdaf::Client<16>> {
+    sender: Option<mpsc::Sender<(V::Measurement, Time)>>,
+    handle: JoinHandle<Result<UploadStats, Error>>,
+}
+
+impl<V: vdaf::Client<16>> UploadSession<V> {
+    /// Enqueue a measurement for upload. Returns an error if the background upload task has
+    /// failed or been dropped.
+    pub async fn put(&self, measurement: V::Measurement, time: Time) -> Result<(), Error> {
+        self.sender
+            .as_ref()
+            .ok_or(Error::PutAfterClose)?
+            .send((measurement, time))
+            .await
+            .map_err(|_| Error::SessionClosed)
+    }
+
+    /// Signal that no more measurements will be sent, flush any pending batch, and wait for all
+    /// uploads to complete. Returns upload statistics on success.
+    pub async fn close(mut self) -> Result<UploadStats, Error> {
+        // Drop the sender so the background task sees the channel close.
+        self.sender.take();
+        self.handle.await.map_err(|_| Error::UploadTaskFailed)?
+    }
+}
+
+impl<V: vdaf::Client<16>> Client<V>
+where
+    V: Send + Sync + 'static,
+    V::Measurement: Send,
+{
+    /// Create a streaming upload session. Measurements sent via [`UploadSession::put`] are
+    /// split into groups of up to `group_size` and uploaded to the leader as each group fills.
+    /// Any partial group remaining when [`UploadSession::close`] is called will be flushed.
+    ///
+    /// ```no_run
+    /// # use janus_client::{Client, UploadStats};
+    /// # use janus_messages::{taskprov::TimePrecision, Time};
+    /// # use prio::vdaf::prio3::Prio3Count;
+    /// # use rand::random;
+    /// #
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let time_precision = TimePrecision::from_seconds(300);
+    /// let client = Client::new(
+    ///     random(),
+    ///     "https://leader.example.com/".parse().unwrap(),
+    ///     "https://helper.example.com/".parse().unwrap(),
+    ///     time_precision,
+    ///     Prio3Count::new_count(2).unwrap(),
+    /// ).await.unwrap();
+    ///
+    /// let session = client.upload_session(100);
+    /// let now = Time::from_seconds_since_epoch(1_000_000, &time_precision);
+    ///
+    /// for _ in 0..250 {
+    ///     session.put(true, now).await.unwrap();
+    /// }
+    ///
+    /// let stats = session.close().await.unwrap();
+    /// assert_eq!(stats.reports_uploaded, 250);
+    /// # }
+    /// ```
+    pub fn upload_session(&self, group_size: usize) -> UploadSession<V> {
+        let (sender, mut receiver) = mpsc::channel::<(V::Measurement, Time)>(group_size);
+        let client = self.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut stats = UploadStats {
+                reports_uploaded: 0,
+                requests_made: 0,
+            };
+            let mut batch = Vec::with_capacity(group_size);
+
+            loop {
+                // Block until at least one measurement arrives, or the channel closes.
+                let count = receiver.recv_many(&mut batch, group_size).await;
+                if count == 0 {
+                    // Channel closed, no more measurements.
+                    break;
+                }
+
+                let (leader_hpke_config, helper_hpke_config) = tokio::try_join!(
+                    async { client.leader_hpke_config.lock().await.get().await.cloned() },
+                    async { client.helper_hpke_config.lock().await.get().await.cloned() },
+                )?;
+
+                let mut reports = Vec::with_capacity(batch.len());
+                for (measurement, time) in batch.drain(..) {
+                    reports.push(client.prepare_report(
+                        &measurement,
+                        &time,
+                        &leader_hpke_config,
+                        &helper_hpke_config,
+                    )?);
+                }
+
+                let num_reports = reports.len() as u64;
+                client.upload_reports(reports).await?;
+                stats.reports_uploaded += num_reports;
+                stats.requests_made += 1;
+            }
+
+            Ok(stats)
+        });
+
+        UploadSession {
+            sender: Some(sender),
+            handle,
+        }
     }
 }
 

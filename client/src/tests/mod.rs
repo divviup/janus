@@ -17,7 +17,7 @@ use prio::{
 use rand::random;
 use url::Url;
 
-use crate::{Client, ClientParameters, Error, HpkeConfiguration, default_http_client};
+use crate::{Client, ClientParameters, Error, HpkeConfiguration, UploadStats, default_http_client};
 
 #[cfg(feature = "ohttp")]
 mod ohttp;
@@ -375,5 +375,105 @@ async fn upload_success_with_empty_response() {
     // Upload should succeed when HTTP 200 is returned with an empty UploadResponse
     client.upload(true).await.unwrap();
 
+    mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_session_basic() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    // Expect two batches: one full batch of 2 and one partial batch of 1.
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(200)
+        .expect(2)
+        .create_async()
+        .await;
+
+    let session = client.upload_session(2);
+    let time = Time::from_seconds_since_epoch(100, &client.parameters.time_precision);
+
+    session.put(true, time).await.unwrap();
+    session.put(false, time).await.unwrap();
+    session.put(true, time).await.unwrap();
+
+    let stats = session.close().await.unwrap();
+    assert_eq!(
+        stats,
+        UploadStats {
+            reports_uploaded: 3,
+            requests_made: 2,
+        }
+    );
+    mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_session_partial_batch() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(200)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let session = client.upload_session(10);
+    let time = Time::from_seconds_since_epoch(100, &client.parameters.time_precision);
+
+    session.put(true, time).await.unwrap();
+
+    let stats = session.close().await.unwrap();
+    assert_eq!(
+        stats,
+        UploadStats {
+            reports_uploaded: 1,
+            requests_made: 1,
+        }
+    );
+    mocked_upload.assert_async().await;
+}
+
+#[tokio::test]
+async fn upload_session_error_propagation() {
+    install_test_trace_subscriber();
+    initialize_rustls();
+    let mut server = mockito::Server::new_async().await;
+    let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
+
+    let mocked_upload = server
+        .mock(
+            "POST",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
+        .with_status(500) // throw the error!
+        .expect_at_least(1)
+        .create_async()
+        .await;
+
+    let session = client.upload_session(2);
+    let time = Time::from_seconds_since_epoch(100, &client.parameters.time_precision);
+
+    session.put(true, time).await.unwrap();
+    session.put(false, time).await.unwrap();
+
+    // The error won't arrive until we close, which is expected.
+    assert_matches!(session.close().await, Err(Error::Http(_)));
     mocked_upload.assert_async().await;
 }
