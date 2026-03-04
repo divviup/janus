@@ -17,6 +17,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures::{
+    TryStreamExt,
     io::{AsyncRead, AsyncReadExt},
     stream::Stream,
 };
@@ -50,7 +51,11 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 
-use super::{Aggregator, Config, Error, error::ArcError, queue::LIFORequestQueue};
+use super::{
+    Aggregator, Config, Error,
+    error::ArcError,
+    queue::{self, LIFORequestQueue},
+};
 use crate::aggregator::{AggregationJobContinueResult, problem_details::ProblemDocument};
 
 #[cfg(test)]
@@ -462,9 +467,23 @@ where
             .allow_headers([CONTENT_TYPE])
             .max_age(CORS_PREFLIGHT_CACHE_AGE);
 
-        // Build the aggregation job routes, optionally with queue middleware
-        let aggregation_job_put = put(aggregation_jobs_put::<C>);
-        let _aggregation_job_post = post(aggregation_jobs_post::<C>);
+        // Build aggregation job routes, optionally with LIFO queue middleware for
+        // back-pressure and load-shedding on helpers.
+        let aggregation_job_routes = Router::new().route(
+            AGGREGATION_JOB_ROUTE,
+            put(aggregation_jobs_put::<C>)
+                .post(aggregation_jobs_post::<C>)
+                .get(aggregation_jobs_get::<C>)
+                .delete(aggregation_jobs_delete::<C>),
+        );
+        let aggregation_job_routes = if let Some(queue) = helper_queue {
+            aggregation_job_routes.layer(middleware::from_fn_with_state(
+                queue,
+                queue::lifo_queue_middleware,
+            ))
+        } else {
+            aggregation_job_routes
+        };
 
         let router = Router::new()
             .route("/hpke_config", get(hpke_config::<C>).layer(hpke_cors))
@@ -472,13 +491,7 @@ where
                 "/tasks/{task_id}/reports",
                 post(upload::<C>).layer(upload_cors),
             )
-            .route(
-                AGGREGATION_JOB_ROUTE,
-                aggregation_job_put
-                    .post(aggregation_jobs_post::<C>)
-                    .get(aggregation_jobs_get::<C>)
-                    .delete(aggregation_jobs_delete::<C>),
-            )
+            .merge(aggregation_job_routes)
             .route(
                 COLLECTION_JOB_ROUTE,
                 put(collection_jobs_put::<C>)
@@ -494,14 +507,6 @@ where
             .layer(middleware::from_fn(http_metrics_middleware))
             .layer(axum::Extension(http_metrics))
             .with_state(state);
-
-        // If there's a helper queue, wrap the aggregation job routes with queue middleware
-        // (This is a simplification; in practice we'd want to apply the queue only to specific
-        // routes)
-        if let Some(_queue) = helper_queue {
-            // TODO: Apply queue middleware to aggregation job routes specifically
-            // For now, the queue is not applied as it needs tower middleware conversion
-        }
 
         Ok(router)
     }
@@ -589,7 +594,6 @@ const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";
 
 /// API handler for the "/hpke_config" GET endpoint.
 async fn hpke_config<C: Clock>(
-    headers: HeaderMap,
     State(state): State<Arc<AggregatorState<C>>>,
 ) -> Result<Response, Error> {
     let (encoded_hpke_config_list, signature) = state.aggregator.handle_hpke_config().await?;
@@ -603,11 +607,6 @@ async fn hpke_config<C: Clock>(
         http::header::CACHE_CONTROL,
         HeaderValue::from_static("max-age=86400"),
     );
-
-    // Handle CORS
-    if let Some(origin) = headers.get(http::header::ORIGIN) {
-        response_headers.insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
-    }
 
     if let Some(signature) = signature {
         response_headers.insert(
@@ -692,33 +691,23 @@ async fn upload<C: Clock>(
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
 
-    let body = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|_| Error::ClientDisconnected)?;
+    let body_reader = body
+        .into_data_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))
+        .into_async_read();
 
     let response = match state
         .aggregator
-        .handle_upload(
-            &task_id,
-            decode_reports_stream(futures::io::Cursor::new(body.to_vec())),
-        )
+        .handle_upload(&task_id, decode_reports_stream(body_reader))
         .await
     {
         Ok(response) => response,
         Err(arc_err) => return Ok(ArcError::from(arc_err).into_response()),
     };
 
-    let mut resp = EncodedBody::new(response, UploadResponse::MEDIA_TYPE)
+    Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE)
         .with_status(StatusCode::OK)
-        .into_response();
-
-    // Handle CORS
-    if let Some(origin) = headers.get(http::header::ORIGIN) {
-        resp.headers_mut()
-            .insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
-    }
-
-    Ok(resp)
+        .into_response())
 }
 
 /// Path parameters for aggregation job endpoints.

@@ -122,8 +122,12 @@ impl std::future::IntoFuture for CloneCounterObserver {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            while self.count.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-                self.notify.notified().await;
+            loop {
+                let notified = self.notify.notified();
+                if self.count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    break;
+                }
+                notified.await;
             }
         })
     }
