@@ -41,7 +41,7 @@ use opentelemetry::metrics::Meter;
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
 
 use super::{
@@ -405,14 +405,15 @@ where
             aggregator: Arc::clone(&self.aggregator),
         });
 
-        // CORS layers for public endpoints
+        // CORS layers for public endpoints. Mirror the request Origin (rather than
+        // returning wildcard `*`) to preserve support for credentialed CORS requests.
         let hpke_cors = CorsLayer::new()
-            .allow_origin(Any)
+            .allow_origin(AllowOrigin::mirror_request())
             .allow_methods([http::Method::GET])
             .max_age(CORS_PREFLIGHT_CACHE_AGE);
 
         let upload_cors = CorsLayer::new()
-            .allow_origin(Any)
+            .allow_origin(AllowOrigin::mirror_request())
             .allow_methods([http::Method::POST])
             .allow_headers([CONTENT_TYPE])
             .max_age(CORS_PREFLIGHT_CACHE_AGE);
