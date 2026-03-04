@@ -136,7 +136,7 @@ impl std::future::IntoFuture for CloneCounterObserver {
 impl Drop for CloneCounter {
     fn drop(&mut self) {
         if self.count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
-            self.notify.notify_one();
+            self.notify.notify_waiters();
         }
     }
 }
