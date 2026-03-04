@@ -534,10 +534,9 @@ mod tests {
         task::{JoinHandle, yield_now},
         time::{sleep, timeout},
     };
+    use tokio_util::sync::CancellationToken;
     use tower::ServiceExt;
     use tracing::debug;
-
-    use tokio_util::sync::CancellationToken;
 
     use super::{Error, LIFORequestQueue, Metrics, lifo_queue_middleware};
     use crate::metrics::test_util::InMemoryMetricInfrastructure;
@@ -991,9 +990,7 @@ mod tests {
     async fn cancellation_token_aborts_queue_acquisition() {
         install_test_trace_subscriber();
 
-        let queue = Arc::new(
-            LIFORequestQueue::new(1, 1, &noop_meter(), "test", None).unwrap(),
-        );
+        let queue = Arc::new(LIFORequestQueue::new(1, 1, &noop_meter(), "test", None).unwrap());
         let unhang = Arc::new(Notify::new());
         let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
 

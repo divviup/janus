@@ -4,7 +4,7 @@ use anyhow::Context;
 use axum::{Json, Router, body::Body, extract::State, response::IntoResponse, routing::post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
-use http::{Request, StatusCode};
+use http::{Request, Response, StatusCode};
 use janus_aggregator::{
     binary_utils::{BinaryOptions, CommonBinaryOptions, janus_main},
     config::{BinaryConfig, CommonConfig},
@@ -219,13 +219,16 @@ async fn proxy_handler(
         Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
 
-    let mut response = (status, body.to_vec()).into_response();
+    let mut response = Response::builder()
+        .status(status)
+        .body(Body::from(body.to_vec()))
+        .unwrap();
     for (name, value) in resp_headers.iter() {
         if let (Ok(name), Ok(value)) = (
             http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
             http::header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
-            response.headers_mut().append(name, value);
+            response.headers_mut().insert(name, value);
         }
     }
     response
