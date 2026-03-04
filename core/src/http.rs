@@ -163,19 +163,19 @@ pub fn check_content_type<M: MediaType>(headers: &http::HeaderMap) -> Result<(),
     )
 }
 
-pub fn check_content_type_value<M: MediaType>(content_type: Mime) -> Result<(), anyhow::Error> {
+fn check_content_type_value<M: MediaType>(content_type: Mime) -> Result<(), anyhow::Error> {
     let expected_mime: Mime = M::MEDIA_TYPE
         .parse()
         .context("failed to parse expected Content-Type header")?;
 
     if content_type.essence_str() != expected_mime.essence_str() {
         return Err(anyhow!(
-            "unexpected MIME essence in Content-Type header {content_type}"
+            "unexpected MIME essence in Content-Type header: got {content_type}, expected {expected_mime}"
         ));
     }
     if content_type.get_param("message") != expected_mime.get_param("message") {
         return Err(anyhow!(
-            "unexpected message parameter in Content-Type header: {content_type}"
+            "unexpected message parameter in Content-Type header: got {content_type}, expected {expected_mime}"
         ));
     }
 

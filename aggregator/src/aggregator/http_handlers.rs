@@ -340,8 +340,8 @@ pub struct HelperAggregationRequestQueue {
 }
 
 /// Shared application state for the aggregator.
-pub struct AggregatorState<C: Clock> {
-    pub aggregator: Arc<Aggregator<C>>,
+pub(crate) struct AggregatorState<C: Clock> {
+    pub(crate) aggregator: Arc<Aggregator<C>>,
 }
 
 /// HTTP server metrics, layered as an `Extension` on all routes.
@@ -504,6 +504,8 @@ where
                     .get(aggregate_shares_get::<C>)
                     .delete(aggregate_shares_delete::<C>),
             )
+            // In axum, the last .layer() is outermost. Extension must be outermost
+            // so the HttpMetrics value is available when the metrics middleware runs.
             .layer(middleware::from_fn(http_metrics_middleware))
             .layer(axum::Extension(http_metrics))
             .with_state(state);

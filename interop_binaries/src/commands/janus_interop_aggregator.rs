@@ -162,9 +162,8 @@ async fn add_task_endpoint(
 }
 
 async fn ready_endpoint(State(state): State<InteropAggregatorState>) -> impl IntoResponse {
-    let client = reqwest::Client::new();
     for peer in &state.health_check_peers {
-        if client.get(peer.as_str()).send().await.is_err() {
+        if state.http_client.get(peer.as_str()).send().await.is_err() {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
@@ -226,7 +225,7 @@ async fn proxy_handler(
             http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
             http::header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
-            response.headers_mut().insert(name, value);
+            response.headers_mut().append(name, value);
         }
     }
     response

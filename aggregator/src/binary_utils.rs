@@ -508,7 +508,9 @@ async fn zpages_server(address: SocketAddr, trace_reload_handle: TraceReloadHand
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .expect("failed to bind zpages server");
-    axum::serve(listener, handler).await.ok();
+    if let Err(err) = axum::serve(listener, handler).await {
+        tracing::warn!(?err, "zpages server exited with error");
+    }
 }
 
 pub fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> Router {

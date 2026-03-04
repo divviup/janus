@@ -12,6 +12,8 @@ use tokio::runtime::Runtime;
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
+    axum::http::StatusCode,
+    axum::response::IntoResponse,
     prometheus::Registry,
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -145,14 +147,21 @@ async fn prometheus_metrics_server(
                 let encoder = prometheus::TextEncoder::new();
                 let metric_families = registry.gather();
                 let mut buffer = Vec::new();
-                encoder.encode(&metric_families, &mut buffer).unwrap();
-                (
-                    [(
-                        http::header::CONTENT_TYPE,
-                        encoder.format_type().to_string(),
-                    )],
-                    buffer,
-                )
+                match encoder.encode(&metric_families, &mut buffer) {
+                    Ok(()) => (
+                        StatusCode::OK,
+                        [(
+                            http::header::CONTENT_TYPE,
+                            encoder.format_type().to_string(),
+                        )],
+                        buffer,
+                    )
+                        .into_response(),
+                    Err(err) => {
+                        tracing::error!(?err, "Failed to encode metrics");
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    }
+                }
             }
         }),
     );

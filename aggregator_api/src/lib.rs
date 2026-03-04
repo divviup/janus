@@ -45,7 +45,8 @@ pub struct ApiState<C: Clock> {
 pub fn aggregator_api_handler<C: Clock>(
     ds: Arc<Datastore<C>>,
     cfg: Config,
-    _meter: &Meter,
+    _meter: &Meter, /* TODO(#4283): wire up HTTP metrics middleware like aggregator's
+                     * http_metrics_middleware */
 ) -> Router {
     let state = Arc::new(ApiState {
         ds,
@@ -86,10 +87,7 @@ pub fn aggregator_api_handler<C: Clock>(
                 .post(post_taskprov_peer_aggregator::<C>)
                 .delete(delete_taskprov_peer_aggregator::<C>),
         )
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            replace_mime_types::<C>,
-        ))
+        .layer(middleware::from_fn(replace_mime_types))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_check::<C>,
@@ -116,11 +114,7 @@ async fn auth_check<C: Clock>(
 }
 
 /// Middleware that validates and replaces Content-Type/Accept headers.
-async fn replace_mime_types<C: Clock>(
-    State(_state): State<Arc<ApiState<C>>>,
-    mut request: Request,
-    next: Next,
-) -> Response {
+async fn replace_mime_types(mut request: Request, next: Next) -> Response {
     let headers = request.headers();
 
     // Content-Type should either be the versioned API, or nothing for GET/DELETE
@@ -200,11 +194,9 @@ impl IntoResponse for Error {
                 datastore::Error::TimeUnaligned { .. } => {
                     (StatusCode::BAD_REQUEST, err.to_string()).into_response()
                 }
-                datastore::Error::User(user_err) if user_err.is::<Error>() => user_err
-                    .downcast_ref::<Error>()
-                    .unwrap()
-                    .status_code()
-                    .into_response(),
+                datastore::Error::User(user_err) if user_err.is::<Error>() => {
+                    (*user_err.downcast::<Error>().unwrap()).into_response()
+                }
                 err => {
                     error!(?err, "Datastore error");
                     StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -218,24 +210,6 @@ impl IntoResponse for Error {
             Self::Url(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
             Self::Role(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
             Self::Hpke(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-        }
-    }
-}
-
-impl Error {
-    fn status_code(&self) -> StatusCode {
-        match self {
-            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Db(datastore::Error::MutationTargetNotFound) => StatusCode::NOT_FOUND,
-            Self::Db(datastore::Error::MutationTargetAlreadyExists) => StatusCode::CONFLICT,
-            Self::Db(datastore::Error::TimeUnaligned { .. }) => StatusCode::BAD_REQUEST,
-            Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::Conflict(_) => StatusCode::CONFLICT,
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Url(_) => StatusCode::BAD_REQUEST,
-            Self::Role(_) => StatusCode::BAD_REQUEST,
-            Self::Hpke(_) => StatusCode::BAD_REQUEST,
         }
     }
 }

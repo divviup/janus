@@ -657,13 +657,11 @@ pub mod test_util {
                     .unwrap()
                     .path(),
             )
-            .header(
-                header::CONTENT_TYPE,
-                AggregationJobInitializeReq::<B>::MEDIA_TYPE,
-            )
             .body(Body::from(aggregation_job.get_encoded().unwrap()))
             .unwrap();
-        *request.headers_mut() = headers;
+        for (key, value) in &headers {
+            request.headers_mut().insert(key, value.clone());
+        }
         request.headers_mut().insert(
             header::CONTENT_TYPE,
             AggregationJobInitializeReq::<B>::MEDIA_TYPE
