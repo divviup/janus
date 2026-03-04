@@ -35,7 +35,7 @@ pub struct Config {
 }
 
 /// Content type
-pub const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
+const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
 
 pub use janus_aggregator_core::BYTES_HISTOGRAM_BOUNDARIES;
 
