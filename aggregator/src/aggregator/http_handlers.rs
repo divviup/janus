@@ -1,16 +1,11 @@
-use std::{
-    collections::VecDeque,
-    io::Cursor,
-    sync::Arc,
-    time::{Duration as StdDuration, Instant},
-};
+use std::{collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration};
 
 use anyhow::Context;
 use axum::{
     Router,
     body::Body,
-    extract::{MatchedPath, Path, Request, State},
-    middleware::{self, Next},
+    extract::{Path, State},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -23,8 +18,9 @@ use futures::{
 };
 use http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
-    BYTES_HISTOGRAM_BOUNDARIES, TIME_HISTOGRAM_BOUNDARIES,
+    ErrorCode, HttpMetrics,
     datastore::{Datastore, Error as datastoreError},
+    http_metrics_middleware,
     taskprov::taskprov_task_id,
 };
 use janus_core::{
@@ -41,10 +37,7 @@ use janus_messages::{
     TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Histogram, Meter},
-};
+use opentelemetry::metrics::Meter;
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
@@ -251,10 +244,6 @@ impl IntoResponse for ArcError {
     }
 }
 
-/// Newtype holding a textual error code, stored in response extensions for metrics.
-#[derive(Clone, Copy)]
-struct ErrorCode(&'static str);
-
 /// Wrapper around a type that implements [`Encode`], producing an HTTP response with the
 /// encoded body, appropriate Content-Type, and status code.
 struct EncodedBody<T> {
@@ -344,15 +333,6 @@ pub(crate) struct AggregatorState<C: Clock> {
     pub(crate) aggregator: Arc<Aggregator<C>>,
 }
 
-/// HTTP server metrics, layered as an `Extension` on all routes.
-#[derive(Clone)]
-struct HttpMetrics {
-    response_counter: Counter<u64>,
-    request_duration: Histogram<f64>,
-    request_body_size: Histogram<f64>,
-    response_body_size: Histogram<f64>,
-}
-
 pub struct AggregatorHandlerBuilder<'a, C>
 where
     C: Clock,
@@ -419,37 +399,7 @@ where
             .transpose()?
             .map(Arc::new);
 
-        let http_metrics = Arc::new(HttpMetrics {
-            response_counter: self
-                .meter
-                .u64_counter("janus_aggregator_responses")
-                .with_description(
-                    "Count of requests handled by the aggregator, by method, route, and response status.",
-                )
-                .with_unit("{request}")
-                .build(),
-            request_duration: self
-                .meter
-                .f64_histogram("http.server.request.duration")
-                .with_description("Duration of HTTP server requests.")
-                .with_unit("s")
-                .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
-                .build(),
-            request_body_size: self
-                .meter
-                .f64_histogram("http.server.request.body_size")
-                .with_description("Size of HTTP server request bodies.")
-                .with_unit("By")
-                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
-                .build(),
-            response_body_size: self
-                .meter
-                .f64_histogram("http.server.response.body_size")
-                .with_description("Size of HTTP server response bodies.")
-                .with_unit("By")
-                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
-                .build(),
-        });
+        let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
 
         let state = Arc::new(AggregatorState {
             aggregator: Arc::clone(&self.aggregator),
@@ -512,84 +462,6 @@ where
 
         Ok(router)
     }
-}
-
-/// Middleware that records HTTP server metrics (response counter, request duration, body sizes).
-async fn http_metrics_middleware(
-    axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let method = request.method().to_string();
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|p| p.as_str().trim_start_matches('/').to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let request_body_size = request
-        .headers()
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
-    let start = Instant::now();
-    let response = next.run(request).await;
-    let duration = start.elapsed().as_secs_f64();
-    let status_code = response.status().as_u16().to_string();
-
-    let error_code = response
-        .extensions()
-        .get::<ErrorCode>()
-        .map(|ec| ec.0)
-        .unwrap_or_else(|| {
-            if response.status().is_client_error() || response.status().is_server_error() {
-                "unknown"
-            } else {
-                ""
-            }
-        });
-
-    let response_body_size = response
-        .headers()
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
-    // janus_aggregator_responses counter
-    metrics.response_counter.add(
-        1,
-        &[
-            KeyValue::new("method", method.clone()),
-            KeyValue::new("route", route.clone()),
-            KeyValue::new("error_code", error_code),
-        ],
-    );
-
-    // http.server.request.duration histogram (OTel semantic conventions)
-    let mut duration_attrs = vec![
-        KeyValue::new("http.route", route.clone()),
-        KeyValue::new("http.request.method", method),
-        KeyValue::new("http.response.status_code", status_code),
-    ];
-    if !error_code.is_empty() {
-        duration_attrs.push(KeyValue::new("error.type", error_code));
-    }
-    metrics.request_duration.record(duration, &duration_attrs);
-
-    // http.server.request.body_size histogram
-    metrics.request_body_size.record(
-        request_body_size,
-        &[KeyValue::new("http.route", route.clone())],
-    );
-
-    // http.server.response.body_size histogram
-    metrics
-        .response_body_size
-        .record(response_body_size, &[KeyValue::new("http.route", route)]);
-
-    response
 }
 
 const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";

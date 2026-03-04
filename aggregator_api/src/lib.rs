@@ -15,7 +15,11 @@ use axum::{
 };
 use git_version::git_version;
 use http::{HeaderValue, StatusCode, header::CONTENT_TYPE as CONTENT_TYPE_HEADER};
-use janus_aggregator_core::datastore::{self, Datastore};
+use janus_aggregator_core::{
+    HttpMetrics,
+    datastore::{self, Datastore},
+    http_metrics_middleware,
+};
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use opentelemetry::metrics::Meter;
@@ -45,9 +49,10 @@ pub struct ApiState<C: Clock> {
 pub fn aggregator_api_handler<C: Clock>(
     ds: Arc<Datastore<C>>,
     cfg: Config,
-    _meter: &Meter, /* TODO(#4283): wire up HTTP metrics middleware like aggregator's
-                     * http_metrics_middleware */
+    meter: &Meter,
 ) -> Router {
+    let http_metrics = HttpMetrics::new(meter, "janus_aggregator_api_responses");
+
     let state = Arc::new(ApiState {
         ds,
         cfg: Arc::new(cfg),
@@ -92,6 +97,8 @@ pub fn aggregator_api_handler<C: Clock>(
             state.clone(),
             auth_check::<C>,
         ))
+        .layer(middleware::from_fn(http_metrics_middleware))
+        .layer(axum::Extension(http_metrics))
         .with_state(state)
 }
 
@@ -180,6 +187,8 @@ enum Error {
 }
 
 impl IntoResponse for Error {
+    // TODO(#4425): Insert `ErrorCode` into response extensions (like the aggregator's
+    // `Error::to_response()` does) for accurate metrics labeling.
     fn into_response(self) -> Response {
         match self {
             Self::Internal(err) => {

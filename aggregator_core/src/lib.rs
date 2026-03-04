@@ -5,11 +5,15 @@
 // https://github.com/rust-lang/rust-clippy/pull/9879
 #![allow(clippy::single_component_path_imports)]
 
-use std::hash::Hash;
+use std::{hash::Hash, sync::Arc, time::Instant};
 
-use axum::{extract::MatchedPath, middleware::Next, response::Response};
+use axum::{body::Body, extract::MatchedPath, middleware::Next, response::Response};
 use educe::Educe;
 use http::Request;
+use opentelemetry::{
+    KeyValue,
+    metrics::{Counter, Histogram, Meter},
+};
 use prio::{
     codec::{Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
@@ -109,6 +113,125 @@ pub trait VdafHasAggregationParameter {}
 
 #[cfg(feature = "test-util")]
 impl VdafHasAggregationParameter for prio::vdaf::dummy::Vdaf {}
+
+/// Newtype holding a textual error code, stored in response extensions for metrics.
+#[derive(Clone, Copy)]
+pub struct ErrorCode(pub &'static str);
+
+/// HTTP server metrics, layered as an `Extension` on all routes.
+#[derive(Clone)]
+pub struct HttpMetrics {
+    response_counter: Counter<u64>,
+    request_duration: Histogram<f64>,
+    request_body_size: Histogram<f64>,
+    response_body_size: Histogram<f64>,
+}
+
+impl HttpMetrics {
+    pub fn new(meter: &Meter, counter_name: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            response_counter: meter
+                .u64_counter(counter_name)
+                .with_description(
+                    "Count of requests handled, by method, route, and response status.",
+                )
+                .with_unit("{request}")
+                .build(),
+            request_duration: meter
+                .f64_histogram("http.server.request.duration")
+                .with_description("Duration of HTTP server requests.")
+                .with_unit("s")
+                .with_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+            request_body_size: meter
+                .f64_histogram("http.server.request.body_size")
+                .with_description("Size of HTTP server request bodies.")
+                .with_unit("By")
+                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+            response_body_size: meter
+                .f64_histogram("http.server.response.body_size")
+                .with_description("Size of HTTP server response bodies.")
+                .with_unit("By")
+                .with_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
+                .build(),
+        })
+    }
+}
+
+/// Middleware that records HTTP server metrics (response counter, request duration, body sizes).
+pub async fn http_metrics_middleware(
+    axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let method = request.method().to_string();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| p.as_str().trim_start_matches('/').to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let request_body_size = request
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    let start = Instant::now();
+    let response = next.run(request).await;
+    let duration = start.elapsed().as_secs_f64();
+    let status_code = response.status().as_u16().to_string();
+
+    let error_code = response
+        .extensions()
+        .get::<ErrorCode>()
+        .map(|ec| ec.0)
+        .unwrap_or_else(|| {
+            if response.status().is_client_error() || response.status().is_server_error() {
+                "unknown"
+            } else {
+                ""
+            }
+        });
+
+    let response_body_size = response
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    metrics.response_counter.add(
+        1,
+        &[
+            KeyValue::new("method", method.clone()),
+            KeyValue::new("route", route.clone()),
+            KeyValue::new("error_code", error_code),
+        ],
+    );
+
+    let mut duration_attrs = vec![
+        KeyValue::new("http.route", route.clone()),
+        KeyValue::new("http.request.method", method),
+        KeyValue::new("http.response.status_code", status_code),
+    ];
+    if !error_code.is_empty() {
+        duration_attrs.push(KeyValue::new("error.type", error_code));
+    }
+    metrics.request_duration.record(duration, &duration_attrs);
+
+    metrics.request_body_size.record(
+        request_body_size,
+        &[KeyValue::new("http.route", route.clone())],
+    );
+
+    metrics
+        .response_body_size
+        .record(response_body_size, &[KeyValue::new("http.route", route)]);
+
+    response
+}
 
 /// Axum middleware that instruments request handlers with tracing spans.
 pub async fn instrumented(request: Request<axum::body::Body>, next: Next) -> Response {
