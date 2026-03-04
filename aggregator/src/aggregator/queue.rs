@@ -27,6 +27,7 @@ use tokio::{
     },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use super::Error;
@@ -325,12 +326,28 @@ impl PermitTx {
 /// This acquires a permit from the queue before forwarding the request to the next handler.
 /// If the queue is full, returns a TooManyRequests error. If the request times out waiting
 /// in the queue, returns a RequestTimeout error.
+///
+/// If a [`CancellationToken`] is present in request extensions (e.g. from fd-level connection
+/// monitoring), acquisition is raced against it so that a disconnected client frees its queue
+/// slot immediately. Without a token, `request_timeout` is the only bound.
 pub async fn lifo_queue_middleware(
     axum::extract::State(queue): axum::extract::State<Arc<LIFORequestQueue>>,
     request: Request,
     next: Next,
 ) -> Response {
-    match queue.acquire().await {
+    let cancel = request.extensions().get::<CancellationToken>().cloned();
+
+    let result = match cancel {
+        Some(token) => {
+            tokio::select! {
+                result = queue.acquire() => result,
+                _ = token.cancelled() => return Error::ClientDisconnected.into_response(),
+            }
+        }
+        None => queue.acquire().await,
+    };
+
+    match result {
         Ok(_permit) => next.run(request).await,
         Err(err) => err.into_response(),
     }
@@ -519,6 +536,8 @@ mod tests {
     };
     use tower::ServiceExt;
     use tracing::debug;
+
+    use tokio_util::sync::CancellationToken;
 
     use super::{Error, LIFORequestQueue, Metrics, lifo_queue_middleware};
     use crate::metrics::test_util::InMemoryMetricInfrastructure;
@@ -966,6 +985,43 @@ mod tests {
 
         install_test_trace_subscriber();
         quickcheck(qc as fn(Parameters) -> TestResult);
+    }
+
+    #[tokio::test]
+    async fn cancellation_token_aborts_queue_acquisition() {
+        install_test_trace_subscriber();
+
+        let queue = Arc::new(
+            LIFORequestQueue::new(1, 1, &noop_meter(), "test", None).unwrap(),
+        );
+        let unhang = Arc::new(Notify::new());
+        let router = hanging_router(Arc::clone(&queue), Arc::clone(&unhang));
+
+        // Fill the single concurrency slot so the next request must wait in the queue.
+        let _blocking = tokio::spawn({
+            let router = router.clone();
+            async move { send_request(&router).await }
+        });
+        // Give the blocking request time to acquire the permit.
+        sleep(Duration::from_millis(50)).await;
+
+        // Build a request with a pre-cancelled CancellationToken.
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let mut request = Request::builder().uri("/").body(Body::empty()).unwrap();
+        request.extensions_mut().insert(token);
+
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "Expected BAD_REQUEST from ClientDisconnected, got {:?}",
+            response.status()
+        );
+
+        // Clean up.
+        unhang.notify_waiters();
     }
 
     #[test]
