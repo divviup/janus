@@ -16,7 +16,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
     UploadResponse, taskprov::TimePrecision,
 };
@@ -64,7 +64,7 @@ async fn upload_handler() {
 
         assert_eq!(
             response.headers().get("content-type").unwrap(),
-            "application/dap-upload-resp"
+            "application/ppm-dap;message=upload-resp"
         );
         let body = &take_response_body(response).await;
         let expected_content_len = format!("{}", body.len());
@@ -718,7 +718,7 @@ async fn upload_handler_mixed_success_failure() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
-        "application/dap-upload-resp"
+        "application/ppm-dap;message=upload-resp"
     );
 
     // Parse the response
@@ -817,7 +817,7 @@ async fn upload_handler_task_not_started() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
-        "application/dap-upload-resp"
+        "application/ppm-dap;message=upload-resp"
     );
 
     let body = take_response_body(&mut response).await;
@@ -1103,7 +1103,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Content-Length: {}\r\n\r\n",
         encoded_report_1.len(),
     );
@@ -1126,7 +1126,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Content-Length: 1000\r\n\r\n"
     );
     client_socket
@@ -1141,7 +1141,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -1170,7 +1170,7 @@ async fn upload_client_early_disconnect() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket
@@ -1346,7 +1346,7 @@ async fn upload_client_http11_bulk() {
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
         "POST /tasks/{task_id}/reports HTTP/1.1\r\n\
-        Content-Type: application/dap-upload-req\r\n\
+        Content-Type: application/ppm-dap;message=upload-req\r\n\
         Transfer-Encoding: chunked\r\n\r\n"
     );
     client_socket

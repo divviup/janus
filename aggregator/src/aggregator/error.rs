@@ -260,6 +260,17 @@ impl Display for ReportRejectionReason {
     }
 }
 
+/// Errors from per-report upload processing. Distinguishes "report rejected"
+/// (soft, per-report) from "internal failure" (hard, aborts upload).
+#[derive(Debug)]
+pub(crate) enum UploadError {
+    /// The report was rejected for a known reason. Already recorded via
+    /// `report_writer.write_rejection()`.
+    ReportRejected(ReportRejection),
+    /// An infrastructure failure (DB, encoding, etc.) that aborts the upload.
+    Internal(Arc<Error>),
+}
+
 /// Errors that cause the aggregator to opt-out of a taskprov task.
 #[derive(Debug, thiserror::Error)]
 pub enum OptOutReason {

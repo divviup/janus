@@ -29,7 +29,7 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::extract_bearer_token,
+    http::{check_content_type, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -40,7 +40,6 @@ use janus_messages::{
     TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
-use mime::Mime;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -687,7 +686,7 @@ async fn upload<C: Clock>(
     State(state): State<Arc<AggregatorState<C>>>,
     body: Body,
 ) -> Result<Response, Error> {
-    validate_content_type(&headers, UploadRequest::MEDIA_TYPE)?;
+    validate_content_type::<UploadRequest>(&headers)?;
 
     let task_id: TaskId = task_id
         .parse()
@@ -750,10 +749,7 @@ async fn aggregation_jobs_put<C: Clock>(
     State(state): State<Arc<AggregatorState<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
-    validate_content_type(
-        &headers,
-        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-    )?;
+    validate_content_type::<AggregationJobInitializeReq<TimeInterval>>(&headers)?;
 
     let task_id = parse_task_id_str(&path.task_id)?;
     let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
@@ -787,7 +783,7 @@ async fn aggregation_jobs_post<C: Clock>(
     State(state): State<Arc<AggregatorState<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
-    validate_content_type(&headers, AggregationJobContinueReq::MEDIA_TYPE)?;
+    validate_content_type::<AggregationJobContinueReq>(&headers)?;
 
     let task_id = parse_task_id_str(&path.task_id)?;
     let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
@@ -885,7 +881,7 @@ async fn collection_jobs_put<C: Clock>(
     State(state): State<Arc<AggregatorState<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
-    validate_content_type(&headers, CollectionJobReq::<TimeInterval>::MEDIA_TYPE)?;
+    validate_content_type::<CollectionJobReq<TimeInterval>>(&headers)?;
 
     let task_id = parse_task_id_str(&path.task_id)?;
     let collection_job_id: CollectionJobId = path
@@ -963,7 +959,7 @@ async fn aggregate_shares_put<C: Clock>(
     State(state): State<Arc<AggregatorState<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
-    validate_content_type(&headers, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
+    validate_content_type::<AggregateShareReq<TimeInterval>>(&headers)?;
 
     let task_id = parse_task_id_str(&path.task_id)?;
     let auth_token = parse_auth_token(&task_id, &headers)?;
@@ -1029,31 +1025,8 @@ async fn aggregate_shares_delete<C: Clock>(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Check the request's Content-Type header.
-fn validate_content_type(
-    headers: &HeaderMap,
-    expected_media_type: &'static str,
-) -> Result<(), Error> {
-    let content_type = headers
-        .get(CONTENT_TYPE)
-        .ok_or_else(|| Error::BadRequest("no Content-Type header".into()))?;
-
-    let mime_str = content_type.to_str().map_err(|_| {
-        Error::BadRequest(format!("invalid Content-Type header: {content_type:?}").into())
-    })?;
-
-    let mime: Mime = mime_str
-        .parse()
-        .context("failed to parse Content-Type header")
-        .map_err(|e| Error::BadRequest(e.into()))?;
-
-    if mime.essence_str() != expected_media_type {
-        return Err(Error::BadRequest(
-            format!("unexpected Content-Type header: {mime}").into(),
-        ));
-    }
-
-    Ok(())
+fn validate_content_type<M: MediaType>(headers: &HeaderMap) -> Result<(), Error> {
+    check_content_type::<M>(headers).map_err(|e| Error::BadRequest(e.into()))
 }
 
 fn parse_task_id_str(encoded: &str) -> Result<TaskId, Error> {

@@ -62,7 +62,7 @@ use janus_core::{
     vdaf::vdaf_application_context,
 };
 use janus_messages::{
-    HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
+    HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
     ReportMetadata, ReportUploadStatus, Role, TaskId, Time, UploadRequest, UploadResponse,
     taskprov::TimePrecision,
 };
