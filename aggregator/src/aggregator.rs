@@ -2479,7 +2479,7 @@ impl VdafOps {
                                 ),
                                 output_share,
                             ),
-                        })
+                        }).map_err(drop)
                     })
             }
         });

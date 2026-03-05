@@ -250,7 +250,7 @@ impl VdafOps {
                                     prepare_step_result,
                                 ))),
                             output_share,
-                        ))
+                        )).map_err(drop)
                     },
                 )
             }
