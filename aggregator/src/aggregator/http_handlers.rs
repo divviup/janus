@@ -542,7 +542,14 @@ where
 
         // Axum router for incrementally migrated endpoints. Routes will be moved here
         // from the Trillium router one batch at a time.
-        let axum_router = axum::Router::new();
+        let mut axum_router = axum::Router::new();
+
+        // Temporary test endpoint to verify the proxy bridge works.
+        // TODO(#4283): Remove once a real endpoint has been migrated.
+        axum_router = axum_router.route(
+            "/internal/test/axum_ready",
+            axum::routing::get(|| async { "axum OK" }),
+        );
 
         // Bind a local listener for the axum router and spawn it.
         let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
