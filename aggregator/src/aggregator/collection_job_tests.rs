@@ -283,6 +283,7 @@ pub(crate) async fn setup_collection_job_test_case(
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
 
     CollectionJobTestCase {

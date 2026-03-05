@@ -812,6 +812,7 @@ async fn upload_handler_error_fanout() {
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
@@ -942,6 +943,7 @@ async fn upload_client_early_disconnect() {
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
 
     let task = TaskBuilder::new(
@@ -1199,6 +1201,7 @@ async fn upload_client_http11_bulk() {
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
 
     let task = TaskBuilder::new(

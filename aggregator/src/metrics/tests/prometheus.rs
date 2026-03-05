@@ -95,6 +95,7 @@ async fn http_metrics() {
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
 
     // Call init to finish setting up metrics.

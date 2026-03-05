@@ -43,6 +43,7 @@ use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::Metrics;
+use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
 use trillium_router::{Router, RouterConnExt};
 
 use super::{
@@ -436,7 +437,7 @@ where
         }
     }
 
-    pub fn build(self) -> Result<impl Handler, Error> {
+    pub async fn build(self) -> Result<impl Handler, Error> {
         let helper_queue = self
             .helper_aggregation_request_queue
             .map(
@@ -539,11 +540,38 @@ where
             .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
             .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
 
+        // Axum router for incrementally migrated endpoints. Routes will be moved here
+        // from the Trillium router one batch at a time.
+        let axum_router = axum::Router::new();
+
+        // Bind a local listener for the axum router and spawn it.
+        let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
+        let axum_address = axum_listener.local_addr().map_err(|err| {
+            Error::Internal(format!("getting axum listener address: {err}").into())
+        })?;
+        tokio::spawn(async move {
+            axum::serve(axum_listener, axum_router).await.ok();
+        });
+
+        // Proxy fallback: routes not matched by the Trillium router are forwarded to
+        // the local axum server. As endpoints migrate, they are removed from the
+        // Trillium router and added to the axum router; the proxy transparently
+        // forwards traffic to them.
+        let upstream = format!("http://{axum_address}/").into_upstream();
+        let proxy = Proxy::new(
+            trillium_proxy::Client::new(trillium_tokio::ClientConfig::default())
+                .with_default_pool(),
+            upstream,
+        );
+
         Ok((
             State(self.aggregator),
             metrics,
             router,
             StatusCounter::new(self.meter),
+            proxy,
         ))
     }
 }
@@ -1216,6 +1244,7 @@ pub mod test_util {
                 timeout_ms: None,
             })
             .build()
+            .await
             .unwrap();
 
             Self {

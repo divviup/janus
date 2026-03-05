@@ -497,10 +497,13 @@ checksum = "021e862c184ae977658b36c4500f7feac3221ca5da43e3f25bd04ab6c79a29b5"
 dependencies = [
  "axum-core 0.5.2",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "itoa",
  "matchit 0.8.4",
  "memchr",
@@ -509,10 +512,15 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper 1.0.2",
+ "tokio",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -552,6 +560,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -2578,6 +2587,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.4",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2636,6 +2646,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tower-http",
  "tracing",
  "tracing-chrome",
  "tracing-log",
@@ -2649,6 +2660,7 @@ dependencies = [
  "trillium-macros 0.0.6",
  "trillium-opentelemetry",
  "trillium-prometheus",
+ "trillium-proxy",
  "trillium-router",
  "trillium-testing",
  "trillium-tokio",
@@ -2701,6 +2713,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.4",
  "backon",
  "base64 0.22.1",
  "bytes",
