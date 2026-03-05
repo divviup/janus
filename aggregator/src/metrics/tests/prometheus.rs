@@ -141,9 +141,12 @@ async fn http_metrics() {
         janus_aggregator_responses_total_metric_labels["method"],
         "GET"
     );
+    // Route is "unknown" because hpke_config is served by the axum router behind the proxy
+    // bridge, so the Trillium router doesn't match it.
+    // TODO(#4283): Will be fixed when metrics middleware migrates to axum.
     assert_eq!(
         janus_aggregator_responses_total_metric_labels["route"],
-        "hpke_config"
+        "unknown"
     );
     assert_eq!(
         janus_aggregator_responses_total_metric_labels["error_code"],
@@ -168,9 +171,11 @@ async fn http_metrics() {
     );
     let http_server_request_duration_seconds_metric_labels =
         labels_to_map(&metric_families["http_server_request_duration_seconds"].get_metric()[0]);
-    assert_eq!(
-        http_server_request_duration_seconds_metric_labels["http_route"],
-        "hpke_config"
+    // http_route is absent because hpke_config is served by the axum router behind the proxy
+    // bridge, so the Trillium router doesn't match it.
+    // TODO(#4283): Will be fixed when metrics middleware migrates to axum.
+    assert!(
+        !http_server_request_duration_seconds_metric_labels.contains_key("http_route"),
     );
     assert_eq!(
         http_server_request_duration_seconds_metric_labels["http_request_method"],
