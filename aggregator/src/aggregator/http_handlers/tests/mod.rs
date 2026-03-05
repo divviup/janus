@@ -9,6 +9,7 @@ mod report;
 
 use trillium_testing::prelude::*;
 
+use super::test_util;
 use crate::aggregator::http_handlers::test_util::HttpHandlerTest;
 
 /// Verify that Trillium routes not matched by the Trillium router fall through to the
@@ -24,5 +25,3 @@ async fn axum_proxy_fallthrough() {
     let body = test_util::take_response_body(&mut conn).await;
     assert_eq!(body, b"axum OK");
 }
-
-use super::test_util;
