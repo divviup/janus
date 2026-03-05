@@ -1329,10 +1329,12 @@ where
                             }
                         };
 
-                        ra_sender.send(WritableReportAggregation::new(
-                            stepped_aggregation.report_aggregation.with_state(new_state),
-                            output_share,
-                        ))
+                        ra_sender
+                            .send(WritableReportAggregation::new(
+                                stepped_aggregation.report_aggregation.with_state(new_state),
+                                output_share,
+                            ))
+                            .map_err(drop)
                     })
             }
         });
