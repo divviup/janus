@@ -174,9 +174,7 @@ async fn http_metrics() {
     // http_route is absent because hpke_config is served by the axum router behind the proxy
     // bridge, so the Trillium router doesn't match it.
     // TODO(#4283): Will be fixed when metrics middleware migrates to axum.
-    assert!(
-        !http_server_request_duration_seconds_metric_labels.contains_key("http_route"),
-    );
+    assert!(!http_server_request_duration_seconds_metric_labels.contains_key("http_route"),);
     assert_eq!(
         http_server_request_duration_seconds_metric_labels["http_request_method"],
         "GET"
