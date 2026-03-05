@@ -1,6 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
+use axum::body::Body;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use http::{Method, Request, StatusCode};
 use janus_aggregator_core::{
     datastore::models::HpkeKeyState,
     task::{AggregationMode, BatchMode, test_util::TaskBuilder},
@@ -13,8 +15,7 @@ use janus_core::{
 };
 use janus_messages::{HpkeConfigId, HpkeConfigList, MediaType, Role};
 use prio::codec::Decode as _;
-use trillium::{KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::get};
+use tower::ServiceExt;
 
 use crate::{
     aggregator::{
@@ -57,14 +58,26 @@ async fn hpke_config() {
         .unwrap();
 
     // No task ID provided.
-    let mut test_conn = get("/hpke_config").run_async(&handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(
-        &test_conn,
-        "cache-control" => "max-age=86400",
-        "content-type" => (HpkeConfigList::MEDIA_TYPE),
+    let mut response = handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "max-age=86400"
     );
-    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        HpkeConfigList::MEDIA_TYPE,
+    );
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut response).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -83,9 +96,13 @@ async fn hpke_config() {
         .await
         .unwrap();
     aggregator.refresh_caches().await.unwrap();
-    let mut test_conn = get("/hpke_config").run_async(&handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    let mut response = handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut response).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -103,9 +120,13 @@ async fn hpke_config() {
         .await
         .unwrap();
     aggregator.refresh_caches().await.unwrap();
-    let mut test_conn = get("/hpke_config").run_async(&handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    let mut response = handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut response).await;
     // Unordered comparison.
     assert_eq!(
         HashMap::from_iter(
@@ -138,9 +159,13 @@ async fn hpke_config() {
         .await
         .unwrap();
     aggregator.refresh_caches().await.unwrap();
-    let mut test_conn = get("/hpke_config").run_async(&handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    let mut response = handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut response).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -191,9 +216,13 @@ async fn hpke_config_with_taskprov() {
         .build()
         .unwrap();
 
-    let mut test_conn = get("/hpke_config").run_async(&handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
+    let mut response = handler
+        .clone()
+        .oneshot(Request::get("/hpke_config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut response).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[hpke_keypair.config().clone()]
@@ -244,37 +273,66 @@ async fn hpke_config_cors_headers() {
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Check for appropriate CORS headers in response to a preflight request.
-    let test_conn = TestConn::build(trillium::Method::Options, "/hpke_config", ())
-        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-        .with_request_header(KnownHeaderName::AccessControlRequestMethod, "GET")
-        .run_async(&handler)
-        .await;
-    assert!(test_conn.status().unwrap().is_success());
-    assert_headers!(
-        &test_conn,
-        "access-control-allow-origin" => "https://example.com/",
-        "access-control-allow-methods"=> "GET",
-        "access-control-max-age"=> "86400",
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/hpke_config")
+                .header("origin", "https://example.com/")
+                .header("access-control-request-method", "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://example.com/"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-methods")
+            .unwrap(),
+        "GET"
+    );
+    assert_eq!(
+        response.headers().get("access-control-max-age").unwrap(),
+        "86400"
     );
 
     // Check for appropriate CORS headers with a simple GET request.
-    let test_conn = get("/hpke_config")
-        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-        .run_async(&handler)
-        .await;
-    assert!(test_conn.status().unwrap().is_success());
-    assert_headers!(
-        &test_conn,
-        "access-control-allow-origin" => "https://example.com/",
+    let response = handler
+        .clone()
+        .oneshot(
+            Request::get("/hpke_config")
+                .header("origin", "https://example.com/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://example.com/"
     );
 }
 
-async fn verify_and_decode_hpke_config_list(test_conn: &mut TestConn) -> HpkeConfigList {
-    let response_body = take_response_body(test_conn).await;
+async fn verify_and_decode_hpke_config_list(response: &mut http::Response<Body>) -> HpkeConfigList {
+    let response_body = take_response_body(response).await;
     let signature = URL_SAFE_NO_PAD
         .decode(
-            test_conn
-                .response_headers()
+            response
+                .headers()
                 .get(HPKE_CONFIG_SIGNATURE_HEADER)
                 .unwrap(),
         )

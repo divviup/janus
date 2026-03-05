@@ -7,7 +7,7 @@ use std::time::Duration;
 use backon::BackoffBuilder;
 use http::{
     HeaderValue,
-    header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE},
+    header::{ACCEPT, CACHE_CONTROL},
 };
 use janus_messages::MediaType;
 use prio::codec::Decode;
@@ -15,7 +15,7 @@ use tokio::time::Instant;
 use url::Url;
 
 use crate::{
-    http::HttpErrorResponse,
+    http::{HttpErrorResponse, check_content_type},
     retries::{ExponentialWithTotalDelayBuilder, retry_http_request},
 };
 
@@ -141,18 +141,9 @@ impl<Resource: FromBytes + MediaType> Refresher<Resource> {
             return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
         }
 
-        let content_type =
-            response
-                .headers()
-                .get(CONTENT_TYPE)
-                .ok_or(Error::UnexpectedServerResponse(
-                    "no content type in server response",
-                ))?;
-        if content_type != Resource::MEDIA_TYPE {
-            return Err(Error::UnexpectedServerResponse(
-                "unexpected content type in server response",
-            ));
-        }
+        check_content_type::<Resource>(response.headers()).map_err(|_| {
+            Error::UnexpectedServerResponse("unexpected content type in server response")
+        })?;
 
         let expires_at = expires_at(response.headers().get_all(CACHE_CONTROL));
 

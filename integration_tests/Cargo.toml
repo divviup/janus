@@ -40,7 +40,7 @@ serde.workspace = true
 serde_json = { workspace = true }
 testcontainers.workspace = true
 tokio.workspace = true
-trillium-tokio.workspace = true
+axum.workspace = true
 url.workspace = true
 uuid.workspace = true
 
@@ -59,6 +59,7 @@ rstest.workspace = true
 rustls-webpki = { version = "0.102.8", features = ["std"] }
 tempfile = { workspace = true }
 tracing.workspace = true
-trillium.workspace = true
-trillium-macros.workspace = true
+rustls.workspace = true
+# trillium deps still needed for divviup-client (which uses trillium internally)
 trillium-rustls.workspace = true
+trillium-tokio.workspace = true

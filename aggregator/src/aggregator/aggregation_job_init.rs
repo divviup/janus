@@ -506,6 +506,8 @@ where
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use axum::{Router, body::Body};
+    use http::{Request, header};
     use janus_aggregator_core::{
         AsyncAggregator,
         task::{AggregatorTask, test_util::Task},
@@ -525,8 +527,7 @@ pub mod test_util {
         vdaf::{self},
     };
     use rand::random;
-    use trillium::{Handler, KnownHeaderName};
-    use trillium_testing::{TestConn, prelude::put};
+    use tower::ServiceExt;
 
     use crate::aggregator::test_util::generate_helper_report_share;
 
@@ -645,20 +646,29 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         aggregation_job: &AggregationJobInitializeReq<B>,
-        handler: &impl Handler,
-    ) -> TestConn {
-        put(task
-            .aggregation_job_uri(aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_authentication_token(task.aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<B>::MEDIA_TYPE,
-        )
-        .with_request_body(aggregation_job.get_encoded().unwrap())
-        .run_async(handler)
-        .await
+        handler: &Router,
+    ) -> http::Response<Body> {
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let mut request = Request::builder()
+            .method("PUT")
+            .uri(
+                task.aggregation_job_uri(aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .body(Body::from(aggregation_job.get_encoded().unwrap()))
+            .unwrap();
+        for (key, value) in &headers {
+            request.headers_mut().insert(key, value.clone());
+        }
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            AggregationJobInitializeReq::<B>::MEDIA_TYPE
+                .parse()
+                .unwrap(),
+        );
+        handler.clone().oneshot(request).await.unwrap()
     }
 }
 
@@ -667,7 +677,8 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use http::StatusCode;
+    use axum::{Router, body::Body};
+    use http::{Request, StatusCode, header};
     use janus_aggregator_core::{
         AsyncAggregator,
         datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
@@ -694,8 +705,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::prelude::put;
+    use tower::ServiceExt;
 
     use crate::aggregator::{
         Config,
@@ -717,7 +727,7 @@ mod tests {
         pub(super) aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
         aggregation_job_init_resp: Option<AggregationJobResp>,
         pub(super) aggregation_param: V::AggregationParam,
-        pub(super) handler: Box<dyn Handler>,
+        pub(super) handler: Router,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
@@ -766,7 +776,7 @@ mod tests {
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
@@ -856,7 +866,7 @@ mod tests {
             aggregation_job_init_req,
             aggregation_job_init_resp: None,
             aggregation_param,
-            handler: Box::new(handler),
+            handler,
             _ephemeral_datastore: ephemeral_datastore,
         }
     }
@@ -872,21 +882,31 @@ mod tests {
         )
         .await;
 
-        let response = put(test_case
-            .task
-            .aggregation_job_uri(&test_case.aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_authentication_token(test_case.task.aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(test_case.aggregation_job_init_req.get_encoded().unwrap())
-        .run_async(&test_case.handler)
-        .await;
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri(
+                test_case
+                    .task
+                    .aggregation_job_uri(&test_case.aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .header(
+                header::CONTENT_TYPE,
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .body(Body::from(
+                test_case.aggregation_job_init_req.get_encoded().unwrap(),
+            ))
+            .unwrap();
+        for (key, value) in &headers {
+            req.headers_mut().insert(key.clone(), value.clone());
+        }
+        let response = test_case.handler.clone().oneshot(req).await.unwrap();
 
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     #[rstest::rstest]
@@ -905,28 +925,40 @@ mod tests {
         )
         .await;
 
-        let response = put(test_case
-            .task
-            .aggregation_job_uri(&test_case.aggregation_job_id, None)
-            .unwrap()
-            .path())
         // Authenticate using a malformed "Authorization: Bearer <token>" header and a
         // `DAP-Auth-Token` header. The presence of the former should cause an error despite
         // the latter being present and well formed.
-        .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
-        .with_request_header(
-            DAP_AUTH_HEADER,
-            test_case.task.aggregator_auth_token().as_ref().to_owned(),
-        )
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(test_case.aggregation_job_init_req.get_encoded().unwrap())
-        .run_async(&test_case.handler)
-        .await;
+        let response = test_case
+            .handler
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(
+                        test_case
+                            .task
+                            .aggregation_job_uri(&test_case.aggregation_job_id, None)
+                            .unwrap()
+                            .path(),
+                    )
+                    .header(header::AUTHORIZATION, header_value)
+                    .header(
+                        DAP_AUTH_HEADER,
+                        test_case.task.aggregator_auth_token().as_ref().to_owned(),
+                    )
+                    .header(
+                        header::CONTENT_TYPE,
+                        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                    )
+                    .body(Body::from(
+                        test_case.aggregation_job_init_req.get_encoded().unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-        assert_eq!(response.status(), Some(Status::Forbidden));
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -963,7 +995,7 @@ mod tests {
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         let want_aggregation_job_resp = AggregationJobResp {
             prepare_resps: Vec::from([PrepareResp::new(
@@ -994,7 +1026,7 @@ mod tests {
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Conflict));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -1035,7 +1067,7 @@ mod tests {
                 &test_case.handler,
             )
             .await;
-            assert_eq!(response.status(), Some(Status::Conflict));
+            assert_eq!(response.status(), StatusCode::CONFLICT);
         }
     }
 
@@ -1073,7 +1105,7 @@ mod tests {
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Conflict));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -1137,7 +1169,7 @@ mod tests {
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
@@ -1251,7 +1283,7 @@ mod tests {
             &handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
@@ -1388,7 +1420,7 @@ mod tests {
             &handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Created));
+        assert_eq!(response.status(), StatusCode::CREATED);
 
         let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
@@ -1421,19 +1453,27 @@ mod tests {
             test_case.aggregation_job_init_req.prepare_inits().to_vec(),
         );
 
-        let mut response = put(test_case
-            .task
-            .aggregation_job_uri(&random(), None)
-            .unwrap()
-            .path())
-        .with_authentication_token(test_case.task.aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(wrong_query.get_encoded().unwrap())
-        .run_async(&test_case.handler)
-        .await;
+        let mut headers = http::HeaderMap::new();
+        headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri(
+                test_case
+                    .task
+                    .aggregation_job_uri(&random(), None)
+                    .unwrap()
+                    .path(),
+            )
+            .header(
+                header::CONTENT_TYPE,
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .body(Body::from(wrong_query.get_encoded().unwrap()))
+            .unwrap();
+        for (key, value) in &headers {
+            req.headers_mut().insert(key.clone(), value.clone());
+        }
+        let mut response = test_case.handler.clone().oneshot(req).await.unwrap();
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({

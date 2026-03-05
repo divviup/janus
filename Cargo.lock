@@ -209,25 +209,15 @@ dependencies = [
 
 [[package]]
 name = "async-compat"
-version = "0.2.3"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f68a707c1feb095d8c07f8a65b9f506b117d30af431cab89374357de7c11461b"
+checksum = "a1ba85bc55464dcbf728b56d97e119d673f4cf9062be330a9a26f3acf504a590"
 dependencies = [
  "futures-core",
  "futures-io",
  "once_cell",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "async-dup"
-version = "1.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2886ab563af5038f79ec016dd7b87947ed138b794e8dd64992962c9cca0411"
-dependencies = [
- "async-lock 3.3.0",
- "futures-io",
 ]
 
 [[package]]
@@ -239,8 +229,8 @@ dependencies = [
  "async-lock 3.3.0",
  "async-task",
  "concurrent-queue",
- "fastrand 2.1.1",
- "futures-lite 2.3.0",
+ "fastrand",
+ "futures-lite",
  "slab",
 ]
 
@@ -255,7 +245,7 @@ dependencies = [
  "async-io",
  "async-lock 3.3.0",
  "blocking",
- "futures-lite 2.3.0",
+ "futures-lite",
  "once_cell",
 ]
 
@@ -269,7 +259,7 @@ dependencies = [
  "cfg-if",
  "concurrent-queue",
  "futures-io",
- "futures-lite 2.3.0",
+ "futures-lite",
  "parking",
  "polling",
  "rustix 0.38.44",
@@ -312,7 +302,7 @@ dependencies = [
  "blocking",
  "cfg-if",
  "event-listener 5.3.1",
- "futures-lite 2.3.0",
+ "futures-lite",
  "rustix 0.38.44",
  "tracing",
 ]
@@ -350,7 +340,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-io",
- "futures-lite 2.3.0",
+ "futures-lite",
  "gloo-timers",
  "kv-log-macro",
  "log",
@@ -491,28 +481,36 @@ dependencies = [
 
 [[package]]
 name = "axum"
-version = "0.8.4"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "021e862c184ae977658b36c4500f7feac3221ca5da43e3f25bd04ab6c79a29b5"
+checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
- "axum-core 0.5.2",
+ "axum-core 0.5.6",
+ "axum-macros",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "itoa",
  "matchit 0.8.4",
  "memchr",
  "mime",
  "percent-encoding",
  "pin-project-lite",
- "rustversion",
- "serde",
+ "serde_core",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper 1.0.2",
+ "tokio",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -537,9 +535,9 @@ dependencies = [
 
 [[package]]
 name = "axum-core"
-version = "0.5.2"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68464cd0412f486726fb3373129ef5d2993f90c34bc2bc1c1e9943b2f4fc7ca6"
+checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -548,10 +546,45 @@ dependencies = [
  "http-body-util",
  "mime",
  "pin-project-lite",
- "rustversion",
  "sync_wrapper 1.0.2",
  "tower-layer",
  "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "axum-extra"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9963ff19f40c6102c76756ef0a46004c0d58957d87259fc9208ff8441c12ab96"
+dependencies = [
+ "axum 0.8.8",
+ "axum-core 0.5.6",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "mime",
+ "pin-project-lite",
+ "rustversion",
+ "serde_core",
+ "serde_json",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "typed-json",
+]
+
+[[package]]
+name = "axum-macros"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "604fde5e028fea851ce1d8570bbdc034bec850d157f7569d10f347d06808c05c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -566,7 +599,7 @@ version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
 dependencies = [
- "fastrand 2.1.1",
+ "fastrand",
  "gloo-timers",
  "tokio",
 ]
@@ -650,9 +683,9 @@ dependencies = [
  "async-channel 2.2.0",
  "async-lock 3.3.0",
  "async-task",
- "fastrand 2.1.1",
+ "fastrand",
  "futures-io",
- "futures-lite 2.3.0",
+ "futures-lite",
  "piper",
  "tracing",
 ]
@@ -818,12 +851,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cidr"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d18b093eba54c9aaa1e3784d4361eb2ba944cf7d0a932a830132238f483e8d8"
-
-[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -901,9 +928,9 @@ dependencies = [
 
 [[package]]
 name = "combine"
-version = "4.6.6"
+version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35ed6e9d84f0b51a7f52daf1c7d71dd136fd7a3f41a8462b8cdb8c78d920fad4"
+checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
@@ -1457,16 +1484,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "etag"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b3d0661a2ccddc26cba0b834e9b717959ed6fdd76c7129ee159c170a875bf44"
-dependencies = [
- "str-buf",
- "xxhash-rust",
-]
-
-[[package]]
 name = "etcetera"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1540,15 +1557,6 @@ name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
-
-[[package]]
-name = "fastrand"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
-dependencies = [
- "instant",
-]
 
 [[package]]
 name = "fastrand"
@@ -1679,17 +1687,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
-name = "full-duplex-async-copy"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb69fcc211c8359cc56981e36370c21f6410d6f9820c68dab273bed4bc58d99e"
-dependencies = [
- "fastrand 1.9.0",
- "futures-lite 1.13.0",
- "pin-project-lite",
-]
-
-[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1756,26 +1753,11 @@ checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
 
 [[package]]
 name = "futures-lite"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49a9d51ce47660b1e808d3c990b4709f2f415d928835a17dfd16991515c46bce"
-dependencies = [
- "fastrand 1.9.0",
- "futures-core",
- "futures-io",
- "memchr",
- "parking",
- "pin-project-lite",
- "waker-fn",
-]
-
-[[package]]
-name = "futures-lite"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52527eb5074e35e9339c6b4e8d12600c7128b68fb25dcb9fa9dec18f7c25f3a5"
 dependencies = [
- "fastrand 2.1.1",
+ "fastrand",
  "futures-core",
  "futures-io",
  "parking",
@@ -2515,15 +2497,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instant"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2578,6 +2551,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.8",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2636,22 +2610,15 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tokio-util",
+ "tower 0.5.2",
+ "tower-http",
  "tracing",
  "tracing-chrome",
  "tracing-log",
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
- "trillium",
- "trillium-api",
- "trillium-caching-headers",
- "trillium-head",
- "trillium-macros 0.0.6",
- "trillium-opentelemetry",
- "trillium-prometheus",
- "trillium-router",
- "trillium-testing",
- "trillium-tokio",
  "trycmd",
  "url",
  "uuid",
@@ -2667,11 +2634,13 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.8",
  "base64 0.22.1",
  "chrono",
  "educe",
  "futures",
  "git-version",
+ "http",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
@@ -2684,12 +2653,9 @@ dependencies = [
  "serde_test",
  "thiserror 2.0.18",
  "tokio",
+ "tower 0.5.2",
+ "tower-http",
  "tracing",
- "trillium",
- "trillium-api",
- "trillium-opentelemetry",
- "trillium-router",
- "trillium-testing",
  "url",
 ]
 
@@ -2701,6 +2667,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "aws-lc-rs",
+ "axum 0.8.8",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2738,11 +2705,9 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
+ "tower 0.5.2",
  "tracing",
  "tracing-log",
- "trillium",
- "trillium-macros 0.0.6",
- "trillium-router",
  "url",
  "yaml_serde",
 ]
@@ -2809,6 +2774,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "aws-lc-rs",
+ "axum 0.8.8",
  "backon",
  "base64 0.22.1",
  "bytes",
@@ -2848,8 +2814,6 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
- "trillium-testing",
  "url",
  "yaml_serde",
 ]
@@ -2860,6 +2824,7 @@ version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "axum 0.8.8",
  "backon",
  "base64 0.22.1",
  "chrono",
@@ -2887,6 +2852,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rstest",
+ "rustls",
  "rustls-webpki 0.102.8",
  "serde",
  "serde_json",
@@ -2894,8 +2860,6 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tracing",
- "trillium",
- "trillium-macros 0.0.6",
  "trillium-rustls",
  "trillium-tokio",
  "url",
@@ -2907,6 +2871,8 @@ name = "janus_interop_binaries"
 version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
+ "axum 0.8.8",
+ "axum-extra",
  "backon",
  "base64 0.22.1",
  "clap",
@@ -2914,6 +2880,7 @@ dependencies = [
  "fixed",
  "futures",
  "hex",
+ "http",
  "janus_aggregator",
  "janus_aggregator_core",
  "janus_client",
@@ -2929,14 +2896,10 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "tokio",
+ "tower 0.5.2",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
- "trillium-api",
- "trillium-proxy",
- "trillium-router",
- "trillium-tokio",
  "url",
 ]
 
@@ -3641,12 +3604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1b6902ff63b32ef6c489e8048c5e253e2e4a803ea3ea7e783914536eb15c52"
-
-[[package]]
 name = "opentelemetry_sdk"
 version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3903,7 +3860,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "668d31b1c4eba19242f2088b2bf3316b82ca31082a8335764db4e083db7485d4"
 dependencies = [
  "atomic-waker",
- "fastrand 2.1.1",
+ "fastrand",
  "futures-io",
 ]
 
@@ -3985,15 +3942,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
 dependencies = [
  "portable-atomic",
-]
-
-[[package]]
-name = "portpicker"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
-dependencies = [
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -4515,17 +4463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "routefinder"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0971d3c8943a6267d6bd0d782fdc4afa7593e7381a92a3df950ff58897e066b5"
-dependencies = [
- "memchr",
- "smartcow",
- "smartstring",
-]
-
-[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4695,9 +4632,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier-android"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84e217e7fdc8466b5b35d30f8c0a30febd29173df4a3a0c2115d306b9c4117ad"
+checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
@@ -5107,17 +5044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sluice"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d7400c0eff44aa2fcb5e31a5f24ba9716ed90138769e4977a2ba6014ae63eb5"
-dependencies = [
- "async-channel 1.9.0",
- "futures-core",
- "futures-io",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5427,15 +5353,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88bc3cb56a90ab1d29db096b9a448424e2c80cb57b4598a392b01bb4e9f5e021"
 dependencies = [
  "event-listener 5.3.1",
- "futures-lite 2.3.0",
+ "futures-lite",
  "pin-project-lite",
 ]
-
-[[package]]
-name = "str-buf"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceb97b7225c713c2fd4db0153cb6b3cab244eb37900c3f634ed4d43310d8c34"
 
 [[package]]
 name = "stringprep"
@@ -5544,7 +5464,7 @@ version = "3.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
- "fastrand 2.1.1",
+ "fastrand",
  "getrandom 0.4.1",
  "once_cell",
  "rustix 1.1.4",
@@ -5918,7 +5838,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
 dependencies = [
  "async-trait",
- "axum 0.8.4",
+ "axum 0.8.8",
  "base64 0.22.1",
  "bytes",
  "h2",
@@ -6154,33 +6074,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-api"
-version = "0.2.0-rc.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ac0b2a746f70736c3b1c78078d361d71a1705121f2b134a791d50de2a4f78d"
-dependencies = [
- "log",
- "mime",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "thiserror 1.0.69",
- "trillium",
- "trillium-macros 0.0.6",
-]
-
-[[package]]
-name = "trillium-caching-headers"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531cab8c8b475e6d575491d96178d8d0e1265b8fdb4cd27cc3b7db18a38d8eeb"
-dependencies = [
- "etag",
- "httpdate",
- "trillium",
-]
-
-[[package]]
 name = "trillium-client"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6189,7 +6082,7 @@ dependencies = [
  "crossbeam-queue",
  "dashmap",
  "encoding_rs",
- "futures-lite 2.3.0",
+ "futures-lite",
  "httparse",
  "log",
  "memchr",
@@ -6203,33 +6096,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-forwarding"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683796aeee40649ad14ef91d90c4963ffeea3ff283edfb9b0ea750eea03c40c0"
-dependencies = [
- "cidr",
- "log",
- "trillium",
-]
-
-[[package]]
-name = "trillium-head"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc125c6f329f4c7d26688ebb551f84ad6e03460094dd2f03f06f35b292aee474"
-dependencies = [
- "trillium",
-]
-
-[[package]]
 name = "trillium-http"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd4c063660875422d9f85a334931963fc301a3ede9a5c39de7c968ab0801ce33"
 dependencies = [
  "encoding_rs",
- "futures-lite 2.3.0",
+ "futures-lite",
  "hashbrown 0.14.5",
  "httparse",
  "httpdate",
@@ -6267,60 +6140,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-opentelemetry"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b5e36d8e79ad6b8858715b9342b4d761d936dcd884f5680ecfb15c0076fa46a"
-dependencies = [
- "opentelemetry",
- "opentelemetry-semantic-conventions",
- "trillium",
- "trillium-macros 0.0.6",
-]
-
-[[package]]
-name = "trillium-prometheus"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37f303a99a7a00c127cff63985b16d4d78c8ec9af17102a40debe80eb19a68e1"
-dependencies = [
- "prometheus",
- "tracing",
- "trillium",
- "trillium-router",
-]
-
-[[package]]
-name = "trillium-proxy"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8656ede56151fdb1f915e04887f2ce9820db56da08793d8fd865db32435e2f4a"
-dependencies = [
- "event-listener 4.0.3",
- "full-duplex-async-copy",
- "futures-lite 2.3.0",
- "log",
- "size",
- "sluice",
- "trillium",
- "trillium-client",
- "trillium-forwarding",
- "trillium-http",
- "url",
-]
-
-[[package]]
-name = "trillium-router"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a7aed20d63101d7dcd165fd047141423009a7f4ccfc75db5b875312d8127dbe"
-dependencies = [
- "log",
- "routefinder",
- "trillium",
-]
-
-[[package]]
 name = "trillium-rustls"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6343,34 +6162,12 @@ dependencies = [
  "async-trait",
  "async_cell",
  "event-listener 4.0.3",
- "futures-lite 2.3.0",
+ "futures-lite",
  "log",
  "pin-project-lite",
  "rlimit",
  "trillium",
  "trillium-http",
- "url",
-]
-
-[[package]]
-name = "trillium-testing"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c6c5d4d9d6f6844131f166cbe4d779894f09f9b846945ab2024272bcd6e198c"
-dependencies = [
- "async-channel 2.2.0",
- "async-dup",
- "cfg-if",
- "dashmap",
- "fastrand 2.1.1",
- "futures-lite 2.3.0",
- "once_cell",
- "portpicker",
- "trillium",
- "trillium-http",
- "trillium-macros 0.0.6",
- "trillium-server-common",
- "trillium-tokio",
  "url",
 ]
 
@@ -6431,6 +6228,16 @@ dependencies = [
  "sha1",
  "thiserror 2.0.18",
  "utf-8",
+]
+
+[[package]]
+name = "typed-json"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6024a8d0025400b3f6b189366e9aa92012cf9c4fe1cd2620848dd61425c49eed"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6612,12 +6419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "waker-fn"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c4517f54858c779bbcbf228f4fca63d121bf85fbecb2dc578cdf4a39395690"
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6797,9 +6598,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36a29fc0408b113f68cf32637857ab740edfafdf460c326cd2afaa2d84cc05dc"
+checksum = "804f18a4ac2676ffb4e8b5b5fa9ae38af06df08162314f96a68d2a363e21a8ca"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -7355,12 +7156,6 @@ dependencies = [
  "serde_json",
  "tempfile",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "927da81e25be1e1a2901d59b81b37dd2efd1fc9c9345a55007f09bf5a2d3ee03"
 
 [[package]]
 name = "yaml_serde"

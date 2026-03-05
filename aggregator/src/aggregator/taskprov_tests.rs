@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use assert_matches::assert_matches;
+use axum::{Router, body::Body};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::TimeDelta;
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     AsyncAggregator,
     datastore::{
@@ -45,11 +47,7 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{
-    assert_headers,
-    prelude::{post, put},
-};
+use tower::ServiceExt;
 use url::Url;
 
 use super::http_handlers::AggregatorHandlerBuilder;
@@ -67,7 +65,7 @@ pub struct TaskprovTestCase<const VERIFY_KEY_SIZE: usize, V: Vdaf> {
     clock: MockClock,
     collector_hpke_keypair: HpkeKeypair,
     datastore: Arc<Datastore<MockClock>>,
-    handler: Box<dyn Handler>,
+    handler: Router,
     peer_aggregator: PeerAggregator,
     task: Task,
     task_config: TaskConfig,
@@ -203,7 +201,7 @@ where
             clock,
             collector_hpke_keypair,
             datastore,
-            handler: Box::new(handler),
+            handler,
             peer_aggregator,
             task,
             task_config,
@@ -289,51 +287,67 @@ async fn taskprov_aggregate_init() {
         ("request_1", request_1, aggregation_job_id_1, report_share_1),
         ("request_2", request_2, aggregation_job_id_2, report_share_2),
     ] {
-        let status = put(test
-            .task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(&test.handler)
-        .await
-        .status()
-        .unwrap();
-        assert_eq!(status, Status::Forbidden, "{name}");
+        let response = test
+            .handler
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(
+                        test.task
+                            .aggregation_job_uri(&aggregation_job_id, None)
+                            .unwrap()
+                            .path(),
+                    )
+                    .header("authorization", "Bearer invalid_token")
+                    .header(
+                        "content-type",
+                        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+                    )
+                    .header(
+                        TASKPROV_HEADER,
+                        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+                    )
+                    .body(Body::from(request.get_encoded().unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{name}");
 
-        let mut test_conn = put(test
-            .task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(&test.handler)
-        .await;
+        let mut headers = http::HeaderMap::new();
+        headers =
+            headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri(
+                test.task
+                    .aggregation_job_uri(&aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .header(
+                "content-type",
+                AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+            )
+            .header(
+                TASKPROV_HEADER,
+                URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+            )
+            .body(Body::from(request.get_encoded().unwrap()))
+            .unwrap();
+        for (key, value) in &headers {
+            req.headers_mut().insert(key.clone(), value.clone());
+        }
+        let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-        assert_eq!(test_conn.status(), Some(Status::Created), "{name}");
-        assert_headers!(
-            &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+        assert_eq!(response.status(), StatusCode::CREATED, "{name}");
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            AggregationJobResp::MEDIA_TYPE,
+            "{name}"
         );
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+        let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
             aggregate_resp,
             AggregationJobResp { prepare_resps } => prepare_resps
@@ -415,30 +429,38 @@ async fn taskprov_aggregate_init_missing_extension() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let mut test_conn = put(test
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
     );
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -500,30 +522,38 @@ async fn taskprov_aggregate_init_malformed_extension() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let mut test_conn = put(test
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
     );
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -590,24 +620,32 @@ async fn taskprov_opt_out_task_ended_regression() {
     // Advance clock past task end time.
     test.clock.advance(TimeDelta::hours(48));
 
-    let test_conn = put(test
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let response = test.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -644,30 +682,38 @@ async fn taskprov_opt_out_mismatched_task_id() {
     )
     .unwrap();
 
-    let mut test_conn = put(test
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
         // Use the test case task's ID.
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        // Use a different task than the URL's.
-        URL_SAFE_NO_PAD.encode(another_task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            // Use a different task than the URL's.
+            URL_SAFE_NO_PAD.encode(another_task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "detail": "derived taskprov task ID does not match task config",
@@ -713,26 +759,33 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
-    let mut test_conn = put(format!(
-        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-    ))
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
+        ))
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(another_task_config_encoded),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
             "taskid": format!("{another_task_id}"),
@@ -778,26 +831,33 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id = taskprov_task_id(&another_task_config_encoded);
 
-    let mut test_conn = put(format!(
-        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-    ))
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
+        ))
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(another_task_config_encoded),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidTask",
             "title": "Aggregator has opted out of the indicated task.",
             "taskid": format!("{another_task_id}"),
@@ -886,50 +946,60 @@ async fn taskprov_aggregate_continue() {
     );
 
     // Attempt using the wrong credentials, should reject.
-    let status = post(
-        test.task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path(),
-    )
-    .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobContinueReq::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await
-    .status()
-    .unwrap();
-    assert_eq!(status, Status::Forbidden);
+    let response = test
+        .handler
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(
+                    test.task
+                        .aggregation_job_uri(&aggregation_job_id, None)
+                        .unwrap()
+                        .path(),
+                )
+                .header("authorization", "Bearer invalid_token")
+                .header("content-type", AggregationJobContinueReq::MEDIA_TYPE)
+                .header(
+                    TASKPROV_HEADER,
+                    URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+                )
+                .body(Body::from(request.get_encoded().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-    let mut test_conn = post(
-        test.task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path(),
-    )
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobContinueReq::MEDIA_TYPE,
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("POST")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header("content-type", AggregationJobContinueReq::MEDIA_TYPE)
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Accepted));
-    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
+    );
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
 
     // We'll only validate the response. Taskprov doesn't touch functionality beyond the
     // authorization of the request.
@@ -993,51 +1063,66 @@ async fn taskprov_aggregate_share() {
     );
 
     // Attempt using the wrong credentials, should reject.
-    let status = put(test
-        .task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_request_header(KnownHeaderName::Authorization, "Bearer invalid_token")
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await
-    .status()
-    .unwrap();
-    assert_eq!(status, Status::Forbidden);
+    let response = test
+        .handler
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(
+                    test.task
+                        .aggregate_shares_uri(&aggregate_share_id)
+                        .unwrap()
+                        .path(),
+                )
+                .header("authorization", "Bearer invalid_token")
+                .header(
+                    "content-type",
+                    AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+                )
+                .header(
+                    TASKPROV_HEADER,
+                    URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+                )
+                .body(Body::from(request.get_encoded().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-    let mut test_conn = put(test
-        .task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregate_shares_uri(&aggregate_share_id)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregateShareMessage::MEDIA_TYPE)
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregateShareMessage::MEDIA_TYPE
     );
-    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
 
     hpke::open(
         &test.collector_hpke_keypair,
@@ -1077,27 +1162,40 @@ async fn end_to_end() {
         )]),
     );
 
-    let mut test_conn = put(test
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(aggregation_job_init_request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(
+            aggregation_job_init_request.get_encoded().unwrap(),
+        ))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
+    );
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1126,28 +1224,37 @@ async fn end_to_end() {
         )]),
     );
 
-    let mut test_conn = post(
-        test.task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path(),
-    )
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobContinueReq::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(aggregation_job_continue_request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("POST")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header("content-type", AggregationJobContinueReq::MEDIA_TYPE)
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(
+            aggregation_job_continue_request.get_encoded().unwrap(),
+        ))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Accepted));
-    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
+    );
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1166,27 +1273,38 @@ async fn end_to_end() {
         checksum,
     );
 
-    let mut test_conn = put(test
-        .task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(aggregate_share_request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregate_shares_uri(&aggregate_share_id)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(aggregate_share_request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
-    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregateShareMessage::MEDIA_TYPE
+    );
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
 
     let plaintext = hpke::open(
         &test.collector_hpke_keypair,
@@ -1237,27 +1355,40 @@ async fn end_to_end_sumvec_hmac() {
         )]),
     );
 
-    let mut test_conn = put(test
-        .task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(aggregation_job_init_request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(
+            aggregation_job_init_request.get_encoded().unwrap(),
+        ))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregationJobResp::MEDIA_TYPE
+    );
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregation_job_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1280,27 +1411,38 @@ async fn end_to_end_sumvec_hmac() {
         checksum,
     );
 
-    let mut test_conn = put(test
-        .task
-        .aggregate_shares_uri(&aggregate_share_id)
-        .unwrap()
-        .path())
-    .with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
-    )
-    .with_request_body(aggregate_share_request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
+    let mut headers = http::HeaderMap::new();
+    headers =
+        headers.with_authentication_token(test.peer_aggregator.primary_aggregator_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(
+            test.task
+                .aggregate_shares_uri(&aggregate_share_id)
+                .unwrap()
+                .path(),
+        )
+        .header(
+            "content-type",
+            AggregateShareReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .body(Body::from(aggregate_share_request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = test.handler.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
-    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        AggregateShareMessage::MEDIA_TYPE
+    );
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut response).await;
 
     let plaintext = hpke::open(
         &test.collector_hpke_keypair,

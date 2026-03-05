@@ -42,11 +42,10 @@ tokio.workspace = true
 tracing = { workspace = true }
 tracing-log = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"] }
-trillium.workspace = true
-trillium-api.workspace = true
-trillium-proxy = { workspace = true }
-trillium-router.workspace = true
-trillium-tokio.workspace = true
+axum.workspace = true
+axum-extra = { workspace = true, features = ["erased-json"] }
+http.workspace = true
+tower.workspace = true
 url.workspace = true
 
 [dev-dependencies]

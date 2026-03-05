@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
+use http::StatusCode;
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
     datastore::{
@@ -29,7 +30,6 @@ use prio::{
     vdaf::{Aggregator, dummy},
 };
 use rand::random;
-use trillium::Status;
 
 use crate::aggregator::{
     BatchAggregationsIterator,
@@ -1705,7 +1705,7 @@ async fn aggregate_continue_unexpected_transition() {
         &aggregation_job_id,
         &request,
         &handler,
-        Status::BadRequest,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
@@ -1862,7 +1862,7 @@ async fn aggregate_continue_out_of_order_transition() {
         &aggregation_job_id,
         &request,
         &handler,
-        Status::BadRequest,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
@@ -1959,7 +1959,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         &aggregation_job_id,
         &request,
         &handler,
-        Status::BadRequest,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent prepare step for non-CONTINUE report aggregation"),

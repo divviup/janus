@@ -1,4 +1,6 @@
 use assert_matches::assert_matches;
+use axum::body::Body;
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     batch_mode::AccumulableBatchMode,
     datastore::models::{CollectionJob, CollectionJobState},
@@ -19,11 +21,7 @@ use prio::{
 };
 use rand::random;
 use serde_json::json;
-use trillium::{KnownHeaderName, Status};
-use trillium_testing::{
-    assert_body, assert_headers,
-    prelude::{delete, get, put},
-};
+use tower::ServiceExt;
 
 use crate::aggregator::{
     collection_job_tests::setup_collection_job_test_case,
@@ -52,15 +50,15 @@ async fn collection_job_put_request_to_helper() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job_with_auth_token(&collection_job_id, &request, Some(&random()))
         .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             "title": "An endpoint received a message with an unknown task ID.",
             "taskid": format!("{}", test_case.task.id()),
@@ -94,15 +92,15 @@ async fn collection_job_put_request_invalid_batch_interval() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
             "title": "The batch implied by the query is invalid.",
             "taskid": format!("{}", test_case.task.id()),
@@ -134,16 +132,16 @@ async fn collection_job_put_request_invalid_aggregation_parameter() {
         Vec::from([0u8, 0u8]),
     );
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
     // Collect request will be rejected because the aggregation parameter can't be decoded
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
         })
@@ -176,22 +174,25 @@ async fn collection_job_put_request_invalid_batch_size() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
-        .with_authentication_token(task.collector_auth_token())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(task.collector_auth_token());
+    let mut req = Request::builder()
+        .method("PUT")
+        .uri(task.collection_job_uri(&collection_job_id).unwrap().path())
+        .header("content-type", CollectionJobReq::<TimeInterval>::MEDIA_TYPE)
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let mut response = handler.clone().oneshot(req).await.unwrap();
 
     // Collect request will be rejected because there are no reports in the batch interval
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
             "taskid": format!("{}", task.id()),
@@ -224,9 +225,8 @@ async fn collection_job_put_request_unauthenticated() {
     let status = test_case
         .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Aggregator authentication token.
     let status = test_case
@@ -236,17 +236,15 @@ async fn collection_job_put_request_unauthenticated() {
             Some(test_case.task.aggregator_auth_token()),
         )
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Missing authentication token.
     let status = test_case
         .put_collection_job_with_auth_token(&collection_job_id, &req, None)
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -271,19 +269,18 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let test_conn = test_case
+    let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(test_conn.status().unwrap(), Status::Created);
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // Incorrect authentication token.
     let status = test_case
         .get_collection_job_with_auth_token(&collection_job_id, Some(&random()))
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Aggregator authentication token.
     let status = test_case
@@ -292,17 +289,15 @@ async fn collection_job_get_request_unauthenticated_collection_jobs() {
             Some(test_case.task.aggregator_auth_token()),
         )
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Missing authentication token.
     let status = test_case
         .get_collection_job_with_auth_token(&collection_job_id, None)
         .await
-        .status()
-        .unwrap();
-    assert_eq!(status, Status::Forbidden);
+        .status();
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -328,7 +323,7 @@ async fn collection_job_success_time_interval() {
         aggregation_param.get_encoded().unwrap(),
     );
 
-    let mut test_conn = test_case
+    let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
@@ -360,12 +355,10 @@ async fn collection_job_success_time_interval() {
     );
 
     assert_eq!(want_collection_job, got_collection_job);
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_body!(&mut test_conn, "");
+    assert_eq!(response.status(), StatusCode::CREATED);
 
-    let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_body!(&mut test_conn, "");
+    let response = test_case.get_collection_job(&collection_job_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Update the collection job with the aggregate shares and some aggregation jobs. collection
     // job should now be complete.
@@ -418,14 +411,14 @@ async fn collection_job_success_time_interval() {
         .await
         .unwrap();
 
-    let mut test_conn = test_case.get_collection_job(&collection_job_id).await;
+    let mut response = test_case.get_collection_job(&collection_job_id).await;
 
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (CollectionJobResp::<TimeInterval>::MEDIA_TYPE)
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        CollectionJobResp::<TimeInterval>::MEDIA_TYPE
     );
-    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut test_conn).await;
+    let collect_resp: CollectionJobResp<TimeInterval> = decode_response_body(&mut response).await;
     let (
         report_count,
         interval,
@@ -494,14 +487,19 @@ async fn collection_job_get_request_no_such_collection_job() {
 
     let no_such_collection_job_id: CollectionJobId = random();
 
-    let test_conn = get(format!(
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(test_case.task.collector_auth_token());
+    let mut req = Request::get(format!(
         "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
         test_case.task.id()
     ))
-    .with_authentication_token(test_case.task.collector_auth_token())
-    .run_async(&test_case.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::NotFound));
+    .body(Body::empty())
+    .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let response = test_case.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -520,9 +518,9 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
-    let test_conn = test_case.put_collection_job(&random(), &request).await;
+    let response = test_case.put_collection_job(&random(), &request).await;
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // This request will not be allowed due to the query count already being consumed.
     let invalid_request = CollectionJobReq::new(
@@ -530,14 +528,14 @@ async fn collection_job_put_request_batch_queried_multiple_times() {
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job(&random(), &invalid_request)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "detail": "batch has already been collected with another aggregation parameter",
@@ -568,9 +566,9 @@ async fn collection_job_put_request_batch_overlap() {
         dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
-    let test_conn = test_case.put_collection_job(&random(), &request).await;
+    let response = test_case.put_collection_job(&random(), &request).await;
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // This request will not be allowed due to overlapping with the previous request.
     let invalid_request = CollectionJobReq::new(
@@ -578,14 +576,14 @@ async fn collection_job_put_request_batch_overlap() {
         dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
-    let mut test_conn = test_case
+    let mut response = test_case
         .put_collection_job(&random(), &invalid_request)
         .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
-            "status": Status::BadRequest as u16,
+            "status": 400,
             "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
             "title": "The queried batch overlaps with a previously queried batch.",
             "taskid": format!("{}", test_case.task.id()),
@@ -606,17 +604,24 @@ async fn delete_collection_job() {
     let collection_job_id: CollectionJobId = random();
 
     // Try to delete a collection job that doesn't exist
-    let test_conn = delete(
-        test_case
-            .task
-            .collection_job_uri(&collection_job_id)
-            .unwrap()
-            .path(),
-    )
-    .with_authentication_token(test_case.task.collector_auth_token())
-    .run_async(&test_case.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::NotFound));
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(test_case.task.collector_auth_token());
+    let mut req = Request::builder()
+        .method("DELETE")
+        .uri(
+            test_case
+                .task
+                .collection_job_uri(&collection_job_id)
+                .unwrap()
+                .path(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let response = test_case.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Create a collection job
     let request = CollectionJobReq::new(
@@ -624,26 +629,33 @@ async fn delete_collection_job() {
         dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
-    let test_conn = test_case
+    let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
+    assert_eq!(response.status(), StatusCode::CREATED);
 
     // Cancel the job
-    let test_conn = delete(
-        test_case
-            .task
-            .collection_job_uri(&collection_job_id)
-            .unwrap()
-            .path(),
-    )
-    .with_authentication_token(test_case.task.collector_auth_token())
-    .run_async(&test_case.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::NoContent));
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(test_case.task.collector_auth_token());
+    let mut req = Request::builder()
+        .method("DELETE")
+        .uri(
+            test_case
+                .task
+                .collection_job_uri(&collection_job_id)
+                .unwrap()
+                .path(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    let response = test_case.handler.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     // Get the job again
-    let test_conn = test_case.get_collection_job(&collection_job_id).await;
-    assert_eq!(test_conn.status(), Some(Status::NoContent));
+    let response = test_case.get_collection_job(&collection_job_id).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }

@@ -4,14 +4,16 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
-use http::{StatusCode, header::RETRY_AFTER};
+use http::{
+    HeaderMap, StatusCode,
+    header::{AUTHORIZATION, RETRY_AFTER},
+};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use janus_messages::{MediaType, problem_type::DapProblemType};
 use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
 use tracing::warn;
-use trillium::{Conn, HeaderValue};
 
 use crate::auth_tokens::AuthenticationToken;
 
@@ -119,17 +121,19 @@ impl Display for HttpErrorResponse {
     }
 }
 
-/// Extracts a bearer authentication token from the connection.
+/// Extracts a bearer authentication token from HTTP headers.
 ///
-/// If the request in `conn` has an `authorization` header, returns the bearer token in the header
+/// If the headers contain an `authorization` header, returns the bearer token in the header
 /// value. Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.
-pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
-    if let Some(authorization) = conn
-        .request_headers()
-        .get("authorization")
-        .map(HeaderValue::to_string)
-    {
+pub fn extract_bearer_token(
+    headers: &HeaderMap,
+) -> Result<Option<AuthenticationToken>, anyhow::Error> {
+    if let Some(authorization) = headers.get(AUTHORIZATION) {
+        let authorization = authorization
+            .to_str()
+            .map_err(|_| anyhow!("invalid authorization header"))?;
+
         let (auth_scheme, token) = authorization
             .split_once(char::is_whitespace)
             .ok_or_else(|| anyhow!("invalid authorization header"))?;
@@ -159,19 +163,19 @@ pub fn check_content_type<M: MediaType>(headers: &http::HeaderMap) -> Result<(),
     )
 }
 
-pub fn check_content_type_value<M: MediaType>(content_type: Mime) -> Result<(), anyhow::Error> {
+fn check_content_type_value<M: MediaType>(content_type: Mime) -> Result<(), anyhow::Error> {
     let expected_mime: Mime = M::MEDIA_TYPE
         .parse()
         .context("failed to parse expected Content-Type header")?;
 
     if content_type.essence_str() != expected_mime.essence_str() {
         return Err(anyhow!(
-            "unexpected MIME essence in Content-Type header {content_type}"
+            "unexpected MIME essence in Content-Type header: got {content_type}, expected {expected_mime}"
         ));
     }
     if content_type.get_param("message") != expected_mime.get_param("message") {
         return Err(anyhow!(
-            "unexpected message parameter in Content-Type header: {content_type}"
+            "unexpected message parameter in Content-Type header: got {content_type}, expected {expected_mime}"
         ));
     }
 
@@ -214,59 +218,63 @@ impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use trillium_testing::TestConn;
+    use http::HeaderMap;
 
     use super::extract_bearer_token;
     use crate::auth_tokens::AuthenticationToken;
+
+    fn headers_with(name: &str, value: &str) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        map.insert(
+            http::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.parse().unwrap(),
+        );
+        map
+    }
 
     #[test]
     fn authorization_header() {
         let good_token = "gVfRUu9krhxrUgFsEo-P5w";
         let expected = AuthenticationToken::new_bearer_token_from_string(good_token).unwrap();
         assert_eq!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", format!("bearer {good_token}")),
-            )
+            extract_bearer_token(&headers_with(
+                "authorization",
+                &format!("bearer {good_token}")
+            ),)
             .unwrap(),
             Some(expected.clone())
         );
         assert_eq!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", format!("BeArEr     {good_token}")),
-            )
+            extract_bearer_token(&headers_with(
+                "authorization",
+                &format!("BeArEr     {good_token}")
+            ),)
             .unwrap(),
             Some(expected)
         );
 
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body").with_request_header(
-                    "Authorization",
-                    "Bearer    gVfRUu9krhxrUgFsEo-P5w    asdf"
-                ),
-            ),
+            extract_bearer_token(&headers_with(
+                "authorization",
+                "Bearer    gVfRUu9krhxrUgFsEo-P5w    asdf"
+            ),),
             Err(_)
         );
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("Authorization", "BearergVfRUu9krhxrUgFsEo-P5w"),
-            ),
+            extract_bearer_token(&headers_with(
+                "authorization",
+                "BearergVfRUu9krhxrUgFsEo-P5w"
+            ),),
             Err(_)
         );
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("Authorization", "Bearer gVfRUu9krhxrUgFsEo(#@(#)*#)-P5w"),
-            ),
+            extract_bearer_token(&headers_with(
+                "authorization",
+                "Bearer gVfRUu9krhxrUgFsEo(#@(#)*#)-P5w"
+            ),),
             Err(_)
         );
 
-        assert_matches!(
-            extract_bearer_token(&TestConn::build("get", "/", "body")),
-            Ok(None)
-        );
+        assert_matches!(extract_bearer_token(&HeaderMap::new()), Ok(None));
     }
 }

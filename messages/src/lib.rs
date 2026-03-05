@@ -1503,6 +1503,7 @@ pub struct UploadResponse {
 }
 
 impl UploadResponse {
+    // TODO(#4402): should be `message=upload-errors` per DAP-18
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-resp";
 

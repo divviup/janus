@@ -16,12 +16,14 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use aws_lc_rs::aead::{AES_128_GCM, LessSafeKey, UnboundKey};
+use axum::{Router, extract::State, routing::get};
 use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
+use http::StatusCode;
 use janus_aggregator_api::git_revision;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::{initialize_rustls, time::Clock};
@@ -30,22 +32,114 @@ use opentelemetry_sdk::metrics::MetricError;
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use rustls::RootCertStore;
 use rustls_pki_types::{CertificateDer, pem::PemObject};
-use tokio::{runtime, sync::oneshot};
+use tokio::runtime;
 use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
-use trillium::{Handler, Info, Init, Status};
-use trillium_api::{State, api};
-use trillium_head::Head;
-use trillium_router::Router;
-use trillium_tokio::Stopper;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
     metrics::install_metrics_exporter,
     trace::{TraceReloadHandle, install_trace_subscriber},
 };
+
+/// A cancellation token used to signal shutdown. Wraps `CancellationToken` and provides an API
+/// compatible with the former `trillium_tokio::Stopper`.
+#[derive(Clone, Debug)]
+pub struct Stopper(CancellationToken);
+
+impl Default for Stopper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Stopper {
+    pub fn new() -> Self {
+        Self(CancellationToken::new())
+    }
+
+    pub fn stop(&self) {
+        self.0.cancel();
+    }
+
+    /// Returns a future that completes when `stop()` is called.
+    pub async fn cancelled(&self) {
+        self.0.cancelled().await;
+    }
+
+    /// Runs the given future to completion, unless this stopper is stopped first. Returns `Some`
+    /// with the future's output if it completed, or `None` if the stopper was stopped.
+    pub async fn stop_future<F: Future>(&self, future: F) -> Option<F::Output> {
+        tokio::pin!(future);
+        tokio::select! {
+            output = &mut future => Some(output),
+            _ = self.0.cancelled() => None,
+        }
+    }
+}
+
+/// Tracks outstanding cloned counters and allows waiting for all of them to be dropped. Used to
+/// wait for spawned tasks to complete.
+pub struct CloneCounterObserver {
+    count: Arc<std::sync::atomic::AtomicUsize>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+pub struct CloneCounter {
+    count: Arc<std::sync::atomic::AtomicUsize>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl Default for CloneCounterObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CloneCounterObserver {
+    pub fn new() -> Self {
+        Self {
+            count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    pub fn counter(&self) -> CloneCounter {
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CloneCounter {
+            count: Arc::clone(&self.count),
+            notify: Arc::clone(&self.notify),
+        }
+    }
+}
+
+impl std::future::IntoFuture for CloneCounterObserver {
+    type Output = ();
+    type IntoFuture = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(async move {
+            loop {
+                let notified = self.notify.notified();
+                if self.count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    break;
+                }
+                notified.await;
+            }
+        })
+    }
+}
+
+impl Drop for CloneCounter {
+    fn drop(&mut self) {
+        if self.count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            self.notify.notify_waiters();
+        }
+    }
+}
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
@@ -401,9 +495,8 @@ fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<()
     Ok(())
 }
 
-/// A trillium server which serves z-pages, which are utility endpoints for health checks and
-/// tracing configuration. It listens on the given address and port. It also takes the reload
-/// handle necessary for reloading the tracing_subscriber configuration.
+/// Serves z-pages: utility endpoints for health checks and tracing configuration. Listens on the
+/// given address and port.
 ///
 /// `/healthz` responds with an empty body and status code 200, which serves as a healthcheck to
 /// indicate when Janus has started up.
@@ -412,59 +505,55 @@ fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<()
 /// with a PUT request.
 async fn zpages_server(address: SocketAddr, trace_reload_handle: TraceReloadHandle) {
     let handler = zpages_handler(trace_reload_handle);
-    trillium_tokio::config()
-        .with_port(address.port())
-        .with_host(&address.ip().to_string())
-        .without_signals()
-        .run_async(handler)
-        .await;
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .expect("failed to bind zpages server");
+    if let Err(err) = axum::serve(listener, handler).await {
+        tracing::warn!(?err, "zpages server exited with error");
+    }
 }
 
-fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> impl Handler {
-    (
-        Head::new(),
-        State(Arc::new(trace_reload_handle)),
-        Router::new()
-            .get(
-                "/healthz",
-                |conn: trillium::Conn| async move { conn.ok("") },
-            )
-            .get("/traceconfigz", api(get_traceconfigz))
-            .put("/traceconfigz", api(put_traceconfigz)),
-    )
+pub fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> Router {
+    Router::new()
+        .route("/healthz", get(|| async { "" }))
+        .route("/traceconfigz", get(get_traceconfigz).put(put_traceconfigz))
+        .with_state(Arc::new(trace_reload_handle))
 }
 
 async fn get_traceconfigz(
-    conn: &mut trillium::Conn,
     State(trace_reload_handle): State<Arc<TraceReloadHandle>>,
-) -> Result<String, Status> {
+) -> Result<String, (StatusCode, String)> {
     trace_reload_handle
         .with_current(|trace_filter| trace_filter.to_string())
         .map_err(|err| {
-            conn.set_body(format!("failed to get current filter: {err}"));
-            Status::InternalServerError
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to get current filter: {err}"),
+            )
         })
 }
 
 /// Allows modifying the runtime tracing filter. Accepts a request with a body containing a filter
 /// expression. See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
-    conn: &mut trillium::Conn,
-    (State(trace_reload_handle), request): (State<Arc<TraceReloadHandle>>, String),
-) -> Result<String, Status> {
-    let new_filter = EnvFilter::try_new(request).map_err(|err| {
-        conn.set_body(format!("invalid filter: {err}"));
-        Status::BadRequest
-    })?;
+    State(trace_reload_handle): State<Arc<TraceReloadHandle>>,
+    body: String,
+) -> Result<String, (StatusCode, String)> {
+    let new_filter = EnvFilter::try_new(body)
+        .map_err(|err| (StatusCode::BAD_REQUEST, format!("invalid filter: {err}")))?;
     trace_reload_handle.reload(new_filter).map_err(|err| {
-        conn.set_body(format!("failed to update filter: {err}"));
-        Status::InternalServerError
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to update filter: {err}"),
+        )
     })?;
     trace_reload_handle
         .with_current(|trace_filter| trace_filter.to_string())
         .map_err(|err| {
-            conn.set_body(format!("failed to get current filter: {err}"));
-            Status::InternalServerError
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to get current filter: {err}"),
+            )
         })
 }
 
@@ -494,27 +583,23 @@ pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
 pub async fn setup_server(
     listen_address: SocketAddr,
     stopper: Stopper,
-    handler: impl Handler,
+    handler: Router,
 ) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
-    let (sender, receiver) = oneshot::channel();
-    let init = Init::new(|info: Info| async move {
-        // Ignore error if the receiver is dropped.
-        let _ = sender.send(info.tcp_socket_addr().copied());
-    });
-
-    let server_config = trillium_tokio::config()
-        .with_port(listen_address.port())
-        .with_host(&listen_address.ip().to_string())
-        .with_stopper(stopper)
-        .without_signals();
-    let handler = (init, handler);
-
-    let task_handle = tokio::spawn(server_config.run_async(handler));
-
-    let address = receiver
+    let listener = tokio::net::TcpListener::bind(listen_address)
         .await
-        .map_err(|err| anyhow!("error waiting for socket address: {err}"))?
-        .ok_or_else(|| anyhow!("could not get server's socket address"))?;
+        .context("failed to bind TCP listener")?;
+    let address = listener
+        .local_addr()
+        .context("couldn't get server's socket address")?;
+
+    let task_handle = tokio::spawn(async move {
+        axum::serve(listener, handler)
+            .with_graceful_shutdown(async move {
+                stopper.stop_future(std::future::pending::<()>()).await;
+            })
+            .await
+            .ok();
+    });
 
     let future = async {
         if let Err(err) = task_handle.await {
@@ -540,7 +625,9 @@ fn initialize_rayon(stack_size: Option<usize>) -> Result<(), ThreadPoolBuildErro
 mod tests {
     use std::fs;
 
+    use axum::body::Body;
     use clap::CommandFactory;
+    use http::{Request, StatusCode};
     use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
     use janus_core::test_util::{
         install_test_trace_subscriber,
@@ -548,9 +635,8 @@ mod tests {
     };
     use opentelemetry_sdk::metrics::data::Gauge;
     use testcontainers::{ContainerRequest, ImageExt, core::Mount, runners::AsyncRunner};
+    use tower::ServiceExt;
     use tracing_subscriber::{EnvFilter, reload};
-    use trillium::Status;
-    use trillium_testing::prelude::*;
 
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
@@ -572,8 +658,12 @@ mod tests {
         let (_, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let test_conn = get("/healthz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let response = handler
+            .clone()
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -581,30 +671,44 @@ mod tests {
         let (_filter, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let mut test_conn = get("/traceconfigz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let mut response = handler
+            .clone()
+            .oneshot(Request::get("/traceconfigz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            String::from_utf8_lossy(&take_response_body(&mut response).await),
             "info",
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("debug")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("debug"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            String::from_utf8_lossy(&take_response_body(&mut response).await),
             "debug",
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("!@($*$#)")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("!@($*$#)"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("invalid filter:")
         );
     }
@@ -615,20 +719,29 @@ mod tests {
         let (_, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
-        let mut test_conn = get("/traceconfigz").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::InternalServerError));
+        let mut response = handler
+            .clone()
+            .oneshot(Request::get("/traceconfigz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("failed to get current filter:")
         );
 
-        let mut test_conn = put("/traceconfigz")
-            .with_request_body("debug")
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::InternalServerError));
+        let mut response = handler
+            .clone()
+            .oneshot(
+                Request::put("/traceconfigz")
+                    .body(Body::from("debug"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
+            String::from_utf8_lossy(&take_response_body(&mut response).await)
                 .starts_with("failed to update filter:")
         );
     }

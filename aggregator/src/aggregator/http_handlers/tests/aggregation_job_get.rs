@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use axum::{Router, body::Body};
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
@@ -21,11 +23,10 @@ use janus_messages::{
 };
 use prio::vdaf::dummy;
 use rand::random;
-use trillium::{Handler, Status};
-use trillium_testing::{TestConn, assert_body, assert_headers, prelude::get};
+use tower::ServiceExt;
 
 use crate::aggregator::{
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body},
+    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_response_body},
     test_util::generate_helper_report_share,
 };
 
@@ -244,7 +245,7 @@ async fn aggregation_job_get_unready() {
         .unwrap();
 
     // Send request.
-    let mut aggregate_conn = get_aggregation_job(
+    let mut response = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(0)),
@@ -253,8 +254,8 @@ async fn aggregation_job_get_unready() {
     .await;
 
     // Validate result.
-    assert_eq!(aggregate_conn.status(), Some(Status::Ok));
-    assert_body!(&mut aggregate_conn, "");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(take_response_body(&mut response).await, b"");
 }
 
 #[tokio::test]
@@ -350,7 +351,7 @@ async fn aggregation_job_get_wrong_step() {
         .unwrap();
 
     // Send request.
-    let test_conn = get_aggregation_job(
+    let response = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(1)),
@@ -359,7 +360,7 @@ async fn aggregation_job_get_wrong_step() {
     .await;
 
     // Validate result.
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -455,10 +456,10 @@ async fn aggregation_job_get_missing_step() {
         .unwrap();
 
     // Send request.
-    let test_conn = get_aggregation_job(&task, &aggregation_job_id, None, &handler).await;
+    let response = get_aggregation_job(&task, &aggregation_job_id, None, &handler).await;
 
     // Validate result.
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -554,7 +555,7 @@ async fn aggregation_job_get_sync() {
         .unwrap();
 
     // Send request.
-    let test_conn = get_aggregation_job(
+    let response = get_aggregation_job(
         &task,
         &aggregation_job_id,
         Some(AggregationJobStep::from(0)),
@@ -563,35 +564,46 @@ async fn aggregation_job_get_sync() {
     .await;
 
     // Validate result.
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 async fn get_aggregation_job(
     task: &Task,
     aggregation_job_id: &AggregationJobId,
     step: Option<AggregationJobStep>,
-    handler: &impl Handler,
-) -> TestConn {
+    handler: &Router,
+) -> http::Response<Body> {
     let uri = task.aggregation_job_uri(aggregation_job_id, step).unwrap();
     let uri = match uri.query() {
         Some(query) => format!("{}?{}", uri.path(), query),
         None => uri.path().to_string(),
     };
 
-    get(uri)
-        .with_authentication_token(task.aggregator_auth_token())
-        .run_async(handler)
-        .await
+    let mut headers = http::HeaderMap::new();
+    headers = headers.with_authentication_token(task.aggregator_auth_token());
+    let mut req = Request::get(uri).body(Body::empty()).unwrap();
+    for (key, value) in &headers {
+        req.headers_mut().insert(key.clone(), value.clone());
+    }
+    handler.clone().oneshot(req).await.unwrap()
 }
 
 async fn get_aggregation_job_and_decode(
     task: &Task,
     aggregation_job_id: &AggregationJobId,
     step: Option<AggregationJobStep>,
-    handler: &impl Handler,
+    handler: &Router,
 ) -> AggregationJobResp {
-    let mut test_conn = get_aggregation_job(task, aggregation_job_id, step, handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    decode_response_body::<AggregationJobResp>(&mut test_conn).await
+    let mut response = get_aggregation_job(task, aggregation_job_id, step, handler).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        AggregationJobResp::MEDIA_TYPE
+    );
+    decode_response_body::<AggregationJobResp>(&mut response).await
 }

@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
+use axum::Router;
 use clap::Parser;
 use educe::Educe;
 use janus_aggregator_api::{self, aggregator_api_handler};
@@ -19,8 +20,6 @@ use sec1::EcPrivateKey;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
-use trillium::Handler;
-use trillium_router::router;
 use url::Url;
 
 use crate::{
@@ -104,7 +103,7 @@ async fn run_aggregator(
         aggregator_handler = aggregator_handler.with_helper_aggregation_request_queue(harq);
     }
 
-    let mut handlers = (aggregator_handler.build()?, None);
+    let mut aggregator_router = aggregator_handler.build()?;
 
     let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
@@ -123,8 +122,6 @@ async fn run_aggregator(
         match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
                 if let Some(listen_address) = config.listen_address {
-                    // Bind the requested address and spawn a future that serves the aggregator API
-                    // on it, which we'll `tokio::join!` on below
                     let (aggregator_api_bound_address, aggregator_api_server) =
                         setup_server(listen_address, stopper.clone(), handler)
                             .await
@@ -134,16 +131,12 @@ async fn run_aggregator(
 
                     spawn(aggregator_api_server)
                 } else if let Some(path_prefix) = &config.path_prefix {
-                    // Create a Trillium handler under the requested path prefix, which we'll add to
-                    // the DAP API handler in the setup_server call below
                     info!(
                         aggregator_bound_address = ?config.listen_address,
                         path_prefix,
                         "Serving aggregator API relative to DAP API"
                     );
-                    // Append wildcard so that this handler will match anything under the prefix
-                    let path_prefix = format!("{path_prefix}/*");
-                    handlers.1 = Some(router().all(path_prefix, handler));
+                    aggregator_router = aggregator_router.nest(&format!("/{path_prefix}"), handler);
                     spawn(ready(()))
                 } else {
                     unreachable!("the configuration should not have deserialized to this state")
@@ -153,7 +146,7 @@ async fn run_aggregator(
         };
 
     let (aggregator_bound_address, aggregator_server) =
-        setup_server(config.listen_address, stopper.clone(), handlers)
+        setup_server(config.listen_address, stopper.clone(), aggregator_router)
             .await
             .context("failed to create aggregator server")?;
     sender.send_replace(Some(aggregator_bound_address));
@@ -175,7 +168,7 @@ fn build_aggregator_api_handler<'a>(
     config: &'a Config,
     datastore: &Arc<Datastore<RealClock>>,
     meter: &Meter,
-) -> Result<Option<(impl Handler, &'a AggregatorApi)>> {
+) -> Result<Option<(Router, &'a AggregatorApi)>> {
     let Some(aggregator_api) = &config.aggregator_api else {
         return Ok(None);
     };

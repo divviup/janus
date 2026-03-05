@@ -433,17 +433,21 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
 pub mod test_util {
     use crate::auth_tokens::AuthenticationToken;
 
-    /// Extension trait to fluently add an auth token to a [`trillium_testing::TestConn`].
+    /// Extension trait to fluently add an auth token to an HTTP request builder.
     pub trait WithAuthenticationToken {
         /// Add the header and value obtained from
         /// [`AuthenticationToken::request_authentication`] to the request.
         fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self;
     }
 
-    impl WithAuthenticationToken for trillium_testing::TestConn {
-        fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+    impl WithAuthenticationToken for http::HeaderMap {
+        fn with_authentication_token(mut self, auth_token: &AuthenticationToken) -> Self {
             let (header, value) = auth_token.request_authentication();
-            self.with_request_header(header, value)
+            self.insert(
+                http::header::HeaderName::from_bytes(header.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+            self
         }
     }
 
