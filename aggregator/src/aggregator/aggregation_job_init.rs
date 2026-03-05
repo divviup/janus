@@ -480,7 +480,7 @@ where
                                     .with_state(report_aggregation_state),
                                 output_share
                             )
-                        )
+                        ).map_err(drop)
                     })
         }
     });

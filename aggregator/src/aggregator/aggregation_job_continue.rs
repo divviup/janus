@@ -170,15 +170,17 @@ where
                             });
 
                     let report_id = *report_aggregation.report_id();
-                    sender.send(WritableReportAggregation::new(
-                        report_aggregation
-                            .with_state(report_aggregation_state)
-                            .with_last_prep_resp(Some(PrepareResp::new(
-                                report_id,
-                                prepare_step_result,
-                            ))),
-                        output_share,
-                    ))
+                    sender
+                        .send(WritableReportAggregation::new(
+                            report_aggregation
+                                .with_state(report_aggregation_state)
+                                .with_last_prep_resp(Some(PrepareResp::new(
+                                    report_id,
+                                    prepare_step_result,
+                                ))),
+                            output_share,
+                        ))
+                        .map_err(drop)
                 })
         }
     });
