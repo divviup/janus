@@ -1115,7 +1115,7 @@ async fn upload_client_early_disconnect() {
         .as_any()
         .downcast_ref::<Sum<u64>>()
         .unwrap();
-    // During the Trillium→axum transition, both pipelines register the same counter name,
+    // During the Trillium-to-axum transition, both pipelines register the same counter name,
     // so filter to the route we care about.
     let upload_counter_points: Vec<_> = counter_data
         .data_points

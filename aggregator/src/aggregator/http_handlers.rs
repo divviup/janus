@@ -9,9 +9,8 @@ use futures::{
     io::{AsyncRead, AsyncReadExt},
     stream::Stream,
 };
-use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
+    BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
     http_metrics_middleware, instrumented,
     taskprov::taskprov_task_id,
