@@ -60,8 +60,9 @@ use self::models::{
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
 use crate::{
-    AsyncAggregator, SecretBytes, TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator, SecretBytes,
     batch_mode::{AccumulableBatchMode, CollectableBatchMode},
+    http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregationMode, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
 };

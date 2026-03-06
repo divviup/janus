@@ -10,9 +10,11 @@ use futures::{
     stream::Stream,
 };
 use janus_aggregator_core::{
-    BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
-    http_metrics_middleware, instrumented,
+    http_server::{
+        BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
+        http_metrics_middleware, instrumented,
+    },
     taskprov::taskprov_task_id,
 };
 use janus_core::{

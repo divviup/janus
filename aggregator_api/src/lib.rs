@@ -9,9 +9,8 @@ use std::{borrow::Cow, str::FromStr, sync::Arc};
 use async_trait::async_trait;
 use git_version::git_version;
 use janus_aggregator_core::{
-    BYTES_HISTOGRAM_BOUNDARIES, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, Datastore},
-    instrumented,
+    http_server::{BYTES_HISTOGRAM_BOUNDARIES, TIME_HISTOGRAM_BOUNDARIES, instrumented},
 };
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};

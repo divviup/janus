@@ -7,11 +7,12 @@ use bytes::Bytes;
 use educe::Educe;
 use futures::{future::BoxFuture, stream::TryStreamExt};
 use janus_aggregator_core::{
-    AsyncAggregator, AsyncAggregatorWithNoise, TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator, AsyncAggregatorWithNoise,
     datastore::{
         self, Datastore,
         models::{AcquiredCollectionJob, BatchAggregation, CollectionJobState, Lease},
     },
+    http_server::TIME_HISTOGRAM_BOUNDARIES,
     task,
 };
 use janus_core::{

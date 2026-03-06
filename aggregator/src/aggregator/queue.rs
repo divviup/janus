@@ -8,7 +8,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use janus_aggregator_core::TIME_HISTOGRAM_BOUNDARIES;
+use janus_aggregator_core::http_server::TIME_HISTOGRAM_BOUNDARIES;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},

@@ -15,7 +15,7 @@ use itertools::Itertools as _;
 #[cfg(feature = "test-util")]
 use janus_aggregator_core::VdafHasAggregationParameter;
 use janus_aggregator_core::{
-    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator,
     datastore::{
         self, Datastore,
         models::{
@@ -24,6 +24,7 @@ use janus_aggregator_core::{
         },
         task_counters::TaskAggregationCounter,
     },
+    http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
