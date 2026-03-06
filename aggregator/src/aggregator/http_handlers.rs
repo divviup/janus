@@ -11,9 +11,9 @@ use futures::{
 };
 use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES,
+    HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
-    instrumented,
+    http_metrics_middleware, instrumented,
     taskprov::taskprov_task_id,
 };
 use janus_core::{
@@ -321,6 +321,7 @@ impl Handler for EmptyBody {
 
 /// A Trillium handler that checks for state set when sending an error response, and updates an
 /// OpenTelemetry counter accordingly.
+// TODO(#4283): Remove in favour of `http_metrics_middleware` when Trillium is fully removed.
 struct StatusCounter(Counter<u64>);
 
 impl StatusCounter {
@@ -542,17 +543,22 @@ where
 
         // Axum router for incrementally migrated endpoints. Routes will be moved here
         // from the Trillium router one batch at a time.
-        let mut axum_router = axum::Router::new();
+        let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
 
-        // Temporary test endpoint to verify the proxy bridge works.
-        // TODO(#4283): Remove once a real endpoint has been migrated.
-        axum_router = axum_router.route(
-            "/internal/test/axum_ready",
-            axum::routing::get(|| async { "axum OK" }),
-        );
+        let axum_router = axum::Router::new()
+            // Temporary test endpoint to verify the proxy bridge works.
+            // TODO(#4283): Remove once a real endpoint has been migrated.
+            .route(
+                "/internal/test/axum_ready",
+                axum::routing::get(|| async { "axum OK" }),
+            )
+            // In axum, the last .layer() is outermost. Extension must be outermost
+            // so the HttpMetrics value is available when the metrics middleware runs.
+            .layer(axum::middleware::from_fn(http_metrics_middleware))
+            .layer(axum::Extension(http_metrics));
 
         // Bind a local listener for the axum router and spawn it.
-        let axum_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let axum_listener = tokio::net::TcpListener::bind("localhost:0")
             .await
             .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
         let axum_address = axum_listener.local_addr().map_err(|err| {

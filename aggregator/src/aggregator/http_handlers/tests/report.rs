@@ -18,7 +18,7 @@ use janus_messages::{
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
     UploadResponse, taskprov::TimePrecision,
 };
-use opentelemetry::Key;
+use opentelemetry::{Key, Value};
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
 use prio::codec::{Encode, ParameterizedDecode};
 use rand::random;
@@ -1104,6 +1104,8 @@ async fn upload_client_early_disconnect() {
     // Inspect the metrics to confirm they contain expected values. We should have seen two
     // successful requests, and two invalid requests due to the client disconnecting in the middle
     // of the request body.
+    let route_key = Key::new("route");
+    let route_value = Value::from("tasks/:task_id/reports");
     let error_code_key = Key::new("error_code");
     let error_type_key = Key::new("error.type");
     let status_code_key = Key::new("http.response.status_code");
@@ -1113,16 +1115,21 @@ async fn upload_client_early_disconnect() {
         .as_any()
         .downcast_ref::<Sum<u64>>()
         .unwrap();
-    assert_eq!(counter_data.data_points.len(), 2);
-    assert!(
-        counter_data
-            .data_points
-            .iter()
-            .all(|data_point| data_point.value == 2)
-    );
+    // During the Trillium→axum transition, both pipelines register the same counter name,
+    // so filter to the route we care about.
+    let upload_counter_points: Vec<_> = counter_data
+        .data_points
+        .iter()
+        .filter(|dp| {
+            dp.attributes
+                .iter()
+                .any(|a| a.key == route_key && a.value == route_value)
+        })
+        .collect();
+    assert_eq!(upload_counter_points.len(), 2);
+    assert!(upload_counter_points.iter().all(|dp| dp.value == 2));
     assert_eq!(
-        counter_data
-            .data_points
+        upload_counter_points
             .iter()
             .map(|data_point| {
                 data_point
@@ -1142,16 +1149,21 @@ async fn upload_client_early_disconnect() {
         .as_any()
         .downcast_ref::<Histogram<f64>>()
         .unwrap();
-    assert_eq!(histogram_data.data_points.len(), 2);
-    assert!(
-        histogram_data
-            .data_points
-            .iter()
-            .all(|data_point| data_point.count == 2)
-    );
+    let http_route_key = Key::new("http.route");
+    let http_route_value = Value::from("tasks/:task_id/reports");
+    let upload_histogram_points: Vec<_> = histogram_data
+        .data_points
+        .iter()
+        .filter(|dp| {
+            dp.attributes
+                .iter()
+                .any(|a| a.key == http_route_key && a.value == http_route_value)
+        })
+        .collect();
+    assert_eq!(upload_histogram_points.len(), 2);
+    assert!(upload_histogram_points.iter().all(|dp| dp.count == 2));
     assert_eq!(
-        histogram_data
-            .data_points
+        upload_histogram_points
             .iter()
             .map(|data_point| {
                 data_point
@@ -1164,8 +1176,7 @@ async fn upload_client_early_disconnect() {
         HashSet::from([Some("client_disconnected".to_string()), None])
     );
     assert_eq!(
-        histogram_data
-            .data_points
+        upload_histogram_points
             .iter()
             .map(|data_point| {
                 data_point

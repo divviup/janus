@@ -171,7 +171,7 @@ impl HttpMetrics {
             response_counter: meter
                 .u64_counter(counter_name)
                 .with_description(
-                    "Count of requests handled, by method, route, and response status.",
+                    "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
                 .with_unit("{request}")
                 .build(),
@@ -205,10 +205,17 @@ pub async fn http_metrics_middleware(
     next: Next,
 ) -> Response {
     let method = request.method().to_string();
+    // Rewrite axum's `{param}` path syntax to `:param` for metric label continuity
+    // with the existing Trillium convention (e.g. `tasks/:task_id/reports`).
     let route = request
         .extensions()
         .get::<MatchedPath>()
-        .map(|p| p.as_str().trim_start_matches('/').to_string())
+        .map(|p| {
+            p.as_str()
+                .trim_start_matches('/')
+                .replace('{', ":")
+                .replace('}', "")
+        })
         .unwrap_or_else(|| "unknown".to_string());
     let request_body_size = request
         .headers()
@@ -277,7 +284,12 @@ pub async fn axum_instrumented(request: Request<Body>, next: Next) -> Response {
     let route = request
         .extensions()
         .get::<MatchedPath>()
-        .map(|p| p.as_str().to_string())
+        .map(|p| {
+            p.as_str()
+                .trim_start_matches('/')
+                .replace('{', ":")
+                .replace('}', "")
+        })
         .unwrap_or_else(|| "unknown".to_string());
     let method = request.method().clone();
     let span = info_span!("endpoint", route, %method);
