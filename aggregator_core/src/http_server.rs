@@ -6,6 +6,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
 };
+use tower_http::trace::TraceLayer;
 use tracing::{Instrument, Span, debug, info_span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
@@ -189,24 +190,35 @@ pub async fn http_metrics_middleware(
     response
 }
 
-/// Axum middleware that instruments request handlers with tracing spans.
-pub async fn axum_instrumented(request: Request<Body>, next: Next) -> Response {
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|p| {
-            p.as_str()
-                .trim_start_matches('/')
-                .replace('{', ":")
-                .replace('}', "")
+/// Returns a [`TraceLayer`] that instruments axum request handlers with tracing spans,
+/// mirroring the Trillium `instrumented` handler's span structure.
+#[allow(clippy::type_complexity)]
+pub fn trace_layer() -> TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    impl Fn(&Request<Body>) -> Span + Clone,
+    (),
+    impl Fn(&Response<Body>, std::time::Duration, &Span) + Clone,
+> {
+    TraceLayer::new_for_http()
+        .make_span_with(|request: &Request<Body>| {
+            let route = request
+                .extensions()
+                .get::<MatchedPath>()
+                .map(|p| {
+                    p.as_str()
+                        .trim_start_matches('/')
+                        .replace('{', ":")
+                        .replace('}', "")
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let method = request.method();
+            info_span!("endpoint", route, %method)
         })
-        .unwrap_or_else(|| "unknown".to_string());
-    let method = request.method().clone();
-    let span = info_span!("endpoint", route, %method);
-    let response = next.run(request).instrument(span.clone()).await;
-    span.in_scope(|| {
-        let status = response.status().canonical_reason().unwrap_or("unknown");
-        debug!(status, "Finished handling request");
-    });
-    response
+        .on_request(())
+        .on_response(
+            |response: &Response<Body>, _latency: std::time::Duration, _span: &Span| {
+                let status = response.status().canonical_reason().unwrap_or("unknown");
+                debug!(status, "Finished handling request");
+            },
+        )
 }

@@ -13,7 +13,7 @@ use janus_aggregator_core::{
     datastore::{Datastore, Error as datastoreError},
     http_server::{
         BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
-        http_metrics_middleware, instrumented,
+        http_metrics_middleware, instrumented, trace_layer,
     },
     taskprov::taskprov_task_id,
 };
@@ -555,6 +555,7 @@ where
             )
             // In axum, the last .layer() is outermost. Extension must be outermost
             // so the HttpMetrics value is available when the metrics middleware runs.
+            .layer(trace_layer())
             .layer(axum::middleware::from_fn(http_metrics_middleware))
             .layer(axum::Extension(http_metrics));
 

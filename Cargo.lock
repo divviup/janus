@@ -2751,6 +2751,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
+ "tower-http",
  "tracing",
  "tracing-log",
  "trillium",
