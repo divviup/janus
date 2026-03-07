@@ -429,6 +429,7 @@ async fn bad_client_report_validity() {
     .await
     .unwrap()
     .build()
+    .await
     .unwrap();
     let stopper = Stopper::new();
     let server_handle = trillium_tokio::config()

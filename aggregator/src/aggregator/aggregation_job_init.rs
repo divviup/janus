@@ -826,6 +826,7 @@ mod tests {
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         let prepare_init_generator = PrepareInitGenerator::new(
@@ -1193,6 +1194,7 @@ mod tests {
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         let vdaf = dummy::Vdaf::new(1);
@@ -1337,6 +1339,7 @@ mod tests {
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         let vdaf = dummy::Vdaf::new(1);

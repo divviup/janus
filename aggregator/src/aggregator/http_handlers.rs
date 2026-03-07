@@ -9,11 +9,12 @@ use futures::{
     io::{AsyncRead, AsyncReadExt},
     stream::Stream,
 };
-use janus_aggregator_api::BYTES_HISTOGRAM_BOUNDARIES;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES,
     datastore::{Datastore, Error as datastoreError},
-    instrumented,
+    http_server::{
+        BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
+        http_metrics_middleware, instrumented, trace_layer,
+    },
     taskprov::taskprov_task_id,
 };
 use janus_core::{
@@ -43,6 +44,7 @@ use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
 use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::Metrics;
+use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
 use trillium_router::{Router, RouterConnExt};
 
 use super::{
@@ -320,6 +322,7 @@ impl Handler for EmptyBody {
 
 /// A Trillium handler that checks for state set when sending an error response, and updates an
 /// OpenTelemetry counter accordingly.
+// TODO(#4283): Remove in favour of `http_metrics_middleware` when Trillium is fully removed.
 struct StatusCounter(Counter<u64>);
 
 impl StatusCounter {
@@ -436,7 +439,7 @@ where
         }
     }
 
-    pub fn build(self) -> Result<impl Handler, Error> {
+    pub async fn build(self) -> Result<impl Handler, Error> {
         let helper_queue = self
             .helper_aggregation_request_queue
             .map(
@@ -539,11 +542,51 @@ where
             .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
             .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
 
+        // Axum router for incrementally migrated endpoints. Routes will be moved here
+        // from the Trillium router one batch at a time.
+        let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
+
+        let axum_router = axum::Router::new()
+            // Temporary test endpoint to verify the proxy bridge works.
+            // TODO(#4283): Remove once a real endpoint has been migrated.
+            .route(
+                "/internal/test/axum_ready",
+                axum::routing::get(|| async { "axum OK" }),
+            )
+            // In axum, the last .layer() is outermost. Extension must be outermost
+            // so the HttpMetrics value is available when the metrics middleware runs.
+            .layer(trace_layer())
+            .layer(axum::middleware::from_fn(http_metrics_middleware))
+            .layer(axum::Extension(http_metrics));
+
+        // Bind a local listener for the axum router and spawn it.
+        let axum_listener = tokio::net::TcpListener::bind("localhost:0")
+            .await
+            .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
+        let axum_address = axum_listener.local_addr().map_err(|err| {
+            Error::Internal(format!("getting axum listener address: {err}").into())
+        })?;
+        tokio::spawn(async move {
+            axum::serve(axum_listener, axum_router).await.ok();
+        });
+
+        // Proxy fallback: routes not matched by the Trillium router are forwarded to
+        // the local axum server. As endpoints migrate, they are removed from the
+        // Trillium router and added to the axum router; the proxy transparently
+        // forwards traffic to them.
+        let upstream = format!("http://{axum_address}/").into_upstream();
+        let proxy = Proxy::new(
+            trillium_proxy::Client::new(trillium_tokio::ClientConfig::default())
+                .with_default_pool(),
+            upstream,
+        );
+
         Ok((
             State(self.aggregator),
             metrics,
             router,
             StatusCounter::new(self.meter),
+            proxy,
         ))
     }
 }
@@ -1216,6 +1259,7 @@ pub mod test_util {
                 timeout_ms: None,
             })
             .build()
+            .await
             .unwrap();
 
             Self {

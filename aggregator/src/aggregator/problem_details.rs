@@ -139,7 +139,7 @@ mod tests {
     use bytes::Bytes;
     use futures::future::join_all;
     use http::Method;
-    use janus_aggregator_core::{TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
+    use janus_aggregator_core::{http_server::TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
     use janus_core::{
         initialize_rustls,
         retries::test_util::LimitedRetryer,

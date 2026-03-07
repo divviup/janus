@@ -102,6 +102,7 @@ impl SimulationAggregator {
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         let inspect_handler = InspectHandler::new(aggregator_handler);

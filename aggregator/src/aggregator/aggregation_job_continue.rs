@@ -503,6 +503,7 @@ mod tests {
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         AggregationJobContinueTestCase {
