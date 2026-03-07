@@ -110,6 +110,8 @@ impl HttpMetrics {
 
 /// Axum middleware that records HTTP server metrics (response counter, request duration,
 /// body sizes).
+// TODO(#4283): Replace with `opentelemetry-instrumentation-tower` once OpenTelemetry is
+// upgraded to 0.31 or later, which we can do after we're off Trillium.
 pub async fn http_metrics_middleware(
     axum::Extension(metrics): axum::Extension<Arc<HttpMetrics>>,
     request: Request<Body>,
