@@ -174,10 +174,15 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use axum::{body::to_bytes, response::IntoResponse};
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        response::IntoResponse,
+        routing::get,
+    };
     use bytes::Bytes;
     use futures::future::join_all;
-    use http::{Method, StatusCode};
+    use http::{Method, Request, StatusCode};
     use janus_aggregator_core::{http_server::TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
     use janus_core::{
         initialize_rustls,
@@ -192,6 +197,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Client;
+    use tower::ServiceExt;
 
     use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
 
@@ -313,7 +319,6 @@ mod tests {
             .map(|test_case| {
                 let request_histogram = request_histogram.clone();
                 async move {
-                    use axum::response::IntoResponse;
                     // Convert the error to an axum response and capture status/body.
                     let error_factory = Arc::new(test_case.error_factory);
                     let error = error_factory();
@@ -364,9 +369,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_after_header() {
-        // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
-        for error in [Error::TooManyRequests, Error::RequestTimeout] {
-            let response = error.into_response();
+        let app = Router::new()
+            .route(
+                "/too_many",
+                get(|| async { Err::<(), Error>(Error::TooManyRequests) }),
+            )
+            .route(
+                "/timeout",
+                get(|| async { Err::<(), Error>(Error::RequestTimeout) }),
+            );
+
+        for path in ["/too_many", "/timeout"] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
             assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
             assert_eq!(
                 response
