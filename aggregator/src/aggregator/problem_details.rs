@@ -111,7 +111,7 @@ impl<'a> ProblemDocument<'a> {
     }
 
     /// Converts this problem document into an axum [`Response`].
-    pub fn into_response_with_retry_after(&self, retry_after: Option<Duration>) -> Response {
+    pub fn to_response_with_retry_after(&self, retry_after: Option<Duration>) -> Response {
         let body = serde_json::to_vec(self).unwrap_or_default();
         let mut response = (
             self.status_code(),
@@ -125,6 +125,7 @@ impl<'a> ProblemDocument<'a> {
         if let Some(retry_after) = retry_after {
             response.headers_mut().insert(
                 RETRY_AFTER,
+                // Unwrap safety: u64::to_string can only contain printable characters
                 HeaderValue::from_str(&retry_after.as_secs().to_string()).unwrap(),
             );
         }
@@ -132,9 +133,9 @@ impl<'a> ProblemDocument<'a> {
     }
 }
 
-impl IntoResponse for &ProblemDocument<'_> {
+impl IntoResponse for ProblemDocument<'_> {
     fn into_response(self) -> Response {
-        self.into_response_with_retry_after(None)
+        self.to_response_with_retry_after(None)
     }
 }
 
@@ -173,7 +174,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use axum::body::to_bytes;
+    use axum::{body::to_bytes, response::IntoResponse};
     use bytes::Bytes;
     use futures::future::join_all;
     use http::{Method, StatusCode};
@@ -363,7 +364,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_after_header() {
-        use axum::response::IntoResponse;
         // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
         for error in [Error::TooManyRequests, Error::RequestTimeout] {
             let response = error.into_response();

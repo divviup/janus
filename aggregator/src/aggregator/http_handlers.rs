@@ -13,7 +13,7 @@ use futures::{
     io::{AsyncRead, AsyncReadExt},
     stream::Stream,
 };
-use http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
     datastore::{Datastore, Error as datastoreError},
     http_server::{
@@ -49,7 +49,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
-use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::Metrics;
 use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
 use trillium_router::{Router, RouterConnExt};
@@ -255,7 +254,7 @@ impl Error {
         let response = match self {
             Error::InvalidConfiguration(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::MessageDecode(_) => {
-                (&ProblemDocument::new_dap(DapProblemType::InvalidMessage)).into_response()
+                ProblemDocument::new_dap(DapProblemType::InvalidMessage).into_response()
             }
             Error::MessageEncode(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::ReportRejected(_) => {
@@ -269,54 +268,56 @@ impl Error {
                 if !detail.is_empty() {
                     doc = doc.with_detail(detail);
                 }
-                (&doc).into_response()
+                doc.into_response()
             }
             Error::StepMismatch { task_id, .. } => {
-                (&ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::StepMismatch)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::UnrecognizedTask(task_id) => {
-                (&ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::UnrecognizedTask)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::UnrecognizedAggregationJob(task_id, _) => {
-                (&ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                    .with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::UnrecognizedAggregateShareId(task_id, aggregate_share_id) => {
-                (&ProblemDocument::new(
+                ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
                     "The aggregate share ID is not recognized.",
                     Status::NotFound,
                 )
                 .with_task_id(task_id)
-                .with_aggregate_share_id(aggregate_share_id))
-                    .into_response()
+                .with_aggregate_share_id(aggregate_share_id)
+                .into_response()
             }
             Error::AbandonedAggregationJob(task_id, aggregation_job_id) => {
-                (&ProblemDocument::new(
+                ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",
                     "The aggregation job has been abandoned.",
                     Status::Gone,
                 )
                 .with_task_id(task_id)
-                .with_aggregation_job_id(aggregation_job_id))
-                    .into_response()
+                .with_aggregation_job_id(aggregation_job_id)
+                .into_response()
             }
             Error::DeletedAggregationJob(task_id, aggregation_job_id) => {
-                (&ProblemDocument::new(
+                ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
                     "The aggregation job has been deleted.",
                     Status::Gone,
                 )
                 .with_task_id(task_id)
-                .with_aggregation_job_id(aggregation_job_id))
-                    .into_response()
+                .with_aggregation_job_id(aggregation_job_id)
+                .into_response()
             }
             Error::DeletedCollectionJob(_, _) => StatusCode::NO_CONTENT.into_response(),
             Error::AbandonedCollectionJob(task_id, collection_job_id) => {
-                (&ProblemDocument::new(
+                ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
                     "The collection job has been abandoned.",
                     Status::InternalServerError,
@@ -326,36 +327,39 @@ impl Error {
                     The job is no longer collectable. Contact the server operators for assistance.",
                 )
                 .with_task_id(task_id)
-                .with_collection_job_id(collection_job_id))
-                    .into_response()
+                .with_collection_job_id(collection_job_id)
+                .into_response()
             }
             Error::UnrecognizedCollectionJob(_, _) => StatusCode::NOT_FOUND.into_response(),
             Error::UnauthorizedRequest(..) => StatusCode::FORBIDDEN.into_response(),
             Error::InvalidBatchSize(task_id, _) => {
-                (&ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::InvalidBatchSize)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::BatchInvalid(task_id, _) => {
-                (&ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::BatchInvalid)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::BatchOverlap(task_id, _) => {
-                (&ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::BatchOverlap)
+                    .with_task_id(task_id)
                     .into_response()
             }
-            Error::BatchMismatch(inner) => (&ProblemDocument::new_dap(DapProblemType::BatchMismatch)
+            Error::BatchMismatch(inner) => ProblemDocument::new_dap(DapProblemType::BatchMismatch)
                 .with_task_id(&inner.task_id)
-                .with_detail(&inner.to_string()))
+                .with_detail(&inner.to_string())
                 .into_response(),
             Error::Datastore(error @ datastoreError::TimeUnaligned { task_id, .. }) => {
-                (&ProblemDocument::new(
+                ProblemDocument::new(
                     DapProblemType::InvalidMessage.type_uri(),
                     "Time unaligned.",
                     Status::BadRequest,
                 )
                 .with_task_id(task_id)
-                .with_detail(&error.to_string()))
-                    .into_response()
+                .with_detail(&error.to_string())
+                .into_response()
             }
             Error::Datastore(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::Hpke(_)
@@ -368,22 +372,23 @@ impl Error {
             | Error::TaskParameters(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Error::AggregateShareRequestRejected(_, _) => StatusCode::BAD_REQUEST.into_response(),
             Error::EmptyAggregation(task_id) => {
-                (&ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id))
+                ProblemDocument::new_dap(DapProblemType::InvalidMessage)
+                    .with_task_id(task_id)
                     .into_response()
             }
             Error::ForbiddenMutation { .. } => StatusCode::CONFLICT.into_response(),
             Error::BadContentType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
-            Error::BadRequest(detail) => (&ProblemDocument::new(
+            Error::BadRequest(detail) => ProblemDocument::new(
                 "about:blank",
                 "Bad Request.",
                 Status::BadRequest,
             )
-            .with_detail(&detail.to_string()))
-                .into_response(),
+            .with_detail(&detail.to_string())
+            .into_response(),
             Error::InvalidTask(task_id, opt_out_reason) => {
-                (&ProblemDocument::new_dap(DapProblemType::InvalidTask)
+                ProblemDocument::new_dap(DapProblemType::InvalidTask)
                     .with_task_id(task_id)
-                    .with_detail(&format!("{opt_out_reason}")))
+                    .with_detail(&format!("{opt_out_reason}"))
                     .into_response()
             }
             Error::DifferentialPrivacy(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -397,14 +402,14 @@ impl Error {
                 "The server is currently servicing too many requests, please try the request again \
                 later.",
             )
-            .into_response_with_retry_after(Some(RATE_LIMIT_RETRY_AFTER)),
+            .to_response_with_retry_after(Some(RATE_LIMIT_RETRY_AFTER)),
             Error::RequestTimeout => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#request-timeout",
                 "Request timed out waiting in queue.",
                 Status::TooManyRequests,
             )
             .with_detail("The request spent too long waiting to be processed.")
-            .into_response_with_retry_after(Some(RATE_LIMIT_RETRY_AFTER)),
+            .to_response_with_retry_after(Some(RATE_LIMIT_RETRY_AFTER)),
         };
 
         if response.status().is_server_error() {
@@ -803,66 +808,13 @@ async fn axum_hpke_config<C: Clock>(
 
     if let Some(signature) = signature {
         response_headers.insert(
-            http::header::HeaderName::from_static(HPKE_CONFIG_SIGNATURE_HEADER),
+            HeaderName::from_static(HPKE_CONFIG_SIGNATURE_HEADER),
+            // Unwrap safety: base64 encoding only produces printable ASCII characters
             HeaderValue::from_str(&URL_SAFE_NO_PAD.encode(signature)).unwrap(),
         );
     }
 
     Ok((StatusCode::OK, response_headers, encoded_hpke_config_list).into_response())
-}
-
-// TODO(#4283): Remove in Part 6 when Trillium is fully removed.
-#[allow(dead_code)]
-/// API handler for the "/hpke_config" GET endpoint.
-async fn hpke_config<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<(), Error> {
-    let (encoded_hpke_config_list, signature) = conn
-        .cancel_on_disconnect(aggregator.handle_hpke_config())
-        .await
-        .ok_or(Error::ClientDisconnected)??;
-
-    // Handle CORS, if the request header is present.
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
-        // Unconditionally allow CORS requests from all origins.
-        let origin = origin.clone();
-        conn.response_headers_mut()
-            .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-    }
-
-    conn.set_cache_control(CacheControlDirective::MaxAge(StdDuration::from_secs(86400)));
-    let headers = conn.response_headers_mut();
-    headers.insert(KnownHeaderName::ContentType, HpkeConfigList::MEDIA_TYPE);
-    if let Some(signature) = signature {
-        headers.insert(
-            HPKE_CONFIG_SIGNATURE_HEADER,
-            URL_SAFE_NO_PAD.encode(signature),
-        );
-    }
-    conn.set_status(Status::Ok);
-    conn.set_body(encoded_hpke_config_list);
-    Ok(())
-}
-
-// TODO(#4283): Remove in Part 6 when Trillium is fully removed.
-#[allow(dead_code)]
-/// Handler for CORS preflight requests to "/hpke_config".
-async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
-    conn.response_headers_mut()
-        .insert(KnownHeaderName::Allow, "GET");
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
-        let origin = origin.clone();
-        let request_headers = conn.response_headers_mut();
-        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "GET");
-        request_headers.insert(
-            KnownHeaderName::AccessControlMaxAge,
-            format!("{}", CORS_PREFLIGHT_CACHE_AGE.as_secs()),
-        );
-    }
-    conn.set_status(Status::Ok);
-    conn
 }
 
 /// Streams reports decoded from an async reader. This function reads the body in chunks and
