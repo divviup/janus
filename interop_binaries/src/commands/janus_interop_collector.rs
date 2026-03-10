@@ -1,11 +1,17 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration as StdDuration,
 };
 
 use anyhow::Context;
+use axum::{
+    Json, Router,
+    extract::{State, rejection::JsonRejection},
+    response::IntoResponse,
+    routing::post,
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
@@ -36,14 +42,10 @@ use prio::{
 use rand::{RngExt, distr::StandardUniform, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tokio::{sync::Mutex, task::JoinHandle};
-use trillium::{Conn, Handler};
-use trillium_api::{Json, State, api};
-use trillium_router::Router;
+use tokio::{net::TcpListener, runtime::Runtime, sync::Mutex, task::JoinHandle};
 
 use crate::{
-    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
-    install_tracing_subscriber,
+    HpkeConfigRegistry, Keyring, NumberAsString, VdafObject, install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
 };
 
@@ -155,6 +157,14 @@ enum CollectionJobState {
     InProgress(Option<JoinHandle<anyhow::Result<CollectResult>>>),
     Completed(CollectResult),
     Error,
+}
+
+#[derive(Clone)]
+struct CollectorState {
+    http_client: reqwest::Client,
+    tasks: TaskStateMap,
+    collection_jobs: CollectionJobStateMap,
+    keyring: Keyring,
 }
 
 async fn handle_add_task(
@@ -659,9 +669,6 @@ async fn handle_collection_poll(
         Entry::Occupied(mut occupied_entry) => match occupied_entry.get_mut() {
             CollectionJobState::InProgress(join_handle_opt) => {
                 if join_handle_opt.as_ref().unwrap().is_finished() {
-                    // Awaiting on the JoinHandle requires owning it. We take it out of the Option,
-                    // and ensure that a different enum variant is stored over it before dropping
-                    // the lock on the HashMap.
                     let taken_handle = join_handle_opt.take().unwrap();
                     let task_result = taken_handle.await;
                     let collect_result = match task_result {
@@ -715,127 +722,146 @@ impl CollectionJobStateMap {
     }
 }
 
-fn handler() -> anyhow::Result<impl Handler> {
-    let http_client = janus_collector::default_http_client()?;
-    let tasks = TaskStateMap::new();
-    let collection_jobs = CollectionJobStateMap::new();
-    let keyring = Keyring::new();
+async fn add_task_handler(
+    State(state): State<CollectorState>,
+    request: Result<Json<AddTaskRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let Json(request) = match request {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(AddTaskResponse {
+                status: ERROR,
+                error: Some(format!("{e:?}")),
+                collector_hpke_config: None,
+            });
+        }
+    };
+    match handle_add_task(&state.tasks.0, &state.keyring.0, request)
+        .await
+        .and_then(|config| config.get_encoded().context("failed to encode HPKE config"))
+    {
+        Ok(collector_hpke_config) => Json(AddTaskResponse {
+            status: SUCCESS,
+            error: None,
+            collector_hpke_config: Some(URL_SAFE_NO_PAD.encode(collector_hpke_config)),
+        }),
+        Err(e) => Json(AddTaskResponse {
+            status: ERROR,
+            error: Some(format!("{e:?}")),
+            collector_hpke_config: None,
+        }),
+    }
+}
 
-    let router = Router::new()
-        .post("/internal/test/ready", Json(serde_json::json!({})))
-        .post(
-            "/internal/test/add_task",
-            api(
-                |_conn: &mut Conn,
-                 (State(tasks), State(keyring), Json(request)): (
-                    State<TaskStateMap>,
-                    State<Keyring>,
-                    Json<AddTaskRequest>,
-                )| async move {
-                    match handle_add_task(&tasks.0, &keyring.0, request)
-                        .await
-                        .and_then(|config| {
-                            config.get_encoded().context("failed to encode HPKE config")
-                        }) {
-                        Ok(collector_hpke_config) => Json(AddTaskResponse {
-                            status: SUCCESS,
-                            error: None,
-                            collector_hpke_config: Some(
-                                URL_SAFE_NO_PAD.encode(collector_hpke_config),
-                            ),
-                        }),
-                        Err(e) => Json(AddTaskResponse {
-                            status: ERROR,
-                            error: Some(format!("{e:?}")),
-                            collector_hpke_config: None,
-                        }),
-                    }
-                },
-            ),
+async fn collection_start_handler(
+    State(state): State<CollectorState>,
+    request: Result<Json<CollectStartRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let Json(request) = match request {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(CollectStartResponse {
+                status: ERROR,
+                error: Some(format!("{e:?}")),
+                handle: None,
+            });
+        }
+    };
+    match handle_collection_start(
+        &state.http_client,
+        &state.tasks.0,
+        &state.collection_jobs.0,
+        request,
+    )
+    .await
+    {
+        Ok(handle) => Json(CollectStartResponse {
+            status: SUCCESS,
+            error: None,
+            handle: Some(handle.0),
+        }),
+        Err(e) => Json(CollectStartResponse {
+            status: ERROR,
+            error: Some(format!("{e:?}")),
+            handle: None,
+        }),
+    }
+}
+
+async fn collection_poll_handler(
+    State(state): State<CollectorState>,
+    request: Result<Json<CollectPollRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let Json(request) = match request {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(CollectPollResponse {
+                status: ERROR,
+                error: Some(format!("{e:?}")),
+                batch_id: None,
+                report_count: None,
+                interval_start: None,
+                interval_duration: None,
+                result: None,
+            });
+        }
+    };
+    match handle_collection_poll(&state.collection_jobs.0, request).await {
+        Ok(Some(collect_result)) => Json(CollectPollResponse {
+            status: COMPLETE,
+            error: None,
+            batch_id: collect_result
+                .partial_batch_selector
+                .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
+            report_count: Some(collect_result.report_count),
+            interval_start: Some(collect_result.interval_start),
+            interval_duration: Some(collect_result.interval_duration),
+            result: Some(collect_result.aggregation_result),
+        }),
+        Ok(None) => Json(CollectPollResponse {
+            status: IN_PROGRESS,
+            error: None,
+            batch_id: None,
+            report_count: None,
+            interval_start: None,
+            interval_duration: None,
+            result: None,
+        }),
+        Err(e) => Json(CollectPollResponse {
+            status: ERROR,
+            error: Some(format!("{e:?}")),
+            batch_id: None,
+            report_count: None,
+            interval_start: None,
+            interval_duration: None,
+            result: None,
+        }),
+    }
+}
+
+fn handler() -> anyhow::Result<Router> {
+    let state = CollectorState {
+        http_client: janus_collector::default_http_client()?,
+        tasks: TaskStateMap::new(),
+        collection_jobs: CollectionJobStateMap::new(),
+        keyring: Keyring::new(),
+    };
+
+    Ok(Router::new()
+        .route(
+            "/internal/test/ready",
+            post(|| async { Json(serde_json::json!({})) }),
         )
-        .post(
+        .route("/internal/test/add_task", post(add_task_handler))
+        .route(
             "/internal/test/collection_start",
-            api(
-                |_conn: &mut Conn,
-                 (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
-                    State<reqwest::Client>,
-                    State<TaskStateMap>,
-                    State<CollectionJobStateMap>,
-                    Json<CollectStartRequest>,
-                )| async move {
-                    match handle_collection_start(
-                        &http_client,
-                        &tasks.0,
-                        &collection_jobs.0,
-                        request,
-                    )
-                    .await
-                    {
-                        Ok(handle) => Json(CollectStartResponse {
-                            status: SUCCESS,
-                            error: None,
-                            handle: Some(handle.0),
-                        }),
-                        Err(e) => Json(CollectStartResponse {
-                            status: ERROR,
-                            error: Some(format!("{e:?}")),
-                            handle: None,
-                        }),
-                    }
-                },
-            ),
+            post(collection_start_handler),
         )
-        .post(
+        .route(
             "/internal/test/collection_poll",
-            api(
-                |_conn: &mut Conn,
-                 (State(collection_jobs), Json(request)): (
-                    State<CollectionJobStateMap>,
-                    Json<CollectPollRequest>,
-                )| async move {
-                    match handle_collection_poll(&collection_jobs.0, request).await {
-                        Ok(Some(collect_result)) => Json(CollectPollResponse {
-                            status: COMPLETE,
-                            error: None,
-                            batch_id: collect_result
-                                .partial_batch_selector
-                                .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
-                            report_count: Some(collect_result.report_count),
-                            interval_start: Some(collect_result.interval_start),
-                            interval_duration: Some(collect_result.interval_duration),
-                            result: Some(collect_result.aggregation_result),
-                        }),
-                        Ok(None) => Json(CollectPollResponse {
-                            status: IN_PROGRESS,
-                            error: None,
-                            batch_id: None,
-                            report_count: None,
-                            interval_start: None,
-                            interval_duration: None,
-                            result: None,
-                        }),
-                        Err(e) => Json(CollectPollResponse {
-                            status: ERROR,
-                            error: Some(format!("{e:?}")),
-                            batch_id: None,
-                            report_count: None,
-                            interval_start: None,
-                            interval_duration: None,
-                            result: None,
-                        }),
-                    }
-                },
-            ),
-        );
-
-    Ok((
-        State(http_client),
-        State(tasks),
-        State(collection_jobs),
-        State(keyring),
-        router,
-        ErrorHandler,
-    ))
+            post(collection_poll_handler),
+        )
+        .with_state(state))
 }
 
 #[derive(Debug, Parser)]
@@ -849,11 +875,14 @@ pub struct Options {
 impl Options {
     pub fn run(self) -> anyhow::Result<()> {
         install_tracing_subscriber()?;
-        trillium_tokio::config()
-            .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
-            .with_port(self.port)
-            .run(handler()?);
-        Ok(())
+        let rt = Runtime::new()?;
+        rt.block_on(async {
+            let app = handler()?;
+            let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.port));
+            let listener = TcpListener::bind(addr).await?;
+            axum::serve(listener, app).await?;
+            Ok(())
+        })
     }
 }
 

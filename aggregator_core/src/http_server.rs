@@ -108,6 +108,21 @@ impl HttpMetrics {
     }
 }
 
+/// Extracts the matched route from an axum request and rewrites `{param}` to `:param`
+/// for metric label continuity with the existing Trillium convention.
+fn normalize_axum_route(request: &Request<Body>) -> String {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| {
+            p.as_str()
+                .trim_start_matches('/')
+                .replace('{', ":")
+                .replace('}', "")
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Axum middleware that records HTTP server metrics (response counter, request duration,
 /// body sizes).
 // TODO(#4283): Replace with `opentelemetry-instrumentation-tower` once OpenTelemetry is
@@ -118,18 +133,7 @@ pub async fn http_metrics_middleware(
     next: Next,
 ) -> Response {
     let method = request.method().to_string();
-    // Rewrite axum's `{param}` path syntax to `:param` for metric label continuity
-    // with the existing Trillium convention (e.g. `tasks/:task_id/reports`).
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|p| {
-            p.as_str()
-                .trim_start_matches('/')
-                .replace('{', ":")
-                .replace('}', "")
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    let route = normalize_axum_route(&request);
     let request_body_size = request
         .headers()
         .get(http::header::CONTENT_LENGTH)
@@ -203,16 +207,7 @@ pub fn trace_layer() -> TraceLayer<
 > {
     TraceLayer::new_for_http()
         .make_span_with(|request: &Request<Body>| {
-            let route = request
-                .extensions()
-                .get::<MatchedPath>()
-                .map(|p| {
-                    p.as_str()
-                        .trim_start_matches('/')
-                        .replace('{', ":")
-                        .replace('}', "")
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+            let route = normalize_axum_route(request);
             let method = request.method();
             info_span!("endpoint", route, %method)
         })
