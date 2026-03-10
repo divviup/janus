@@ -39,6 +39,7 @@ use opentelemetry::{
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
+use tower::ServiceBuilder;
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{State, TryFromConn, api};
@@ -555,9 +556,12 @@ where
             )
             // In axum, the last .layer() is outermost. Extension must be outermost
             // so the HttpMetrics value is available when the metrics middleware runs.
-            .layer(trace_layer())
-            .layer(axum::middleware::from_fn(http_metrics_middleware))
-            .layer(axum::Extension(http_metrics));
+            .layer(
+                ServiceBuilder::new()
+                    .layer(trace_layer())
+                    .layer(axum::middleware::from_fn(http_metrics_middleware))
+                    .layer(axum::Extension(http_metrics)),
+            );
 
         // Bind a local listener for the axum router and spawn it.
         let axum_listener = tokio::net::TcpListener::bind("localhost:0")
