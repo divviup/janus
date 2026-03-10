@@ -25,6 +25,8 @@ version = "0.9.0-prerelease-1"
 [workspace.dependencies]
 anyhow = "1"
 assert_matches = "1"
+axum = "0.8"
+axum-extra = "0.10"
 async-stream = "0.3"
 async-trait = "0.1"
 aws-lc-rs = "1.16.1"
@@ -115,6 +117,9 @@ tracing-stackdriver = "0.10.0"
 tracing-subscriber = "0.3"
 tokio = { version = "1.50", features = ["full", "tracing"] }
 tokio-postgres = "0.7.16"
+tokio-util = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-postgres-rustls = "0.13.0"
 tokio-stream = "0.1.18"
 trillium = "0.2.20"

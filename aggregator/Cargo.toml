@@ -37,6 +37,7 @@ test-util = [
 [dependencies]
 anyhow.workspace = true
 assert_matches = { workspace = true }
+axum.workspace = true
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 aws-lc-rs = { workspace = true }
@@ -98,6 +99,8 @@ tracing-log = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 tracing-stackdriver = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt", "json"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
 trillium.workspace = true
 trillium-api.workspace = true
 trillium-caching-headers.workspace = true
@@ -105,6 +108,7 @@ trillium-head.workspace = true
 trillium-macros = "0.0.6"
 trillium-opentelemetry.workspace = true
 trillium-prometheus = { workspace = true, optional = true }
+trillium-proxy.workspace = true
 trillium-router.workspace = true
 trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true

@@ -13,7 +13,7 @@ use educe::Educe;
 use futures::future::BoxFuture;
 use http::{HeaderValue, header::RETRY_AFTER};
 use janus_aggregator_core::{
-    AsyncAggregator, TIME_HISTOGRAM_BOUNDARIES,
+    AsyncAggregator,
     datastore::{
         self, Datastore,
         models::{
@@ -22,6 +22,7 @@ use janus_aggregator_core::{
         },
         task_counters::TaskAggregationCounter,
     },
+    http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
 };
 use janus_core::{

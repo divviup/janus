@@ -13,13 +13,10 @@ use prio::{
     dp::DifferentialPrivacyStrategy,
     vdaf::{Aggregator, AggregatorWithNoise},
 };
-use tracing::{Instrument, Span, debug, info_span};
-use trillium::{Conn, Handler, Status};
-use trillium_macros::Handler;
-use trillium_router::RouterConnExt;
 
 pub mod batch_mode;
 pub mod datastore;
+pub mod http_server;
 pub mod task;
 pub mod taskprov;
 
@@ -110,47 +107,6 @@ pub trait VdafHasAggregationParameter {}
 
 #[cfg(feature = "test-util")]
 impl VdafHasAggregationParameter for prio::vdaf::dummy::Vdaf {}
-
-pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
-    InstrumentedHandler(handler)
-}
-
-struct InstrumentedHandlerSpan(Span);
-
-#[derive(Handler)]
-struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
-
-impl<H: Handler> InstrumentedHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let route = conn.route().expect("no route in conn").to_string();
-        let method = conn.method();
-        let span = info_span!("endpoint", route, %method);
-        conn.insert_state(InstrumentedHandlerSpan(span.clone()));
-        self.0.run(conn).instrument(span).await
-    }
-
-    async fn before_send(&self, mut conn: Conn) -> Conn {
-        if let Some(span) = conn.take_state::<InstrumentedHandlerSpan>() {
-            let conn = self.0.before_send(conn).instrument(span.0.clone()).await;
-            span.0.in_scope(|| {
-                let status = conn
-                    .status()
-                    .as_ref()
-                    .map_or("unknown", Status::canonical_reason);
-                debug!(status, "Finished handling request");
-            });
-            conn
-        } else {
-            self.0.before_send(conn).await
-        }
-    }
-}
-
-/// These boundaries are intended to be able to capture the length of short-lived operations
-/// (e.g. HTTP requests) as well as longer-running operations.
-pub const TIME_HISTOGRAM_BOUNDARIES: &[f64] = &[
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
-];
 
 #[cfg(feature = "test-util")]
 pub mod test_util {

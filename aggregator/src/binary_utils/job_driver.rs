@@ -9,8 +9,8 @@ use std::{
 
 use anyhow::Context as _;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, models::Lease},
+    http_server::TIME_HISTOGRAM_BOUNDARIES,
 };
 use janus_core::{Runtime, time::Clock};
 use opentelemetry::{KeyValue, metrics::Meter};

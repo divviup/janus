@@ -54,6 +54,7 @@ async fn hpke_config() {
     );
     let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
         .build()
+        .await
         .unwrap();
 
     // No task ID provided.
@@ -189,6 +190,7 @@ async fn hpke_config_with_taskprov() {
     );
     let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
         .build()
+        .await
         .unwrap();
 
     let mut test_conn = get("/hpke_config").run_async(&handler).await;

@@ -144,6 +144,7 @@ where
         .await
         .unwrap()
         .build()
+        .await
         .unwrap();
 
         let min_batch_size = 1;

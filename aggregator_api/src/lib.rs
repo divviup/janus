@@ -9,9 +9,8 @@ use std::{borrow::Cow, str::FromStr, sync::Arc};
 use async_trait::async_trait;
 use git_version::git_version;
 use janus_aggregator_core::{
-    TIME_HISTOGRAM_BOUNDARIES,
     datastore::{self, Datastore},
-    instrumented,
+    http_server::{BYTES_HISTOGRAM_BOUNDARIES, TIME_HISTOGRAM_BOUNDARIES, instrumented},
 };
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
@@ -68,12 +67,6 @@ impl Handler for ReplaceMimeTypes {
         conn.with_response_header(ContentType, CONTENT_TYPE)
     }
 }
-
-/// These boundaries are intended to be used with measurements having the unit of "bytes".
-pub const BYTES_HISTOGRAM_BOUNDARIES: &[f64] = &[
-    1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0, 65536.0, 131072.0, 262144.0, 524288.0,
-    1048576.0, 2097152.0, 4194304.0, 8388608.0, 16777216.0, 33554432.0,
-];
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.

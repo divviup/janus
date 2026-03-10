@@ -104,7 +104,7 @@ async fn run_aggregator(
         aggregator_handler = aggregator_handler.with_helper_aggregation_request_queue(harq);
     }
 
-    let mut handlers = (aggregator_handler.build()?, None);
+    let mut handlers = (aggregator_handler.build().await?, None);
 
     let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
