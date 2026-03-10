@@ -554,13 +554,13 @@ where
                 "/internal/test/axum_ready",
                 axum::routing::get(|| async { "axum OK" }),
             )
-            // In axum, the last .layer() is outermost. Extension must be outermost
+            // In tower, the first .layer() is outermost. Extension must be outermost
             // so the HttpMetrics value is available when the metrics middleware runs.
             .layer(
                 ServiceBuilder::new()
-                    .layer(trace_layer())
+                    .layer(axum::Extension(http_metrics))
                     .layer(axum::middleware::from_fn(http_metrics_middleware))
-                    .layer(axum::Extension(http_metrics)),
+                    .layer(trace_layer()),
             );
 
         // Bind a local listener for the axum router and spawn it.
