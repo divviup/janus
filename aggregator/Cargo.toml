@@ -117,7 +117,6 @@ uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 janus_aggregator = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
-tower.workspace = true
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }

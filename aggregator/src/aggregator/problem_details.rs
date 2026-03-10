@@ -9,6 +9,7 @@ use janus_messages::{
     AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
 };
 use serde::Serialize;
+use tracing::warn;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
 
@@ -112,7 +113,14 @@ impl<'a> ProblemDocument<'a> {
 
     /// Converts this problem document into an axum [`Response`].
     pub fn to_response_with_retry_after(&self, retry_after: Option<Duration>) -> Response {
-        let body = serde_json::to_vec(self).unwrap_or_default();
+        let body = match serde_json::to_vec(self) {
+            Ok(body) => body,
+            Err(e) => {
+                warn!(?e, ?self, "Failed to serialize problem document");
+                "{}".as_bytes().to_vec()
+            }
+        };
+
         let mut response = (
             self.status_code(),
             [(
