@@ -37,7 +37,6 @@ use prio::{
         xof::{Seed, Xof, XofTurboShake128},
     },
 };
-
 // TODO(#4402): remove allow once Janus moves to prio 0.18 which uses rand 0.10
 #[allow(unused_imports)]
 use rand::{RngExt, distr::StandardUniform, random, rng};
@@ -133,7 +132,12 @@ pub(super) async fn upload_report_invalid_measurement(
 /// Take an already-encoded measurement as a vector of field elements, and run the Prio3 sharding
 /// algorithm on it to produce a public share and a set of input shares.
 // TODO(#4402): remove allow once Janus moves to prio 0.18 which uses rand 0.10
-#[allow(unused_variables, unused_mut, unreachable_code)]
+#[allow(
+    unused_variables,
+    unused_mut,
+    unreachable_code,
+    clippy::diverging_sub_expression
+)]
 fn shard_encoded_measurement(
     vdaf: &Prio3Histogram,
     task_id: &TaskId,
