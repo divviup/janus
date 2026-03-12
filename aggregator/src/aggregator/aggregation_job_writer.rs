@@ -30,7 +30,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram},
 };
-use rand::{Rng as _, rng};
+use rand::{RngExt, rng};
 use tokio::try_join;
 use tracing::{Level, warn};
 

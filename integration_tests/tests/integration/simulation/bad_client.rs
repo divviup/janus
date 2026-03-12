@@ -37,7 +37,10 @@ use prio::{
         xof::{Seed, Xof, XofTurboShake128},
     },
 };
-use rand::{Rng, distr::StandardUniform, random, rng};
+
+// TODO(#4402): remove allow once Janus moves to prio 0.18 which uses rand 0.10
+#[allow(unused_imports)]
+use rand::{RngExt, distr::StandardUniform, random, rng};
 use tokio::net::TcpListener;
 use trillium_tokio::Stopper;
 use url::Url;
@@ -129,6 +132,8 @@ pub(super) async fn upload_report_invalid_measurement(
 
 /// Take an already-encoded measurement as a vector of field elements, and run the Prio3 sharding
 /// algorithm on it to produce a public share and a set of input shares.
+// TODO(#4402): remove allow once Janus moves to prio 0.18 which uses rand 0.10
+#[allow(unused_variables, unused_mut, unreachable_code)]
 fn shard_encoded_measurement(
     vdaf: &Prio3Histogram,
     task_id: &TaskId,
@@ -159,7 +164,8 @@ fn shard_encoded_measurement(
         Histogram::new(MAX_REPORTS, chunk_length).unwrap();
 
     // Share measurement.
-    let helper_share_seed = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let helper_share_seed: Seed<VERIFY_KEY_LENGTH_PRIO3> =
+        todo!("set this to `rng.random()` once Janus moves to prio 0.18 which uses rand 0.10");
     let mut helper_measurement_share_rng = XofTurboShake128::seed_stream(
         helper_share_seed.as_ref(),
         &[&domain_separation_tag(vdaf, DST_MEASUREMENT_SHARE), &ctx],
@@ -169,13 +175,16 @@ fn shard_encoded_measurement(
         Vec::with_capacity(circuit.input_len());
     let mut leader_measurement_share = encoded_measurement.clone();
     for leader_elem in leader_measurement_share.iter_mut() {
-        let helper_elem = helper_measurement_share_rng.sample(StandardUniform);
+        let helper_elem = todo!(
+            "set this to `helper_measurement_share_rng.sample(StandardUniform)` once Janus moves to prio 0.18 which uses rand 0.10"
+        );
         *leader_elem -= helper_elem;
         expanded_helper_measurement_share.push(helper_elem);
     }
 
     // Derive joint randomness.
-    let helper_joint_rand_blind = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let helper_joint_rand_blind: Seed<VERIFY_KEY_LENGTH_PRIO3> =
+        todo!("set this to `rng.random()` once Janus moves to prio 0.18 which uses rand 0.10");
     let mut helper_joint_rand_part_xof = XofTurboShake128::init(
         helper_joint_rand_blind.as_ref(),
         &[&domain_separation_tag(vdaf, DST_JOINT_RAND_PART), &ctx],
@@ -187,7 +196,8 @@ fn shard_encoded_measurement(
     }
     let helper_joint_rand_seed_part = helper_joint_rand_part_xof.into_seed();
 
-    let leader_joint_rand_blind = rng.random::<Seed<VERIFY_KEY_LENGTH_PRIO3>>();
+    let leader_joint_rand_blind: Seed<VERIFY_KEY_LENGTH_PRIO3> =
+        todo!("set this to `rng.random()` once Janus moves to prio 0.18 which uses rand 0.10");
     let mut leader_joint_rand_part_xof = XofTurboShake128::init(
         leader_joint_rand_blind.as_ref(),
         &[&domain_separation_tag(vdaf, DST_JOINT_RAND_PART), &ctx],
@@ -213,13 +223,15 @@ fn shard_encoded_measurement(
         &[&[NUM_PROOFS]],
     );
     for _ in 0..circuit.joint_rand_len() {
-        joint_rand.push(joint_rand_xof.sample(StandardUniform));
+        joint_rand.push(todo!("set this to `joint_rand_xof.sample(StandardUniform)` once Janus moves to prio 0.18 which uses rand 0.10"));
     }
 
     // Construct and share FLP proof.
     let mut prove_rand: Vec<Field128> = Vec::new();
     for _ in 0..circuit.prove_rand_len() {
-        prove_rand.push(random());
+        prove_rand.push(todo!(
+            "set this to `random()` once Janus moves to prio 0.18 which uses rand 0.10"
+        ));
     }
     let mut leader_proof_share = circuit
         .prove(&encoded_measurement, &prove_rand, &joint_rand)
@@ -230,7 +242,9 @@ fn shard_encoded_measurement(
         &[&[NUM_PROOFS, HELPER_AGGREGATOR_ID]],
     );
     for leader_elem in leader_proof_share.iter_mut() {
-        let helper_elem = helper_proofs_share_xof.sample(StandardUniform);
+        let helper_elem = todo!(
+            "set this to `helper_proofs_share_xof.sample(StandardUniform)` once Janus moves to prio 0.18 which uses rand 0.10"
+        );
         *leader_elem -= helper_elem;
     }
 
