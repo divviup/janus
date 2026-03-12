@@ -1572,7 +1572,7 @@ mod tests {
             },
             AggregationMode::Synchronous,
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 2048,
                 length: 4,
                 chunk_length: 2,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,

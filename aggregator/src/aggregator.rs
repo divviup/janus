@@ -1002,12 +1002,12 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy,
             } => {
-                let vdaf = Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
+                let vdaf = Prio3::new_sum_vec(2, *max_measurement, *length, *chunk_length)?;
                 VdafOps::Prio3SumVec(
                     Arc::new(vdaf),
                     vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
@@ -1016,14 +1016,19 @@ impl<C: Clock> TaskAggregator<C> {
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy,
             } => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
-                    ParallelSum<Field64, Mul<Field64>>,
-                >(*proofs, *bits, *length, *chunk_length)?;
+                    ParallelSum<Field64, Mul>,
+                >(
+                    *proofs,
+                    u64::try_from(*max_measurement)?,
+                    *length,
+                    *chunk_length,
+                )?;
                 VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(
                     Arc::new(vdaf),
                     vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
@@ -1360,7 +1365,7 @@ enum VdafOps {
     Prio3Sum(Arc<Prio3Sum>),
     Prio3SumVec(Arc<Prio3SumVec>, vdaf_ops_strategies::Prio3SumVec),
     Prio3SumVecField64MultiproofHmacSha256Aes128(
-        Arc<Prio3SumVecField64MultiproofHmacSha256Aes128<ParallelSum<Field64, Mul<Field64>>>>,
+        Arc<Prio3SumVecField64MultiproofHmacSha256Aes128<ParallelSum<Field64, Mul>>>,
         vdaf_ops_strategies::Prio3SumVec,
     ),
     Prio3Histogram(Arc<Prio3Histogram>, vdaf_ops_strategies::Prio3Histogram),
@@ -1431,7 +1436,7 @@ macro_rules! vdaf_ops_dispatch {
                 type $Vdaf = ::janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
                     ::prio::flp::gadgets::ParallelSum<
                         ::prio::field::Field64,
-                        ::prio::flp::gadgets::Mul<::prio::field::Field64>
+                        ::prio::flp::gadgets::Mul,
                     >,
                 >;
                 const $VERIFY_KEY_LENGTH: usize = 32;

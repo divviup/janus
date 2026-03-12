@@ -85,7 +85,7 @@ impl TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Count<Field64> {
 
 impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::Histogram<Field128, PS>
 where
-    PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
+    PS: ParallelSumGadget<Field128, Mul> + Eq + 'static,
 {
     fn add_noise_to_agg_share(
         &self,
@@ -99,7 +99,7 @@ where
 
 impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field128, PS>
 where
-    PS: ParallelSumGadget<Field128, Mul<Field128>> + Eq + 'static,
+    PS: ParallelSumGadget<Field128, Mul> + Eq + 'static,
 {
     fn add_noise_to_agg_share(
         &self,
@@ -113,7 +113,7 @@ where
 
 impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field64, PS>
 where
-    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
+    PS: ParallelSumGadget<Field64, Mul> + Eq + 'static,
 {
     fn add_noise_to_agg_share(
         &self,
@@ -131,7 +131,7 @@ impl<T, SPoly, SBlindPoly> TypeWithNoise<NoDifferentialPrivacy>
 where
     T: Fixed + CompatibleFloat,
     SPoly: ParallelSumGadget<Field128, PolyEval<Field128>> + Eq + Clone + 'static,
-    SBlindPoly: ParallelSumGadget<Field128, Mul<Field128>> + Eq + Clone + 'static,
+    SBlindPoly: ParallelSumGadget<Field128, Mul> + Eq + Clone + 'static,
 {
     fn add_noise_to_agg_share(
         &self,

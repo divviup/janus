@@ -1216,7 +1216,7 @@ async fn end_to_end_sumvec_hmac() {
     .unwrap();
     let vdaf_config = VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
         length: 12,
-        bits: 8,
+        max_measurement: 4096,
         chunk_length: 14,
         proofs: 2,
     };

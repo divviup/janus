@@ -180,7 +180,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         (VdafInstance::Prio3Count, Role::Leader),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -189,7 +189,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
@@ -202,7 +202,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 64,
                 chunk_length: 10,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,

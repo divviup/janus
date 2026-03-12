@@ -335,13 +335,13 @@ async fn handle_collection_start(
         (
             ParsedQuery::TimeInterval(batch_interval),
             VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             },
         ) => {
-            let vdaf = Prio3::new_sum_vec(2, bits, length, chunk_length)
+            let vdaf = Prio3::new_sum_vec(2, max_measurement, length, chunk_length)
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -362,7 +362,7 @@ async fn handle_collection_start(
             ParsedQuery::TimeInterval(batch_interval),
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
@@ -370,7 +370,7 @@ async fn handle_collection_start(
         ) => {
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<ParallelSum<_, _>>(
                 proofs,
-                bits,
+                u64::try_from(max_measurement).context("max measurement too big")?,
                 length,
                 chunk_length,
             )
@@ -546,13 +546,13 @@ async fn handle_collection_start(
         (
             ParsedQuery::LeaderSelected,
             VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             },
         ) => {
-            let vdaf = Prio3::new_sum_vec(2, bits, length, chunk_length)
+            let vdaf = Prio3::new_sum_vec(2, max_measurement, length, chunk_length)
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -573,7 +573,7 @@ async fn handle_collection_start(
             ParsedQuery::LeaderSelected,
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
@@ -581,7 +581,7 @@ async fn handle_collection_start(
         ) => {
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<ParallelSum<_, _>>(
                 proofs,
-                bits,
+                u64::try_from(max_measurement).context("max measurement too big")?,
                 length,
                 chunk_length,
             )

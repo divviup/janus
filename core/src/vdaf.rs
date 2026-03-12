@@ -98,7 +98,7 @@ pub enum VdafInstance {
     Prio3Sum { max_measurement: u64 },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
-        bits: usize,
+        max_measurement: u128,
         length: usize,
         chunk_length: usize,
         #[serde(default)]
@@ -108,7 +108,7 @@ pub enum VdafInstance {
     /// different XOF.
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: u8,
-        bits: usize,
+        max_measurement: u128,
         length: usize,
         chunk_length: usize,
         #[serde(default)]
@@ -172,23 +172,23 @@ impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
                 max_measurement: u64::from(*max_measurement),
             }),
             taskprov::VdafConfig::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
             } => Ok(Self::Prio3SumVec {
-                bits: *bits as usize,
+                max_measurement: *max_measurement as u128,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
             }),
             taskprov::VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 proofs,
             } => Ok(Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: *proofs,
-                bits: *bits as usize,
+                max_measurement: *max_measurement as u128,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -216,10 +216,10 @@ pub type Prio3SumVecField64MultiproofHmacSha256Aes128<PS> =
 /// Construct a customized Prio3SumVec VDAF, using the [`Field64`] field, multiple proofs, and
 /// [`XofHmacSha256Aes128`] as the XOF.
 pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128<
-    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
+    PS: ParallelSumGadget<Field64, Mul> + Eq + 'static,
 >(
     proofs: u8,
-    bits: usize,
+    max_measurement: u64,
     length: usize,
     chunk_length: usize,
 ) -> Result<Prio3SumVecField64MultiproofHmacSha256Aes128<PS>, VdafError> {
@@ -232,7 +232,7 @@ pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128<
         2,
         proofs,
         ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128,
-        SumVec::new(bits, length, chunk_length)?,
+        SumVec::new(max_measurement, length, chunk_length)?,
     )
 }
 
@@ -260,13 +260,13 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::vdaf::VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy,
             } => {
                 let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?;
+                    ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *max_measurement, *length, *chunk_length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH_PRIO3;
                 match dp_strategy.clone() {
@@ -287,7 +287,7 @@ macro_rules! vdaf_dispatch_impl_base {
 
             ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy,
@@ -295,14 +295,14 @@ macro_rules! vdaf_dispatch_impl_base {
                 let $vdaf =
                     janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
                         *proofs,
-                        *bits,
+                        u64::try_from(*max_measurement)?,
                         *length,
                         *chunk_length,
                     )?;
                 type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128<
                     ::prio::flp::gadgets::ParallelSum<
                         ::prio::field::Field64,
-                        ::prio::flp::gadgets::Mul<::prio::field::Field64>,
+                        ::prio::flp::gadgets::Mul,
                     >,
                 >;
                 const $VERIFY_KEY_LEN: usize =
@@ -639,7 +639,7 @@ mod tests {
         );
         assert_tokens(
             &VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 1,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -650,7 +650,7 @@ mod tests {
                     variant: "Prio3SumVec",
                     len: 4,
                 },
-                Token::Str("bits"),
+                Token::Str("max_measurement"),
                 Token::U64(1),
                 Token::Str("length"),
                 Token::U64(8),
@@ -669,7 +669,7 @@ mod tests {
         );
         assert_tokens(
             &VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 1,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
@@ -719,7 +719,7 @@ mod tests {
         assert_tokens(
             &VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: 2,
-                bits: 1,
+                max_measurement: 1,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -732,7 +732,7 @@ mod tests {
                 },
                 Token::Str("proofs"),
                 Token::U8(2),
-                Token::Str("bits"),
+                Token::Str("max_measurement"),
                 Token::U64(1),
                 Token::Str("length"),
                 Token::U64(8),
@@ -865,7 +865,7 @@ chunk_length: 2"
             yaml_serde::from_str::<VdafInstance>(
                 "---
 !Prio3SumVec
-bits: 2
+max_measurement: 2
 length: 2
 chunk_length: 2
 dp_strategy:
@@ -875,7 +875,7 @@ dp_strategy:
             )
             .unwrap(),
             VdafInstance::Prio3SumVec {
-                bits: 2,
+                max_measurement: 2,
                 length: 2,
                 chunk_length: 2,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(

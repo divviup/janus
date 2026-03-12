@@ -115,13 +115,13 @@ pub enum VdafObject {
         max_measurement: NumberAsString<u64>,
     },
     Prio3SumVec {
-        bits: NumberAsString<usize>,
+        max_measurement: NumberAsString<u128>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: NumberAsString<u8>,
-        bits: NumberAsString<usize>,
+        max_measurement: NumberAsString<u128>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
@@ -148,25 +148,25 @@ impl From<VdafInstance> for VdafObject {
             },
 
             VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             } => VdafObject::Prio3SumVec {
-                bits: NumberAsString(bits),
+                max_measurement: NumberAsString(max_measurement),
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
             },
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             } => VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: NumberAsString(proofs),
-                bits: NumberAsString(bits),
+                max_measurement: NumberAsString(max_measurement),
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
             },
@@ -206,11 +206,11 @@ impl From<VdafObject> for VdafInstance {
             },
 
             VdafObject::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
             } => VdafInstance::Prio3SumVec {
-                bits: bits.0,
+                max_measurement: max_measurement.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -218,12 +218,12 @@ impl From<VdafObject> for VdafInstance {
 
             VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
             } => VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: proofs.0,
-                bits: bits.0,
+                max_measurement: max_measurement.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,

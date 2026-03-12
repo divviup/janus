@@ -686,35 +686,21 @@ where
                                             ),
 
                                         Prio3SumVec {
-                                            bits,
-                                            length,
-                                            chunk_length: _,
-                                            dp_strategy: _,
+                                            max_measurement, ..
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*bits)
-                                                    .unwrap_or(u64::MAX)
-                                                    .saturating_mul(
-                                                        u64::try_from(*length).unwrap_or(u64::MAX),
-                                                    ),
+                                                u64::try_from(*max_measurement).unwrap_or(u64::MAX),
                                                 &[KeyValue::new("type", "Prio3SumVec")],
                                             ),
 
                                         Prio3SumVecField64MultiproofHmacSha256Aes128 {
-                                            proofs: _,
-                                            bits,
-                                            length,
-                                            chunk_length: _,
-                                            dp_strategy: _,
+                                            max_measurement,
+                                            ..
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*bits)
-                                                    .unwrap_or(u64::MAX)
-                                                    .saturating_mul(
-                                                        u64::try_from(*length).unwrap_or(u64::MAX),
-                                                    ),
+                                                u64::try_from(*max_measurement).unwrap_or(u64::MAX),
                                                 &[KeyValue::new(
                                                     "type",
                                                     "Prio3SumVecField64MultiproofHmacSha256Aes128",

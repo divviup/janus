@@ -67,7 +67,7 @@ impl InteropClientEncoding for Prio3SumVecMultithreaded {
 
 impl<PS> InteropClientEncoding for Prio3SumVecField64MultiproofHmacSha256Aes128<PS>
 where
-    PS: ParallelSumGadget<Field64, Mul<Field64>> + Eq + 'static,
+    PS: ParallelSumGadget<Field64, Mul> + Eq + 'static,
 {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::Array(
@@ -95,26 +95,26 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             "max_measurement": format!("{max_measurement}"),
         }),
         VdafInstance::Prio3SumVec {
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => json!({
             "type": "Prio3SumVec",
-            "bits": format!("{bits}"),
+            "max_measurement": format!("{max_measurement}"),
             "length": format!("{length}"),
             "chunk_length": format!("{chunk_length}"),
         }),
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs,
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => json!({
             "type": "Prio3SumVecField64MultiproofHmacSha256Aes128",
             "proofs": format!("{proofs}"),
-            "bits": format!("{bits}"),
+            "max_measurement": format!("{max_measurement}"),
             "length": format!("{length}"),
             "chunk_length": format!("{chunk_length}"),
         }),

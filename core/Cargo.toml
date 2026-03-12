@@ -58,7 +58,7 @@ k8s-openapi = { workspace = true, optional = true }
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 mime.workspace = true
 mockito = { workspace = true, optional = true }
-prio = { workspace = true, default-features = true, features = ["experimental"] }
+prio = { workspace = true, default-features = true }
 quickcheck = { workspace = true, optional = true }
 rand.workspace = true
 retry-after.workspace = true

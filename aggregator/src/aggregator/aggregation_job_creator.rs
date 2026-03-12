@@ -334,13 +334,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             (
                 task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVec {
-                    bits,
+                    max_measurement,
                     length,
                     chunk_length,
-                    dp_strategy: _,
+                    ..
                 },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
+                let vdaf = Arc::new(Prio3::new_sum_vec(
+                    2,
+                    *max_measurement,
+                    *length,
+                    *chunk_length,
+                )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3SumVec>(task, vdaf)
                     .await
             }
@@ -349,15 +354,20 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 task::BatchMode::TimeInterval,
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     proofs,
-                    bits,
+                    max_measurement,
                     length,
                     chunk_length,
-                    dp_strategy: _,
+                    ..
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
-                    ParallelSum<Field64, Mul<Field64>>,
-                >(*proofs, *bits, *length, *chunk_length)?);
+                    ParallelSum<Field64, Mul>,
+                >(
+                    *proofs,
+                    u64::try_from(*max_measurement)?,
+                    *length,
+                    *chunk_length,
+                )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
                     Prio3SumVecField64MultiproofHmacSha256Aes128<_>,
@@ -448,13 +458,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     batch_time_window_size,
                 },
                 VdafInstance::Prio3SumVec {
-                    bits,
+                    max_measurement,
                     length,
                     chunk_length,
-                    dp_strategy: _,
+                    ..
                 },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec(2, *bits, *length, *chunk_length)?);
+                let vdaf = Arc::new(Prio3::new_sum_vec(
+                    2,
+                    *max_measurement,
+                    *length,
+                    *chunk_length,
+                )?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH_PRIO3,
@@ -468,15 +483,20 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     proofs,
-                    bits,
+                    max_measurement,
                     length,
                     chunk_length,
-                    dp_strategy: _,
+                    ..
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
-                    ParallelSum<Field64, Mul<Field64>>,
-                >(*proofs, *bits, *length, *chunk_length)?);
+                    ParallelSum<Field64, Mul>,
+                >(
+                    *proofs,
+                    u64::try_from(*max_measurement)?,
+                    *length,
+                    *chunk_length,
+                )?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<
                     VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
