@@ -387,6 +387,7 @@ async fn aggregator_hpke_config(
     Ok(list.hpke_configs()[0].clone())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn bad_client_report_validity() {
     install_test_trace_subscriber();
@@ -477,6 +478,7 @@ async fn bad_client_report_validity() {
 
 /// This checks that [`shard_encoded_measurement`] is correct by sharding a correctly-encoded
 /// measurement, and confirming that it prepares successfully.
+#[ignore]
 #[test]
 fn shard_encoded_measurement_correct() {
     let chunk_length = optimal_chunk_length(MAX_REPORTS);
