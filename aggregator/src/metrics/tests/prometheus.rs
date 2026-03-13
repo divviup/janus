@@ -148,13 +148,13 @@ async fn http_metrics() {
         MetricType::COUNTER
     );
     assert!(metric_families["janus_aggregator_responses_total"].has_help());
-    // Find the Trillium StatusCounter's entry (route=hpke_config).
-    let trillium_response_metric = find_metric_by_label(
+    // Find the axum http_metrics_middleware entry (route=hpke_config).
+    let axum_response_metric = find_metric_by_label(
         metric_families["janus_aggregator_responses_total"].get_metric(),
         "route",
         "hpke_config",
     );
-    let janus_aggregator_responses_total_metric_labels = labels_to_map(trillium_response_metric);
+    let janus_aggregator_responses_total_metric_labels = labels_to_map(axum_response_metric);
     assert_eq!(
         janus_aggregator_responses_total_metric_labels["method"],
         "GET"
@@ -178,13 +178,12 @@ async fn http_metrics() {
         MetricType::HISTOGRAM
     );
     assert!(metric_families["http_server_request_duration_seconds"].has_help());
-    let trillium_duration_metric = find_metric_by_label(
+    let axum_duration_metric = find_metric_by_label(
         metric_families["http_server_request_duration_seconds"].get_metric(),
         "http_route",
         "hpke_config",
     );
-    let http_server_request_duration_seconds_metric_labels =
-        labels_to_map(trillium_duration_metric);
+    let http_server_request_duration_seconds_metric_labels = labels_to_map(axum_duration_metric);
     assert_eq!(
         http_server_request_duration_seconds_metric_labels["http_request_method"],
         "GET"
@@ -239,8 +238,8 @@ async fn axum_http_metrics() {
 
     handler.init(&mut "testing".into()).await;
 
-    // Hit the axum-only test endpoint through the proxy bridge.
-    get("/internal/test/axum_ready").run_async(&handler).await;
+    // Hit the axum hpke_config endpoint through the proxy bridge.
+    get("/hpke_config").run_async(&handler).await;
 
     let metric_families = registry
         .gather()
@@ -252,7 +251,7 @@ async fn axum_http_metrics() {
     let axum_response_metric = find_metric_by_label(
         metric_families["janus_aggregator_responses_total"].get_metric(),
         "route",
-        "internal/test/axum_ready",
+        "hpke_config",
     );
     let labels = labels_to_map(axum_response_metric);
     assert_eq!(labels["method"], "GET");
@@ -262,7 +261,7 @@ async fn axum_http_metrics() {
     let axum_duration_metric = find_metric_by_label(
         metric_families["http_server_request_duration_seconds"].get_metric(),
         "http_route",
-        "internal/test/axum_ready",
+        "hpke_config",
     );
     let labels = labels_to_map(axum_duration_metric);
     assert_eq!(labels["http_request_method"], "GET");

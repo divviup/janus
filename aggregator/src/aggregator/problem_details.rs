@@ -1,9 +1,15 @@
 use std::time::Duration;
 
+use axum::response::{IntoResponse, Response};
+use http::{
+    HeaderValue, StatusCode,
+    header::{CONTENT_TYPE, RETRY_AFTER},
+};
 use janus_messages::{
     AggregateShareId, AggregationJobId, CollectionJobId, TaskId, problem_type::DapProblemType,
 };
 use serde::Serialize;
+use tracing::warn;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
 
@@ -99,6 +105,46 @@ impl<'a> ProblemDocument<'a> {
             ..self
         }
     }
+
+    /// Returns the HTTP status code for this problem document.
+    pub fn status_code(&self) -> StatusCode {
+        StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    }
+
+    /// Converts this problem document into an axum [`Response`].
+    pub fn to_response_with_retry_after(&self, retry_after: Option<Duration>) -> Response {
+        let body = match serde_json::to_vec(self) {
+            Ok(body) => body,
+            Err(e) => {
+                warn!(?e, ?self, "Failed to serialize problem document");
+                "{}".as_bytes().to_vec()
+            }
+        };
+
+        let mut response = (
+            self.status_code(),
+            [(
+                CONTENT_TYPE,
+                HeaderValue::from_static(PROBLEM_DETAILS_JSON_MEDIA_TYPE),
+            )],
+            body,
+        )
+            .into_response();
+        if let Some(retry_after) = retry_after {
+            response.headers_mut().insert(
+                RETRY_AFTER,
+                // Unwrap safety: u64::to_string can only contain printable characters
+                HeaderValue::from_str(&retry_after.as_secs().to_string()).unwrap(),
+            );
+        }
+        response
+    }
+}
+
+impl IntoResponse for ProblemDocument<'_> {
+    fn into_response(self) -> Response {
+        self.to_response_with_retry_after(None)
+    }
 }
 
 pub trait ProblemDetailsConnExt {
@@ -133,12 +179,18 @@ impl RetryAfterConnExt for Conn {
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, sync::Arc};
+    use std::sync::Arc;
 
     use assert_matches::assert_matches;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        response::IntoResponse,
+        routing::get,
+    };
     use bytes::Bytes;
     use futures::future::join_all;
-    use http::Method;
+    use http::{Method, Request, StatusCode};
     use janus_aggregator_core::{http_server::TIME_HISTOGRAM_BOUNDARIES, test_util::noop_meter};
     use janus_core::{
         initialize_rustls,
@@ -153,8 +205,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Client;
-    use trillium::Status;
-    use trillium_testing::{assert_headers, assert_status, prelude::post};
+    use tower::ServiceExt;
 
     use crate::aggregator::{Error, RequestBody, error::BatchMismatch, send_request_to_helper};
 
@@ -276,22 +327,19 @@ mod tests {
             .map(|test_case| {
                 let request_histogram = request_histogram.clone();
                 async move {
-                    // Run the handler implementation of the given error, and capture its response.
+                    // Convert the error to an axum response and capture status/body.
                     let error_factory = Arc::new(test_case.error_factory);
                     let error = error_factory();
-                    let mut test_conn = post("/").run_async(&error).await;
-                    let body = if let Some(body) = test_conn.take_response_body() {
-                        body.into_bytes().await.unwrap()
-                    } else {
-                        Cow::from([].as_slice())
-                    };
+                    let response = error.into_response();
+                    let status = response.status();
+                    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
                     // Serve the response via mockito, and run it through post_to_helper's
                     // error handling.
                     let mut server = mockito::Server::new_async().await;
                     let error_mock = server
                         .mock("POST", "/")
-                        .with_status(test_conn.status().unwrap() as u16 as usize)
+                        .with_status(status.as_u16() as usize)
                         .with_header("Content-Type", "application/problem+json")
                         .with_body(body)
                         .create_async()
@@ -329,11 +377,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_after_header() {
-        // Test that TooManyRequests and RequestTimeout errors include Retry-After headers
-        for error in [Error::TooManyRequests, Error::RequestTimeout] {
-            let test_conn = post("/").run_async(&error).await;
-            assert_status!(test_conn, Status::TooManyRequests);
-            assert_headers!(test_conn, "Retry-After" => "30");
+        let app = Router::new()
+            .route(
+                "/too_many",
+                get(|| async { Err::<(), Error>(Error::TooManyRequests) }),
+            )
+            .route(
+                "/timeout",
+                get(|| async { Err::<(), Error>(Error::RequestTimeout) }),
+            );
+
+        for path in ["/too_many", "/timeout"] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("Retry-After")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "30"
+            );
         }
     }
 }
