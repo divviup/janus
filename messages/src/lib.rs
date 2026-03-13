@@ -25,7 +25,7 @@ use prio::{
     },
     topology::ping_pong::PingPongMessage,
 };
-use rand::{Rng, distr::StandardUniform, prelude::Distribution};
+use rand::{Rng, RngExt, distr::StandardUniform, prelude::Distribution};
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
