@@ -17,8 +17,8 @@ use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE}
 use janus_aggregator_core::{
     datastore::{Datastore, Error as datastoreError},
     http_server::{
-        BYTES_HISTOGRAM_BOUNDARIES, HttpMetrics, TIME_HISTOGRAM_BOUNDARIES,
-        http_metrics_middleware, instrumented, trace_layer,
+        BYTES_HISTOGRAM_BOUNDARIES, ErrorCode as AxumErrorCode, HttpMetrics,
+        TIME_HISTOGRAM_BOUNDARIES, http_metrics_middleware, instrumented, trace_layer,
     },
     taskprov::taskprov_task_id,
 };
@@ -417,7 +417,7 @@ impl Error {
         }
 
         let mut response = response;
-        response.extensions_mut().insert(ErrorCode(error_code));
+        response.extensions_mut().insert(AxumErrorCode(error_code));
         response
     }
 }
