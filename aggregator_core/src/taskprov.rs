@@ -10,7 +10,7 @@ use chrono::TimeDelta;
 use educe::Educe;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
 use janus_messages::{HpkeConfig, Role, TaskId};
-use rand::{distr::StandardUniform, prelude::Distribution};
+use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},

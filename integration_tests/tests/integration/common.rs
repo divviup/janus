@@ -23,7 +23,7 @@ use prio::{
     flp::gadgets::ParallelSumMultithreaded,
     vdaf::{self, dummy, prio3::Prio3},
 };
-use rand::{Rng, random, rng, seq::IteratorRandom as _};
+use rand::{RngExt, random, rng, seq::IteratorRandom as _};
 use tokio::time::{self, sleep};
 use url::Url;
 

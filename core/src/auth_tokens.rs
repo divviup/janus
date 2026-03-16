@@ -11,7 +11,7 @@ use aws_lc_rs::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use http::{HeaderValue, header::AUTHORIZATION};
-use rand::{distr::StandardUniform, prelude::Distribution};
+use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 

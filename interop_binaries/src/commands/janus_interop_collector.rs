@@ -33,7 +33,7 @@ use prio::{
     flp::gadgets::ParallelSum,
     vdaf::{self, prio3::Prio3},
 };
-use rand::{distr::StandardUniform, prelude::Distribution, random};
+use rand::{RngExt, distr::StandardUniform, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task::JoinHandle};
