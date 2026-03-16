@@ -7,10 +7,6 @@ use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32};
 use janus_collector::{
     AuthenticationToken, Collection, CollectionJob, Collector, PollResult,
     PrivateCollectorCredential, default_http_client,
@@ -24,8 +20,6 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     taskprov::TimePrecision,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     codec::Decode,
     vdaf::{self, Vdaf, prio3::Prio3},
@@ -75,15 +69,6 @@ enum VdafType {
     SumVec,
     /// Prio3Histogram
     Histogram,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint16BitBoundedL2VecSum
-    FixedPoint16BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint32BitBoundedL2VecSum
-    FixedPoint32BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint64BitBoundedL2VecSum
-    FixedPoint64BitBoundedL2VecSum,
 }
 
 #[derive(Clone)]
@@ -487,22 +472,6 @@ macro_rules! options_vdaf_dispatch {
                 let body = $body;
                 body
             }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
-                        .map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
-                        .map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
             _ => Err(clap::Error::raw(
                 ErrorKind::ArgumentConflict,
                 format!(
@@ -888,42 +857,6 @@ mod tests {
             "--time-precision=300".to_string(),
         ]);
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-        }
-
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend(["--vdaf=histogram".to_string(), "--length=apple".to_string()]);
         assert_eq!(
@@ -962,30 +895,6 @@ mod tests {
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend(["--vdaf=histogram".to_string(), "--length=4".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-        }
     }
 
     #[test]

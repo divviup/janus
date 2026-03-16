@@ -15,8 +15,6 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_aggregator_core::task::{BatchMode, test_util::Task};
-#[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     hpke::HpkeKeypair,
     vdaf::{VdafInstance, vdaf_dp_strategies},
@@ -129,13 +127,6 @@ pub enum VdafObject {
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPointBoundedL2VecSum {
-        bitsize: Prio3FixedPointBoundedL2VecSumBitSize,
-        #[serde(default)]
-        dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
-        length: NumberAsString<usize>,
-    },
 }
 
 impl From<VdafInstance> for VdafObject {
@@ -178,17 +169,6 @@ impl From<VdafInstance> for VdafObject {
             } => VdafObject::Prio3Histogram {
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
-            },
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length,
-            } => VdafObject::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length: NumberAsString(length),
             },
 
             _ => panic!("Unsupported VDAF: {vdaf:?}"),
@@ -236,17 +216,6 @@ impl From<VdafObject> for VdafInstance {
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
-            },
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length,
-            } => VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length: length.0,
             },
         }
     }

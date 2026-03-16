@@ -1181,7 +1181,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.12",
  "curve25519-dalek-derive",
- "fiat-crypto 0.2.9",
+ "fiat-crypto",
  "rustc_version",
  "subtle",
 ]
@@ -1635,12 +1635,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "fiat-crypto"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
 name = "filetime"
@@ -2641,7 +2635,6 @@ dependencies = [
  "deadpool",
  "deadpool-postgres",
  "educe",
- "fixed",
  "futures",
  "hex",
  "http",
@@ -2842,7 +2835,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "educe",
- "fixed",
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
@@ -2875,7 +2867,6 @@ dependencies = [
  "clap",
  "constcat",
  "educe",
- "fixed",
  "futures",
  "hex",
  "hpke-dispatch",
@@ -2970,7 +2961,6 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "educe",
- "fixed",
  "futures",
  "hex",
  "janus_aggregator",
@@ -3045,9 +3035,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base64 0.22.1",
- "cfg-if",
  "clap",
- "fixed",
  "janus_collector",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
@@ -4153,7 +4141,7 @@ dependencies = [
  "bitvec",
  "byteorder",
  "ctr",
- "fiat-crypto 0.2.9",
+ "fiat-crypto",
  "fixed",
  "getrandom 0.2.16",
  "hmac",
@@ -4177,10 +4165,8 @@ version = "0.18.1-alpha.2"
 source = "git+https://github.com/divviup/libprio-rs?rev=255ad81c9746314e42a327b0d824ca766302982c#255ad81c9746314e42a327b0d824ca766302982c"
 dependencies = [
  "aes",
- "bitvec",
  "byteorder",
  "ctr",
- "fiat-crypto 0.3.0",
  "hex",
  "hmac",
  "num-bigint",

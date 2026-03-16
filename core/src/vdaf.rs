@@ -37,14 +37,6 @@ pub fn vdaf_application_context(
     ctx
 }
 
-/// Bitsize parameter for the `Prio3FixedPointBoundedL2VecSum` VDAF.
-#[cfg(feature = "fpvec_bounded_l2")]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Prio3FixedPointBoundedL2VecSumBitSize {
-    BitSize16,
-    BitSize32,
-}
-
 /// Contains dedicated enums which describe the differential privacy strategies
 /// of a given VDAF.
 ///
@@ -52,8 +44,6 @@ pub enum Prio3FixedPointBoundedL2VecSumBitSize {
 /// enum is required.
 pub mod vdaf_dp_strategies {
     use prio::dp::distributions::PureDpDiscreteLaplace;
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use prio::dp::distributions::ZCdpDiscreteGaussian;
     use serde::{Deserialize, Serialize};
 
     /// Differential privacy strategies supported by `Prio3Histogram`.
@@ -72,16 +62,6 @@ pub mod vdaf_dp_strategies {
         #[default]
         NoDifferentialPrivacy,
         PureDpDiscreteLaplace(PureDpDiscreteLaplace),
-    }
-
-    /// Differential privacy strategies supported by `Prio3FixedPointBoundedL2VecSum`.
-    #[cfg(feature = "fpvec_bounded_l2")]
-    #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-    #[serde(tag = "dp_strategy")]
-    pub enum Prio3FixedPointBoundedL2VecSum {
-        #[default]
-        NoDifferentialPrivacy,
-        ZCdpDiscreteGaussian(ZCdpDiscreteGaussian),
     }
 }
 
@@ -122,13 +102,6 @@ pub enum VdafInstance {
         chunk_length: usize,
         #[serde(default)]
         dp_strategy: vdaf_dp_strategies::Prio3Histogram,
-    },
-    /// A `Prio3` fixed point vector sum with bounded L2 norm.
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPointBoundedL2VecSum {
-        bitsize: Prio3FixedPointBoundedL2VecSumBitSize,
-        dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
-        length: usize,
     },
 
     /// A fake, no-op VDAF, which uses an aggregation parameter and a variable number of rounds.
@@ -353,59 +326,6 @@ macro_rules! vdaf_dispatch_impl_base {
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
-#[cfg(feature = "fpvec_bounded_l2")]
-#[macro_export]
-macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
-    (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { bitsize, dp_strategy, length } => {
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH_PRIO3;
-
-                match dp_strategy.clone() {
-                    janus_core::vdaf::vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(_strategy) => {
-                        type $DpStrategy = ::prio::dp::distributions::ZCdpDiscreteGaussian;
-                        let $dp_strategy = _strategy;
-                        janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(@dispatch_bitsize bitsize, $Vdaf, $vdaf, length => $body)
-                    },
-                    janus_core::vdaf::vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
-                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                        let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                        janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(@dispatch_bitsize bitsize, $Vdaf, $vdaf, length => $body)
-                    }
-                }
-            },
-
-            _ => unreachable!(),
-        }
-    };
-
-    (@dispatch_bitsize $bitsize:ident, $Vdaf:ident, $vdaf:ident, $length:ident => $body:tt) => {
-        match $bitsize {
-            janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum(
-                        2, *$length,
-                    )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<
-                    ::fixed::FixedI16<::fixed::types::extra::U15>,
-                >;
-                $body
-            },
-            janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum(
-                        2, *$length,
-                    )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<
-                    ::fixed::FixedI32<::fixed::types::extra::U31>,
-                >;
-                $body
-            },
-        };
-    }
-}
-
-/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
 #[cfg(feature = "test-util")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl_test_util {
@@ -452,59 +372,7 @@ macro_rules! vdaf_dispatch_impl_test_util {
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
-#[cfg(all(feature = "fpvec_bounded_l2", feature = "test-util"))]
-#[macro_export]
-macro_rules! vdaf_dispatch_impl {
-    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { .. } => {
-                ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Fake { .. }
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-}
-
-/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
-#[cfg(all(feature = "fpvec_bounded_l2", not(feature = "test-util")))]
-#[macro_export]
-macro_rules! vdaf_dispatch_impl {
-    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { .. } => {
-                ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-}
-
-/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
-#[cfg(all(not(feature = "fpvec_bounded_l2"), feature = "test-util"))]
+#[cfg(feature = "test-util")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
@@ -529,7 +397,7 @@ macro_rules! vdaf_dispatch_impl {
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
-#[cfg(all(not(feature = "fpvec_bounded_l2"), not(feature = "test-util")))]
+#[cfg(not(feature = "test-util"))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
@@ -598,12 +466,8 @@ mod tests {
         DifferentialPrivacyStrategy, PureDpBudget, Rational,
         distributions::{DiscreteLaplaceDpStrategy, PureDpDiscreteLaplace},
     };
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use prio::dp::{ZCdpBudget, distributions::ZCdpDiscreteGaussian};
     use serde_test::{Token, assert_tokens};
 
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use crate::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
     use crate::vdaf::{VdafInstance, vdaf_dp_strategies};
 
     #[test]
@@ -797,37 +661,6 @@ mod tests {
                 name: "VdafInstance",
                 variant: "FakeFailsPrepStep",
             }],
-        );
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    #[test]
-    fn vdaf_deserialization_backwards_compatibility_fpvec_bounded_l2() {
-        assert_eq!(
-            yaml_serde::from_str::<VdafInstance>(
-                "---
-!Prio3FixedPointBoundedL2VecSum
-bitsize: BitSize16
-dp_strategy:
-    dp_strategy: ZCdpDiscreteGaussian
-    budget:
-        epsilon:
-        - - 1
-        - - 2
-length: 10"
-            )
-            .unwrap(),
-            VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize: Prio3FixedPointBoundedL2VecSumBitSize::BitSize16,
-                dp_strategy:
-                    vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(
-                        ZCdpDiscreteGaussian::from_budget(
-                            ZCdpBudget::new(Rational::from_unsigned(1u128, 2u128).unwrap())
-                                .unwrap()
-                        ),
-                    ),
-                length: 10,
-            }
         );
     }
 

@@ -1,10 +1,3 @@
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::traits::Fixed;
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::flp::{
-    gadgets::PolyEval,
-    types::fixedpoint_l2::{FixedPointBoundedL2VecSum, compatible_float::CompatibleFloat},
-};
 #[cfg(feature = "test-util")]
 use prio::vdaf::{AggregatorWithNoise, dummy};
 use prio::{
@@ -114,24 +107,6 @@ where
 impl<PS> TypeWithNoise<NoDifferentialPrivacy> for prio::flp::types::SumVec<Field64, PS>
 where
     PS: ParallelSumGadget<Field64, Mul> + Eq + 'static,
-{
-    fn add_noise_to_agg_share(
-        &self,
-        _dp_strategy: &NoDifferentialPrivacy,
-        _agg_result: &mut [Self::Field],
-        _num_measurements: usize,
-    ) -> Result<(), prio::flp::FlpError> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "fpvec_bounded_l2")]
-impl<T, SPoly, SBlindPoly> TypeWithNoise<NoDifferentialPrivacy>
-    for FixedPointBoundedL2VecSum<T, SPoly, SBlindPoly>
-where
-    T: Fixed + CompatibleFloat,
-    SPoly: ParallelSumGadget<Field128, PolyEval<Field128>> + Eq + Clone + 'static,
-    SBlindPoly: ParallelSumGadget<Field128, Mul> + Eq + Clone + 'static,
 {
     fn add_noise_to_agg_share(
         &self,

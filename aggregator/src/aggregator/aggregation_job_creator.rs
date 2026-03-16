@@ -5,11 +5,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    FixedI16, FixedI32,
-    types::extra::{U15, U31},
-};
 use futures::future::try_join_all;
 use itertools::Itertools as _;
 #[cfg(feature = "test-util")]
@@ -27,8 +22,6 @@ use janus_aggregator_core::{
     http_server::TIME_HISTOGRAM_BOUNDARIES,
     task::{self, AggregatorTask},
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     time::{Clock, DateTimeExt, IntervalExt, TimeExt},
     vdaf::{
@@ -42,8 +35,6 @@ use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     field::Field64,
     flp::gadgets::{Mul, ParallelSum},
@@ -384,29 +375,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::BatchMode::TimeInterval,
-                VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                    bitsize,
-                    dp_strategy: _,
-                    length,
-                },
-            ) => match bitsize {
-                Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
-                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, vdaf)
-                            .await
-                }
-                Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
-                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH_PRIO3, Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, vdaf)
-                            .await
-                }
-            },
-
             #[cfg(feature = "test-util")]
             (task::BatchMode::TimeInterval, VdafInstance::Fake { rounds }) => {
                 let vdaf = Arc::new(prio::vdaf::dummy::Vdaf::new(*rounds));
@@ -514,39 +482,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     VERIFY_KEY_LENGTH_PRIO3,
                     Prio3Histogram,
                 >(task, vdaf, batch_time_window_size).await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::BatchMode::LeaderSelected {
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                    bitsize,
-                    dp_strategy: _,
-                    length,
-                },
-            ) => {
-                let batch_time_window_size = *batch_time_window_size;
-
-                match bitsize {
-                    janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>> =
-                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                        self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                                VERIFY_KEY_LENGTH_PRIO3,
-                            Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                            >(task, vdaf, batch_time_window_size).await
-                    }
-                    janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>> =
-                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?);
-                        self.create_aggregation_jobs_for_leader_selected_task_no_param::<
-                                VERIFY_KEY_LENGTH_PRIO3,
-                            Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                            >(task, vdaf, batch_time_window_size).await
-                    }
-                }
             }
 
             #[cfg(feature = "test-util")]

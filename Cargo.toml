@@ -34,7 +34,6 @@ backon = { version = "1.6.0", features = ["tokio-sleep"] }
 base64 = "0.22.1"
 bhttp = "0.6.1"
 bytes = "1"
-cfg-if = "1.0.4"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
@@ -46,7 +45,6 @@ deadpool = "0.12.2"
 deadpool-postgres = "0.14.1"
 divviup-client = "0.4"
 educe = { version = "0.6.0", default-features = false, features = ["Debug", "PartialEq", "Eq"] }
-fixed = "1.30"
 futures = "0.3.32"
 git-version = "0.3.9"
 hex = "0.4.3"

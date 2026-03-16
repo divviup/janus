@@ -18,11 +18,6 @@ use aws_lc_rs::{
 };
 use backon::BackoffBuilder;
 use bytes::Bytes;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    FixedI16, FixedI32,
-    types::extra::{U15, U31},
-};
 use futures::{
     Stream,
     future::try_join_all,
@@ -43,8 +38,6 @@ use janus_aggregator_core::{
     task::{self, AggregationMode, AggregatorTask, BatchMode},
     taskprov::PeerAggregator,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     Runtime,
     auth_tokens::AuthenticationToken,
@@ -71,8 +64,6 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 #[cfg(feature = "test-util")]
 use prio::vdaf::{VdafError, VerifyTransition, dummy};
 use prio::{
@@ -1042,34 +1033,6 @@ impl<C: Clock> TaskAggregator<C> {
                 )
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length,
-            } => match bitsize {
-                Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                    let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
-                        Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
-                    VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(
-                        Arc::new(vdaf),
-                        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(
-                            dp_strategy.clone(),
-                        ),
-                    )
-                }
-                Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                    let vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
-                        Prio3::new_fixedpoint_boundedl2_vec_sum(2, *length)?;
-                    VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(
-                        Arc::new(vdaf),
-                        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::from_vdaf_dp_strategy(
-                            dp_strategy.clone(),
-                        ),
-                    )
-                }
-            },
-
             #[cfg(feature = "test-util")]
             VdafInstance::Fake { rounds } => VdafOps::Fake(Arc::new(dummy::Vdaf::new(*rounds))),
 
@@ -1287,8 +1250,6 @@ mod vdaf_ops_strategies {
 
     use janus_core::vdaf::vdaf_dp_strategies;
     use prio::dp::distributions::PureDpDiscreteLaplace;
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use prio::dp::distributions::ZCdpDiscreteGaussian;
 
     #[derive(Debug)]
     pub enum Prio3Histogram {
@@ -1327,29 +1288,6 @@ mod vdaf_ops_strategies {
             }
         }
     }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    #[derive(Debug)]
-    pub enum Prio3FixedPointBoundedL2VecSum {
-        NoDifferentialPrivacy,
-        ZCdpDiscreteGaussian(Arc<ZCdpDiscreteGaussian>),
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    impl Prio3FixedPointBoundedL2VecSum {
-        pub fn from_vdaf_dp_strategy(
-            dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
-        ) -> Self {
-            match dp_strategy {
-                vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
-                    Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy
-                }
-                vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(s) => {
-                    Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(Arc::new(s))
-                }
-            }
-        }
-    }
 }
 
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
@@ -1364,16 +1302,6 @@ enum VdafOps {
         vdaf_ops_strategies::Prio3SumVec,
     ),
     Prio3Histogram(Arc<Prio3Histogram>, vdaf_ops_strategies::Prio3Histogram),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint16BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>>,
-        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
-    ),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint32BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>>,
-        vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
-    ),
     #[cfg(feature = "test-util")]
     Fake(Arc<dummy::Vdaf>),
 }
@@ -1471,55 +1399,6 @@ macro_rules! vdaf_ops_dispatch {
                 }
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
-            // Note that the variable `_dp_strategy` is used if `$dp_strategy`
-            // and `$DpStrategy` are given. The underscore suppresses warnings
-            // which occur when `vdaf_ops!` is called without these parameters.
-            crate::aggregator::VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(vdaf, _dp_strategy) => {
-                let $vdaf = vdaf;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<FixedI16<U15>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH_PRIO3;
-
-                match _dp_strategy {
-                    vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(_strategy) => {
-                        type $DpStrategy = ::prio::dp::distributions::ZCdpDiscreteGaussian;
-                        let $dp_strategy = &_strategy;
-                        let body = $body;
-                        body
-                    },
-                    vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
-                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                        let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                        let body = $body;
-                        body
-                    }
-                }
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            // Note that the variable `_dp_strategy` is used if `$dp_strategy`
-            // and `$DpStrategy` are given. The underscore suppresses warnings
-            // which occur when `vdaf_ops!` is called without these parameters.
-            crate::aggregator::VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(vdaf, _dp_strategy) => {
-                let $vdaf = vdaf;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum<FixedI32<U31>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH_PRIO3;
-
-                match _dp_strategy {
-                    vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::ZCdpDiscreteGaussian(_strategy) => {
-                        type $DpStrategy = ::prio::dp::distributions::ZCdpDiscreteGaussian;
-                        let $dp_strategy = &_strategy;
-                        let body = $body;
-                        body
-                    },
-                    vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum::NoDifferentialPrivacy => {
-                        type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                        let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                        let body = $body;
-                        body
-                    }
-                }
-            }
 
             #[cfg(feature = "test-util")]
             crate::aggregator::VdafOps::Fake(vdaf) => {

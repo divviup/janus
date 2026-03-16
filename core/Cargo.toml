@@ -14,7 +14,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "prio/experimental"]
 test-util = [
     "dep:assert_matches",
     "dep:k8s-openapi",
@@ -47,7 +46,6 @@ chrono = { workspace = true, features = ["clock"] }
 clap.workspace = true
 constcat.workspace = true
 educe.workspace = true
-fixed = { workspace = true, optional = true }
 futures = { workspace = true }
 hex = { workspace = true }
 hpke-dispatch = { workspace = true, features = ["serde"] }
@@ -82,7 +80,6 @@ trillium-testing = { workspace = true, optional = true }
 url = { workspace = true }
 
 [dev-dependencies]
-fixed = { workspace = true }
 hex = { workspace = true, features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
