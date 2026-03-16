@@ -24,17 +24,17 @@ where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
     pub continuation: Option<PingPongContinuation<VERIFY_KEY_LENGTH, 16, V>>,
-    pub state: PingPongState<V::PrepareState, V::OutputShare>,
+    pub state: PingPongState<V::VerifyState, V::OutputShare>,
 }
 
 impl<const VERIFY_KEY_LENGTH: usize, V> PrepareTransition<VERIFY_KEY_LENGTH, V>
 where
     V: vdaf::Aggregator<VERIFY_KEY_LENGTH, 16>,
 {
-    pub fn prepare_state(&self) -> &V::PrepareState {
+    pub fn prepare_state(&self) -> &V::VerifyState {
         assert_matches!(self.state, PingPongState::Continued(Continued{
-            ref prepare_state, ..
-        }) => prepare_state)
+            ref verifier_state, ..
+        }) => verifier_state)
     }
 
     pub fn message(&self) -> Option<&PingPongMessage> {
@@ -156,13 +156,13 @@ where
             };
 
             match curr_state {
-                PingPongState::Continued(Continued { prepare_state, .. }) => {
+                PingPongState::Continued(Continued { verifier_state, .. }) => {
                     let continuation = match role {
                         Role::Leader => vdaf
                             .leader_continued(
                                 &ctx,
                                 aggregation_param,
-                                prepare_state,
+                                verifier_state,
                                 last_peer_message.unwrap(),
                             )
                             .unwrap(),
@@ -170,7 +170,7 @@ where
                             .helper_continued(
                                 &ctx,
                                 aggregation_param,
-                                prepare_state,
+                                verifier_state,
                                 last_peer_message.unwrap(),
                             )
                             .unwrap(),

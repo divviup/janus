@@ -928,7 +928,7 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     LeaderPollInit {
         /// Leader's current aggregation state.
         #[educe(Debug(ignore))]
-        prepare_state: A::PrepareState,
+        prepare_state: A::VerifyState,
     },
 
     /// The Leader received a "processing" response from a previous aggregation continue
@@ -953,14 +953,14 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: AsyncAggregator<SEED_
     HelperContinue {
         /// Helper's current preparation state
         #[educe(Debug(ignore))]
-        prepare_state: A::PrepareState,
+        prepare_state: A::VerifyState,
     },
     /// The Helper has received an aggregation continuation request from the Leader, and is
     /// processing it asynchronously.
     HelperContinueProcessing {
         /// Helper's current preparation state.
         #[educe(Debug(ignore))]
-        prepare_state: A::PrepareState,
+        prepare_state: A::VerifyState,
         /// The message from the Leader for this report aggregation.
         #[educe(Debug(ignore))]
         prepare_continue: PrepareContinue,
