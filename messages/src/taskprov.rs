@@ -289,14 +289,14 @@ impl VdafConfig {
             Self::Reserved => 0,
             Self::Prio3Count => 0,
             Self::Prio3Sum { .. } => 4,
-            Self::Prio3SumVec { .. } => 9,
+            Self::Prio3SumVec { .. } => 12,
             Self::Prio3Histogram { .. } => 8,
             Self::Prio3MultihotCountVec { .. } => 12,
             Self::Poplar1 { .. } => 2,
 
             #[cfg(feature = "test-util")]
             Self::Fake { .. } => 4,
-            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 10,
+            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 13,
         }
     }
 }
@@ -814,7 +814,7 @@ mod tests {
                 },
                 concat!(
                     "00000003", // vdaf_type
-                    "0009",     // vdaf_config length
+                    "000c",     // vdaf_config length
                     concat!(
                         // vdaf_config
                         "0000000C", // length
@@ -886,7 +886,7 @@ mod tests {
                 },
                 concat!(
                     "FFFF1003", // vdaf_type
-                    "000A",     // vdaf_config length
+                    "000D",     // vdaf_config length
                     concat!(
                         // vdaf_config
                         "0000000C", // length
