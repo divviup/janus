@@ -1510,16 +1510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "etag"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b3d0661a2ccddc26cba0b834e9b717959ed6fdd76c7129ee159c170a875bf44"
-dependencies = [
- "str-buf",
- "xxhash-rust",
-]
-
-[[package]]
 name = "etcetera"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2700,7 +2690,6 @@ dependencies = [
  "tracing-subscriber",
  "trillium",
  "trillium-api",
- "trillium-caching-headers",
  "trillium-head",
  "trillium-macros 0.0.6",
  "trillium-opentelemetry",
@@ -5492,12 +5481,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "str-buf"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceb97b7225c713c2fd4db0153cb6b3cab244eb37900c3f634ed4d43310d8c34"
-
-[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6227,17 +6210,6 @@ dependencies = [
  "thiserror 1.0.69",
  "trillium",
  "trillium-macros 0.0.6",
-]
-
-[[package]]
-name = "trillium-caching-headers"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531cab8c8b475e6d575491d96178d8d0e1265b8fdb4cd27cc3b7db18a38d8eeb"
-dependencies = [
- "etag",
- "httpdate",
- "trillium",
 ]
 
 [[package]]
@@ -7415,12 +7387,6 @@ dependencies = [
  "serde_json",
  "tempfile",
 ]
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "927da81e25be1e1a2901d59b81b37dd2efd1fc9c9345a55007f09bf5a2d3ee03"
 
 [[package]]
 name = "yaml_serde"

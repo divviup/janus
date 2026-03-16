@@ -124,7 +124,6 @@ tokio-postgres-rustls = "0.13.0"
 tokio-stream = "0.1.18"
 trillium = "0.2.20"
 trillium-api = { version = "0.2.0-rc.12", default-features = false }
-trillium-caching-headers = "0.2.3"
 trillium-head = "0.2.3"
 trillium-macros = "0.0.6"
 trillium-opentelemetry = "0.10.0"
