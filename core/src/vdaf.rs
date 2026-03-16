@@ -98,7 +98,8 @@ pub enum VdafInstance {
     Prio3Sum { max_measurement: u64 },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
-        max_measurement: u128,
+        // TODO: Make this field u128 to match incoming changes to draft-ietf-ppm-dap
+        max_measurement: u64,
         length: usize,
         chunk_length: usize,
         #[serde(default)]
@@ -108,7 +109,8 @@ pub enum VdafInstance {
     /// different XOF.
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: u8,
-        max_measurement: u128,
+        // TODO: Make this field u128 to match incoming changes to draft-ietf-ppm-dap
+        max_measurement: u64,
         length: usize,
         chunk_length: usize,
         #[serde(default)]
@@ -176,7 +178,7 @@ impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
                 length,
                 chunk_length,
             } => Ok(Self::Prio3SumVec {
-                max_measurement: *max_measurement as u128,
+                max_measurement: *max_measurement as u64,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -188,7 +190,7 @@ impl TryFrom<&taskprov::VdafConfig> for VdafInstance {
                 proofs,
             } => Ok(Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: *proofs,
-                max_measurement: *max_measurement as u128,
+                max_measurement: *max_measurement as u64,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -419,7 +421,7 @@ macro_rules! vdaf_dispatch_impl_test_util {
             }
 
             ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_prep_init_fn(
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(
                     |_| -> Result<(), ::prio::vdaf::VdafError> {
                         ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
                             "FakeFailsPrepInit failed at prep_init".to_string(),
@@ -434,9 +436,9 @@ macro_rules! vdaf_dispatch_impl_test_util {
             }
 
             ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_prep_step_fn(
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(
                     |_| -> Result<
-                        ::prio::vdaf::PrepareTransition<::prio::vdaf::dummy::Vdaf, 0, 16>,
+                        ::prio::vdaf::VerifyTransition<::prio::vdaf::dummy::Vdaf, 0, 16>,
                         ::prio::vdaf::VdafError,
                     > {
                         ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
@@ -684,7 +686,7 @@ mod tests {
                     variant: "Prio3SumVec",
                     len: 4,
                 },
-                Token::Str("bits"),
+                Token::Str("max_measurement"),
                 Token::U64(1),
                 Token::Str("length"),
                 Token::U64(8),
