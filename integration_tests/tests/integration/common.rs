@@ -485,7 +485,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             chunk_length,
             dp_strategy: _,
         } => {
-            let max_measurement = u64::try_from(*max_measurement).expect("max measurement too big");
+            let max_measurement = *max_measurement;
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                 ParallelSumMultithreaded<_, _>,
             >(*proofs, max_measurement, *length, *chunk_length)

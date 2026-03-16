@@ -690,7 +690,7 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*max_measurement).unwrap_or(u64::MAX),
+                                                *max_measurement,
                                                 &[KeyValue::new("type", "Prio3SumVec")],
                                             ),
 
@@ -700,7 +700,7 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*max_measurement).unwrap_or(u64::MAX),
+                                                *max_measurement,
                                                 &[KeyValue::new(
                                                     "type",
                                                     "Prio3SumVecField64MultiproofHmacSha256Aes128",

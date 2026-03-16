@@ -370,7 +370,7 @@ async fn handle_collection_start(
         ) => {
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<ParallelSum<_, _>>(
                 proofs,
-                u64::try_from(max_measurement).context("max measurement too big")?,
+                max_measurement,
                 length,
                 chunk_length,
             )
@@ -581,7 +581,7 @@ async fn handle_collection_start(
         ) => {
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<ParallelSum<_, _>>(
                 proofs,
-                u64::try_from(max_measurement).context("max measurement too big")?,
+                max_measurement,
                 length,
                 chunk_length,
             )

@@ -1223,7 +1223,7 @@ where
                                         &ctx,
                                         aggregation_job.aggregation_parameter(),
                                         leader_prepare_state.clone(),
-                                        &helper_prep_msg,
+                                        helper_prep_msg,
                                     )
                                     .and_then(|c| Ok((c.clone(), c.evaluate(&ctx, &vdaf)?)))
                                     .map_err(

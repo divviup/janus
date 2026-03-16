@@ -363,10 +363,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                     ParallelSum<Field64, Mul>,
                 >(
-                    *proofs,
-                    u64::try_from(*max_measurement)?,
-                    *length,
-                    *chunk_length,
+                    *proofs, *max_measurement, *length, *chunk_length
                 )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     VERIFY_KEY_LENGTH_PRIO3_HMACSHA256_AES128,
@@ -492,10 +489,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                     ParallelSum<Field64, Mul>,
                 >(
-                    *proofs,
-                    u64::try_from(*max_measurement)?,
-                    *length,
-                    *chunk_length,
+                    *proofs, *max_measurement, *length, *chunk_length
                 )?);
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_leader_selected_task_no_param::<

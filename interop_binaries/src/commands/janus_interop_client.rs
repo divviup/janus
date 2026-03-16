@@ -157,12 +157,7 @@ async fn handle_upload(
             let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                 ParallelSumMultithreaded<Field64, Mul>,
-            >(
-                proofs,
-                u64::try_from(max_measurement).context("max measurement too large")?,
-                length,
-                chunk_length,
-            )
+            >(proofs, max_measurement, length, chunk_length)
             .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
