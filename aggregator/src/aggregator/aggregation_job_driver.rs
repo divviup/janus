@@ -539,7 +539,7 @@ where
                     }) {
                         // Initialization succeeded. Store the new state and send the message to the
                         // helper.
-                        Ok(Continued { message, prepare_state }) => {
+                        Ok(Continued { message, verifier_state }) => {
                             pi_and_sa_sender.send((
                                 report_aggregation.ord(),
                                 PrepareInit::new(
@@ -556,7 +556,7 @@ where
                                 ),
                                 SteppedAggregation::new(
                                     report_aggregation,
-                                    Either::PrepareState(prepare_state),
+                                    Either::PrepareState(verifier_state),
                                 ),
                             )).map_err(|_| ())
                         }
@@ -755,8 +755,8 @@ where
                                 // FinishedWithOutbound. Anything else is illegal.
                                 Ok(PingPongState::Continued(Continued {
                                     message,
-                                    prepare_state,
-                                })) => (message, Either::PrepareState(prepare_state)),
+                                    verifier_state,
+                                })) => (message, Either::PrepareState(verifier_state)),
                                 Ok(PingPongState::FinishedWithOutbound {
                                     message,
                                     output_share,
@@ -917,8 +917,8 @@ where
                         // never expect this to fail and represent it as Error::Internal.
                         .map_err(|e| Error::Internal(e.into()))
                         .map(|ping_pong_state| match ping_pong_state {
-                            PingPongState::Continued(Continued { prepare_state, .. }) => {
-                                Either::PrepareState(prepare_state)
+                            PingPongState::Continued(Continued { verifier_state, .. }) => {
+                                Either::PrepareState(verifier_state)
                             }
                             PingPongState::Finished { output_share }
                             | PingPongState::FinishedWithOutbound { output_share, .. } => {
@@ -1223,7 +1223,7 @@ where
                                         &ctx,
                                         aggregation_job.aggregation_parameter(),
                                         leader_prepare_state.clone(),
-                                        helper_prep_msg,
+                                        &helper_prep_msg,
                                     )
                                     .and_then(|c| Ok((c.clone(), c.evaluate(&ctx, &vdaf)?)))
                                     .map_err(
@@ -1964,13 +1964,13 @@ where
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state.
 struct SteppedAggregation<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
-    leader_state_or_output_share: Either<A::PrepareState, A::OutputShare>,
+    leader_state_or_output_share: Either<A::VerifyState, A::OutputShare>,
 }
 
 impl<const SEED_SIZE: usize, A: AsyncAggregator<SEED_SIZE>> SteppedAggregation<SEED_SIZE, A> {
     fn new(
         report_aggregation: ReportAggregation<SEED_SIZE, A>,
-        leader_state_or_output_share: Either<A::PrepareState, A::OutputShare>,
+        leader_state_or_output_share: Either<A::VerifyState, A::OutputShare>,
     ) -> Self {
         Self {
             report_aggregation,

@@ -74,7 +74,7 @@ use opentelemetry::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 #[cfg(feature = "test-util")]
-use prio::vdaf::{PrepareTransition, VdafError, dummy};
+use prio::vdaf::{VdafError, VerifyTransition, dummy};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
@@ -1007,7 +1007,7 @@ impl<C: Clock> TaskAggregator<C> {
                 chunk_length,
                 dp_strategy,
             } => {
-                let vdaf = Prio3::new_sum_vec(2, *max_measurement, *length, *chunk_length)?;
+                let vdaf = Prio3::new_sum_vec(2, *max_measurement as u128, *length, *chunk_length)?;
                 VdafOps::Prio3SumVec(
                     Arc::new(vdaf),
                     vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
@@ -1023,12 +1023,7 @@ impl<C: Clock> TaskAggregator<C> {
             } => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                     ParallelSum<Field64, Mul>,
-                >(
-                    *proofs,
-                    u64::try_from(*max_measurement)?,
-                    *length,
-                    *chunk_length,
-                )?;
+                >(*proofs, *max_measurement, *length, *chunk_length)?;
                 VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(
                     Arc::new(vdaf),
                     vdaf_ops_strategies::Prio3SumVec::from_vdaf_dp_strategy(dp_strategy.clone()),
@@ -1080,7 +1075,7 @@ impl<C: Clock> TaskAggregator<C> {
 
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(
-                dummy::Vdaf::new(1).with_prep_init_fn(|_| -> Result<(), VdafError> {
+                dummy::Vdaf::new(1).with_verify_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))
@@ -1089,8 +1084,8 @@ impl<C: Clock> TaskAggregator<C> {
 
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepStep => {
-                VdafOps::Fake(Arc::new(dummy::Vdaf::new(1).with_prep_step_fn(
-                    |_| -> Result<PrepareTransition<dummy::Vdaf, 0, 16>, VdafError> {
+                VdafOps::Fake(Arc::new(dummy::Vdaf::new(1).with_verify_next_fn(
+                    |_| -> Result<VerifyTransition<dummy::Vdaf, 0, 16>, VdafError> {
                         Err(VdafError::Uncategorized(
                             "FakeFailsPrepStep failed at prep_step".to_string(),
                         ))

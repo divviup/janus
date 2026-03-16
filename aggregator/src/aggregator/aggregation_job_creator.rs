@@ -342,7 +342,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec(
                     2,
-                    *max_measurement,
+                    *max_measurement as u128,
                     *length,
                     *chunk_length,
                 )?);
@@ -466,7 +466,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec(
                     2,
-                    *max_measurement,
+                    *max_measurement as u128,
                     *length,
                     *chunk_length,
                 )?);

@@ -1212,7 +1212,7 @@ async fn end_to_end() {
 async fn end_to_end_sumvec_hmac() {
     let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
         ParallelSumMultithreaded<_, _>,
-    >(2, 8, 12, 14)
+    >(2, 4096, 12, 14)
     .unwrap();
     let vdaf_config = VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
         length: 12,

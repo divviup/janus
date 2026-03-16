@@ -117,11 +117,11 @@ where
                                         // the leader with the message, and await the next message
                                         // from the Leader to advance preparation.
                                         PingPongState::Continued(Continued {
-                                            prepare_state,
+                                            verifier_state,
                                             message,
                                         }) => (
                                             ReportAggregationState::HelperContinue {
-                                                prepare_state,
+                                                prepare_state: verifier_state,
                                             },
                                             PrepareStepResult::Continue { message },
                                             None,

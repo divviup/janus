@@ -434,9 +434,11 @@ where
                                 // Helper is not finished. Store the new prepare state, respond to
                                 // the leader with the outgoing message and await the next message
                                 // from the Leader to advance to the next step.
-                                Ok(PingPongState::Continued(Continued{prepare_state, message})) => {
+                                Ok(PingPongState::Continued(Continued{verifier_state, message})) => {
                                     (
-                                        ReportAggregationState::HelperContinue { prepare_state },
+                                        ReportAggregationState::HelperContinue {
+                                            prepare_state: verifier_state
+                                        },
                                         PrepareStepResult::Continue { message },
                                         None,
                                     )

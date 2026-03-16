@@ -268,7 +268,7 @@ macro_rules! vdaf_dispatch_impl_base {
                 dp_strategy,
             } => {
                 let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *max_measurement, *length, *chunk_length)?;
+                    ::prio::vdaf::prio3::Prio3::new_sum_vec(2, *max_measurement as u128, *length, *chunk_length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVec;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH_PRIO3;
                 match dp_strategy.clone() {
@@ -297,7 +297,7 @@ macro_rules! vdaf_dispatch_impl_base {
                 let $vdaf =
                     janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
                         *proofs,
-                        u64::try_from(*max_measurement)?,
+                        *max_measurement,
                         *length,
                         *chunk_length,
                     )?;
@@ -421,13 +421,11 @@ macro_rules! vdaf_dispatch_impl_test_util {
             }
 
             ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(
-                    |_| -> Result<(), ::prio::vdaf::VdafError> {
-                        ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
-                            "FakeFailsPrepInit failed at prep_init".to_string(),
-                        ))
-                    },
-                );
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(|_| {
+                    ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
+                        "FakeFailsPrepInit failed at prep_init".to_string(),
+                    ))
+                });
                 type $Vdaf = ::prio::vdaf::dummy::Vdaf;
                 const $VERIFY_KEY_LEN: usize = 0;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
@@ -436,16 +434,11 @@ macro_rules! vdaf_dispatch_impl_test_util {
             }
 
             ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(
-                    |_| -> Result<
-                        ::prio::vdaf::VerifyTransition<::prio::vdaf::dummy::Vdaf, 0, 16>,
-                        ::prio::vdaf::VdafError,
-                    > {
-                        ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
-                            "FakeFailsPrepStep failed at prep_step".to_string(),
-                        ))
-                    },
-                );
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(|_| {
+                    ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
+                        "FakeFailsPrepStep failed at prep_step".to_string(),
+                    ))
+                });
                 type $Vdaf = ::prio::vdaf::dummy::Vdaf;
                 const $VERIFY_KEY_LEN: usize = 0;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
