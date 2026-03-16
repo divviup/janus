@@ -4174,14 +4174,13 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.18.1-alpha.2"
-source = "git+https://github.com/divviup/libprio-rs?rev=215cedb99f8b0d7395a5f885af53cd0398c878f3#215cedb99f8b0d7395a5f885af53cd0398c878f3"
+source = "git+https://github.com/divviup/libprio-rs?rev=255ad81c9746314e42a327b0d824ca766302982c#255ad81c9746314e42a327b0d824ca766302982c"
 dependencies = [
  "aes",
  "bitvec",
  "byteorder",
  "ctr",
  "fiat-crypto 0.3.0",
- "fixed",
  "hex",
  "hmac",
  "num-bigint",
