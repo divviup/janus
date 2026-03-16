@@ -341,7 +341,7 @@ async fn handle_collection_start(
                 dp_strategy: _,
             },
         ) => {
-            let vdaf = Prio3::new_sum_vec(2, max_measurement, length, chunk_length)
+            let vdaf = Prio3::new_sum_vec(2, max_measurement as u128, length, chunk_length)
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -552,7 +552,7 @@ async fn handle_collection_start(
                 dp_strategy: _,
             },
         ) => {
-            let vdaf = Prio3::new_sum_vec(2, max_measurement, length, chunk_length)
+            let vdaf = Prio3::new_sum_vec(2, max_measurement as u128, length, chunk_length)
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,

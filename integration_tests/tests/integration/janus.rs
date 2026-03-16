@@ -581,7 +581,7 @@ async fn janus_in_process_histogram_dp_noise() {
 async fn janus_in_process_sumvec_dp_noise() {
     static TEST_NAME: &str = "janus_in_process_sumvec_dp_noise";
     const VECTOR_LENGTH: usize = 50;
-    const MAX_MEASUREMENT: u128 = 1 << 2;
+    const MAX_MEASUREMENT: u64 = 1 << 2;
     const CHUNK_LENGTH: usize = 10;
 
     install_test_trace_subscriber();
@@ -602,7 +602,8 @@ async fn janus_in_process_sumvec_dp_noise() {
     ))
     .await;
     let vdaf =
-        Prio3::new_sum_vec_multithreaded(2, MAX_MEASUREMENT, VECTOR_LENGTH, CHUNK_LENGTH).unwrap();
+        Prio3::new_sum_vec_multithreaded(2, MAX_MEASUREMENT as u128, VECTOR_LENGTH, CHUNK_LENGTH)
+            .unwrap();
 
     let total_measurements: usize = janus_pair
         .task_parameters

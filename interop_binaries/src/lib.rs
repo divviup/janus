@@ -115,13 +115,13 @@ pub enum VdafObject {
         max_measurement: NumberAsString<u64>,
     },
     Prio3SumVec {
-        max_measurement: NumberAsString<u128>,
+        max_measurement: NumberAsString<u64>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: NumberAsString<u8>,
-        max_measurement: NumberAsString<u128>,
+        max_measurement: NumberAsString<u64>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },

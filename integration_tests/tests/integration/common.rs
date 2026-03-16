@@ -430,11 +430,15 @@ pub async fn submit_measurements_and_verify_aggregate(
             chunk_length,
             dp_strategy: _,
         } => {
-            let vdaf =
-                Prio3::new_sum_vec_multithreaded(2, *max_measurement, *length, *chunk_length)
-                    .unwrap();
+            let vdaf = Prio3::new_sum_vec_multithreaded(
+                2,
+                *max_measurement as u128,
+                *length,
+                *chunk_length,
+            )
+            .unwrap();
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random_range(..*max_measurement))
+                iter::repeat_with(|| random_range(..*max_measurement) as u128)
                     .take(*length)
                     .collect::<Vec<_>>()
             })

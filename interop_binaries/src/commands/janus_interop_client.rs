@@ -141,8 +141,9 @@ async fn handle_upload(
             dp_strategy: _,
         } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, max_measurement, length, chunk_length)
-                .context("failed to construct Prio3SumVec VDAF")?;
+            let vdaf =
+                Prio3::new_sum_vec_multithreaded(2, max_measurement as u128, length, chunk_length)
+                    .context("failed to construct Prio3SumVec VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 

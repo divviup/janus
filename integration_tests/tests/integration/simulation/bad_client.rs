@@ -32,7 +32,7 @@ use prio::{
     field::{Field128, FieldElement},
     flp::{Flp, gadgets::ParallelSum, types::Histogram},
     vdaf::{
-        AggregateShare, Aggregator, Client as _, Collector, PrepareTransition, Vdaf,
+        AggregateShare, Aggregator, Client as _, Collector, Vdaf, VerifyTransition,
         prio3::{Prio3, Prio3Histogram, Prio3InputShare, Prio3PublicShare, optimal_chunk_length},
         xof::{Seed, Xof, XofTurboShake128},
     },
@@ -230,7 +230,7 @@ fn shard_encoded_measurement(
         &[&[NUM_PROOFS, HELPER_AGGREGATOR_ID]],
     );
     for leader_elem in leader_proof_share.iter_mut() {
-        let helper_elem = todo!(helper_proofs_share_xof.sample(StandardUniform));
+        let helper_elem = helper_proofs_share_xof.sample(StandardUniform);
         *leader_elem -= helper_elem;
     }
 
@@ -493,7 +493,7 @@ fn shard_encoded_measurement_correct() {
     let verify_key: [u8; VERIFY_KEY_LENGTH_PRIO3] = random();
     let ctx = vdaf_application_context(&task_id);
     let (leader_prepare_state, leader_prepare_share) = vdaf
-        .prepare_init(
+        .verify_init(
             &verify_key,
             &ctx,
             0,
@@ -504,7 +504,7 @@ fn shard_encoded_measurement_correct() {
         )
         .unwrap();
     let (helper_prepare_state, helper_prepare_share) = vdaf
-        .prepare_init(
+        .verify_init(
             &verify_key,
             &ctx,
             1,
@@ -515,18 +515,18 @@ fn shard_encoded_measurement_correct() {
         )
         .unwrap();
     let prepare_message = vdaf
-        .prepare_shares_to_prepare_message(&ctx, &(), [leader_prepare_share, helper_prepare_share])
+        .verifier_shares_to_message(&ctx, &(), [leader_prepare_share, helper_prepare_share])
         .unwrap();
     let leader_transition = vdaf
-        .prepare_next(&ctx, leader_prepare_state, prepare_message.clone())
+        .verify_next(&ctx, leader_prepare_state, prepare_message.clone())
         .unwrap();
     let helper_transition = vdaf
-        .prepare_next(&ctx, helper_prepare_state, prepare_message)
+        .verify_next(&ctx, helper_prepare_state, prepare_message)
         .unwrap();
     let leader_output_share =
-        assert_matches!(leader_transition, PrepareTransition::Finish(output_share) => output_share);
+        assert_matches!(leader_transition, VerifyTransition::Finish(output_share) => output_share);
     let helper_output_share =
-        assert_matches!(helper_transition, PrepareTransition::Finish(output_share) => output_share);
+        assert_matches!(helper_transition, VerifyTransition::Finish(output_share) => output_share);
     let aggregate_result = vdaf
         .unshard(
             &(),
