@@ -2782,8 +2782,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prepare_message: format!("prepare_message_{ord}").into(),
-                        prepare_share: format!("prepare_share_{ord}").into(),
+                        verifier_message: format!("verifier_message_{ord}").into(),
+                        verifier_share: format!("verifier_share_{ord}").into(),
                     },
                 },
             )),
@@ -2872,8 +2872,8 @@ WHERE client_report_id = $1",
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prepare_message: format!("updated_prepare_message_{ord}").into(),
-                        prepare_share: format!("updated_prepare_share_{ord}").into(),
+                        verifier_message: format!("updated_verifier_message_{ord}").into(),
+                        verifier_share: format!("updated_verifier_share_{ord}").into(),
                     },
                 },
             )),
