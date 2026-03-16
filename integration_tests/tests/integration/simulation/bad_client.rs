@@ -275,7 +275,7 @@ fn shard_encoded_measurement(
 
 fn domain_separation_tag(vdaf: &impl Vdaf, usage: u16) -> [u8; 8] {
     let mut dst = [0; 8];
-    dst[0] = 12; // version
+    dst[0] = 18; // version
     dst[1] = 0; // algorithm class
     dst[2..6].copy_from_slice(vdaf.algorithm_id().to_be_bytes().as_slice());
     dst[6..8].copy_from_slice(usage.to_be_bytes().as_slice());
