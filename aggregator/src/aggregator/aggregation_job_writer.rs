@@ -704,7 +704,7 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                (length * (max_measurement.ilog2() as usize) + 1)
+                                                (length * (max_measurement.ilog2() as usize + 1))
                                                     as u64,
                                                 &[KeyValue::new(
                                                     "type",
