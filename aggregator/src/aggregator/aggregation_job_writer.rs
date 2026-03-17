@@ -681,7 +681,7 @@ where
                                         Prio3Sum { max_measurement } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                max_measurement.next_power_of_two().ilog2() as u64,
+                                                max_measurement.ilog2() as u64 + 1,
                                                 &[KeyValue::new("type", "Prio3Sum")],
                                             ),
 
@@ -692,9 +692,7 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                (length
-                                                    * max_measurement.next_power_of_two().ilog2()
-                                                        as usize)
+                                                (length * (max_measurement.ilog2() as usize + 1))
                                                     as u64,
                                                 &[KeyValue::new("type", "Prio3SumVec")],
                                             ),
@@ -706,9 +704,7 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                (length
-                                                    * max_measurement.next_power_of_two().ilog2()
-                                                        as usize)
+                                                (length * (max_measurement.ilog2() as usize) + 1)
                                                     as u64,
                                                 &[KeyValue::new(
                                                     "type",
