@@ -2500,7 +2500,7 @@ WHERE report_aggregations.task_id = $1
                                         .to_string(),
                                 )
                             })?;
-                        let prepare_state = A::PrepareState::get_decoded_with_param(
+                        let prepare_state = A::VerifyState::get_decoded_with_param(
                             &(vdaf, 1 /* helper */),
                             &helper_prep_state_bytes,
                         )?;
@@ -2529,7 +2529,7 @@ WHERE report_aggregations.task_id = $1
                         )
                     })?;
 
-                let prepare_state = A::PrepareState::get_decoded_with_param(
+                let prepare_state = A::VerifyState::get_decoded_with_param(
                     &(vdaf, 1 /* helper */),
                     &helper_prep_state_bytes,
                 )?;
@@ -2551,7 +2551,7 @@ WHERE report_aggregations.task_id = $1
                     })
                     .and_then(|encoded| {
                         Ok(ReportAggregationState::LeaderPollInit {
-                            prepare_state: A::PrepareState::get_decoded_with_param(
+                            prepare_state: A::VerifyState::get_decoded_with_param(
                                 &(vdaf, 0 /* leader */),
                                 &encoded,
                             )?,

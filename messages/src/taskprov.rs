@@ -208,8 +208,8 @@ pub enum VdafConfig {
     Prio3SumVec {
         /// Length of the vector.
         length: u32,
-        /// Bit length of each summand.
-        bits: u8,
+        /// Largest summand.
+        max_measurement: u32,
         /// Size of each proof chunk.
         chunk_length: u32,
     },
@@ -242,8 +242,8 @@ pub enum VdafConfig {
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         /// Number of summands.
         length: u32,
-        /// Bit length of each summand.
-        bits: u8,
+        /// Largest summand.
+        max_measurement: u32,
         /// Size of each proof chunk.
         chunk_length: u32,
         /// Number of proofs.
@@ -289,14 +289,14 @@ impl VdafConfig {
             Self::Reserved => 0,
             Self::Prio3Count => 0,
             Self::Prio3Sum { .. } => 4,
-            Self::Prio3SumVec { .. } => 9,
+            Self::Prio3SumVec { .. } => 12,
             Self::Prio3Histogram { .. } => 8,
             Self::Prio3MultihotCountVec { .. } => 12,
             Self::Poplar1 { .. } => 2,
 
             #[cfg(feature = "test-util")]
             Self::Fake { .. } => 4,
-            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 10,
+            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 13,
         }
     }
 }
@@ -313,11 +313,11 @@ impl Encode for VdafConfig {
             }
             Self::Prio3SumVec {
                 length,
-                bits,
+                max_measurement,
                 chunk_length,
             } => {
                 length.encode(bytes)?;
-                bits.encode(bytes)?;
+                max_measurement.encode(bytes)?;
                 chunk_length.encode(bytes)?;
             }
             Self::Prio3Histogram {
@@ -346,12 +346,12 @@ impl Encode for VdafConfig {
             }
             Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 length,
-                bits,
+                max_measurement,
                 chunk_length,
                 proofs,
             } => {
                 length.encode(bytes)?;
-                bits.encode(bytes)?;
+                max_measurement.encode(bytes)?;
                 chunk_length.encode(bytes)?;
                 proofs.encode(bytes)?;
             }
@@ -376,7 +376,7 @@ impl Decode for VdafConfig {
             },
             Self::PRIO3_SUM_VEC => Self::Prio3SumVec {
                 length: u32::decode(bytes)?,
-                bits: u8::decode(bytes)?,
+                max_measurement: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
             },
             Self::PRIO3_HISTOGRAM => Self::Prio3Histogram {
@@ -399,7 +399,7 @@ impl Decode for VdafConfig {
             Self::PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMAC_SHA256_AES128 => {
                 Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     length: u32::decode(bytes)?,
-                    bits: u8::decode(bytes)?,
+                    max_measurement: u32::decode(bytes)?,
                     chunk_length: u32::decode(bytes)?,
                     proofs: u8::decode(bytes)?,
                 }
@@ -809,16 +809,16 @@ mod tests {
             (
                 VdafConfig::Prio3SumVec {
                     length: 12,
-                    bits: 8,
+                    max_measurement: 8,
                     chunk_length: 14,
                 },
                 concat!(
                     "00000003", // vdaf_type
-                    "0009",     // vdaf_config length
+                    "000c",     // vdaf_config length
                     concat!(
                         // vdaf_config
                         "0000000C", // length
-                        "08",       // bits
+                        "00000008", // max_measurement
                         "0000000E"  // chunk_length
                     ),
                 ),
@@ -880,17 +880,17 @@ mod tests {
             (
                 VdafConfig::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                     length: 12,
-                    bits: 8,
+                    max_measurement: 8,
                     chunk_length: 14,
                     proofs: 2,
                 },
                 concat!(
                     "FFFF1003", // vdaf_type
-                    "000A",     // vdaf_config length
+                    "000D",     // vdaf_config length
                     concat!(
                         // vdaf_config
                         "0000000C", // length
-                        "08",       // bits
+                        "00000008", // max_measurement
                         "0000000E", // chunk_length
                         "02"        // proofs
                     ),

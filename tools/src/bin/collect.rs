@@ -7,10 +7,6 @@ use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32};
 use janus_collector::{
     AuthenticationToken, Collection, CollectionJob, Collector, PollResult,
     PrivateCollectorCredential, default_http_client,
@@ -24,8 +20,6 @@ use janus_messages::{
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
     taskprov::TimePrecision,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSum;
 use prio::{
     codec::Decode,
     vdaf::{self, Vdaf, prio3::Prio3},
@@ -75,15 +69,6 @@ enum VdafType {
     SumVec,
     /// Prio3Histogram
     Histogram,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint16BitBoundedL2VecSum
-    FixedPoint16BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint32BitBoundedL2VecSum
-    FixedPoint32BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint64BitBoundedL2VecSum
-    FixedPoint64BitBoundedL2VecSum,
 }
 
 #[derive(Clone)]
@@ -322,10 +307,7 @@ struct Options {
     /// when used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
-    /// Bit length of measurements, for use with --vdaf=sumvec
-    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    bits: Option<usize>,
-    /// Maximum measurement value, for use with --vdaf=sum
+    /// Maximum measurement value, for use with --vdaf=sum or --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     max_measurement: Option<u64>,
 
@@ -462,52 +444,31 @@ macro_rules! options_query_dispatch {
 
 macro_rules! options_vdaf_dispatch {
     ($options:expr, ($vdaf:ident) => $body:tt) => {
-        match (
-            $options.vdaf,
-            $options.length,
-            $options.bits,
-            $options.max_measurement,
-        ) {
-            (VdafType::Count, None, None, None) => {
+        match ($options.vdaf, $options.length, $options.max_measurement) {
+            (VdafType::Count, None, None) => {
                 let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
-            (VdafType::Sum, None, None, Some(max_measurement)) => {
+            (VdafType::Sum, None, Some(max_measurement)) => {
                 let $vdaf = Prio3::new_sum(2, u64::from(max_measurement))
                     .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
-            (VdafType::SumVec, Some(length), Some(bits), None) => {
+            (VdafType::SumVec, Some(length), Some(max_measurement)) => {
                 // We can take advantage of the fact that Prio3SumVec unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
-                let $vdaf = Prio3::new_sum_vec(2, bits, length, 1)
+                let $vdaf = Prio3::new_sum_vec(2, max_measurement as u128, length, 1)
                     .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
-            (VdafType::Histogram, Some(length), None, None) => {
+            (VdafType::Histogram, Some(length), None) => {
                 // We can take advantage of the fact that Prio3Histogram unsharding does not use the
                 // chunk_length parameter and avoid asking the user for it.
                 let $vdaf =
                     Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None, None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
-                        .map_err(|err| Error::Anyhow(err.into()))?;
-                let body = $body;
-                body
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None, None) => {
-                let $vdaf: Prio3FixedPointBoundedL2VecSum<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum(2, length)
-                        .map_err(|err| Error::Anyhow(err.into()))?;
                 let body = $body;
                 body
             }
@@ -790,7 +751,6 @@ mod tests {
             },
             vdaf: VdafType::Count,
             length: None,
-            bits: None,
             max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
@@ -897,42 +857,6 @@ mod tests {
             "--time-precision=300".to_string(),
         ]);
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-        }
-
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend(["--vdaf=histogram".to_string(), "--length=apple".to_string()]);
         assert_eq!(
@@ -957,13 +881,13 @@ mod tests {
         );
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=sum".to_string(), "--bits=8".to_string()]);
+        good_arguments.extend(["--vdaf=sum".to_string(), "--max-measurement=8".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend([
             "--vdaf=sumvec".to_string(),
-            "--bits=8".to_string(),
+            "--max-measurement=8".to_string(),
             "--length=10".to_string(),
         ]);
         Options::try_parse_from(good_arguments).unwrap();
@@ -971,30 +895,6 @@ mod tests {
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend(["--vdaf=histogram".to_string(), "--length=4".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-        }
     }
 
     #[test]
@@ -1028,7 +928,6 @@ mod tests {
             },
             vdaf: VdafType::Count,
             length: None,
-            bits: None,
             max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: None,
@@ -1376,7 +1275,6 @@ mod tests {
             },
             vdaf: VdafType::Count,
             length: None,
-            bits: None,
             max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
@@ -1463,7 +1361,6 @@ mod tests {
             },
             vdaf: VdafType::Count,
             length: None,
-            bits: None,
             max_measurement: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),

@@ -14,7 +14,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "prio/experimental"]
 test-util = []
 
 [dependencies]
@@ -22,7 +21,6 @@ anyhow.workspace = true
 backon = { workspace = true }
 chrono.workspace = true
 educe.workspace = true
-fixed = { workspace = true, optional = true }
 hpke-dispatch = { workspace = true, features = ["serde"] }
 janus_core.workspace = true
 janus_messages.workspace = true
@@ -41,6 +39,6 @@ url = { workspace = true }
 [dev-dependencies]
 assert_matches.workspace = true
 base64.workspace = true
-janus_collector = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
-janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
+janus_collector = { workspace = true, features = ["test-util"] }
+janus_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }

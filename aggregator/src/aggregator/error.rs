@@ -404,23 +404,23 @@ pub(crate) fn handle_ping_pong_error(
         _ => panic!("invalid role"),
     };
     let (error_desc, value) = match ping_pong_error {
-        PingPongError::VdafPrepareInit(_) => (
+        PingPongError::VdafVerifyInit(_) => (
             "Couldn't helper_initialize report share".to_string(),
             "prepare_init_failure".to_string(),
         ),
-        PingPongError::VdafPrepareSharesToPrepareMessage(_) => (
+        PingPongError::VdafVerifierSharesToMessage(_) => (
             "Couldn't compute prepare message".to_string(),
             "prepare_message_failure".to_string(),
         ),
-        PingPongError::VdafPrepareNext(_) => (
+        PingPongError::VdafVerifyNext(_) => (
             "Prepare next failed".to_string(),
             "prepare_next_failure".to_string(),
         ),
-        PingPongError::CodecPrepShare(_) => (
+        PingPongError::CodecVerifierShare(_) => (
             format!("Couldn't decode {peer_role} prepare share"),
             format!("{peer_role}_prep_share_decode_failure"),
         ),
-        PingPongError::CodecPrepMessage(_) => (
+        PingPongError::CodecVerifierMessage(_) => (
             format!("Couldn't decode {peer_role} prepare message"),
             format!("{peer_role}_prep_message_decode_failure"),
         ),

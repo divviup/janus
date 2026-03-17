@@ -773,7 +773,6 @@ mod tests {
 
     use assert_matches::assert_matches;
     use chrono::{DateTime, TimeZone, Utc};
-    use fixed::types::I1F31;
     use janus_core::{
         auth_tokens::{AuthenticationToken, test_util::MatchAuthenticationToken},
         hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
@@ -1170,86 +1169,6 @@ mod tests {
                     chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 Vec::from([0, 0, 0, 1])
-            )
-        );
-
-        mocked_collect_complete.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn successful_collect_prio3_fixedpoint_boundedl2_vec_sum() {
-        install_test_trace_subscriber();
-        initialize_rustls();
-        let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_fixedpoint_boundedl2_vec_sum(2, 3).unwrap();
-        const FP32_4_INV: I1F31 = I1F31::lit("0.25");
-        const FP32_8_INV: I1F31 = I1F31::lit("0.125");
-        const FP32_16_INV: I1F31 = I1F31::lit("0.0625");
-        let transcript = run_vdaf(
-            &vdaf,
-            &random(),
-            &random(),
-            &(),
-            &random(),
-            &vec![FP32_16_INV, FP32_8_INV, FP32_4_INV],
-        );
-        let collector = setup_collector(&mut server, vdaf);
-
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000, &TEST_TIME_PRECISION),
-            Duration::from_seconds(3600, &TEST_TIME_PRECISION),
-        )
-        .unwrap();
-        let collect_resp =
-            build_collect_response_time(&transcript, &collector, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.task_id);
-
-        let mocked_collect_start_success = server
-            .mock("PUT", matcher)
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_status(201)
-            .expect(1)
-            .create_async()
-            .await;
-
-        let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
-            .await
-            .unwrap();
-        assert_eq!(job.query.batch_interval(), &batch_interval);
-
-        mocked_collect_start_success.assert_async().await;
-
-        let collection_job_path = format!(
-            "/tasks/{}/collection_jobs/{}",
-            collector.task_id, job.collection_job_id
-        );
-        let mocked_collect_complete = server
-            .mock("GET", collection_job_path.as_str())
-            .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded().unwrap())
-            .expect(1)
-            .create_async()
-            .await;
-
-        let agg_result = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(
-            agg_result,
-            Collection::new(
-                PartialBatchSelector::new_time_interval(),
-                1,
-                (
-                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
-                    chrono::Duration::try_seconds(3600).unwrap(),
-                ),
-                Vec::from([0.0625, 0.125, 0.25])
             )
         );
 

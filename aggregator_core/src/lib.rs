@@ -47,15 +47,15 @@ pub trait AsyncAggregator<const VERIFY_KEY_SIZE: usize>:
         AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
         AggregateShare: Send + Sync + PartialEq,
         InputShare: Send + Sync + PartialEq,
-        PrepareMessage: Send + Sync + PartialEq,
-        PrepareShare: Send + Sync + PartialEq,
+        VerifierMessage: Send + Sync + PartialEq,
+        VerifierShare: Send + Sync + PartialEq,
         PublicShare: Send + Sync + PartialEq,
         OutputShare: Send + Sync + PartialEq + Eq,
-        PrepareState: Send
-                          + Sync
-                          + Encode
-                          + PartialEq
-                          + for<'a> ParameterizedDecode<(&'a Self, usize)>,
+        VerifyState: Send
+                         + Sync
+                         + Encode
+                         + PartialEq
+                         + for<'a> ParameterizedDecode<(&'a Self, usize)>,
     >
     + 'static
     + Send
@@ -72,15 +72,15 @@ impl<
             AggregationParam: Send + Sync + PartialEq + Eq + Hash + Ord,
             AggregateShare: Send + Sync + PartialEq,
             InputShare: Send + Sync + PartialEq,
-            PrepareMessage: Send + Sync + PartialEq,
-            PrepareShare: Send + Sync + PartialEq,
+            VerifierMessage: Send + Sync + PartialEq,
+            VerifierShare: Send + Sync + PartialEq,
             PublicShare: Send + Sync + PartialEq,
             OutputShare: Send + Sync + PartialEq + Eq,
-            PrepareState: Send
-                              + Sync
-                              + Encode
-                              + PartialEq
-                              + for<'a> ParameterizedDecode<(&'a Self, usize)>,
+            VerifyState: Send
+                             + Sync
+                             + Encode
+                             + PartialEq
+                             + for<'a> ParameterizedDecode<(&'a Self, usize)>,
         >
         + 'static
         + Send

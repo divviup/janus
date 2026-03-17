@@ -23,7 +23,7 @@ use prio::{
     flp::gadgets::ParallelSumMultithreaded,
     vdaf::{self, dummy, prio3::Prio3},
 };
-use rand::{RngExt, random, rng, seq::IteratorRandom as _};
+use rand::{RngExt, random, random_range, rng, seq::IteratorRandom as _};
 use tokio::time::{self, sleep};
 use url::Url;
 
@@ -425,15 +425,20 @@ pub async fn submit_measurements_and_verify_aggregate(
             .await;
         }
         VdafInstance::Prio3SumVec {
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length).unwrap();
-
+            let vdaf = Prio3::new_sum_vec_multithreaded(
+                2,
+                *max_measurement as u128,
+                *length,
+                *chunk_length,
+            )
+            .unwrap();
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random::<u128>() >> (128 - bits))
+                iter::repeat_with(|| random_range(..=*max_measurement) as u128)
                     .take(*length)
                     .collect::<Vec<_>>()
             })
@@ -475,18 +480,19 @@ pub async fn submit_measurements_and_verify_aggregate(
         }
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs,
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => {
+            let max_measurement = *max_measurement;
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
                 ParallelSumMultithreaded<_, _>,
-            >(*proofs, *bits, *length, *chunk_length)
+            >(*proofs, max_measurement, *length, *chunk_length)
             .unwrap();
 
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random::<u64>() >> (64 - bits))
+                iter::repeat_with(|| random_range(..=max_measurement))
                     .take(*length)
                     .collect::<Vec<_>>()
             })

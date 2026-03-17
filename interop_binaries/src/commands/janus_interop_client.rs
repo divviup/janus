@@ -4,17 +4,8 @@ use anyhow::Context;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    FixedI16, FixedI32,
-    types::extra::{U15, U31},
-};
-#[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
 use janus_messages::{TaskId, Time, taskprov::TimePrecision};
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::Decode,
     field::Field64,
@@ -135,28 +126,29 @@ async fn handle_upload(
         }
 
         VdafInstance::Prio3SumVec {
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length, chunk_length)
-                .context("failed to construct Prio3SumVec VDAF")?;
+            let vdaf =
+                Prio3::new_sum_vec_multithreaded(2, max_measurement as u128, length, chunk_length)
+                    .context("failed to construct Prio3SumVec VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs,
-            bits,
+            max_measurement,
             length,
             chunk_length,
             dp_strategy: _,
         } => {
             let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
             let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128::<
-                ParallelSumMultithreaded<Field64, Mul<Field64>>,
-            >(proofs, bits, length, chunk_length)
+                ParallelSumMultithreaded<Field64, Mul>,
+            >(proofs, max_measurement, length, chunk_length)
             .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
@@ -172,31 +164,6 @@ async fn handle_upload(
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        VdafInstance::Prio3FixedPointBoundedL2VecSum {
-            bitsize,
-            dp_strategy: _,
-            length,
-        } => match bitsize {
-            Prio3FixedPointBoundedL2VecSumBitSize::BitSize16 => {
-                let measurement =
-                    parse_vector_measurement::<FixedI16<U15>>(request.measurement.clone())?;
-                let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length).context(
-                        "failed to construct Prio3FixedPoint16BitBoundedL2VecSumZCdp VDAF",
-                    )?;
-                handle_upload_generic(http_client, vdaf, request, measurement).await?;
-            }
-            Prio3FixedPointBoundedL2VecSumBitSize::BitSize32 => {
-                let measurement =
-                    parse_vector_measurement::<FixedI32<U31>>(request.measurement.clone())?;
-                let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length).context(
-                        "failed to construct Prio3FixedPoint32BitBoundedL2VecSumZCdp VDAF",
-                    )?;
-                handle_upload_generic(http_client, vdaf, request, measurement).await?;
-            }
-        },
         _ => panic!("Unsupported VDAF: {vdaf_instance:?}"),
     }
     Ok(())

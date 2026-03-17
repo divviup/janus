@@ -133,7 +133,7 @@ fn roundtrip_prepare_init() {
                     ),
                 },
                 message: PingPongMessage::Initialize {
-                    prepare_share: Vec::from("012345"),
+                    verifier_share: Vec::from("012345"),
                 },
             },
             concat!(
@@ -173,7 +173,7 @@ fn roundtrip_prepare_init() {
                     "0000000b", // ping pong message length
                     "00",       // ping pong message type
                     concat!(
-                        "00000006",     // prepare_share length
+                        "00000006",     // verifier_share length
                         "303132333435", // opaque data
                     )
                 )
@@ -195,7 +195,7 @@ fn roundtrip_prepare_init() {
                     ),
                 },
                 message: PingPongMessage::Finish {
-                    prepare_message: Vec::new(),
+                    verifier_message: Vec::new(),
                 },
             },
             concat!(
@@ -243,7 +243,7 @@ fn roundtrip_prepare_init() {
                     "00000005", // ping pong message length
                     "02",       // ping pong message type
                     concat!(
-                        "00000000", // prepare_message length
+                        "00000000", // verifier_message length
                         ""          // opaque data
                     )
                 )
@@ -260,8 +260,8 @@ fn roundtrip_prepare_resp() {
                 report_id: ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 result: PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prepare_message: Vec::from("012345"),
-                        prepare_share: Vec::from("6789"),
+                        verifier_message: Vec::from("012345"),
+                        verifier_share: Vec::from("6789"),
                     },
                 },
             },
@@ -273,11 +273,11 @@ fn roundtrip_prepare_resp() {
                     "00000013", // ping pong message length
                     "01",       // ping pong message type
                     concat!(
-                        "00000006",     // prepare_message length
+                        "00000006",     // verifier_message length
                         "303132333435", // opaque data
                     ),
                     concat!(
-                        "00000004", // prepare_share length
+                        "00000004", // verifier_share length
                         "36373839", // opaque data
                     )
                 ),
@@ -347,7 +347,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         ),
                     },
                     message: PingPongMessage::Initialize {
-                        prepare_share: Vec::from("012345"),
+                        verifier_share: Vec::from("012345"),
                     },
                 },
                 PrepareInit {
@@ -365,7 +365,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         ),
                     },
                     message: PingPongMessage::Finish {
-                        prepare_message: Vec::new(),
+                        verifier_message: Vec::new(),
                     },
                 },
             ]),
@@ -422,7 +422,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         "0000000b", // ping pong message length
                         "00",       // ping pong message type
                         concat!(
-                            "00000006",     // prepare_share length
+                            "00000006",     // verifier_share length
                             "303132333435", // opaque data
                         ),
                     )
@@ -471,7 +471,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         "00000005", // ping pong message length
                         "02",       // ping pong message type
                         concat!(
-                            "00000000", // prepare_message length
+                            "00000000", // verifier_message length
                             ""          // opaque data
                         )
                     )
@@ -503,7 +503,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         ),
                     },
                     message: PingPongMessage::Initialize {
-                        prepare_share: Vec::from("012345"),
+                        verifier_share: Vec::from("012345"),
                     },
                 },
                 PrepareInit {
@@ -521,7 +521,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         ),
                     },
                     message: PingPongMessage::Finish {
-                        prepare_message: Vec::new(),
+                        verifier_message: Vec::new(),
                     },
                 },
             ]),
@@ -578,7 +578,7 @@ fn roundtrip_aggregation_job_initialize_req() {
                         "0000000b", // ping pong message length
                         "00",       // ping pong message type
                         concat!(
-                            "00000006",     // prepare_share length
+                            "00000006",     // verifier_share length
                             "303132333435", // opaque data
                         )
                     ),
@@ -648,7 +648,7 @@ fn roundtrip_aggregation_job_continue_req() {
                         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                     ]),
                     message: PingPongMessage::Initialize {
-                        prepare_share: Vec::from("012345"),
+                        verifier_share: Vec::from("012345"),
                     },
                 },
                 PrepareContinue {
@@ -656,7 +656,7 @@ fn roundtrip_aggregation_job_continue_req() {
                         16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                     ]),
                     message: PingPongMessage::Initialize {
-                        prepare_share: Vec::from("012345"),
+                        verifier_share: Vec::from("012345"),
                     },
                 },
             ]),
@@ -673,7 +673,7 @@ fn roundtrip_aggregation_job_continue_req() {
                         "0000000b", // ping pong message length
                         "00",       // ping pong message type
                         concat!(
-                            "00000006",     // prepare_share length
+                            "00000006",     // verifier_share length
                             "303132333435", // opaque data
                         )
                     ),
@@ -685,7 +685,7 @@ fn roundtrip_aggregation_job_continue_req() {
                         "0000000b", // ping pong message length
                         "00",       // ping pong message type
                         concat!(
-                            "00000006",     // prepare_share length
+                            "00000006",     // verifier_share length
                             "303132333435", // opaque data
                         )
                     ),
@@ -706,8 +706,8 @@ fn roundtrip_aggregation_job_resp() {
                     ]),
                     result: PrepareStepResult::Continue {
                         message: PingPongMessage::Continue {
-                            prepare_message: Vec::from("01234"),
-                            prepare_share: Vec::from("56789"),
+                            verifier_message: Vec::from("01234"),
+                            verifier_share: Vec::from("56789"),
                         },
                     },
                 },
@@ -729,13 +729,13 @@ fn roundtrip_aggregation_job_resp() {
                     "00000013", // ping pong message length
                     "01",       // ping pong message type
                     concat!(
-                        // prepare_message
-                        "00000005",   // prepare_message length
+                        // verifier_message
+                        "00000005",   // verifier_message length
                         "3031323334", // opaque data
                     ),
                     concat!(
-                        // prepare_share
-                        "00000005",   // prepare_share length
+                        // verifier_share
+                        "00000005",   // verifier_share length
                         "3536373839", // opaque data
                     )
                 ),

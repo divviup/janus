@@ -426,7 +426,7 @@ impl InClusterJanusPair {
                     bits: 64,
                 },
                 VdafInstance::Prio3SumVec {
-                    bits,
+                    max_measurement,
                     length,
                     chunk_length,
                     dp_strategy,
@@ -434,7 +434,7 @@ impl InClusterJanusPair {
                     let dp_strategy =
                         serde_json::from_value(serde_json::to_value(dp_strategy).unwrap()).unwrap();
                     Vdaf::SumVec(SumVec::new(
-                        bits.try_into().unwrap(),
+                        max_measurement.try_into().unwrap(),
                         length.try_into().unwrap(),
                         Some(chunk_length.try_into().unwrap()),
                         dp_strategy,
@@ -1012,7 +1012,7 @@ async fn in_cluster_histogram_dp_noise() {
 async fn in_cluster_sumvec_dp_noise() {
     static TEST_NAME: &str = "in_cluster_sumvec_dp_noise";
     const VECTOR_LENGTH: usize = 50;
-    const BITS: usize = 2;
+    const MAX_MEASUREMENT: u64 = 1 << 2;
     const CHUNK_LENGTH: usize = 10;
 
     install_test_trace_subscriber();
@@ -1022,7 +1022,7 @@ async fn in_cluster_sumvec_dp_noise() {
     let epsilon = Rational::from_unsigned(1u128, 10u128).unwrap();
     let janus_pair = InClusterJanusPair::new(
         VdafInstance::Prio3SumVec {
-            bits: BITS,
+            max_measurement: MAX_MEASUREMENT,
             length: VECTOR_LENGTH,
             chunk_length: CHUNK_LENGTH,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
@@ -1037,7 +1037,9 @@ async fn in_cluster_sumvec_dp_noise() {
         },
     )
     .await;
-    let vdaf = Prio3::new_sum_vec_multithreaded(2, BITS, VECTOR_LENGTH, CHUNK_LENGTH).unwrap();
+    let vdaf =
+        Prio3::new_sum_vec_multithreaded(2, MAX_MEASUREMENT as u128, VECTOR_LENGTH, CHUNK_LENGTH)
+            .unwrap();
 
     let total_measurements: usize = janus_pair
         .task_parameters

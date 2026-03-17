@@ -95,7 +95,7 @@ async fn janus_divviup_ts_sumvec() {
     run_divviup_ts_integration_test(
         "janus_divviup_ts_sumvec",
         VdafInstance::Prio3SumVec {
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,

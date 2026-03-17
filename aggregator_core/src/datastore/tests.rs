@@ -180,7 +180,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         (VdafInstance::Prio3Count, Role::Leader),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -189,7 +189,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 8,
                 chunk_length: 3,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
@@ -202,7 +202,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ),
         (
             VdafInstance::Prio3SumVec {
-                bits: 1,
+                max_measurement: 4096,
                 length: 64,
                 chunk_length: 10,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -2782,8 +2782,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prepare_message: format!("prepare_message_{ord}").into(),
-                        prepare_share: format!("prepare_share_{ord}").into(),
+                        verifier_message: format!("verifier_message_{ord}").into(),
+                        verifier_share: format!("verifier_share_{ord}").into(),
                     },
                 },
             )),
@@ -2872,8 +2872,8 @@ WHERE client_report_id = $1",
                 report_id,
                 PrepareStepResult::Continue {
                     message: PingPongMessage::Continue {
-                        prepare_message: format!("updated_prepare_message_{ord}").into(),
-                        prepare_share: format!("updated_prepare_share_{ord}").into(),
+                        verifier_message: format!("updated_verifier_message_{ord}").into(),
+                        verifier_share: format!("updated_verifier_share_{ord}").into(),
                     },
                 },
             )),

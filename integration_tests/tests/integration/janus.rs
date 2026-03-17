@@ -415,7 +415,7 @@ async fn janus_janus_sync_sum_vec() {
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3SumVec {
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -434,7 +434,7 @@ async fn janus_janus_async_sum_vec() {
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3SumVec {
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -452,7 +452,7 @@ async fn janus_in_process_sync_sum_vec() {
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3SumVec {
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -470,7 +470,7 @@ async fn janus_in_process_async_sum_vec() {
         BatchMode::TimeInterval,
         AggregationMode::Asynchronous,
         VdafInstance::Prio3SumVec {
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -491,7 +491,7 @@ async fn janus_in_process_customized_sum_vec() {
         AggregationMode::Synchronous,
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs: 2,
-            bits: 16,
+            max_measurement: 1 << 16,
             length: 15,
             chunk_length: 16,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -581,7 +581,7 @@ async fn janus_in_process_histogram_dp_noise() {
 async fn janus_in_process_sumvec_dp_noise() {
     static TEST_NAME: &str = "janus_in_process_sumvec_dp_noise";
     const VECTOR_LENGTH: usize = 50;
-    const BITS: usize = 2;
+    const MAX_MEASUREMENT: u64 = 1 << 2;
     const CHUNK_LENGTH: usize = 10;
 
     install_test_trace_subscriber();
@@ -592,7 +592,7 @@ async fn janus_in_process_sumvec_dp_noise() {
         BatchMode::TimeInterval,
         AggregationMode::Synchronous,
         VdafInstance::Prio3SumVec {
-            bits: BITS,
+            max_measurement: MAX_MEASUREMENT,
             length: VECTOR_LENGTH,
             chunk_length: CHUNK_LENGTH,
             dp_strategy: vdaf_dp_strategies::Prio3SumVec::PureDpDiscreteLaplace(
@@ -601,7 +601,9 @@ async fn janus_in_process_sumvec_dp_noise() {
         },
     ))
     .await;
-    let vdaf = Prio3::new_sum_vec_multithreaded(2, BITS, VECTOR_LENGTH, CHUNK_LENGTH).unwrap();
+    let vdaf =
+        Prio3::new_sum_vec_multithreaded(2, MAX_MEASUREMENT as u128, VECTOR_LENGTH, CHUNK_LENGTH)
+            .unwrap();
 
     let total_measurements: usize = janus_pair
         .task_parameters

@@ -69,7 +69,7 @@ struct Properties {
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
 where
     A: AsyncAggregator<SEED_SIZE, AggregationParam = ()>,
-    A::PrepareState: Encode,
+    A::VerifyState: Encode,
 {
     pub fn new(
         min_aggregation_job_size: usize,

@@ -45,7 +45,7 @@ kube.workspace = true
 opentelemetry.workspace = true
 postgres-protocol = { workspace = true }
 postgres-types = { workspace = true, features = ["derive", "array-impls"] }
-prio = { workspace = true, features = ["experimental"] }
+prio.workspace = true
 rand = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }

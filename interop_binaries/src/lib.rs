@@ -15,8 +15,6 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
 use janus_aggregator_core::task::{BatchMode, test_util::Task};
-#[cfg(feature = "fpvec_bounded_l2")]
-use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     hpke::HpkeKeypair,
     vdaf::{VdafInstance, vdaf_dp_strategies},
@@ -115,26 +113,19 @@ pub enum VdafObject {
         max_measurement: NumberAsString<u64>,
     },
     Prio3SumVec {
-        bits: NumberAsString<usize>,
+        max_measurement: NumberAsString<u64>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
         proofs: NumberAsString<u8>,
-        bits: NumberAsString<usize>,
+        max_measurement: NumberAsString<u64>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
     },
     Prio3Histogram {
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
-    },
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPointBoundedL2VecSum {
-        bitsize: Prio3FixedPointBoundedL2VecSumBitSize,
-        #[serde(default)]
-        dp_strategy: vdaf_dp_strategies::Prio3FixedPointBoundedL2VecSum,
-        length: NumberAsString<usize>,
     },
 }
 
@@ -148,25 +139,25 @@ impl From<VdafInstance> for VdafObject {
             },
 
             VdafInstance::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             } => VdafObject::Prio3SumVec {
-                bits: NumberAsString(bits),
+                max_measurement: NumberAsString(max_measurement),
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
             },
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
                 dp_strategy: _,
             } => VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: NumberAsString(proofs),
-                bits: NumberAsString(bits),
+                max_measurement: NumberAsString(max_measurement),
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
             },
@@ -178,17 +169,6 @@ impl From<VdafInstance> for VdafObject {
             } => VdafObject::Prio3Histogram {
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
-            },
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length,
-            } => VdafObject::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length: NumberAsString(length),
             },
 
             _ => panic!("Unsupported VDAF: {vdaf:?}"),
@@ -206,11 +186,11 @@ impl From<VdafObject> for VdafInstance {
             },
 
             VdafObject::Prio3SumVec {
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
             } => VdafInstance::Prio3SumVec {
-                bits: bits.0,
+                max_measurement: max_measurement.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -218,12 +198,12 @@ impl From<VdafObject> for VdafInstance {
 
             VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs,
-                bits,
+                max_measurement,
                 length,
                 chunk_length,
             } => VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 proofs: proofs.0,
-                bits: bits.0,
+                max_measurement: max_measurement.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3SumVec::NoDifferentialPrivacy,
@@ -236,17 +216,6 @@ impl From<VdafObject> for VdafInstance {
                 length: length.0,
                 chunk_length: chunk_length.0,
                 dp_strategy: vdaf_dp_strategies::Prio3Histogram::NoDifferentialPrivacy,
-            },
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length,
-            } => VdafInstance::Prio3FixedPointBoundedL2VecSum {
-                bitsize,
-                dp_strategy,
-                length: length.0,
             },
         }
     }

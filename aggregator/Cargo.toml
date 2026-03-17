@@ -14,7 +14,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 otlp = [
     "dep:opentelemetry-otlp",
@@ -50,7 +49,6 @@ console-subscriber = { workspace = true, optional = true }
 deadpool = { workspace = true, features = ["rt_tokio_1"] }
 deadpool-postgres = { workspace = true }
 educe.workspace = true
-fixed = { workspace = true, optional = true }
 futures = { workspace = true }
 hex = { workspace = true, features = ["serde"] }
 http.workspace = true
@@ -115,7 +113,7 @@ url.workspace = true
 uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
-janus_aggregator = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
+janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
