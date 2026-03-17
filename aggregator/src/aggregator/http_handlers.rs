@@ -5,11 +5,14 @@ use std::{
 use anyhow::Context;
 use async_trait::async_trait;
 use axum::{
-    extract::State as AxumState,
+    body::Body,
+    extract::{Path, State as AxumState},
     response::{IntoResponse, Response},
+    routing::post,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::{
+    TryStreamExt,
     io::{AsyncRead, AsyncReadExt},
     stream::Stream,
 };
@@ -25,7 +28,7 @@ use janus_aggregator_core::{
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::{check_content_type_value, extract_bearer_token},
+    http::{check_content_type, check_content_type_value, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -442,13 +445,12 @@ impl IntoResponse for ArcError {
 /// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age>.
 const CORS_PREFLIGHT_CACHE_AGE: StdDuration = StdDuration::from_secs(24 * 60 * 60);
 
-/// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the
-/// inner object and sending it as the response body, setting the Content-Type header to the
-/// provided media type, and setting the status to the specified value (or 200 if unspecified).
+/// Wrapper around a type that implements [`Encode`], producing an HTTP response with the
+/// encoded body, appropriate Content-Type, and status code.
 struct EncodedBody<T> {
     object: T,
     media_type: &'static str,
-    status: Status,
+    status: StatusCode,
 }
 
 impl<T> EncodedBody<T>
@@ -459,12 +461,26 @@ where
         Self {
             object,
             media_type,
-            status: Status::Ok,
+            status: StatusCode::OK,
         }
     }
 
-    fn with_status(self, status: Status) -> Self {
+    fn with_status(self, status: StatusCode) -> Self {
         Self { status, ..self }
+    }
+}
+
+impl<T: Encode> IntoResponse for EncodedBody<T> {
+    fn into_response(self) -> Response {
+        match self.object.get_encoded() {
+            Ok(encoded) => (
+                self.status,
+                [(CONTENT_TYPE, HeaderValue::from_static(self.media_type))],
+                encoded,
+            )
+                .into_response(),
+            Err(e) => Error::MessageEncode(e).into_response(),
+        }
     }
 }
 
@@ -477,7 +493,7 @@ where
         match self.object.get_encoded() {
             Ok(encoded) => conn
                 .with_response_header(KnownHeaderName::ContentType, self.media_type)
-                .with_status(self.status)
+                .with_status(self.status.as_u16())
                 .with_body(encoded)
                 .halt(),
             Err(e) => Error::MessageEncode(e).run(conn).await,
@@ -658,12 +674,6 @@ where
 
         let router = Router::new()
             .without_options_handling()
-            .post("tasks/:task_id/reports", instrumented(api(upload::<C>)))
-            .with_route(
-                trillium::Method::Options,
-                "tasks/:task_id/reports",
-                upload_cors_preflight,
-            )
             .put(
                 AGGREGATION_JOB_ROUTE,
                 instrumented(if let Some(ref queue) = helper_queue {
@@ -741,10 +751,20 @@ where
             .allow_methods([http::Method::GET])
             .max_age(CORS_PREFLIGHT_CACHE_AGE);
 
+        let upload_cors = CorsLayer::new()
+            .allow_origin(AllowOrigin::mirror_request())
+            .allow_methods([http::Method::POST])
+            .allow_headers([CONTENT_TYPE])
+            .max_age(CORS_PREFLIGHT_CACHE_AGE);
+
         let axum_router = axum::Router::new()
             .route(
                 "/hpke_config",
                 axum::routing::get(axum_hpke_config::<C>).layer(hpke_cors),
+            )
+            .route(
+                "/tasks/{task_id}/reports",
+                post(axum_upload::<C>).layer(upload_cors),
             )
             .with_state(Arc::clone(&self.aggregator))
             // In tower, the first .layer() is outermost. Extension must be outermost
@@ -885,50 +905,35 @@ where
     }
 }
 
-/// API handler for the "/tasks/.../reports" POST endpoint.
-async fn upload<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<EncodedBody<UploadResponse>, ArcError> {
-    validate_content_type::<UploadRequest>(conn).map_err(Arc::new)?;
+/// Axum handler for the "/tasks/{task_id}/reports" POST endpoint.
+async fn axum_upload<C: Clock>(
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    body: Body,
+) -> Result<Response, Error> {
+    validate_content_type_headers::<UploadRequest>(&headers)?;
 
-    let task_id = parse_task_id(conn).map_err(Arc::new)?;
+    let task_id: TaskId = task_id
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
 
-    // Handle CORS, if the request header is present.
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
-        // Unconditionally allow CORS requests from all origins.
-        let origin = origin.clone();
-        conn.response_headers_mut()
-            .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-    }
+    let body_reader = body
+        .into_data_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))
+        .into_async_read();
 
-    let response = aggregator
-        .handle_upload(&task_id, decode_reports_stream(conn.request_body().await))
-        .await?;
+    let response = match aggregator
+        .handle_upload(&task_id, decode_reports_stream(body_reader))
+        .await
+    {
+        Ok(response) => response,
+        Err(arc_err) => return Ok(ArcError::from(arc_err).into_response()),
+    };
 
-    // Regardless of whether all or any reports were accepted, return 200 OK to indicate that the
-    // HTTP messages were exchanged successfully. The client will have to examine the response body
-    // to determine which reports were accepted or rejected.
-    Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE).with_status(Status::Ok))
-}
-
-/// Handler for CORS preflight requests to "/tasks/.../reports".
-async fn upload_cors_preflight(mut conn: Conn) -> Conn {
-    conn.response_headers_mut()
-        .insert(KnownHeaderName::Allow, "POST");
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
-        let origin = origin.clone();
-        let request_headers = conn.response_headers_mut();
-        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "POST");
-        request_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
-        request_headers.insert(
-            KnownHeaderName::AccessControlMaxAge,
-            format!("{}", CORS_PREFLIGHT_CACHE_AGE.as_secs()),
-        );
-    }
-    conn.set_status(Status::Ok);
-    conn
+    Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE)
+        .with_status(StatusCode::OK)
+        .into_response())
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
@@ -958,7 +963,7 @@ async fn aggregation_jobs_put<C: Clock>(
             response,
             AggregationJobResp::MEDIA_TYPE,
         )
-        .with_status(Status::Created))),
+        .with_status(StatusCode::CREATED))),
         None => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
@@ -992,7 +997,7 @@ async fn aggregation_jobs_post<C: Clock>(
     match response {
         AggregationJobContinueResult::Sync(resp) => {
             Ok(Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
-                .with_status(Status::Accepted)))
+                .with_status(StatusCode::ACCEPTED)))
         }
         AggregationJobContinueResult::Async(step) => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
@@ -1030,7 +1035,7 @@ async fn aggregation_jobs_get<C: Clock>(
             response,
             AggregationJobResp::MEDIA_TYPE,
         )
-        .with_status(Status::Ok))),
+        .with_status(StatusCode::OK))),
         None => Ok(Err(EmptyBody::for_aggregation_job(
             &task_id,
             &aggregation_job_id,
@@ -1205,6 +1210,11 @@ async fn aggregate_shares_delete<C: Clock>(
 /// Check the request's Content-Type header, and return an error if its MIME essence or its
 /// `message` parameter do not match those expected for messages of type `M`. The header may have
 /// other parameters in it; this function does not check them.
+fn validate_content_type_headers<M: MediaType>(headers: &HeaderMap) -> Result<(), Error> {
+    check_content_type::<M>(headers).map_err(|e| Error::BadRequest(e.into()))
+}
+
+/// Validates the Content-Type of the request against `M` (Trillium adapter).
 fn validate_content_type<M: MediaType>(conn: &Conn) -> Result<(), Error> {
     let content_type = conn
         .request_headers()
