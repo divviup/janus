@@ -640,7 +640,7 @@ async fn e2e_prio3_sum_vec() {
         QueryKind::TimeInterval,
         json!({
             "type": "Prio3SumVec",
-            "bits": "64",
+            "max_measurement": "4096",
             "length": "4",
             "chunk_length": "18",
         }),
