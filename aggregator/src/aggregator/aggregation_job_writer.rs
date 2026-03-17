@@ -670,8 +670,8 @@ where
                                 self.writer.update_metrics(|metrics| {
                                     metrics.report_aggregation_success_counter.add(1, &[]);
 
-                                    // Bucket written reports by the number of bits their
-                                    // representation uses
+                                    // Bucket written reports by the size of their encoded
+                                    // measurement in field elements.
                                     use VdafInstance::*;
                                     match self.writer.task.vdaf() {
                                         Prio3Count => metrics
@@ -716,12 +716,10 @@ where
                                                 )],
                                             ),
 
-                                        // Each histogram bucket can contain up to
-                                        // Field128::modulus(), so 128 bits
                                         Prio3Histogram { length, .. } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                *length as u64 * 128,
+                                                u64::try_from(*length).unwrap_or(u64::MAX),
                                                 &[KeyValue::new("type", "Prio3Histogram")],
                                             ),
 
