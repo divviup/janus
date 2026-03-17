@@ -881,13 +881,13 @@ mod tests {
         );
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=sum".to_string(), "--bits=8".to_string()]);
+        good_arguments.extend(["--vdaf=sum".to_string(), "--max-measurement=8".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend([
             "--vdaf=sumvec".to_string(),
-            "--bits=8".to_string(),
+            "--max-measurement=8".to_string(),
             "--length=10".to_string(),
         ]);
         Options::try_parse_from(good_arguments).unwrap();

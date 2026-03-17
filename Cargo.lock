@@ -2657,7 +2657,7 @@ dependencies = [
  "pem",
  "postgres-protocol",
  "postgres-types",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "prometheus",
  "querystring",
  "quickcheck",
@@ -2773,7 +2773,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "regex",
  "reqwest",
@@ -2814,7 +2814,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "mockito",
  "ohttp",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "reqwest",
  "thiserror 2.0.18",
@@ -2841,7 +2841,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "mime",
  "mockito",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "reqwest",
  "retry-after",
@@ -2878,7 +2878,7 @@ dependencies = [
  "kube",
  "mime",
  "mockito",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "quickcheck",
  "rand 0.10.0",
  "regex",
@@ -2931,7 +2931,7 @@ dependencies = [
  "kube",
  "opentelemetry",
  "opentelemetry_sdk",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "quickcheck",
  "rand 0.10.0",
  "regex",
@@ -2970,7 +2970,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.9.0-prerelease-1",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "regex",
  "reqwest",
@@ -3020,7 +3020,7 @@ dependencies = [
  "janus_messages 0.9.0-prerelease-1",
  "num_enum",
  "pretty_assertions",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "serde",
  "serde_test",
@@ -3039,7 +3039,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",
- "prio 0.18.1-alpha.2",
+ "prio 0.18.1-alpha.3",
  "rand 0.10.0",
  "reqwest",
  "serde_json",
@@ -4161,8 +4161,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.18.1-alpha.2"
-source = "git+https://github.com/divviup/libprio-rs?rev=255ad81c9746314e42a327b0d824ca766302982c#255ad81c9746314e42a327b0d824ca766302982c"
+version = "0.18.1-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63f116b43145de87ab3a439940d3e54209c6fecb23a07983dea85966baf5d37d"
 dependencies = [
  "aes",
  "byteorder",
