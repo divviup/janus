@@ -108,7 +108,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
                 "The aggregate share ID is not recognized.",
-                Status::NotFound,
+                StatusCode::NOT_FOUND,
             )
             .with_task_id(task_id)
             .with_aggregate_share_id(aggregate_share_id),
@@ -117,7 +117,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",
                 "The aggregation job has been abandoned.",
-                Status::Gone,
+                StatusCode::GONE,
             )
             .with_task_id(task_id)
             .with_aggregation_job_id(aggregation_job_id),
@@ -126,7 +126,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
                 "The aggregation job has been deleted.",
-                Status::Gone,
+                StatusCode::GONE,
             )
             .with_task_id(task_id)
             .with_aggregation_job_id(aggregation_job_id),
@@ -136,7 +136,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
                 "The collection job has been abandoned.",
-                Status::InternalServerError,
+                StatusCode::INTERNAL_SERVER_ERROR,
             )
             .with_detail(
                 "An internal problem has caused the server to stop processing this collection job. \
@@ -166,7 +166,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
                 &ProblemDocument::new(
                     DapProblemType::InvalidMessage.type_uri(),
                     "Time unaligned.",
-                    Status::BadRequest,
+                    StatusCode::BAD_REQUEST,
                 )
                 .with_task_id(task_id)
                 .with_detail(&error.to_string()),
@@ -190,7 +190,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "about:blank", // No additional semantics over-and-above the HTTP status code.
                 "Bad Request.",
-                Status::BadRequest,
+                StatusCode::BAD_REQUEST,
             )
             .with_detail(&detail.to_string()),
         ),
@@ -205,7 +205,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#too-many-requests",
                 "The server is currently overloaded.",
-                Status::TooManyRequests,
+                StatusCode::TOO_MANY_REQUESTS,
             )
             .with_detail(
                 "The server is currently servicing too many requests, please try the request again \
@@ -216,7 +216,7 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
             &ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#request-timeout",
                 "Request timed out waiting in queue.",
-                Status::TooManyRequests,
+                StatusCode::TOO_MANY_REQUESTS,
             )
             .with_detail("The request spent too long waiting to be processed."),
         ).with_retry_after(StdDuration::from_secs(30)),
@@ -289,7 +289,7 @@ impl Error {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
                     "The aggregate share ID is not recognized.",
-                    Status::NotFound,
+                    StatusCode::NOT_FOUND,
                 )
                 .with_task_id(task_id)
                 .with_aggregate_share_id(aggregate_share_id)
@@ -299,7 +299,7 @@ impl Error {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",
                     "The aggregation job has been abandoned.",
-                    Status::Gone,
+                    StatusCode::GONE,
                 )
                 .with_task_id(task_id)
                 .with_aggregation_job_id(aggregation_job_id)
@@ -309,7 +309,7 @@ impl Error {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
                     "The aggregation job has been deleted.",
-                    Status::Gone,
+                    StatusCode::GONE,
                 )
                 .with_task_id(task_id)
                 .with_aggregation_job_id(aggregation_job_id)
@@ -320,7 +320,7 @@ impl Error {
                 ProblemDocument::new(
                     "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
                     "The collection job has been abandoned.",
-                    Status::InternalServerError,
+                    StatusCode::INTERNAL_SERVER_ERROR,
                 )
                 .with_detail(
                     "An internal problem has caused the server to stop processing this collection job. \
@@ -355,7 +355,7 @@ impl Error {
                 ProblemDocument::new(
                     DapProblemType::InvalidMessage.type_uri(),
                     "Time unaligned.",
-                    Status::BadRequest,
+                    StatusCode::BAD_REQUEST,
                 )
                 .with_task_id(task_id)
                 .with_detail(&error.to_string())
@@ -381,7 +381,7 @@ impl Error {
             Error::BadRequest(detail) => ProblemDocument::new(
                 "about:blank",
                 "Bad Request.",
-                Status::BadRequest,
+                StatusCode::BAD_REQUEST,
             )
             .with_detail(&detail.to_string())
             .into_response(),
@@ -396,7 +396,7 @@ impl Error {
             Error::TooManyRequests => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#too-many-requests",
                 "The server is currently overloaded.",
-                Status::TooManyRequests,
+                StatusCode::TOO_MANY_REQUESTS,
             )
             .with_detail(
                 "The server is currently servicing too many requests, please try the request again \
@@ -406,7 +406,7 @@ impl Error {
             Error::RequestTimeout => ProblemDocument::new(
                 "https://docs.divviup.org/references/janus-errors#request-timeout",
                 "Request timed out waiting in queue.",
-                Status::TooManyRequests,
+                StatusCode::TOO_MANY_REQUESTS,
             )
             .with_detail("The request spent too long waiting to be processed.")
             .to_response_with_retry_after(Some(RATE_LIMIT_RETRY_AFTER)),
