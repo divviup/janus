@@ -818,7 +818,7 @@ mod tests {
                     concat!(
                         // vdaf_config
                         "0000000C", // length
-                        "00000008", // bits
+                        "00000008", // max_measurement
                         "0000000E"  // chunk_length
                     ),
                 ),
@@ -890,7 +890,7 @@ mod tests {
                     concat!(
                         // vdaf_config
                         "0000000C", // length
-                        "00000008", // bits
+                        "00000008", // max_measurement
                         "0000000E", // chunk_length
                         "02"        // proofs
                     ),

@@ -438,7 +438,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .unwrap();
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random_range(..*max_measurement) as u128)
+                iter::repeat_with(|| random_range(..=*max_measurement) as u128)
                     .take(*length)
                     .collect::<Vec<_>>()
             })
@@ -492,7 +492,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .unwrap();
 
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random_range(..max_measurement))
+                iter::repeat_with(|| random_range(..=max_measurement))
                     .take(*length)
                     .collect::<Vec<_>>()
             })

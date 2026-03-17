@@ -341,7 +341,7 @@ macro_rules! vdaf_dispatch_impl_test_util {
             }
 
             ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_next_fn(|_| {
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1).with_verify_init_fn(|_| {
                     ::std::result::Result::Err(::prio::vdaf::VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))

@@ -102,7 +102,6 @@ where
     let mut helper_prepare_transitions = Vec::new();
 
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-    println!("measurement: {measurement:?}");
     let (public_share, input_shares) = vdaf.shard(&ctx, measurement, report_id.as_ref()).unwrap();
 
     let leader_state = vdaf
