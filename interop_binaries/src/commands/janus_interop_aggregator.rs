@@ -178,7 +178,14 @@ async fn add_task_endpoint(
 async fn ready_endpoint(State(state): State<InteropAggregatorState>) -> impl IntoResponse {
     let result = try_join_all(state.health_check_peers.iter().map(|peer| {
         let client = state.http_client.clone();
-        async move { client.get(peer.as_str()).send().await.map(|_| ()) }
+        async move {
+            client
+                .get(peer.as_str())
+                .send()
+                .await?
+                .error_for_status()
+                .map(|_| ())
+        }
     }))
     .await;
     match result {
@@ -206,19 +213,19 @@ async fn proxy_handler(
         .unwrap_or("/");
     let url = format!("{}{path}", state.proxy_url);
 
-    let method = request.method().clone();
-    let headers = request.headers().clone();
-    let body = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
+    let (parts, request_body) = request.into_parts();
+    let body = match axum::body::to_bytes(request_body, 10 * 1024 * 1024).await {
         Ok(bytes) => bytes,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    let reqwest_method = match reqwest::Method::from_bytes(method.as_str().as_bytes()) {
+    let reqwest_method = match reqwest::Method::from_bytes(parts.method.as_str().as_bytes()) {
         Ok(m) => m,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
     let mut builder = state.http_client.request(reqwest_method, &url);
-    for (name, value) in headers
+    for (name, value) in parts
+        .headers
         .iter()
         .filter(|(h, _v)| !UNPROXYABLE_HEADERS.contains(h))
     {
@@ -279,7 +286,8 @@ fn make_handler(
     // Proxy DAP requests under the serving prefix to the aggregator. Any request not matched by
     // the test API routes above will be forwarded to the aggregator.
     let router = if dap_serving_prefix == "/" {
-        // Router::nest("/", ...) panics in Axum 0.8; use fallback instead.
+        // Router::nest requires nested paths by design, which "/" is not, so use
+        // fallback instead.
         test_routes.fallback(proxy_handler)
     } else {
         let proxy_routes = Router::new().fallback(proxy_handler);

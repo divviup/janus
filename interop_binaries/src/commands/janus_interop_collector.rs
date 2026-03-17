@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration as StdDuration,
 };
@@ -669,6 +669,9 @@ async fn handle_collection_poll(
         Entry::Occupied(mut occupied_entry) => match occupied_entry.get_mut() {
             CollectionJobState::InProgress(join_handle_opt) => {
                 if join_handle_opt.as_ref().unwrap().is_finished() {
+                    // Awaiting on the JoinHandle requires owning it. We take it out of the
+                    // Option, and ensure that a different enum variant is stored over it before
+                    // dropping the lock on the HashMap.
                     let taken_handle = join_handle_opt.take().unwrap();
                     let task_result = taken_handle.await;
                     let collect_result = match task_result {
@@ -878,7 +881,7 @@ impl Options {
         let rt = Runtime::new()?;
         rt.block_on(async {
             let app = handler()?;
-            let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.port));
+            let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, self.port));
             let listener = TcpListener::bind(addr).await?;
             axum::serve(listener, app).await?;
             Ok(())
