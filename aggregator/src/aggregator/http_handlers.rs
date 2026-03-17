@@ -1301,25 +1301,19 @@ fn parse_auth_token_from_headers(
 
 /// Get an [`AuthenticationToken`] from the request (Trillium adapter).
 fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
-    let headers = conn_to_http_headers(conn);
-    parse_auth_token_from_headers(task_id, &headers)
-}
-
-/// Extract HTTP headers from a Trillium connection into an `http::HeaderMap`.
-///
-/// This is a temporary adapter for the Trillium-to-Axum migration.
-fn conn_to_http_headers(conn: &Conn) -> HeaderMap {
+    // Build an http::HeaderMap with just the auth-related headers from the Trillium conn.
     let mut headers = HeaderMap::new();
-    for (name, values) in conn.request_headers().iter() {
-        if let Ok(header_name) = HeaderName::try_from(name.as_ref()) {
-            for value in values.iter() {
-                if let Ok(header_value) = HeaderValue::from_str(&value.to_string()) {
-                    headers.append(header_name.clone(), header_value);
-                }
-            }
+    if let Some(auth) = conn.request_headers().get("authorization") {
+        if let Ok(value) = HeaderValue::from_str(&auth.to_string()) {
+            headers.insert(http::header::AUTHORIZATION, value);
         }
     }
-    headers
+    if let Some(dap_auth) = conn.request_headers().get(DAP_AUTH_HEADER) {
+        if let Ok(value) = HeaderValue::from_bytes(dap_auth.as_ref()) {
+            headers.insert(DAP_AUTH_HEADER, value);
+        }
+    }
+    parse_auth_token_from_headers(task_id, &headers)
 }
 
 fn parse_taskprov_header<C: Clock>(
