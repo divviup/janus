@@ -651,6 +651,40 @@ where
         }
     }
 
+    /// Build just the Axum router (without the Trillium wrapper and proxy). This is useful for
+    /// tests that need to serve the axum router directly.
+    pub fn build_axum_router(&self) -> axum::Router {
+        let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
+
+        let hpke_cors = CorsLayer::new()
+            .allow_origin(AllowOrigin::mirror_request())
+            .allow_methods([http::Method::GET])
+            .max_age(CORS_PREFLIGHT_CACHE_AGE);
+
+        let upload_cors = CorsLayer::new()
+            .allow_origin(AllowOrigin::mirror_request())
+            .allow_methods([http::Method::POST])
+            .allow_headers([CONTENT_TYPE])
+            .max_age(CORS_PREFLIGHT_CACHE_AGE);
+
+        axum::Router::new()
+            .route(
+                "/hpke_config",
+                axum::routing::get(axum_hpke_config::<C>).layer(hpke_cors),
+            )
+            .route(
+                "/tasks/{task_id}/reports",
+                post(axum_upload::<C>).layer(upload_cors),
+            )
+            .with_state(Arc::clone(&self.aggregator))
+            .layer(
+                ServiceBuilder::new()
+                    .layer(axum::Extension(http_metrics))
+                    .layer(axum::middleware::from_fn(http_metrics_middleware))
+                    .layer(trace_layer()),
+            )
+    }
+
     pub async fn build(self) -> Result<impl Handler, Error> {
         let helper_queue = self
             .helper_aggregation_request_queue
@@ -742,39 +776,7 @@ where
             .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
             .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
 
-        // Axum router for incrementally migrated endpoints. Routes will be moved here
-        // from the Trillium router one batch at a time.
-        let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
-
-        let hpke_cors = CorsLayer::new()
-            .allow_origin(AllowOrigin::mirror_request())
-            .allow_methods([http::Method::GET])
-            .max_age(CORS_PREFLIGHT_CACHE_AGE);
-
-        let upload_cors = CorsLayer::new()
-            .allow_origin(AllowOrigin::mirror_request())
-            .allow_methods([http::Method::POST])
-            .allow_headers([CONTENT_TYPE])
-            .max_age(CORS_PREFLIGHT_CACHE_AGE);
-
-        let axum_router = axum::Router::new()
-            .route(
-                "/hpke_config",
-                axum::routing::get(axum_hpke_config::<C>).layer(hpke_cors),
-            )
-            .route(
-                "/tasks/{task_id}/reports",
-                post(axum_upload::<C>).layer(upload_cors),
-            )
-            .with_state(Arc::clone(&self.aggregator))
-            // In tower, the first .layer() is outermost. Extension must be outermost
-            // so the HttpMetrics value is available when the metrics middleware runs.
-            .layer(
-                ServiceBuilder::new()
-                    .layer(axum::Extension(http_metrics))
-                    .layer(axum::middleware::from_fn(http_metrics_middleware))
-                    .layer(trace_layer()),
-            );
+        let axum_router = self.build_axum_router();
 
         // Bind a local listener for the axum router and spawn it.
         let axum_listener = tokio::net::TcpListener::bind("localhost:0")
