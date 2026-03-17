@@ -670,6 +670,8 @@ where
                                 self.writer.update_metrics(|metrics| {
                                     metrics.report_aggregation_success_counter.add(1, &[]);
 
+                                    // Bucket written reports by the number of bits their
+                                    // representation uses
                                     use VdafInstance::*;
                                     match self.writer.task.vdaf() {
                                         Prio3Count => metrics
@@ -679,40 +681,47 @@ where
                                         Prio3Sum { max_measurement } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                *max_measurement,
+                                                max_measurement.next_power_of_two().ilog2() as u64,
                                                 &[KeyValue::new("type", "Prio3Sum")],
                                             ),
 
                                         Prio3SumVec {
-                                            max_measurement, ..
-                                        } => metrics
-                                            .aggregated_report_share_dimension_histogram
-                                            .record(
-                                                *max_measurement,
-                                                &[KeyValue::new("type", "Prio3SumVec")],
-                                            ),
-
-                                        Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                                            length,
                                             max_measurement,
                                             ..
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                *max_measurement,
+                                                (length
+                                                    * max_measurement.next_power_of_two().ilog2()
+                                                        as usize)
+                                                    as u64,
+                                                &[KeyValue::new("type", "Prio3SumVec")],
+                                            ),
+
+                                        Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                                            length,
+                                            max_measurement,
+                                            ..
+                                        } => metrics
+                                            .aggregated_report_share_dimension_histogram
+                                            .record(
+                                                (length
+                                                    * max_measurement.next_power_of_two().ilog2()
+                                                        as usize)
+                                                    as u64,
                                                 &[KeyValue::new(
                                                     "type",
                                                     "Prio3SumVecField64MultiproofHmacSha256Aes128",
                                                 )],
                                             ),
 
-                                        Prio3Histogram {
-                                            length,
-                                            chunk_length: _,
-                                            dp_strategy: _,
-                                        } => metrics
+                                        // Each histogram bucket can contain up to
+                                        // Field128::modulus(), so 128 bits
+                                        Prio3Histogram { length, .. } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                u64::try_from(*length).unwrap_or(u64::MAX),
+                                                *length as u64 * 128,
                                                 &[KeyValue::new("type", "Prio3Histogram")],
                                             ),
 
