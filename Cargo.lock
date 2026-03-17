@@ -2716,6 +2716,7 @@ dependencies = [
  "educe",
  "futures",
  "git-version",
+ "http",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.9.0-prerelease-1",

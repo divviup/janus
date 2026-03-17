@@ -1265,23 +1265,49 @@ fn parse_aggregate_share_id(conn: &Conn) -> Result<AggregateShareId, Error> {
         .map_err(|e| Error::BadRequest(format!("invalid aggregate share ID in path: {e}").into()))
 }
 
-/// Get an [`AuthenticationToken`] from the request.
-fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
+/// Get an [`AuthenticationToken`] from the request, using `http::HeaderMap`.
+fn parse_auth_token_from_headers(
+    task_id: &TaskId,
+    headers: &HeaderMap,
+) -> Result<Option<AuthenticationToken>, Error> {
     // Prefer a bearer token, then fall back to DAP-Auth-Token
     if let Some(bearer_token) =
-        extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?
+        extract_bearer_token(headers).map_err(|_| Error::UnauthorizedRequest(*task_id))?
     {
         return Ok(Some(bearer_token));
     }
 
-    conn.request_headers()
+    headers
         .get(DAP_AUTH_HEADER)
         .map(|value| {
-            AuthenticationToken::new_dap_auth_token_from_bytes(value.as_ref())
+            AuthenticationToken::new_dap_auth_token_from_bytes(value.as_bytes())
                 .context("bad DAP-Auth-Token header")
                 .map_err(|e| Error::BadRequest(e.into()))
         })
         .transpose()
+}
+
+/// Get an [`AuthenticationToken`] from the request (Trillium adapter).
+fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
+    let headers = conn_to_http_headers(conn);
+    parse_auth_token_from_headers(task_id, &headers)
+}
+
+/// Extract HTTP headers from a Trillium connection into an `http::HeaderMap`.
+///
+/// This is a temporary adapter for the Trillium-to-Axum migration.
+fn conn_to_http_headers(conn: &Conn) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (name, values) in conn.request_headers().iter() {
+        if let Ok(header_name) = HeaderName::try_from(name.as_ref()) {
+            for value in values.iter() {
+                if let Ok(header_value) = HeaderValue::from_str(&value.to_string()) {
+                    headers.append(header_name.clone(), header_value);
+                }
+            }
+        }
+    }
+    headers
 }
 
 fn parse_taskprov_header<C: Clock>(

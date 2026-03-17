@@ -11,8 +11,6 @@ use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
 use tracing::warn;
-use trillium::{Conn, HeaderValue};
-
 use crate::auth_tokens::AuthenticationToken;
 
 pub mod cached_resource;
@@ -119,17 +117,19 @@ impl Display for HttpErrorResponse {
     }
 }
 
-/// Extracts a bearer authentication token from the connection.
+/// Extracts a bearer authentication token from HTTP headers.
 ///
-/// If the request in `conn` has an `authorization` header, returns the bearer token in the header
-/// value. Returns `None` if there is no `authorization` header, and an error if there is an
+/// If `headers` has an `authorization` header, returns the bearer token in the header value.
+/// Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.
-pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
-    if let Some(authorization) = conn
-        .request_headers()
-        .get("authorization")
-        .map(HeaderValue::to_string)
-    {
+pub fn extract_bearer_token(
+    headers: &http::HeaderMap,
+) -> Result<Option<AuthenticationToken>, anyhow::Error> {
+    if let Some(authorization_value) = headers.get(http::header::AUTHORIZATION) {
+        let authorization = authorization_value
+            .to_str()
+            .map_err(|_| anyhow!("invalid authorization header"))?;
+
         let (auth_scheme, token) = authorization
             .split_once(char::is_whitespace)
             .ok_or_else(|| anyhow!("invalid authorization header"))?;
@@ -214,59 +214,55 @@ impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use trillium_testing::TestConn;
+    use http::HeaderMap;
 
     use super::extract_bearer_token;
     use crate::auth_tokens::AuthenticationToken;
+
+    fn headers_with_authorization(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::AUTHORIZATION, value.parse().unwrap());
+        headers
+    }
 
     #[test]
     fn authorization_header() {
         let good_token = "gVfRUu9krhxrUgFsEo-P5w";
         let expected = AuthenticationToken::new_bearer_token_from_string(good_token).unwrap();
         assert_eq!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", format!("bearer {good_token}")),
-            )
+            extract_bearer_token(&headers_with_authorization(&format!(
+                "bearer {good_token}"
+            )))
             .unwrap(),
             Some(expected.clone())
         );
         assert_eq!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("authorization", format!("BeArEr     {good_token}")),
-            )
+            extract_bearer_token(&headers_with_authorization(&format!(
+                "BeArEr     {good_token}"
+            )))
             .unwrap(),
             Some(expected)
         );
 
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body").with_request_header(
-                    "Authorization",
-                    "Bearer    gVfRUu9krhxrUgFsEo-P5w    asdf"
-                ),
-            ),
+            extract_bearer_token(&headers_with_authorization(
+                "Bearer    gVfRUu9krhxrUgFsEo-P5w    asdf"
+            )),
             Err(_)
         );
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("Authorization", "BearergVfRUu9krhxrUgFsEo-P5w"),
-            ),
+            extract_bearer_token(&headers_with_authorization(
+                "BearergVfRUu9krhxrUgFsEo-P5w"
+            )),
             Err(_)
         );
         assert_matches!(
-            extract_bearer_token(
-                &TestConn::build("get", "/", "body")
-                    .with_request_header("Authorization", "Bearer gVfRUu9krhxrUgFsEo(#@(#)*#)-P5w"),
-            ),
+            extract_bearer_token(&headers_with_authorization(
+                "Bearer gVfRUu9krhxrUgFsEo(#@(#)*#)-P5w"
+            )),
             Err(_)
         );
 
-        assert_matches!(
-            extract_bearer_token(&TestConn::build("get", "/", "body")),
-            Ok(None)
-        );
+        assert_matches!(extract_bearer_token(&HeaderMap::new()), Ok(None));
     }
 }
