@@ -1333,9 +1333,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.4.83"
+version = "0.4.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbffc230bb87c847e34689517864e51216f66d5147f394f14daeaee74ba36a4f"
+checksum = "4511fbc47c9a1f14d83278658bdafcde32574961a933fc26c5cfb795a95c660f"
 dependencies = [
  "base64 0.22.1",
  "email_address",
