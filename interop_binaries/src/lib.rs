@@ -30,8 +30,6 @@ use testcontainers::{ContainerAsync, Image};
 use tokio::sync::Mutex;
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, prelude::*};
-use trillium::{Conn, Handler, Status, async_trait};
-use trillium_api::ApiConnExt;
 use url::Url;
 
 pub mod commands;
@@ -496,30 +494,7 @@ impl<I: Image> Deref for ContainerLogsDropGuard<I> {
     }
 }
 
-pub struct ErrorHandler;
-
-#[async_trait]
-impl Handler for ErrorHandler {
-    async fn run(&self, conn: Conn) -> Conn {
-        conn
-    }
-
-    async fn before_send(&self, mut conn: Conn) -> Conn {
-        if let Some(error) = conn.take_state::<trillium_api::Error>() {
-            // Could not parse the request, return a 400 status code.
-            return conn
-                .with_json(&serde_json::json!({
-                    "status": status::ERROR,
-                    "error": format!("{error}"),
-                }))
-                .with_status(Status::BadRequest);
-        }
-        conn
-    }
-}
-
-/// A wrapper around [`HpkeConfigRegistry`] that is suitable for use in Trillium connection
-/// state.
+/// A wrapper around [`HpkeConfigRegistry`].
 #[derive(Clone)]
 pub struct Keyring(pub Arc<Mutex<HpkeConfigRegistry>>);
 

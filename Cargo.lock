@@ -2951,12 +2951,14 @@ name = "janus_interop_binaries"
 version = "0.9.0-prerelease-1"
 dependencies = [
  "anyhow",
+ "axum 0.8.8",
  "backon",
  "base64 0.22.1",
  "clap",
  "educe",
  "futures",
  "hex",
+ "http",
  "janus_aggregator",
  "janus_aggregator_core",
  "janus_client",
@@ -2972,14 +2974,10 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "tokio",
+ "tower 0.5.2",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "trillium",
- "trillium-api",
- "trillium-proxy",
- "trillium-router",
- "trillium-tokio",
  "url",
 ]
 

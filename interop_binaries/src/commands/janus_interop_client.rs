@@ -1,6 +1,17 @@
-use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+use std::{
+    fmt::Display,
+    net::{Ipv4Addr, SocketAddr},
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::Context;
+use axum::{
+    Json, Router,
+    extract::{State, rejection::JsonRejection},
+    response::IntoResponse,
+    routing::post,
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
@@ -13,13 +24,11 @@ use prio::{
     vdaf::prio3::Prio3,
 };
 use serde::{Deserialize, Serialize};
-use trillium::{Conn, Handler};
-use trillium_api::{Json, State, api};
-use trillium_router::Router;
+use tokio::net::TcpListener;
 use url::Url;
 
 use crate::{
-    ErrorHandler, NumberAsString, VdafObject, install_tracing_subscriber,
+    NumberAsString, VdafObject, install_tracing_subscriber,
     status::{ERROR, SUCCESS},
 };
 
@@ -169,32 +178,41 @@ async fn handle_upload(
     Ok(())
 }
 
-fn handler() -> anyhow::Result<impl Handler> {
-    let http_client = janus_client::default_http_client()?;
+async fn handle_upload_endpoint(
+    State(http_client): State<Arc<reqwest::Client>>,
+    request: Result<Json<UploadRequest>, JsonRejection>,
+) -> impl IntoResponse {
+    let Json(request) = match request {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(UploadResponse {
+                status: ERROR,
+                error: Some(format!("{e:?}")),
+            });
+        }
+    };
+    match handle_upload(&http_client, request).await {
+        Ok(()) => Json(UploadResponse {
+            status: SUCCESS,
+            error: None,
+        }),
+        Err(e) => Json(UploadResponse {
+            status: ERROR,
+            error: Some(format!("{e:?}")),
+        }),
+    }
+}
 
-    Ok((
-        State(http_client),
-        Router::new()
-            .post("/internal/test/ready", Json(serde_json::json!({})))
-            .post(
-                "/internal/test/upload",
-                api(
-                    |_conn: &mut Conn, (State(http_client), Json(request))| async move {
-                        match handle_upload(&http_client, request).await {
-                            Ok(()) => Json(UploadResponse {
-                                status: SUCCESS,
-                                error: None,
-                            }),
-                            Err(e) => Json(UploadResponse {
-                                status: ERROR,
-                                error: Some(format!("{e:?}")),
-                            }),
-                        }
-                    },
-                ),
-            ),
-        ErrorHandler,
-    ))
+fn handler() -> anyhow::Result<Router> {
+    let http_client = Arc::new(janus_client::default_http_client()?);
+
+    Ok(Router::new()
+        .route(
+            "/internal/test/ready",
+            post(|| async { Json(serde_json::json!({})) }),
+        )
+        .route("/internal/test/upload", post(handle_upload_endpoint))
+        .with_state(http_client))
 }
 
 #[derive(Debug, Parser)]
@@ -208,11 +226,14 @@ pub struct Options {
 impl Options {
     pub fn run(self) -> anyhow::Result<()> {
         install_tracing_subscriber()?;
-        trillium_tokio::config()
-            .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
-            .with_port(self.port)
-            .run(handler()?);
-        Ok(())
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            let app = handler()?;
+            let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.port));
+            let listener = TcpListener::bind(addr).await?;
+            axum::serve(listener, app).await?;
+            Ok(())
+        })
     }
 }
 
