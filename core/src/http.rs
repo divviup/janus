@@ -11,6 +11,7 @@ use mime::Mime;
 use reqwest::{Response, header::CONTENT_TYPE};
 use retry_after::RetryAfter;
 use tracing::warn;
+
 use crate::auth_tokens::AuthenticationToken;
 
 pub mod cached_resource;
@@ -230,10 +231,8 @@ mod tests {
         let good_token = "gVfRUu9krhxrUgFsEo-P5w";
         let expected = AuthenticationToken::new_bearer_token_from_string(good_token).unwrap();
         assert_eq!(
-            extract_bearer_token(&headers_with_authorization(&format!(
-                "bearer {good_token}"
-            )))
-            .unwrap(),
+            extract_bearer_token(&headers_with_authorization(&format!("bearer {good_token}")))
+                .unwrap(),
             Some(expected.clone())
         );
         assert_eq!(
@@ -251,9 +250,7 @@ mod tests {
             Err(_)
         );
         assert_matches!(
-            extract_bearer_token(&headers_with_authorization(
-                "BearergVfRUu9krhxrUgFsEo-P5w"
-            )),
+            extract_bearer_token(&headers_with_authorization("BearergVfRUu9krhxrUgFsEo-P5w")),
             Err(_)
         );
         assert_matches!(
