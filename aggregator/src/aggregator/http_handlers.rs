@@ -677,6 +677,8 @@ where
                 post(axum_upload::<C>).layer(upload_cors),
             )
             .with_state(Arc::clone(&self.aggregator))
+            // In tower, the first .layer() is outermost. Extension must be outermost
+            // so the HttpMetrics value is available when the metrics middleware runs.
             .layer(
                 ServiceBuilder::new()
                     .layer(axum::Extension(http_metrics))
@@ -1304,7 +1306,7 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     // Build an http::HeaderMap with just the auth-related headers from the Trillium conn.
     let mut headers = HeaderMap::new();
     if let Some(auth) = conn.request_headers().get("authorization") {
-        if let Ok(value) = HeaderValue::from_str(&auth.to_string()) {
+        if let Ok(value) = HeaderValue::from_bytes(auth.as_ref()) {
             headers.insert(http::header::AUTHORIZATION, value);
         }
     }

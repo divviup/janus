@@ -140,7 +140,7 @@ pub fn aggregator_api_handler<C: Clock>(
 async fn auth_check(conn: &mut Conn, (): ()) -> Option<(Status, Halt)> {
     let mut headers = http::HeaderMap::new();
     if let Some(auth) = conn.request_headers().get("authorization") {
-        if let Ok(value) = http::HeaderValue::from_str(&auth.to_string()) {
+        if let Ok(value) = http::HeaderValue::from_bytes(auth.as_ref()) {
             headers.insert(http::header::AUTHORIZATION, value);
         }
     }
