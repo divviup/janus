@@ -45,9 +45,16 @@ branch.
 | `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | ? | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Unmaintained as of June 24, 2024 |
 | `release/0.7` | [`draft-ietf-ppm-dap-09`][dap-09] | [`draft-ietf-ppm-dap-taskprov-03`][taskprov-03] | Yes, [with errata](#draft-ietf-ppm-dap-09-errata) | Supported |
 | `release/0.8` | [`draft-ietf-ppm-dap-15`][dap-15] | [`draft-ietf-ppm-dap-taskprov-03`][taskprov-03] | Yes | Unmaintained as of August 27th, 2025 |
-| `main` | [`draft-ietf-ppm-dap`][dap-gh] | [`draft-ietf-ppm-dap-taskprov`][taskprov-gh] | No | Supported |
+| `main` | [`draft-ietf-ppm-dap-18`][dap-gh][^1] | [`draft-ietf-ppm-dap-taskprov-04`][taskprov-gh][^2] | No | Supported |
 
 Note that not every DAP draft has been implemented.
+
+[^1]: `draft-ietf-ppm-dap-18` has not yet been published. Janus implements the
+      tip of the specification's `main` branch, which is expected to soon become
+      the 18th draft.
+[^2]: `draft-ietf-ppm-dap-taskprov-04` has not yet been published. Janus
+      implements the tip of the specification's `main` branch, which is expected
+      to soon become the 18th draft.
 
 [dap-01]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/
 [dap-02]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/

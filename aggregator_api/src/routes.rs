@@ -49,7 +49,7 @@ pub(super) async fn get_config(
         LazyLock::new(|| format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()));
 
     Json(AggregatorApiConfig {
-        protocol: "DAP-16",
+        protocol: "DAP-18",
         dap_url: config.public_dap_url.clone(),
         role: AggregatorRole::Either,
         vdafs: Vec::from([
