@@ -677,8 +677,6 @@ where
                 post(axum_upload::<C>).layer(upload_cors),
             )
             .with_state(Arc::clone(&self.aggregator))
-            // In tower, the first .layer() is outermost. Extension must be outermost
-            // so the HttpMetrics value is available when the metrics middleware runs.
             .layer(
                 ServiceBuilder::new()
                     .layer(axum::Extension(http_metrics))

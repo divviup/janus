@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
+use std::{collections::HashSet, net::Ipv6Addr, sync::Arc, time::Duration as StdDuration};
 
 use chrono::TimeDelta;
 use janus_aggregator_core::{
@@ -972,7 +972,7 @@ async fn upload_client_early_disconnect() {
         .get_encoded()
         .unwrap();
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
         axum::serve(listener, handler).await.unwrap();
@@ -1210,7 +1210,7 @@ async fn upload_client_http11_bulk() {
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
     let stopper = Stopper::new();
-    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let server = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let local_addr = server.local_addr().unwrap();
     let handle = trillium_tokio::config()
         .without_signals()
