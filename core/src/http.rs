@@ -122,29 +122,34 @@ impl Display for HttpErrorResponse {
 ///
 /// If `headers` has an `authorization` header, returns the bearer token in the header value.
 /// Returns `None` if there is no `authorization` header, and an error if there is an
-/// `authorization` header whose value is not a bearer token.
+/// `authorization` header whose value is not a bearer token or if there are multiple
+/// `authorization` headers.
 pub fn extract_bearer_token(
     headers: &http::HeaderMap,
 ) -> Result<Option<AuthenticationToken>, anyhow::Error> {
-    if let Some(authorization_value) = headers.get(http::header::AUTHORIZATION) {
-        let authorization = authorization_value
-            .to_str()
-            .map_err(|_| anyhow!("invalid authorization header"))?;
-
-        let (auth_scheme, token) = authorization
-            .split_once(char::is_whitespace)
-            .ok_or_else(|| anyhow!("invalid authorization header"))?;
-
-        if auth_scheme.to_lowercase() != "bearer" {
-            return Err(anyhow!("authorization scheme is not bearer"));
-        }
-
-        return Ok(Some(AuthenticationToken::new_bearer_token_from_string(
-            token.trim_start(),
-        )?));
+    let mut authorization_values = headers.get_all(http::header::AUTHORIZATION).into_iter();
+    let Some(authorization_value) = authorization_values.next() else {
+        return Ok(None);
+    };
+    if authorization_values.next().is_some() {
+        return Err(anyhow!("multiple authorization headers"));
     }
 
-    Ok(None)
+    let authorization = authorization_value
+        .to_str()
+        .map_err(|_| anyhow!("invalid authorization header"))?;
+
+    let (auth_scheme, token) = authorization
+        .split_once(char::is_whitespace)
+        .ok_or_else(|| anyhow!("invalid authorization header"))?;
+
+    if auth_scheme.to_lowercase() != "bearer" {
+        return Err(anyhow!("authorization scheme is not bearer"));
+    }
+
+    Ok(Some(AuthenticationToken::new_bearer_token_from_string(
+        token.trim_start(),
+    )?))
 }
 
 /// Return OK if there is a Content-Type header and it matches the MIME essence and "message"
@@ -261,5 +266,13 @@ mod tests {
         );
 
         assert_matches!(extract_bearer_token(&HeaderMap::new()), Ok(None));
+
+        // Multiple authorization headers should be rejected.
+        let mut headers = headers_with_authorization("Bearer gVfRUu9krhxrUgFsEo-P5w");
+        headers.append(
+            http::header::AUTHORIZATION,
+            "Bearer another-token".parse().unwrap(),
+        );
+        assert_matches!(extract_bearer_token(&headers), Err(_));
     }
 }
