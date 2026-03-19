@@ -2974,7 +2974,7 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "tokio",
- "tower 0.5.2",
+ "tower 0.5.3",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
