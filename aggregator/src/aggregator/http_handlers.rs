@@ -674,7 +674,7 @@ where
             )
             .route(
                 "/tasks/{task_id}/reports",
-                post(axum_upload::<C>).layer(upload_cors),
+                post(upload::<C>).layer(upload_cors),
             )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
@@ -908,7 +908,7 @@ where
 }
 
 /// Axum handler for the "/tasks/{task_id}/reports" POST endpoint.
-async fn axum_upload<C: Clock>(
+async fn upload<C: Clock>(
     headers: HeaderMap,
     Path(task_id): Path<String>,
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
