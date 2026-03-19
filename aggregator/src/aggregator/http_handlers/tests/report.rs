@@ -1093,6 +1093,7 @@ async fn upload_client_early_disconnect() {
     .unwrap();
 
     handle.abort();
+    let _ = handle.await;
     in_memory_metrics.shutdown().await;
 
     // Inspect the metrics to confirm they contain expected values. We should have seen two
