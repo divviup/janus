@@ -10,7 +10,7 @@ use janus_messages::{
 };
 use serde::Serialize;
 use tracing::warn;
-use trillium::{Conn, KnownHeaderName, Status};
+use trillium::{Conn, KnownHeaderName};
 use trillium_api::ApiConnExt;
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
@@ -44,11 +44,11 @@ impl<'a> ProblemDocument<'a> {
     /// If the error is defined in DAP, use [`Self::new_dap`] instead.
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc9457
-    pub fn new(type_: &'static str, title: &'static str, status: Status) -> Self {
+    pub fn new(type_: &'static str, title: &'static str, status: StatusCode) -> Self {
         Self {
             type_,
             title,
-            status: status.into(),
+            status: status.as_u16(),
             taskid: None,
             detail: None,
             aggregation_job_id: None,
@@ -67,7 +67,7 @@ impl<'a> ProblemDocument<'a> {
             // specified otherwise.
             //
             // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-09.html#section-3.2
-            Status::BadRequest,
+            StatusCode::BAD_REQUEST,
         )
     }
 
@@ -142,6 +142,12 @@ impl<'a> ProblemDocument<'a> {
 }
 
 impl IntoResponse for ProblemDocument<'_> {
+    fn into_response(self) -> Response {
+        self.to_response_with_retry_after(None)
+    }
+}
+
+impl IntoResponse for &ProblemDocument<'_> {
     fn into_response(self) -> Response {
         self.to_response_with_retry_after(None)
     }

@@ -138,8 +138,14 @@ pub fn aggregator_api_handler<C: Clock>(
 }
 
 async fn auth_check(conn: &mut Conn, (): ()) -> Option<(Status, Halt)> {
+    let mut headers = http::HeaderMap::new();
+    if let Some(auth) = conn.request_headers().get("authorization") {
+        if let Ok(value) = http::HeaderValue::from_bytes(auth.as_ref()) {
+            headers.insert(http::header::AUTHORIZATION, value);
+        }
+    }
     let (Some(cfg), Ok(Some(bearer_token))) =
-        (conn.state::<Arc<Config>>(), extract_bearer_token(conn))
+        (conn.state::<Arc<Config>>(), extract_bearer_token(&headers))
     else {
         return Some((Status::Unauthorized, Halt));
     };

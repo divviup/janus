@@ -16,6 +16,7 @@ base64.workspace = true
 chrono.workspace = true
 educe.workspace = true
 git-version.workspace = true
+http.workspace = true
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true

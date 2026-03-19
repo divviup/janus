@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration as StdDuration};
+use std::{collections::HashSet, net::Ipv6Addr, sync::Arc, time::Duration as StdDuration};
 
 use chrono::TimeDelta;
 use janus_aggregator_core::{
@@ -18,7 +18,7 @@ use janus_messages::{
     PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
     UploadResponse, taskprov::TimePrecision,
 };
-use opentelemetry::{Key, Value};
+use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
 use prio::codec::{Encode, ParameterizedDecode};
 use rand::random;
@@ -933,7 +933,7 @@ async fn upload_client_early_disconnect() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
-    let handler = AggregatorHandlerBuilder::new(
+    let builder = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -941,10 +941,8 @@ async fn upload_client_early_disconnect() {
         default_aggregator_config(),
     )
     .await
-    .unwrap()
-    .build()
-    .await
     .unwrap();
+    let handler = builder.build_axum_router();
 
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
@@ -974,14 +972,11 @@ async fn upload_client_early_disconnect() {
         .get_encoded()
         .unwrap();
 
-    let stopper = Stopper::new();
-    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-    let local_addr = server.local_addr().unwrap();
-    let handle = trillium_tokio::config()
-        .without_signals()
-        .with_stopper(stopper.clone())
-        .with_prebound_server(server)
-        .spawn(handler);
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, handler).await.unwrap();
+    });
 
     // Client sends report, using Content-Length, and waits for one byte of response.
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
@@ -1097,15 +1092,13 @@ async fn upload_client_early_disconnect() {
     .await
     .unwrap();
 
-    stopper.stop();
-    handle.await;
+    handle.abort();
+    let _ = handle.await;
     in_memory_metrics.shutdown().await;
 
     // Inspect the metrics to confirm they contain expected values. We should have seen two
     // successful requests, and two invalid requests due to the client disconnecting in the middle
     // of the request body.
-    let route_key = Key::new("route");
-    let route_value = Value::from("tasks/:task_id/reports");
     let error_code_key = Key::new("error_code");
     let error_type_key = Key::new("error.type");
     let status_code_key = Key::new("http.response.status_code");
@@ -1115,21 +1108,16 @@ async fn upload_client_early_disconnect() {
         .as_any()
         .downcast_ref::<Sum<u64>>()
         .unwrap();
-    // During the Trillium-to-axum transition, both pipelines register the same counter name,
-    // so filter to the route we care about.
-    let upload_counter_points: Vec<_> = counter_data
-        .data_points
-        .iter()
-        .filter(|dp| {
-            dp.attributes
-                .iter()
-                .any(|a| a.key == route_key && a.value == route_value)
-        })
-        .collect();
-    assert_eq!(upload_counter_points.len(), 2);
-    assert!(upload_counter_points.iter().all(|dp| dp.value == 2));
+    assert_eq!(counter_data.data_points.len(), 2);
+    assert!(
+        counter_data
+            .data_points
+            .iter()
+            .all(|data_point| data_point.value == 2)
+    );
     assert_eq!(
-        upload_counter_points
+        counter_data
+            .data_points
             .iter()
             .map(|data_point| {
                 data_point
@@ -1149,21 +1137,16 @@ async fn upload_client_early_disconnect() {
         .as_any()
         .downcast_ref::<Histogram<f64>>()
         .unwrap();
-    let http_route_key = Key::new("http.route");
-    let http_route_value = Value::from("tasks/:task_id/reports");
-    let upload_histogram_points: Vec<_> = histogram_data
-        .data_points
-        .iter()
-        .filter(|dp| {
-            dp.attributes
-                .iter()
-                .any(|a| a.key == http_route_key && a.value == http_route_value)
-        })
-        .collect();
-    assert_eq!(upload_histogram_points.len(), 2);
-    assert!(upload_histogram_points.iter().all(|dp| dp.count == 2));
+    assert_eq!(histogram_data.data_points.len(), 2);
+    assert!(
+        histogram_data
+            .data_points
+            .iter()
+            .all(|data_point| data_point.count == 2)
+    );
     assert_eq!(
-        upload_histogram_points
+        histogram_data
+            .data_points
             .iter()
             .map(|data_point| {
                 data_point
@@ -1176,7 +1159,8 @@ async fn upload_client_early_disconnect() {
         HashSet::from([Some("client_disconnected".to_string()), None])
     );
     assert_eq!(
-        upload_histogram_points
+        histogram_data
+            .data_points
             .iter()
             .map(|data_point| {
                 data_point
@@ -1227,7 +1211,7 @@ async fn upload_client_http11_bulk() {
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
     let stopper = Stopper::new();
-    let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let server = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
     let local_addr = server.local_addr().unwrap();
     let handle = trillium_tokio::config()
         .without_signals()
