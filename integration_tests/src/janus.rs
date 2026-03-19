@@ -21,13 +21,12 @@ use janus_aggregator::{
     config::{
         CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig, default_max_transaction_retries,
     },
-    metrics::MetricsConfiguration,
+    metrics::{MetricsConfiguration, test_util::InMemoryMetricInfrastructure},
     trace::{TokioConsoleConfiguration, TraceConfiguration},
 };
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastore, ephemeral_datastore},
     task::test_util::Task,
-    test_util::noop_meter,
 };
 use janus_core::time::RealClock;
 #[cfg(feature = "testcontainer")]
@@ -99,6 +98,11 @@ pub struct JanusInProcess {
     socket_address: SocketAddr,
     stopper: Stopper,
     _ephemeral_datastore: EphemeralDatastore,
+    pub aggregator_metrics: InMemoryMetricInfrastructure,
+    pub aggregation_job_creator_metrics: InMemoryMetricInfrastructure,
+    pub aggregation_job_driver_metrics: InMemoryMetricInfrastructure,
+    pub collection_job_driver_metrics: InMemoryMetricInfrastructure,
+    pub key_rotator_metrics: InMemoryMetricInfrastructure,
 }
 
 impl JanusInProcess {
@@ -117,6 +121,11 @@ impl JanusInProcess {
             .connection_string()
             .parse()
             .expect("error parsing database URL");
+        let aggregator_metrics = InMemoryMetricInfrastructure::new();
+        let aggregation_job_creator_metrics = InMemoryMetricInfrastructure::new();
+        let aggregation_job_driver_metrics = InMemoryMetricInfrastructure::new();
+        let collection_job_driver_metrics = InMemoryMetricInfrastructure::new();
+        let key_rotator_metrics = InMemoryMetricInfrastructure::new();
 
         // Provision the task.
         datastore
@@ -254,7 +263,7 @@ impl JanusInProcess {
                 options: aggregator_options,
                 config: aggregator_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
-                meter: noop_meter(),
+                meter: aggregator_metrics.meter.clone(),
                 stopper: stopper.clone(),
             });
         tokio::spawn(async {
@@ -266,7 +275,7 @@ impl JanusInProcess {
                 options: aggregation_job_creator_options,
                 config: aggregation_job_creator_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
-                meter: noop_meter(),
+                meter: aggregation_job_creator_metrics.meter.clone(),
                 stopper: stopper.clone(),
             });
             async {
@@ -279,7 +288,7 @@ impl JanusInProcess {
                 options: aggregation_job_driver_options,
                 config: aggregation_job_driver_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
-                meter: noop_meter(),
+                meter: aggregation_job_driver_metrics.meter.clone(),
                 stopper: stopper.clone(),
             });
             async {
@@ -292,7 +301,7 @@ impl JanusInProcess {
                 options: collection_job_driver_options,
                 config: collection_job_driver_config,
                 datastore: ephemeral_datastore.datastore(clock).await,
-                meter: noop_meter(),
+                meter: collection_job_driver_metrics.meter.clone(),
                 stopper: stopper.clone(),
             });
             async {
@@ -305,7 +314,7 @@ impl JanusInProcess {
                 options: key_rotator_options,
                 config: key_rotator_config,
                 datastore,
-                meter: noop_meter(),
+                meter: key_rotator_metrics.meter.clone(),
                 stopper: stopper.clone(),
             });
             async {
@@ -328,6 +337,11 @@ impl JanusInProcess {
             socket_address,
             stopper,
             _ephemeral_datastore: ephemeral_datastore,
+            aggregator_metrics,
+            aggregation_job_creator_metrics,
+            aggregation_job_driver_metrics,
+            collection_job_driver_metrics,
+            key_rotator_metrics,
         }
     }
 
