@@ -942,7 +942,7 @@ async fn upload_client_early_disconnect() {
     )
     .await
     .unwrap();
-    let handler = builder.build_axum_router();
+    let handler = builder.build_axum_router(None);
 
     let task = TaskBuilder::new(
         BatchMode::TimeInterval,
