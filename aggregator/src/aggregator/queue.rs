@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use axum::{extract::Request, middleware::Next, response::IntoResponse};
 use itertools::Itertools;
 use janus_aggregator_core::http_server::TIME_HISTOGRAM_BOUNDARIES;
 use opentelemetry::{
@@ -22,6 +23,7 @@ use tokio::{
     },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 use trillium::{Conn, Handler};
 use trillium_macros::Handler;
@@ -347,6 +349,39 @@ impl<H: Handler> LIFOQueueHandler<H> {
 /// Convenience function for wrapping a handler with a [`LIFOQueueHandler`].
 pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl Handler {
     LIFOQueueHandler::new(queue, handler)
+}
+
+/// Axum middleware that queues requests through a [`LIFORequestQueue`].
+///
+/// This acquires a permit from the queue before forwarding the request to the next handler.
+/// If the queue is full, returns a TooManyRequests error. If the request times out waiting
+/// in the queue, returns a RequestTimeout error.
+///
+/// If a [`CancellationToken`] is present in request extensions (e.g. from fd-level connection
+/// monitoring), acquisition is raced against it so that a disconnected client frees its queue
+/// slot immediately. Without a token, `request_timeout` is the only bound.
+#[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
+pub async fn lifo_queue_middleware(
+    axum::extract::State(queue): axum::extract::State<Arc<LIFORequestQueue>>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let cancel = request.extensions().get::<CancellationToken>().cloned();
+
+    let result = match cancel {
+        Some(token) => {
+            tokio::select! {
+                result = queue.acquire() => result,
+                _ = token.cancelled() => return Error::ClientDisconnected.into_response(),
+            }
+        }
+        None => queue.acquire().await,
+    };
+
+    match result {
+        Ok(_permit) => next.run(request).await,
+        Err(err) => err.into_response(),
+    }
 }
 
 #[derive(Clone, Debug)]
