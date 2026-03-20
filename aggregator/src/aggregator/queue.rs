@@ -323,6 +323,8 @@ impl PermitTx {
 /// [`LIFORequestQueue`].
 ///
 /// Multiple request handlers can share a queue, by cloning the [`Arc`] that wraps the queue.
+// TODO(#4283): Remove when queue tests are migrated to axum.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Handler)]
 pub struct LIFOQueueHandler<H> {
     #[handler(except = [run])]
@@ -347,6 +349,8 @@ impl<H: Handler> LIFOQueueHandler<H> {
 }
 
 /// Convenience function for wrapping a handler with a [`LIFOQueueHandler`].
+// TODO(#4283): Remove when queue tests are migrated to axum.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl Handler {
     LIFOQueueHandler::new(queue, handler)
 }
@@ -360,7 +364,6 @@ pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl
 /// If a [`CancellationToken`] is present in request extensions (e.g. from fd-level connection
 /// monitoring), acquisition is raced against it so that a disconnected client frees its queue
 /// slot immediately. Without a token, `request_timeout` is the only bound.
-#[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
 pub async fn lifo_queue_middleware(
     axum::extract::State(queue): axum::extract::State<Arc<LIFORequestQueue>>,
     request: Request,

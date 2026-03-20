@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{Path, State as AxumState},
+    middleware,
     response::{IntoResponse, Response},
     routing::{post, put},
 };
@@ -22,14 +23,14 @@ use janus_aggregator_core::{
     datastore::{Datastore, Error as datastoreError},
     http_server::{
         BYTES_HISTOGRAM_BOUNDARIES, ErrorCode as AxumErrorCode, HttpMetrics,
-        TIME_HISTOGRAM_BOUNDARIES, http_metrics_middleware, instrumented, trace_layer,
+        TIME_HISTOGRAM_BOUNDARIES, http_metrics_middleware, trace_layer,
     },
     taskprov::taskprov_task_id,
 };
 use janus_core::{
     Runtime,
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    http::{check_content_type, check_content_type_value, extract_bearer_token},
+    http::{check_content_type, extract_bearer_token},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -40,7 +41,6 @@ use janus_messages::{
     TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
-use mime::Mime;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Meter},
@@ -52,7 +52,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
-use trillium_api::{State, TryFromConn, api};
+use trillium_api::State;
 use trillium_opentelemetry::Metrics;
 use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
 use trillium_router::{Router, RouterConnExt};
@@ -60,7 +60,7 @@ use trillium_router::{Router, RouterConnExt};
 use super::{
     Aggregator, Config, Error,
     error::ArcError,
-    queue::{LIFORequestQueue, queued_lifo},
+    queue::{self, LIFORequestQueue},
 };
 use crate::aggregator::{
     AggregationJobContinueResult,
@@ -522,6 +522,20 @@ impl EmptyBody {
     }
 }
 
+impl IntoResponse for EmptyBody {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::OK,
+            [
+                // TODO(#3921): make Retry-After configurable instead of hardcoding.
+                (http::header::RETRY_AFTER, "2".to_string()),
+                (http::header::LOCATION, self.location),
+            ],
+        )
+            .into_response()
+    }
+}
+
 #[async_trait]
 impl Handler for EmptyBody {
     async fn run(&self, conn: Conn) -> Conn {
@@ -612,14 +626,13 @@ impl Handler for StatusCounter {
 }
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
-    "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
+    "/tasks/{task_id}/aggregation_jobs/{aggregation_job_id}";
 pub(crate) static COLLECTION_JOB_ROUTE: &str =
     "/tasks/{task_id}/collection_jobs/{collection_job_id}";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
-    "tasks/:task_id/aggregate_shares/:aggregate_share_id";
+    "/tasks/{task_id}/aggregate_shares/{aggregate_share_id}";
 
 /// Path parameters for aggregation job endpoints.
-#[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
 #[derive(Deserialize)]
 struct AggregationJobPath {
     task_id: String,
@@ -627,7 +640,6 @@ struct AggregationJobPath {
 }
 
 /// Path parameters for aggregate share endpoints.
-#[allow(dead_code)] // Will be used when aggregate share handlers migrate to axum.
 #[derive(Deserialize)]
 struct AggregateSharePath {
     task_id: String,
@@ -698,7 +710,7 @@ where
 
     /// Build just the Axum router (without the Trillium wrapper and proxy). This is useful for
     /// tests that need to serve the axum router directly.
-    pub fn build_axum_router(&self) -> axum::Router {
+    pub fn build_axum_router(&self, helper_queue: Option<Arc<LIFORequestQueue>>) -> axum::Router {
         let http_metrics = HttpMetrics::new(self.meter, "janus_aggregator_responses");
 
         let hpke_cors = CorsLayer::new()
@@ -712,6 +724,24 @@ where
             .allow_headers([CONTENT_TYPE])
             .max_age(CORS_PREFLIGHT_CACHE_AGE);
 
+        // Build aggregation job routes, optionally with LIFO queue middleware for
+        // back-pressure and load-shedding on helpers.
+        let aggregation_job_routes = axum::Router::new().route(
+            AGGREGATION_JOB_ROUTE,
+            put(aggregation_jobs_put::<C>)
+                .post(aggregation_jobs_post::<C>)
+                .get(aggregation_jobs_get::<C>)
+                .delete(aggregation_jobs_delete::<C>),
+        );
+        let aggregation_job_routes = if let Some(queue) = helper_queue {
+            aggregation_job_routes.layer(middleware::from_fn_with_state(
+                queue,
+                queue::lifo_queue_middleware,
+            ))
+        } else {
+            aggregation_job_routes
+        };
+
         axum::Router::new()
             .route(
                 "/hpke_config",
@@ -721,11 +751,18 @@ where
                 "/tasks/{task_id}/reports",
                 post(upload::<C>).layer(upload_cors),
             )
+            .merge(aggregation_job_routes)
             .route(
                 COLLECTION_JOB_ROUTE,
                 put(collection_jobs_put::<C>)
                     .get(collection_jobs_get::<C>)
                     .delete(collection_jobs_delete::<C>),
+            )
+            .route(
+                AGGREGATE_SHARES_ROUTE,
+                put(aggregate_shares_put::<C>)
+                    .get(aggregate_shares_get::<C>)
+                    .delete(aggregate_shares_delete::<C>),
             )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
@@ -757,50 +794,8 @@ where
             .transpose()?
             .map(Arc::new);
 
-        let router = Router::new()
-            .without_options_handling()
-            .put(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(if let Some(ref queue) = helper_queue {
-                    Box::new(queued_lifo(
-                        Arc::clone(queue),
-                        api(aggregation_jobs_put::<C>),
-                    )) as Box<dyn Handler>
-                } else {
-                    Box::new(api(aggregation_jobs_put::<C>)) as Box<dyn Handler>
-                }),
-            )
-            .post(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(if let Some(ref queue) = helper_queue {
-                    Box::new(queued_lifo(
-                        Arc::clone(queue),
-                        api(aggregation_jobs_post::<C>),
-                    )) as Box<dyn Handler>
-                } else {
-                    Box::new(api(aggregation_jobs_post::<C>)) as Box<dyn Handler>
-                }),
-            )
-            .get(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_get::<C>)),
-            )
-            .delete(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_delete::<C>)),
-            )
-            .put(
-                AGGREGATE_SHARES_ROUTE,
-                instrumented(api(aggregate_shares_put::<C>)),
-            )
-            .get(
-                AGGREGATE_SHARES_ROUTE,
-                instrumented(api(aggregate_shares_get::<C>)),
-            )
-            .delete(
-                AGGREGATE_SHARES_ROUTE,
-                instrumented(api(aggregate_shares_delete::<C>)),
-            );
+        // The Trillium router is now empty — all routes have migrated to axum.
+        let router = Router::new().without_options_handling();
 
         let metrics = Metrics::new(self.meter.clone())
             .with_route(|conn| {
@@ -815,7 +810,7 @@ where
             .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
             .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
 
-        let axum_router = self.build_axum_router();
+        let axum_router = self.build_axum_router(helper_queue);
 
         // Bind a local listener for the axum router and spawn it.
         let axum_listener = tokio::net::TcpListener::bind("localhost:0")
@@ -980,133 +975,132 @@ async fn upload<C: Clock>(
         .into_response())
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
+/// Axum handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
 async fn aggregation_jobs_put<C: Clock>(
-    conn: &mut Conn,
-    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
-    validate_content_type::<AggregationJobInitializeReq<TimeInterval>>(conn)?;
+    headers: HeaderMap,
+    Path(path): Path<AggregationJobPath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    body: Bytes,
+) -> Result<Response, Error> {
+    validate_content_type_headers::<AggregationJobInitializeReq<TimeInterval>>(&headers)?;
 
-    let task_id = parse_task_id(conn)?;
-    let aggregation_job_id = parse_aggregation_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_init(
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let response = aggregator
+        .handle_aggregate_init(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+        )
+        .await?;
 
     match response {
-        Some(response) => Ok(Ok(EncodedBody::new(
-            response,
-            AggregationJobResp::MEDIA_TYPE,
-        )
-        .with_status(StatusCode::CREATED))),
-        None => Ok(Err(EmptyBody::for_aggregation_job(
-            &task_id,
-            &aggregation_job_id,
-            0,
-        ))),
+        Some(response) => Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
+            .with_status(StatusCode::CREATED)
+            .into_response()),
+        None => {
+            Ok(EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, 0).into_response())
+        }
     }
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
+/// Axum handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
-    conn: &mut Conn,
-    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
-    validate_content_type::<AggregationJobContinueReq>(conn)?;
+    headers: HeaderMap,
+    Path(path): Path<AggregationJobPath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    body: Bytes,
+) -> Result<Response, Error> {
+    validate_content_type_headers::<AggregationJobContinueReq>(&headers)?;
 
-    let task_id = parse_task_id(conn)?;
-    let aggregation_job_id = parse_aggregation_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_continue(
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let response = aggregator
+        .handle_aggregate_continue(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+        )
+        .await?;
 
     match response {
         AggregationJobContinueResult::Sync(resp) => {
-            Ok(Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
-                .with_status(StatusCode::ACCEPTED)))
+            Ok(EncodedBody::new(resp, AggregationJobResp::MEDIA_TYPE)
+                .with_status(StatusCode::ACCEPTED)
+                .into_response())
         }
-        AggregationJobContinueResult::Async(step) => Ok(Err(EmptyBody::for_aggregation_job(
-            &task_id,
-            &aggregation_job_id,
-            step.into(),
-        ))),
+        AggregationJobContinueResult::Async(step) => {
+            Ok(
+                EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, step.into())
+                    .into_response(),
+            )
+        }
     }
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
+/// Axum handler for the "/tasks/.../aggregation_jobs/..." GET endpoint.
 async fn aggregation_jobs_get<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<Result<EncodedBody<AggregationJobResp>, EmptyBody>, Error> {
-    let task_id = parse_task_id(conn)?;
-    let aggregation_job_id = parse_aggregation_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let step = parse_step(conn)?
+    headers: HeaderMap,
+    Path(path): Path<AggregationJobPath>,
+    axum::extract::RawQuery(query): axum::extract::RawQuery,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<Response, Error> {
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let step = parse_step_from_query(query.as_deref())?
         .ok_or_else(|| Error::BadRequest("missing step query parameter".into()))?;
 
-    let response = conn
-        .cancel_on_disconnect(aggregator.handle_aggregate_get(
+    let response = aggregator
+        .handle_aggregate_get(
             &task_id,
             &aggregation_job_id,
             auth_token,
             taskprov_task_config.as_ref(),
             step,
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+        )
+        .await?;
 
     match response {
-        Some(response) => Ok(Ok(EncodedBody::new(
-            response,
-            AggregationJobResp::MEDIA_TYPE,
-        )
-        .with_status(StatusCode::OK))),
-        None => Ok(Err(EmptyBody::for_aggregation_job(
-            &task_id,
-            &aggregation_job_id,
-            step.into(),
-        ))),
+        Some(response) => Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE)
+            .with_status(StatusCode::OK)
+            .into_response()),
+        None => Ok(
+            EmptyBody::for_aggregation_job(&task_id, &aggregation_job_id, step.into())
+                .into_response(),
+        ),
     }
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
+/// Axum handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
 async fn aggregation_jobs_delete<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<Status, Error> {
-    let task_id = parse_task_id(conn)?;
-    let aggregation_job_id = parse_aggregation_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+    headers: HeaderMap,
+    Path(path): Path<AggregationJobPath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<StatusCode, Error> {
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let aggregation_job_id = parse_aggregation_job_id_str(&path.aggregation_job_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
 
-    conn.cancel_on_disconnect(aggregator.handle_aggregate_delete(
-        &task_id,
-        &aggregation_job_id,
-        auth_token,
-        taskprov_task_config.as_ref(),
-    ))
-    .await
-    .ok_or(Error::ClientDisconnected)??;
-    Ok(Status::NoContent)
+    aggregator
+        .handle_aggregate_delete(
+            &task_id,
+            &aggregation_job_id,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Axum handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
@@ -1193,73 +1187,74 @@ async fn collection_jobs_delete<C: Clock>(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" PUT endpoint.
+/// Axum handler for the "/tasks/.../aggregate_shares/..." PUT endpoint.
 async fn aggregate_shares_put<C: Clock>(
-    conn: &mut Conn,
-    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<EncodedBody<AggregateShare>, Error> {
-    validate_content_type::<AggregateShareReq<TimeInterval>>(conn)?;
+    headers: HeaderMap,
+    Path(path): Path<AggregateSharePath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    body: Bytes,
+) -> Result<Response, Error> {
+    validate_content_type_headers::<AggregateShareReq<TimeInterval>>(&headers)?;
 
-    let task_id = parse_task_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let aggregate_share_id = parse_aggregate_share_id(conn)?;
-    let share = conn
-        .cancel_on_disconnect(aggregator.handle_put_aggregate_share(
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let aggregate_share_id = parse_aggregate_share_id_str(&path.aggregate_share_id)?;
+    let share = aggregator
+        .handle_put_aggregate_share(
             &task_id,
             &aggregate_share_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+        )
+        .await?;
 
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE).into_response())
 }
 
-/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" GET endpoint.
+/// Axum handler for the "/tasks/.../aggregate_shares/..." GET endpoint.
 async fn aggregate_shares_get<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<EncodedBody<AggregateShare>, Error> {
-    let task_id = parse_task_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let aggregate_share_id = parse_aggregate_share_id(conn)?;
-    let share = conn
-        .cancel_on_disconnect(aggregator.handle_get_aggregate_share(
+    headers: HeaderMap,
+    Path(path): Path<AggregateSharePath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<Response, Error> {
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let aggregate_share_id = parse_aggregate_share_id_str(&path.aggregate_share_id)?;
+    let share = aggregator
+        .handle_get_aggregate_share(
             &task_id,
             &aggregate_share_id,
             auth_token,
             taskprov_task_config.as_ref(),
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+        )
+        .await?;
 
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE).into_response())
 }
 
-/// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" DELETE endpoint.
+/// Axum handler for the "/tasks/.../aggregate_shares/..." DELETE endpoint.
 async fn aggregate_shares_delete<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<(), Error> {
-    let task_id = parse_task_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let aggregate_share_id = parse_aggregate_share_id(conn)?;
-    conn.cancel_on_disconnect(aggregator.handle_delete_aggregate_share(
-        &task_id,
-        &aggregate_share_id,
-        auth_token,
-        taskprov_task_config.as_ref(),
-    ))
-    .await
-    .ok_or(Error::ClientDisconnected)??;
+    headers: HeaderMap,
+    Path(path): Path<AggregateSharePath>,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<StatusCode, Error> {
+    let task_id = parse_task_id_str(&path.task_id)?;
+    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let taskprov_task_config = parse_taskprov_header_from_headers(&aggregator, &task_id, &headers)?;
+    let aggregate_share_id = parse_aggregate_share_id_str(&path.aggregate_share_id)?;
+    aggregator
+        .handle_delete_aggregate_share(
+            &task_id,
+            &aggregate_share_id,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
+        .await?;
 
-    conn.set_status(Status::NoContent);
-    Ok(())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Check the request's Content-Type header, and return an error if its MIME essence or its
@@ -1269,52 +1264,19 @@ fn validate_content_type_headers<M: MediaType>(headers: &HeaderMap) -> Result<()
     check_content_type::<M>(headers).map_err(|e| Error::BadRequest(e.into()))
 }
 
-/// Validates the Content-Type of the request against `M` (Trillium adapter).
-fn validate_content_type<M: MediaType>(conn: &Conn) -> Result<(), Error> {
-    let content_type = conn
-        .request_headers()
-        .get(KnownHeaderName::ContentType)
-        .ok_or_else(|| Error::BadRequest("no Content-Type header".into()))?;
-
-    // For whatever, reason, HeaderValue::as_str doesn't work when content types include parameters
-    // so we get the value bytes and parse into a `Mime` ourselves.
-    let request_mime: Mime = str::from_utf8(content_type.as_ref())
-        .map_err(|_| {
-            Error::BadRequest(format!("invalid Content-Type header: {content_type}").into())
-        })?
-        .parse()
-        .context("failed to parse Content-Type header")
-        .map_err(|e| Error::BadRequest(e.into()))?;
-
-    check_content_type_value::<M>(request_mime).map_err(|e| Error::BadRequest(e.into()))
-}
-
-/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter
-fn parse_task_id(conn: &Conn) -> Result<TaskId, Error> {
-    let encoded = conn
-        .param("task_id")
-        .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".into()))?;
+fn parse_task_id_str(encoded: &str) -> Result<TaskId, Error> {
     encoded
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".into()))
 }
 
-/// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
-fn parse_aggregation_job_id(conn: &Conn) -> Result<AggregationJobId, Error> {
-    let encoded = conn.param("aggregation_job_id").ok_or_else(|| {
-        Error::Internal("aggregation_job_id parameter is missing from captures".into())
-    })?;
+fn parse_aggregation_job_id_str(encoded: &str) -> Result<AggregationJobId, Error> {
     encoded
         .parse()
         .map_err(|_| Error::BadRequest("invalid AggregationJobId".into()))
 }
 
-/// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path
-/// parameters.
-fn parse_aggregate_share_id(conn: &Conn) -> Result<AggregateShareId, Error> {
-    let encoded = conn.param("aggregate_share_id").ok_or_else(|| {
-        Error::Internal("aggregate_share_id parameter is missing from captures".into())
-    })?;
+fn parse_aggregate_share_id_str(encoded: &str) -> Result<AggregateShareId, Error> {
     encoded
         .parse()
         .map_err(|e| Error::BadRequest(format!("invalid aggregate share ID in path: {e}").into()))
@@ -1332,31 +1294,18 @@ fn parse_auth_token_from_headers(
         return Ok(Some(bearer_token));
     }
 
-    headers
-        .get(DAP_AUTH_HEADER)
-        .map(|value| {
-            AuthenticationToken::new_dap_auth_token_from_bytes(value.as_bytes())
-                .context("bad DAP-Auth-Token header")
-                .map_err(|e| Error::BadRequest(e.into()))
-        })
-        .transpose()
-}
+    let mut dap_auth_values = headers.get_all(DAP_AUTH_HEADER).into_iter();
+    let Some(value) = dap_auth_values.next() else {
+        return Ok(None);
+    };
+    if dap_auth_values.next().is_some() {
+        return Err(Error::UnauthorizedRequest(*task_id));
+    }
 
-/// Get an [`AuthenticationToken`] from the request (Trillium adapter).
-fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
-    // Build an http::HeaderMap with just the auth-related headers from the Trillium conn.
-    let mut headers = HeaderMap::new();
-    if let Some(auth) = conn.request_headers().get("authorization") {
-        if let Ok(value) = HeaderValue::from_bytes(auth.as_ref()) {
-            headers.insert(http::header::AUTHORIZATION, value);
-        }
-    }
-    if let Some(dap_auth) = conn.request_headers().get(DAP_AUTH_HEADER) {
-        if let Ok(value) = HeaderValue::from_bytes(dap_auth.as_ref()) {
-            headers.insert(DAP_AUTH_HEADER, value);
-        }
-    }
-    parse_auth_token_from_headers(task_id, &headers)
+    AuthenticationToken::new_dap_auth_token_from_bytes(value.as_bytes())
+        .context("bad DAP-Auth-Token header")
+        .map_err(|e| Error::BadRequest(e.into()))
+        .map(Some)
 }
 
 /// Parse the taskprov header from an `http::HeaderMap`.
@@ -1369,10 +1318,17 @@ fn parse_taskprov_header_from_headers<C: Clock>(
         return Ok(None);
     }
 
-    let taskprov_header = match headers.get(TASKPROV_HEADER) {
+    let mut taskprov_values = headers.get_all(TASKPROV_HEADER).into_iter();
+    let taskprov_header = match taskprov_values.next() {
         Some(taskprov_header) => taskprov_header,
         None => return Ok(None),
     };
+    if taskprov_values.next().is_some() {
+        return Err(Error::InvalidMessage(
+            Some(*task_id),
+            "multiple taskprov headers",
+        ));
+    }
 
     let task_config_encoded = URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
         Error::InvalidMessage(
@@ -1398,22 +1354,6 @@ fn parse_taskprov_header_from_headers<C: Clock>(
     ))
 }
 
-/// Parse the taskprov header from a Trillium connection (delegates to
-/// [`parse_taskprov_header_from_headers`]).
-fn parse_taskprov_header<C: Clock>(
-    aggregator: &Aggregator<C>,
-    task_id: &TaskId,
-    conn: &Conn,
-) -> Result<Option<TaskConfig>, Error> {
-    let mut headers = HeaderMap::new();
-    if let Some(val) = conn.request_headers().get(TASKPROV_HEADER) {
-        if let Ok(hv) = HeaderValue::from_bytes(val.as_ref()) {
-            headers.insert(TASKPROV_HEADER, hv);
-        }
-    }
-    parse_taskprov_header_from_headers(aggregator, task_id, &headers)
-}
-
 /// Gets the [`AggregationJobStep`] from a raw query string.
 fn parse_step_from_query(query: Option<&str>) -> Result<Option<AggregationJobStep>, Error> {
     const STEP_KEY: &str = "step";
@@ -1427,30 +1367,6 @@ fn parse_step_from_query(query: Option<&str>) -> Result<Option<AggregationJobSte
         .map(|(_, val)| val.parse::<u16>().map(AggregationJobStep::from))
         .transpose()
         .map_err(|err| Error::BadRequest(format!("couldn't parse step: {err}").into()))
-}
-
-/// Gets the [`AggregationJobStep`] from the request's query string (Trillium adapter).
-fn parse_step(conn: &Conn) -> Result<Option<AggregationJobStep>, Error> {
-    parse_step_from_query(Some(conn.querystring()))
-}
-
-struct BodyBytes(Vec<u8>);
-
-#[async_trait]
-impl TryFromConn for BodyBytes {
-    type Error = Error;
-
-    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
-        conn.request_body()
-            .await
-            .read_bytes()
-            .await
-            .map(BodyBytes)
-            .map_err(|error| match error {
-                trillium::Error::Io(_) | trillium::Error::Closed => Error::ClientDisconnected,
-                _ => Error::BadRequest(error.into()),
-            })
-    }
 }
 
 #[cfg(feature = "test-util")]
