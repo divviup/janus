@@ -13,7 +13,7 @@ use clap::Parser;
 use futures::future::try_join_all;
 use http::{
     Request, Response, StatusCode,
-    header::{HOST, HeaderName, HeaderValue},
+    header::{CONNECTION, HOST, HeaderName, HeaderValue, TRANSFER_ENCODING},
 };
 use janus_aggregator::{
     binary_utils::{BinaryOptions, CommonBinaryOptions, janus_main},
@@ -40,8 +40,8 @@ use crate::{
     status::{ERROR, SUCCESS},
 };
 
-// Headers which should not be passed through the reverse proxy
-const UNPROXYABLE_HEADERS: [HeaderName; 1] = [HOST];
+// Headers which should not be passed through the reverse proxy.
+const UNPROXYABLE_HEADERS: [HeaderName; 3] = [HOST, TRANSFER_ENCODING, CONNECTION];
 
 #[derive(Clone)]
 struct InteropAggregatorState {

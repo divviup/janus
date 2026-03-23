@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use assert_matches::assert_matches;
 use futures::future::try_join_all;
+use http::StatusCode;
 use janus_aggregator_core::{
     batch_mode::CollectableBatchMode,
     datastore::{
@@ -29,7 +30,6 @@ use prio::{
     vdaf::{Aggregator, dummy},
 };
 use rand::random;
-use trillium::Status;
 
 use crate::aggregator::{
     BatchAggregationsIterator,
@@ -49,7 +49,7 @@ async fn aggregate_continue_sync() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair: hpke_key,
         ..
     } = HttpHandlerTest::new().await;
@@ -277,7 +277,7 @@ async fn aggregate_continue_sync() {
 
     // Send request, and parse response.
     let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
 
     // Validate response.
     assert_eq!(
@@ -391,7 +391,7 @@ async fn aggregate_continue_async() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair: hpke_key,
         ..
     } = HttpHandlerTest::new().await;
@@ -547,7 +547,7 @@ async fn aggregate_continue_async() {
 
     // Send request, and parse response.
     let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
 
     // Validate response was empty.
     assert!(aggregate_resp.is_none());
@@ -634,7 +634,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair: hpke_key,
         ..
     } = HttpHandlerTest::new().await;
@@ -911,7 +911,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
 
     // Send request, and parse response.
     let resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
+        post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &router).await;
     assert!(resp.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
@@ -1201,7 +1201,7 @@ async fn aggregate_continue_accumulate_batch_aggregation() {
     );
 
     let resp_2 =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
+        post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &router).await;
     assert!(resp_2.is_some());
 
     // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
@@ -1312,7 +1312,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -1400,8 +1400,7 @@ async fn aggregate_continue_leader_sends_non_continue_or_finish_transition() {
         )]),
     );
 
-    let resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+    let resp = post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
     let prepare_resps =
         assert_matches!(resp, Some(AggregationJobResp{prepare_resps}) => prepare_resps);
     assert_eq!(prepare_resps.len(), 1);
@@ -1426,7 +1425,7 @@ async fn aggregate_continue_prep_step_fails() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair: hpke_key,
         ..
     } = HttpHandlerTest::new().await;
@@ -1525,7 +1524,7 @@ async fn aggregate_continue_prep_step_fails() {
     );
 
     let aggregate_resp =
-        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &router).await;
     assert_eq!(
         aggregate_resp,
         Some(AggregationJobResp {
@@ -1611,7 +1610,7 @@ async fn aggregate_continue_unexpected_transition() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -1704,8 +1703,8 @@ async fn aggregate_continue_unexpected_transition() {
         &task,
         &aggregation_job_id,
         &request,
-        &handler,
-        Status::BadRequest,
+        &router,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
@@ -1722,7 +1721,7 @@ async fn aggregate_continue_out_of_order_transition() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -1861,8 +1860,8 @@ async fn aggregate_continue_out_of_order_transition() {
         &task,
         &aggregation_job_id,
         &request,
-        &handler,
-        Status::BadRequest,
+        &router,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent unexpected, duplicate, or out-of-order prepare steps"),
@@ -1879,7 +1878,7 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -1958,8 +1957,8 @@ async fn aggregate_continue_for_non_waiting_aggregation() {
         &task,
         &aggregation_job_id,
         &request,
-        &handler,
-        Status::BadRequest,
+        &router,
+        StatusCode::BAD_REQUEST,
         "urn:ietf:params:ppm:dap:error:invalidMessage",
         "The message type for a response was incorrect or the payload was malformed.",
         Some("leader sent prepare step for non-CONTINUE report aggregation"),

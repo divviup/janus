@@ -21,7 +21,7 @@ use crate::{
         Config,
         http_handlers::{
             AggregatorHandlerBuilder, HPKE_CONFIG_SIGNATURE_HEADER,
-            test_util::{HttpHandlerTest, take_response_body},
+            test_util::{HttpHandlerTest, take_response_body_conn as take_response_body},
         },
         test_util::{hpke_config_signing_key, hpke_config_verification_key},
     },

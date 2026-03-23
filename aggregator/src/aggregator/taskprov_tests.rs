@@ -58,7 +58,10 @@ use crate::{
     aggregator::{
         Config,
         aggregation_job_init::test_util::PrepareInitGenerator,
-        http_handlers::test_util::{decode_response_body, take_problem_details},
+        http_handlers::test_util::{
+            decode_response_body_conn as decode_response_body,
+            take_problem_details_conn as take_problem_details,
+        },
     },
     config::TaskprovConfig,
 };

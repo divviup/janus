@@ -27,7 +27,10 @@ use trillium_testing::{
 
 use crate::aggregator::{
     collection_job_tests::setup_collection_job_test_case,
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    http_handlers::test_util::{
+        HttpHandlerTest, decode_response_body_conn as decode_response_body,
+        take_problem_details_conn as take_problem_details,
+    },
 };
 
 #[tokio::test]

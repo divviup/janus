@@ -447,6 +447,17 @@ pub mod test_util {
         }
     }
 
+    impl WithAuthenticationToken for http::HeaderMap {
+        fn with_authentication_token(mut self, auth_token: &AuthenticationToken) -> Self {
+            let (header, value) = auth_token.request_authentication();
+            self.insert(
+                http::header::HeaderName::from_bytes(header.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+            self
+        }
+    }
+
     /// Extension trait to fluently match on authentication tokens with a [`mockito::Mock`].
     pub trait MatchAuthenticationToken {
         /// Matches on requests which include a header and value matching
