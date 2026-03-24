@@ -6,11 +6,12 @@ use anyhow::Context;
 use async_trait::async_trait;
 use axum::{
     body::Body,
-    extract::{Path, State as AxumState},
+    extract::{FromRequestParts, Path, State as AxumState},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{post, put},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
 use futures::{
     TryStreamExt,
     io::{AsyncRead, AsyncReadExt},
@@ -532,6 +533,26 @@ impl Handler for EmptyBody {
     }
 }
 
+/// A Trillium handler that wraps the proxy and only forwards the request when no prior handler
+/// (i.e. the Trillium router) has set a status on the conn. This prevents the proxy from
+/// overriding responses from Trillium-handled routes.
+// TODO(#4283): Remove when Trillium is fully removed.
+struct ConditionalProxy<H>(H);
+
+#[async_trait]
+impl<H: Handler> Handler for ConditionalProxy<H> {
+    async fn run(&self, conn: Conn) -> Conn {
+        if conn.status().is_some() {
+            return conn;
+        }
+        self.0.run(conn).await
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        self.0.before_send(conn).await
+    }
+}
+
 /// A Trillium handler that checks for state set when sending an error response, and updates an
 /// OpenTelemetry counter accordingly.
 // TODO(#4283): Remove in favour of `http_metrics_middleware` when Trillium is fully removed.
@@ -592,9 +613,48 @@ impl Handler for StatusCounter {
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
-pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
+pub(crate) static COLLECTION_JOB_ROUTE: &str =
+    "/tasks/{task_id}/collection_jobs/{collection_job_id}";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
     "tasks/:task_id/aggregate_shares/:aggregate_share_id";
+
+/// Parsed path parameters for collection job endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs, de-duplicating validation across handlers.
+struct CollectionJobPath {
+    task_id: TaskId,
+    collection_job_id: CollectionJobId,
+}
+
+#[derive(Deserialize)]
+struct RawCollectionJobPath {
+    task_id: String,
+    collection_job_id: String,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for CollectionJobPath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawCollectionJobPath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let collection_job_id = raw
+            .collection_job_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))?;
+        Ok(Self {
+            task_id,
+            collection_job_id,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -676,6 +736,12 @@ where
                 "/tasks/{task_id}/reports",
                 post(upload::<C>).layer(upload_cors),
             )
+            .route(
+                COLLECTION_JOB_ROUTE,
+                put(collection_jobs_put::<C>)
+                    .get(collection_jobs_get::<C>)
+                    .delete(collection_jobs_delete::<C>),
+            )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
                 ServiceBuilder::new()
@@ -739,18 +805,6 @@ where
                 instrumented(api(aggregation_jobs_delete::<C>)),
             )
             .put(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_put::<C>)),
-            )
-            .get(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_get::<C>)),
-            )
-            .delete(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_delete::<C>)),
-            )
-            .put(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares_put::<C>)),
             )
@@ -792,20 +846,23 @@ where
         // Proxy fallback: routes not matched by the Trillium router are forwarded to
         // the local axum server. As endpoints migrate, they are removed from the
         // Trillium router and added to the axum router; the proxy transparently
-        // forwards traffic to them.
+        // forwards traffic to them. We use `proxy_not_found()` so that axum's
+        // intentional 404 responses (e.g. for missing collection jobs) are forwarded
+        // back to the client rather than being swallowed by the proxy.
         let upstream = format!("http://{axum_address}/").into_upstream();
         let proxy = Proxy::new(
             trillium_proxy::Client::new(trillium_tokio::ClientConfig::default())
                 .with_default_pool(),
             upstream,
-        );
+        )
+        .proxy_not_found();
 
         Ok((
             State(self.aggregator),
             metrics,
             router,
             StatusCounter::new(self.meter),
-            proxy,
+            ConditionalProxy(proxy),
         ))
     }
 }
@@ -1067,77 +1124,64 @@ async fn aggregation_jobs_delete<C: Clock>(
     Ok(Status::NoContent)
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
+/// Axum handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
 async fn collection_jobs_put<C: Clock>(
-    conn: &mut Conn,
-    (State(aggregator), BodyBytes(body)): (State<Arc<Aggregator<C>>>, BodyBytes),
-) -> Result<(), Error> {
-    validate_content_type::<CollectionJobReq<TimeInterval>>(conn)?;
+    headers: HeaderMap,
+    path: CollectionJobPath,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+    body: Bytes,
+) -> Result<Response, Error> {
+    validate_content_type_headers::<CollectionJobReq<TimeInterval>>(&headers)?;
 
-    let task_id = parse_task_id(conn)?;
-    let collection_job_id = parse_collection_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let response_bytes = conn
-        .cancel_on_disconnect(aggregator.handle_create_collection_job(
-            &task_id,
-            &collection_job_id,
-            &body,
-            auth_token,
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let response_bytes = aggregator
+        .handle_create_collection_job(&path.task_id, &path.collection_job_id, &body, auth_token)
+        .await?;
 
-    conn.response_headers_mut().insert(
-        KnownHeaderName::ContentType,
-        CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-    );
-    conn.set_status(Status::Created);
-    conn.set_body(response_bytes);
-    Ok(())
+    Ok((
+        StatusCode::CREATED,
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static(CollectionJobResp::<TimeInterval>::MEDIA_TYPE),
+        )],
+        response_bytes,
+    )
+        .into_response())
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." GET endpoint.
+/// Axum handler for the "/tasks/.../collection_jobs/..." GET endpoint.
 async fn collection_jobs_get<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<(), Error> {
-    let task_id = parse_task_id(conn)?;
-    let collection_job_id = parse_collection_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let response_bytes = conn
-        .cancel_on_disconnect(aggregator.handle_get_collection_job(
-            &task_id,
-            &collection_job_id,
-            auth_token,
-        ))
-        .await
-        .ok_or(Error::ClientDisconnected)??;
+    headers: HeaderMap,
+    path: CollectionJobPath,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<Response, Error> {
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    let response_bytes = aggregator
+        .handle_get_collection_job(&path.task_id, &path.collection_job_id, auth_token)
+        .await?;
 
-    conn.response_headers_mut().insert(
-        KnownHeaderName::ContentType,
-        CollectionJobResp::<TimeInterval>::MEDIA_TYPE,
-    );
-    conn.set_status(Status::Ok);
-    conn.set_body(response_bytes);
-    Ok(())
+    Ok((
+        StatusCode::OK,
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static(CollectionJobResp::<TimeInterval>::MEDIA_TYPE),
+        )],
+        response_bytes,
+    )
+        .into_response())
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
+/// Axum handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
 async fn collection_jobs_delete<C: Clock>(
-    conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<Status, Error> {
-    let task_id = parse_task_id(conn)?;
-    let collection_job_id = parse_collection_job_id(conn)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    conn.cancel_on_disconnect(aggregator.handle_delete_collection_job(
-        &task_id,
-        &collection_job_id,
-        auth_token,
-    ))
-    .await
-    .ok_or(Error::ClientDisconnected)??;
-    Ok(Status::NoContent)
+    headers: HeaderMap,
+    path: CollectionJobPath,
+    AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
+) -> Result<StatusCode, Error> {
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
+    aggregator
+        .handle_delete_collection_job(&path.task_id, &path.collection_job_id, auth_token)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// API handler for the "/tasks/.../aggregate_shares/:aggregate_share_id" PUT endpoint.
@@ -1254,16 +1298,6 @@ fn parse_aggregation_job_id(conn: &Conn) -> Result<AggregationJobId, Error> {
     encoded
         .parse()
         .map_err(|_| Error::BadRequest("invalid AggregationJobId".into()))
-}
-
-/// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
-fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
-    let encoded = conn.param("collection_job_id").ok_or_else(|| {
-        Error::Internal("collection_job_id parameter is missing from captures".into())
-    })?;
-    encoded
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))
 }
 
 /// Parse an [`AggregateShareId`] from the "aggregate_share_id" parameter in a set of path
