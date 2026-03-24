@@ -63,7 +63,7 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, ReportUploadStatus, Role, TaskId, Time, UploadRequest, UploadResponse,
+    ReportMetadata, ReportUploadStatus, Role, TaskId, Time, UploadErrors, UploadRequest,
     taskprov::TimePrecision,
 };
 #[cfg(feature = "ohttp")]
@@ -678,7 +678,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         &self,
         upload_endpoint: &Url,
         request_body: &[u8],
-    ) -> Result<(StatusCode, Option<UploadResponse>), Error> {
+    ) -> Result<(StatusCode, Option<UploadErrors>), Error> {
         let response = retry_http_request(
             self.parameters.http_request_retry_parameters.build(),
             || async {
@@ -697,10 +697,10 @@ impl<V: vdaf::Client<16>> Client<V> {
             .headers()
             .get(CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            == Some(UploadResponse::MEDIA_TYPE)
+            == Some(UploadErrors::MEDIA_TYPE)
         {
             let body = response.body();
-            Some(UploadResponse::get_decoded_with_param(
+            Some(UploadErrors::get_decoded_with_param(
                 &body.len(),
                 body.as_ref(),
             )?)
@@ -719,7 +719,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         &self,
         upload_endpoint: &Url,
         request_body: &[u8],
-    ) -> Result<(StatusCode, Option<UploadResponse>), Error> {
+    ) -> Result<(StatusCode, Option<UploadErrors>), Error> {
         let ohttp_config = if let Some(ohttp_config) = &self.ohttp_config {
             ohttp_config
         } else {
@@ -804,9 +804,9 @@ impl<V: vdaf::Client<16>> Client<V> {
             .iter()
             .find(|field| field.name() == CONTENT_TYPE.as_str().as_bytes())
             .and_then(|field| {
-                if field.value() == UploadResponse::MEDIA_TYPE.as_bytes() {
+                if field.value() == UploadErrors::MEDIA_TYPE.as_bytes() {
                     let content = message.content();
-                    UploadResponse::get_decoded_with_param(&content.len(), content).ok()
+                    UploadErrors::get_decoded_with_param(&content.len(), content).ok()
                 } else {
                     None
                 }

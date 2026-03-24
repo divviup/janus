@@ -2,8 +2,8 @@ use prio::codec::Encode;
 
 use crate::{
     Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, PlaintextInputShare,
-    Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, UploadRequest,
-    UploadResponse, roundtrip_encoding, roundtrip_encoding_parameterized, taskprov::TimePrecision,
+    Report, ReportError, ReportId, ReportMetadata, ReportUploadStatus, TaskId, Time, UploadErrors,
+    UploadRequest, roundtrip_encoding, roundtrip_encoding_parameterized, taskprov::TimePrecision,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
@@ -322,7 +322,7 @@ fn roundtrip_input_share_aad() {
 
 #[test]
 fn upload_response_size() {
-    let response = UploadResponse::new(&[
+    let response = UploadErrors::new(&[
         ReportUploadStatus::new(ReportId::from([0u8; 16]), ReportError::TaskExpired),
         ReportUploadStatus::new(ReportId::from([1u8; 16]), ReportError::InvalidMessage),
     ]);
@@ -519,9 +519,9 @@ fn roundtrip_upload_request() {
 #[test]
 fn roundtrip_upload_response() {
     roundtrip_encoding_parameterized(&[
-        (UploadResponse::new(&[]), 0, ""),
+        (UploadErrors::new(&[]), 0, ""),
         (
-            UploadResponse::new(&[ReportUploadStatus::new(
+            UploadErrors::new(&[ReportUploadStatus::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 ReportError::TaskExpired,
             )]),
@@ -532,7 +532,7 @@ fn roundtrip_upload_response() {
             ),
         ),
         (
-            UploadResponse::new(&[
+            UploadErrors::new(&[
                 ReportUploadStatus::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     ReportError::TaskExpired,

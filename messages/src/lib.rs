@@ -1496,15 +1496,16 @@ impl Decode for ReportUploadStatus {
     }
 }
 
-/// Represents a response to a request to upload reports to DAP aggregators.
+/// Represents errors that occurred while uploading reports to DAP aggregators. If no errors
+/// occurred, there will be no response body.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UploadResponse {
+pub struct UploadErrors {
     status: Vec<ReportUploadStatus>,
 }
 
-impl UploadResponse {
+impl UploadErrors {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-resp";
+    pub const MEDIA_TYPE: &'static str = "application/ppm-dap;message=upload-errors";
 
     pub fn new(statuses: &[ReportUploadStatus]) -> Self {
         Self {
@@ -1517,7 +1518,7 @@ impl UploadResponse {
     }
 }
 
-impl Encode for UploadResponse {
+impl Encode for UploadErrors {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         encode_fixlen_items(bytes, &self.status)
     }
@@ -1531,7 +1532,7 @@ impl Encode for UploadResponse {
     }
 }
 
-impl ParameterizedDecode<usize> for UploadResponse {
+impl ParameterizedDecode<usize> for UploadErrors {
     fn decode_with_param(length: &usize, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let status = decode_fixlen_items(*length, &(), bytes)?;
 

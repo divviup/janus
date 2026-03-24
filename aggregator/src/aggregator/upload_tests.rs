@@ -135,10 +135,12 @@ async fn upload() {
         clock.now().to_time(task.time_precision()),
     );
 
-    aggregator
+    let upload_errors = aggregator
         .handle_upload(task.id(), report_stream(report.clone()))
         .await
         .unwrap();
+
+    assert!(upload_errors.status().is_empty());
 
     let got_report = ds
         .run_unnamed_tx(|tx| {

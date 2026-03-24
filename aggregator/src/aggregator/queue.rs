@@ -140,8 +140,14 @@ impl LIFORequestQueue {
                                             if stack.insert(id, permit_tx).is_some() {
                                                 // Avoid panicking on this bug, since if this
                                                 // process dies, request processing stops.
-                                                error!(?id, "bug: overwrote existing request in the queue");
-                                                metrics.requests_queued.add(1, &[KeyValue::new("status", "overwrote")]);
+                                                error!(
+                                                    ?id,
+                                                    "bug: overwrote existing request in the queue",
+                                                );
+                                                metrics.requests_queued.add(
+                                                    1,
+                                                    &[KeyValue::new("status", "overwrote")],
+                                                );
                                             } else {
                                                 metrics.requests_queued.add(1, &[]);
                                             }

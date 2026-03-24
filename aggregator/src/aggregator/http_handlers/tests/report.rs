@@ -15,8 +15,8 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, MediaType,
-    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadRequest,
-    UploadResponse, taskprov::TimePrecision,
+    PlaintextInputShare, Report, ReportError, ReportId, ReportMetadata, Role, UploadErrors,
+    UploadRequest, taskprov::TimePrecision,
 };
 use opentelemetry::Key;
 use opentelemetry_sdk::metrics::data::{Histogram, Sum};
@@ -64,12 +64,12 @@ async fn upload_handler() {
         }
         assert_eq!(test_conn.status(), Some(Status::Ok));
 
-        assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
+        assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
         let body = &take_response_body(test_conn).await;
         let expected_content_len = format!("{}", body.len());
         let len_str = expected_content_len.as_str();
         assert_headers!(&test_conn, "content-length" => len_str);
-        let upload_response = UploadResponse::get_decoded_with_param(&body.len(), body).unwrap();
+        let upload_response = UploadErrors::get_decoded_with_param(&body.len(), body).unwrap();
 
         assert_eq!(upload_response.status().len(), 1);
         for status in upload_response.status() {
@@ -626,11 +626,11 @@ async fn upload_handler_mixed_success_failure() {
 
     // Should get HTTP 200 OK even with mixed results
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
+    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
 
     // Parse the response
     let body = take_response_body(&mut test_conn).await;
-    let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
+    let upload_response = UploadErrors::get_decoded_with_param(&body.len(), &body).unwrap();
 
     // Successful reports should NOT appear in the response
     assert_eq!(
@@ -717,10 +717,10 @@ async fn upload_handler_task_not_started() {
 
     // Should get HTTP 200 OK but with TaskNotStarted error in response
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-resp");
+    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
 
     let body = take_response_body(&mut test_conn).await;
-    let upload_response = UploadResponse::get_decoded_with_param(&body.len(), &body).unwrap();
+    let upload_response = UploadErrors::get_decoded_with_param(&body.len(), &body).unwrap();
 
     assert_eq!(upload_response.status().len(), 1);
     assert_eq!(
