@@ -688,7 +688,7 @@ mod tests {
     use janus_messages::{
         AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
         ExtensionType, MediaType, PartialBatchSelector, PrepareResp, PrepareStepResult,
-        ReportError, ReportMetadata, batch_mode::TimeInterval, taskprov::TimePrecision,
+        ReportError, ReportMetadata, TimePrecision, batch_mode::TimeInterval,
     };
     use prio::{
         codec::Encode,

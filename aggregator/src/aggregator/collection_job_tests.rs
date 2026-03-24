@@ -26,9 +26,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, CollectionJobId,
-    CollectionJobReq, CollectionJobResp, Interval, MediaType, Query, Role, Time,
+    CollectionJobReq, CollectionJobResp, Interval, MediaType, Query, Role, Time, TimePrecision,
     batch_mode::{BatchMode as BatchModeTrait, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode},

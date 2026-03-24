@@ -7,8 +7,8 @@ use janus_core::{
     test_util::install_test_trace_subscriber,
 };
 use janus_messages::{
-    HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, UploadErrors,
-    UploadRequest, taskprov::TimePrecision,
+    HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, TimePrecision,
+    UploadErrors, UploadRequest,
 };
 use prio::{
     codec::Encode,

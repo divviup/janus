@@ -902,9 +902,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Interval, Query, ReportError, ReportId, ReportIdChecksum,
-        ReportMetadata, Role, TaskId,
+        ReportMetadata, Role, TaskId, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
-        taskprov::TimePrecision,
     };
     use prio::vdaf::{
         dummy,

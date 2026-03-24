@@ -17,9 +17,8 @@ use janus_interop_binaries::{
     testcontainer::{Aggregator, Client, Collector},
 };
 use janus_messages::{
-    TaskId,
+    TaskId, TimePrecision,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 use prio::codec::Encode;
 use rand::random;

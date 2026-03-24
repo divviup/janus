@@ -22,7 +22,7 @@ use janus_core::{
     vdaf::{VdafInstance, vdaf_dp_strategies},
 };
 use janus_integration_tests::{TaskParameters, client::ClientBackend};
-use janus_messages::{Duration as JanusDuration, TaskId, taskprov::TimePrecision};
+use janus_messages::{Duration as JanusDuration, TaskId, TimePrecision};
 use prio::{
     dp::{
         DifferentialPrivacyStrategy, PureDpBudget, Rational, distributions::PureDpDiscreteLaplace,

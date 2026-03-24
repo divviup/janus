@@ -27,7 +27,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
-    TaskId, Time, taskprov::TimePrecision,
+    TaskId, Time, TimePrecision,
 };
 use rand::{RngExt, distr::StandardUniform, random, rng};
 use serde_test::{Token, assert_ser_tokens, assert_tokens};

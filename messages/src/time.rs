@@ -8,13 +8,87 @@ use std::{
 use prio::codec::{CodecError, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, taskprov::TimePrecision};
+use crate::Error;
 
-/// DAP protocol message representing a duration in terms of the task's time precision.
-/// The value represents the number of time_precision intervals.
+/// DAP protocol message representing a number of seconds. DAP [`Time`]s and [`Duration`]s are
+/// represented as a number of `TimePrecision` units. The time precision is a parameter of each DAP
+/// task.
 ///
-/// To convert between this representation and real-world durations (seconds),
-/// use the conversion methods that take a [`TimePrecision`] parameter.
+/// # Discussion
+///
+/// No conversions between this type and [`Duration`] are provided. `Duration`s represent a number
+/// of time precision units, while `TimePrecision` represents the unit size in seconds. These are
+/// fundamentally different types and cannot be directly converted without additional context.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TimePrecision(u64);
+
+impl TimePrecision {
+    /// Create a time precision representing the provided number of seconds.
+    ///
+    /// # Panics
+    /// Panics if `seconds` is 0.
+    pub const fn from_seconds(seconds: u64) -> Self {
+        assert!(seconds > 0);
+        Self(seconds)
+    }
+
+    /// Create a time precision representing the provided number of hours.
+    ///
+    /// This is a convenience method for tests. For production code with time
+    /// arithmetic, use `chrono::TimeDelta` and `from_chrono`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub const fn from_hours(hours: u64) -> Self {
+        Self(hours * 3600)
+    }
+
+    /// Get the number of seconds this duration represents.
+    pub const fn as_seconds(&self) -> u64 {
+        self.0
+    }
+
+    /// Convert this [`TimePrecision`] into a [`chrono::TimeDelta`].
+    ///
+    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
+    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
+        chrono::TimeDelta::try_seconds(
+            self.0
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
+        ))
+    }
+}
+
+impl Encode for TimePrecision {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
+}
+
+impl Decode for TimePrecision {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u64::decode(bytes)?))
+    }
+}
+
+impl Display for TimePrecision {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} seconds", self.0)
+    }
+}
+
+/// DAP protocol message representing a duration in terms of the task's time precision. The value
+/// represents the number of time_precision intervals.
+///
+/// To convert between this representation and real-world durations (seconds), use the conversion
+/// methods that take a [`TimePrecision`] parameter.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
 

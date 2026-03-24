@@ -15,6 +15,7 @@ use std::{
 
 use anyhow::anyhow;
 use base64::{Engine, display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
+use batch_mode::{BatchMode, LeaderSelected, TimeInterval};
 use educe::Educe;
 use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 pub use prio::codec;
@@ -30,8 +31,7 @@ use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Visitor},
 };
-
-use self::batch_mode::{BatchMode, LeaderSelected, TimeInterval};
+pub use time::{Duration, Interval, Time, TimePrecision};
 
 pub mod batch_mode;
 pub mod problem_type;
@@ -39,8 +39,6 @@ pub mod taskprov;
 #[cfg(test)]
 mod tests;
 pub mod time;
-
-pub use time::{Duration, Interval, Time};
 
 /// Messages which have an HTTP media type associated with them.
 pub trait MediaType {

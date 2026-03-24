@@ -2,9 +2,7 @@ use assert_matches::assert_matches;
 use prio::codec::{CodecError, Decode, Encode};
 use serde_test::{Token, assert_de_tokens_error, assert_tokens};
 
-use crate::{
-    Duration, Interval, Role, TaskId, Time, Url, roundtrip_encoding, taskprov::TimePrecision,
-};
+use crate::{Duration, Interval, Role, TaskId, Time, TimePrecision, Url, roundtrip_encoding};
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);
 
@@ -37,6 +35,22 @@ fn roundtrip_url() {
         Url::get_decoded(&hex::decode("0001FF").unwrap()),
         Err(CodecError::Other(_))
     );
+}
+
+#[test]
+#[should_panic]
+fn time_precision_zero() {
+    // Don't allow 0 time precision because we'd panic dividing by zero
+    TimePrecision::from_seconds(0);
+}
+
+#[test]
+fn roundtrip_time_precision() {
+    roundtrip_encoding(&[
+        (TimePrecision::from_seconds(1), "0000000000000001"),
+        (TimePrecision::from_seconds(12345), "0000000000003039"),
+        (TimePrecision::from_seconds(u64::MAX), "FFFFFFFFFFFFFFFF"),
+    ])
 }
 
 #[test]

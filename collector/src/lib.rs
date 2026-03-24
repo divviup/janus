@@ -84,9 +84,8 @@ use janus_core::{
 };
 use janus_messages::{
     AggregateShareAad, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
-    MediaType, PartialBatchSelector, Query, Role, TaskId,
+    MediaType, PartialBatchSelector, Query, Role, TaskId, TimePrecision,
     batch_mode::{BatchMode, TimeInterval},
-    taskprov::TimePrecision,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -783,10 +782,9 @@ mod tests {
     use janus_messages::{
         AggregateShareAad, BatchId, BatchSelector, CollectionJobId, CollectionJobReq,
         CollectionJobResp, Duration, HpkeCiphertext, Interval, MediaType, PartialBatchSelector,
-        Query, Role, TaskId, Time,
+        Query, Role, TaskId, Time, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
         problem_type::DapProblemType,
-        taskprov::TimePrecision,
     };
     use mockito::Matcher;
     use prio::{

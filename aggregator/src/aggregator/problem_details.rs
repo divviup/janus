@@ -205,9 +205,8 @@ mod tests {
         time::{Clock, DateTimeExt, RealClock},
     };
     use janus_messages::{
-        Duration, Interval, ReportIdChecksum,
+        Duration, Interval, ReportIdChecksum, TimePrecision,
         problem_type::{DapProblemType, DapProblemTypeParseError},
-        taskprov::TimePrecision,
     };
     use rand::random;
     use reqwest::Client;

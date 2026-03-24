@@ -10,7 +10,7 @@ use janus_core::{
     retries::test_util::test_http_request_exponential_backoff,
     test_util::install_test_trace_subscriber,
 };
-use janus_messages::{MediaType, Report, UploadRequest, taskprov::TimePrecision};
+use janus_messages::{MediaType, Report, TimePrecision, UploadRequest};
 use ohttp::{
     KeyConfig, SymmetricSuite,
     hpke::{Aead, Kdf},

@@ -28,9 +28,8 @@ use janus_core::{
 use janus_messages::{
     AggregateShareId, AggregationJobId, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PrepareContinue, PrepareInit, PrepareResp,
-    Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time,
+    Query, ReportId, ReportIdChecksum, ReportMetadata, Role, TaskId, Time, TimePrecision,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 use leases::{acquired_aggregation_job_from_row, acquired_collection_job_from_row};
 use models::SqlInterval;
