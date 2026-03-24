@@ -14,10 +14,9 @@ use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
 };
 use janus_messages::{
-    Duration, Interval, Query, Time,
+    Duration, Interval, Query, Time, TimePrecision,
     batch_mode::{self, LeaderSelected},
     problem_type::DapProblemType,
-    taskprov::TimePrecision,
 };
 use prio::{
     flp::gadgets::ParallelSumMultithreaded,

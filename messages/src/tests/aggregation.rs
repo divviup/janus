@@ -4,8 +4,7 @@ use crate::{
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchId, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, LeaderSelected,
     PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportError, ReportId, ReportMetadata, ReportShare, Time, roundtrip_encoding,
-    taskprov::TimePrecision,
+    ReportError, ReportId, ReportMetadata, ReportShare, Time, TimePrecision, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);

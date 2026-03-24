@@ -5,7 +5,7 @@ use janus_core::{
     test_util::install_test_trace_subscriber,
     time::{DateTimeExt, TimeExt},
 };
-use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+use janus_messages::{Duration, Interval, Time, TimePrecision};
 use opentelemetry_sdk::metrics::data::Sum;
 use rand::random;
 

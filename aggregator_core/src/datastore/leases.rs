@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use chrono::{DateTime, Utc};
 use janus_core::{time::Clock, vdaf::VdafInstance};
 use janus_messages::{
-    AggregationJobId, CollectionJobId, TaskId, batch_mode::BatchMode, taskprov::TimePrecision,
+    AggregationJobId, CollectionJobId, TaskId, TimePrecision, batch_mode::BatchMode,
 };
 use postgres_types::{Json, Timestamp};
 use prio::codec::Decode;

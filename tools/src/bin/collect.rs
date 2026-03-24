@@ -17,8 +17,8 @@ use janus_core::{
 };
 use janus_messages::{
     CollectionJobId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
+    TimePrecision,
     batch_mode::{BatchMode, LeaderSelected, TimeInterval},
-    taskprov::TimePrecision,
 };
 use prio::{
     codec::Decode,

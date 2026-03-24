@@ -28,8 +28,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, InputShareAad, Interval,
-    PlaintextInputShare, Query, Report, ReportError, Role, batch_mode::TimeInterval,
-    taskprov::TimePrecision,
+    PlaintextInputShare, Query, Report, ReportError, Role, TimePrecision, batch_mode::TimeInterval,
 };
 use prio::{codec::Encode, vdaf::prio3::Prio3Count};
 use rand::random;

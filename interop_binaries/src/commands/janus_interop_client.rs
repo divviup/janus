@@ -16,7 +16,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use educe::Educe;
 use janus_core::vdaf::{VdafInstance, new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128};
-use janus_messages::{TaskId, Time, taskprov::TimePrecision};
+use janus_messages::{TaskId, Time, TimePrecision};
 use prio::{
     codec::Decode,
     field::Field64,

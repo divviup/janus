@@ -22,7 +22,7 @@ use janus_core::{
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobResp, AggregationJobStep, Duration, Interval,
     PrepareContinue, PrepareResp, PrepareStepResult, ReportError, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, Time, batch_mode::TimeInterval, taskprov::TimePrecision,
+    ReportMetadata, Role, Time, TimePrecision, batch_mode::TimeInterval,
 };
 use prio::{
     topology::ping_pong::PingPongMessage,

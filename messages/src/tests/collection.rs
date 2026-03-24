@@ -3,8 +3,8 @@ use prio::codec::Decode;
 use crate::{
     AggregateShare, AggregateShareAad, AggregateShareReq, BatchId, BatchSelector, CollectionJobReq,
     CollectionJobResp, Duration, HpkeCiphertext, HpkeConfigId, Interval, LeaderSelected,
-    PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval, roundtrip_encoding,
-    taskprov::TimePrecision,
+    PartialBatchSelector, Query, ReportIdChecksum, TaskId, Time, TimeInterval, TimePrecision,
+    roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);

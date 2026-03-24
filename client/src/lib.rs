@@ -9,7 +9,7 @@
 //! ```no_run
 //! use url::Url;
 //! use prio::vdaf::prio3::Prio3Histogram;
-//! use janus_messages::{taskprov::TimePrecision, TaskId};
+//! use janus_messages::{TimePrecision, TaskId};
 //! use std::str::FromStr;
 //!
 //! #[tokio::main]
@@ -63,8 +63,8 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfig, HpkeConfigList, InputShareAad, MediaType, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, ReportUploadStatus, Role, TaskId, Time, UploadErrors, UploadRequest,
-    taskprov::TimePrecision,
+    ReportMetadata, ReportUploadStatus, Role, TaskId, Time, TimePrecision, UploadErrors,
+    UploadRequest,
 };
 #[cfg(feature = "ohttp")]
 use ohttp::{ClientRequest, KeyConfig};
@@ -390,7 +390,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
     /// ```no_run
     /// # use url::Url;
     /// # use prio::vdaf::prio3::Prio3Count;
-    /// # use janus_messages::{taskprov::TimePrecision, TaskId};
+    /// # use janus_messages::{TimePrecision, TaskId};
     /// # use rand::random;
     /// # use std::str::FromStr;
     ///
@@ -584,7 +584,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
-    /// # use janus_messages::{taskprov::TimePrecision, Time};
+    /// # use janus_messages::{TimePrecision, Time};
     /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
     /// # use std::time::SystemTime;
@@ -868,7 +868,7 @@ where
     ///
     /// ```no_run
     /// # use janus_client::{Client, UploadStats};
-    /// # use janus_messages::{taskprov::TimePrecision, Time};
+    /// # use janus_messages::{TimePrecision, Time};
     /// # use prio::vdaf::prio3::Prio3Count;
     /// # use rand::random;
     /// #

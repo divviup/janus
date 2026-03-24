@@ -196,9 +196,8 @@ mod tests {
     };
     use janus_messages::{
         AggregationJobStep, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum, ReportMetadata, ReportShare, Role,
+        ReportIdChecksum, ReportMetadata, ReportShare, Role, TimePrecision,
         batch_mode::{LeaderSelected, TimeInterval},
-        taskprov::TimePrecision,
     };
     use prio::vdaf::dummy;
     use rand::random;

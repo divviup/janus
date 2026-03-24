@@ -1,6 +1,6 @@
 use crate::{
-    BatchId, Duration, Interval, LeaderSelected, Query, TaskId, Time, TimeInterval, batch_mode,
-    roundtrip_encoding, taskprov::TimePrecision,
+    BatchId, Duration, Interval, LeaderSelected, Query, TaskId, Time, TimeInterval, TimePrecision,
+    batch_mode, roundtrip_encoding,
 };
 
 const TEST_TIME_PRECISION: TimePrecision = TimePrecision::from_seconds(1);

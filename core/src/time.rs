@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, TimeDelta, Utc};
-use janus_messages::{Duration, Error, Interval, Time, taskprov::TimePrecision};
+use janus_messages::{Duration, Error, Interval, Time, TimePrecision};
 
 /// A clock knows what time it currently is.
 pub trait Clock: 'static + Clone + Debug + Sync + Send {
@@ -566,7 +566,7 @@ impl IntervalExt for Interval {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
-    use janus_messages::{Duration, Interval, Time, taskprov::TimePrecision};
+    use janus_messages::{Duration, Interval, Time, TimePrecision};
 
     use crate::time::{DateTimeExt, IntervalExt, TimeDeltaExt, TimeExt};
 
