@@ -5,6 +5,7 @@ use std::{
     io::Cursor,
 };
 
+use chrono::TimeDelta;
 use prio::codec::{CodecError, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,7 @@ impl TimePrecision {
     /// Create a time precision representing the provided number of seconds.
     ///
     /// # Panics
+    ///
     /// Panics if `seconds` is 0.
     pub const fn from_seconds(seconds: u64) -> Self {
         assert!(seconds > 0);
@@ -41,17 +43,16 @@ impl TimePrecision {
         Self(hours * 3600)
     }
 
-    /// Get the number of seconds this duration represents.
+    /// Get this time precision as a numebr of seconds.
     pub const fn as_seconds(&self) -> u64 {
         self.0
     }
 
     /// Convert this [`TimePrecision`] into a [`chrono::TimeDelta`].
     ///
-    /// Returns an error if the duration cannot be represented as a TimeDelta (e.g., the number of
-    /// seconds is too large for i64 or the resulting milliseconds would overflow).
+    /// Returns an error if the time precision cannot be represented as a TimeDelta.
     pub fn to_chrono(&self) -> Result<chrono::TimeDelta, Error> {
-        chrono::TimeDelta::try_seconds(
+        TimeDelta::try_seconds(
             self.0
                 .try_into()
                 .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
@@ -74,7 +75,13 @@ impl Encode for TimePrecision {
 
 impl Decode for TimePrecision {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u64::decode(bytes)?))
+        let seconds = u64::decode(bytes)?;
+        if seconds == 0 {
+            // We return an error here instead of panicking because we could be parsing an untrusted
+            // message.
+            return Err(CodecError::Other("time precision must be nonzero".into()));
+        }
+        Ok(Self(seconds))
     }
 }
 

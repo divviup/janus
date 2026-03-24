@@ -45,6 +45,15 @@ fn time_precision_zero() {
 }
 
 #[test]
+fn time_precision_zero_decode() {
+    // Decoding
+    assert_matches!(
+        TimePrecision::get_decoded(&[0; 8]).unwrap_err(),
+        CodecError::Other(_)
+    );
+}
+
+#[test]
 fn roundtrip_time_precision() {
     roundtrip_encoding(&[
         (TimePrecision::from_seconds(1), "0000000000000001"),
