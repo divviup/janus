@@ -40,13 +40,11 @@ fn roundtrip_url() {
 #[test]
 #[should_panic]
 fn time_precision_zero() {
-    // Don't allow 0 time precision because we'd panic dividing by zero
     TimePrecision::from_seconds(0);
 }
 
 #[test]
 fn time_precision_zero_decode() {
-    // Decoding
     assert_matches!(
         TimePrecision::get_decoded(&[0; 8]).unwrap_err(),
         CodecError::Other(_)
