@@ -36,7 +36,7 @@ use janus_messages::{
     AggregateShare, AggregateShareId, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     CollectionJobId, CollectionJobReq, CollectionJobResp, HpkeConfigList, MediaType, Report,
-    TaskId, UploadRequest, UploadResponse, batch_mode::TimeInterval, codec::Decode,
+    TaskId, UploadErrors, UploadRequest, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
 use mime::Mime;
@@ -674,7 +674,7 @@ where
             )
             .route(
                 "/tasks/{task_id}/reports",
-                post(upload::<C>).layer(upload_cors),
+                post(upload_post::<C>).layer(upload_cors),
             )
             .with_state(Arc::clone(&self.aggregator))
             .layer(
@@ -908,7 +908,7 @@ where
 }
 
 /// Axum handler for the "/tasks/{task_id}/reports" POST endpoint.
-async fn upload<C: Clock>(
+async fn upload_post<C: Clock>(
     headers: HeaderMap,
     Path(task_id): Path<String>,
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
@@ -925,17 +925,24 @@ async fn upload<C: Clock>(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))
         .into_async_read();
 
-    let response = match aggregator
+    let upload_errors = match aggregator
         .handle_upload(&task_id, decode_reports_stream(body_reader))
         .await
     {
-        Ok(response) => response,
+        Ok(upload_errors) => upload_errors,
         Err(arc_err) => return Ok(ArcError::from(arc_err).into_response()),
     };
 
-    Ok(EncodedBody::new(response, UploadResponse::MEDIA_TYPE)
-        .with_status(StatusCode::OK)
-        .into_response())
+    let response = if upload_errors.status().is_empty() {
+        // If all reports were successfully uploaded, the response has no body.
+        StatusCode::OK.into_response()
+    } else {
+        EncodedBody::new(upload_errors, UploadErrors::MEDIA_TYPE)
+            .with_status(StatusCode::OK)
+            .into_response()
+    };
+
+    Ok(response)
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.

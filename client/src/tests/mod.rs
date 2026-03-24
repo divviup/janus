@@ -8,7 +8,7 @@ use janus_core::{
 };
 use janus_messages::{
     HpkeConfigList, MediaType, ReportError, ReportUploadStatus, Role, Time, UploadRequest,
-    UploadResponse, taskprov::TimePrecision,
+    UploadErrors, taskprov::TimePrecision,
 };
 use prio::{
     codec::Encode,
@@ -291,7 +291,7 @@ async fn upload_with_per_report_errors() {
     let report_id = *report.metadata().id();
 
     // Create an UploadResponse with a per-report error
-    let upload_response = UploadResponse::new(&[ReportUploadStatus::new(
+    let upload_response = UploadErrors::new(&[ReportUploadStatus::new(
         report_id,
         ReportError::ReportReplayed,
     )]);
@@ -304,7 +304,7 @@ async fn upload_with_per_report_errors() {
         )
         .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), UploadResponse::MEDIA_TYPE)
+        .with_header(CONTENT_TYPE.as_str(), UploadErrors::MEDIA_TYPE)
         .with_body(response_body)
         .expect(1)
         .create_async()
@@ -356,7 +356,7 @@ async fn upload_success_with_empty_response() {
     let client = setup_client(&server, Prio3::new_count(2).unwrap()).await;
 
     // Empty UploadResponse (no errors)
-    let upload_response = UploadResponse::new(&[]);
+    let upload_response = UploadErrors::new(&[]);
     let response_body = upload_response.get_encoded().unwrap();
 
     let mocked_upload = server
@@ -366,7 +366,7 @@ async fn upload_success_with_empty_response() {
         )
         .match_header(CONTENT_TYPE.as_str(), UploadRequest::MEDIA_TYPE)
         .with_status(200)
-        .with_header(CONTENT_TYPE.as_str(), UploadResponse::MEDIA_TYPE)
+        .with_header(CONTENT_TYPE.as_str(), UploadErrors::MEDIA_TYPE)
         .with_body(response_body)
         .expect(1)
         .create_async()

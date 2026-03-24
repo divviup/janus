@@ -56,7 +56,7 @@ use janus_messages::{
     AggregationJobStep, BatchSelector, CollectionJobId, CollectionJobReq, CollectionJobResp,
     Duration, ExtensionType, HpkeConfig, HpkeConfigList, InputShareAad, Interval,
     PartialBatchSelector, PlaintextInputShare, PrepareResp, Report, ReportError,
-    ReportUploadStatus, Role, TaskId, UploadResponse,
+    ReportUploadStatus, Role, TaskId, UploadErrors,
     batch_mode::{LeaderSelected, TimeInterval},
     taskprov::TaskConfig,
 };
@@ -374,7 +374,7 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         reports: impl Stream<Item = Result<Report, Error>>,
-    ) -> Result<UploadResponse, Arc<Error>> {
+    ) -> Result<UploadErrors, Arc<Error>> {
         let task_aggregator = self
             .task_aggregators
             .get(task_id)
@@ -1072,7 +1072,7 @@ impl<C: Clock> TaskAggregator<C> {
         hpke_keypairs: &HpkeKeypairCache,
         metrics: &AggregatorMetrics,
         reports: impl Stream<Item = Result<Report, Error>>,
-    ) -> Result<UploadResponse, Arc<Error>> {
+    ) -> Result<UploadErrors, Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
                 clock,
@@ -1427,7 +1427,7 @@ impl VdafOps {
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         reports: impl Stream<Item = Result<Report, Error>>,
-    ) -> Result<UploadResponse, Arc<Error>> {
+    ) -> Result<UploadErrors, Arc<Error>> {
         match task.batch_mode() {
             task::BatchMode::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
@@ -1645,7 +1645,7 @@ impl VdafOps {
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report_stream: impl Stream<Item = Result<Report, Error>>,
-    ) -> Result<UploadResponse, Arc<Error>>
+    ) -> Result<UploadErrors, Arc<Error>>
     where
         A: AsyncAggregator<SEED_SIZE>,
         C: Clock,
@@ -1717,7 +1717,7 @@ impl VdafOps {
             }
         }
 
-        Ok(UploadResponse::new(&status))
+        Ok(UploadErrors::new(&status))
     }
 
     async fn handle_uploaded_report<const SEED_SIZE: usize, B, A, C>(
