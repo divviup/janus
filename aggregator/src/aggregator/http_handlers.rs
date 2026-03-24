@@ -6,7 +6,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use axum::{
     body::Body,
-    extract::{Path, State as AxumState},
+    extract::{FromRequestParts, Path, State as AxumState},
     response::{IntoResponse, Response},
     routing::{post, put},
 };
@@ -618,11 +618,42 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str =
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
     "tasks/:task_id/aggregate_shares/:aggregate_share_id";
 
-/// Path parameters for collection job endpoints.
-#[derive(Deserialize)]
+/// Parsed path parameters for collection job endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs, de-duplicating validation across handlers.
 struct CollectionJobPath {
+    task_id: TaskId,
+    collection_job_id: CollectionJobId,
+}
+
+#[derive(Deserialize)]
+struct RawCollectionJobPath {
     task_id: String,
     collection_job_id: String,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for CollectionJobPath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawCollectionJobPath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let collection_job_id = raw
+            .collection_job_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))?;
+        Ok(Self {
+            task_id,
+            collection_job_id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1096,23 +1127,15 @@ async fn aggregation_jobs_delete<C: Clock>(
 /// Axum handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
 async fn collection_jobs_put<C: Clock>(
     headers: HeaderMap,
-    Path(path): Path<CollectionJobPath>,
+    path: CollectionJobPath,
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
     body: Bytes,
 ) -> Result<Response, Error> {
     validate_content_type_headers::<CollectionJobReq<TimeInterval>>(&headers)?;
 
-    let task_id: TaskId = path
-        .task_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
-    let collection_job_id: CollectionJobId = path
-        .collection_job_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))?;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     let response_bytes = aggregator
-        .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+        .handle_create_collection_job(&path.task_id, &path.collection_job_id, &body, auth_token)
         .await?;
 
     Ok((
@@ -1129,20 +1152,12 @@ async fn collection_jobs_put<C: Clock>(
 /// Axum handler for the "/tasks/.../collection_jobs/..." GET endpoint.
 async fn collection_jobs_get<C: Clock>(
     headers: HeaderMap,
-    Path(path): Path<CollectionJobPath>,
+    path: CollectionJobPath,
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
 ) -> Result<Response, Error> {
-    let task_id: TaskId = path
-        .task_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
-    let collection_job_id: CollectionJobId = path
-        .collection_job_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))?;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     let response_bytes = aggregator
-        .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
+        .handle_get_collection_job(&path.task_id, &path.collection_job_id, auth_token)
         .await?;
 
     Ok((
@@ -1159,20 +1174,12 @@ async fn collection_jobs_get<C: Clock>(
 /// Axum handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
 async fn collection_jobs_delete<C: Clock>(
     headers: HeaderMap,
-    Path(path): Path<CollectionJobPath>,
+    path: CollectionJobPath,
     AxumState(aggregator): AxumState<Arc<Aggregator<C>>>,
 ) -> Result<StatusCode, Error> {
-    let task_id: TaskId = path
-        .task_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
-    let collection_job_id: CollectionJobId = path
-        .collection_job_id
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid CollectionJobId".into()))?;
-    let auth_token = parse_auth_token_from_headers(&task_id, &headers)?;
+    let auth_token = parse_auth_token_from_headers(&path.task_id, &headers)?;
     aggregator
-        .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
+        .handle_delete_collection_job(&path.task_id, &path.collection_job_id, auth_token)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
