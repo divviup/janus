@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use axum::{extract::Request, middleware::Next, response::IntoResponse};
 use itertools::Itertools;
 use janus_aggregator_core::http_server::TIME_HISTOGRAM_BOUNDARIES;
 use opentelemetry::{
@@ -353,6 +354,23 @@ impl<H: Handler> LIFOQueueHandler<H> {
 /// Convenience function for wrapping a handler with a [`LIFOQueueHandler`].
 pub fn queued_lifo<H: Handler>(queue: Arc<LIFORequestQueue>, handler: H) -> impl Handler {
     LIFOQueueHandler::new(queue, handler)
+}
+
+/// Axum middleware that queues requests through a [`LIFORequestQueue`].
+///
+/// This acquires a permit from the queue before forwarding the request to the next handler.
+/// If the queue is full, returns a TooManyRequests error. If the request times out waiting
+/// in the queue, returns a RequestTimeout error.
+#[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
+pub async fn lifo_queue_middleware(
+    axum::extract::State(queue): axum::extract::State<Arc<LIFORequestQueue>>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    match queue.acquire().await {
+        Ok(_permit) => next.run(request).await,
+        Err(err) => err.into_response(),
+    }
 }
 
 #[derive(Clone, Debug)]

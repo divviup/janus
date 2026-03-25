@@ -618,6 +618,86 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str =
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
     "tasks/:task_id/aggregate_shares/:aggregate_share_id";
 
+/// Parsed path parameters for aggregation job endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs.
+#[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
+struct AggregationJobPath {
+    task_id: TaskId,
+    aggregation_job_id: AggregationJobId,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct RawAggregationJobPath {
+    task_id: String,
+    aggregation_job_id: String,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for AggregationJobPath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawAggregationJobPath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let aggregation_job_id = raw
+            .aggregation_job_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid AggregationJobId".into()))?;
+        Ok(Self {
+            task_id,
+            aggregation_job_id,
+        })
+    }
+}
+
+/// Parsed path parameters for aggregate share endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs.
+#[allow(dead_code)] // Will be used when aggregate share handlers migrate to axum.
+struct AggregateSharePath {
+    task_id: TaskId,
+    aggregate_share_id: AggregateShareId,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct RawAggregateSharePath {
+    task_id: String,
+    aggregate_share_id: String,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for AggregateSharePath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawAggregateSharePath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let aggregate_share_id = raw
+            .aggregate_share_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid AggregateShareId".into()))?;
+        Ok(Self {
+            task_id,
+            aggregate_share_id,
+        })
+    }
+}
+
 /// Parsed path parameters for collection job endpoints. Implements a custom Axum extractor that
 /// parses path segments into typed IDs, de-duplicating validation across handlers.
 struct CollectionJobPath {
@@ -1357,16 +1437,17 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     parse_auth_token_from_headers(task_id, &headers)
 }
 
-fn parse_taskprov_header<C: Clock>(
+/// Parse the taskprov header from an `http::HeaderMap`.
+fn parse_taskprov_header_from_headers<C: Clock>(
     aggregator: &Aggregator<C>,
     task_id: &TaskId,
-    conn: &Conn,
+    headers: &HeaderMap,
 ) -> Result<Option<TaskConfig>, Error> {
     if !aggregator.cfg.taskprov_config.enabled {
         return Ok(None);
     }
 
-    let taskprov_header = match conn.request_headers().get(TASKPROV_HEADER) {
+    let taskprov_header = match headers.get(TASKPROV_HEADER) {
         Some(taskprov_header) => taskprov_header,
         None => return Ok(None),
     };
@@ -1395,15 +1476,40 @@ fn parse_taskprov_header<C: Clock>(
     ))
 }
 
-/// Gets the [`AggregationJobStep`] from the request's query string.
-fn parse_step(conn: &Conn) -> Result<Option<AggregationJobStep>, Error> {
+/// Parse the taskprov header from a Trillium connection (delegates to
+/// [`parse_taskprov_header_from_headers`]).
+fn parse_taskprov_header<C: Clock>(
+    aggregator: &Aggregator<C>,
+    task_id: &TaskId,
+    conn: &Conn,
+) -> Result<Option<TaskConfig>, Error> {
+    let mut headers = HeaderMap::new();
+    if let Some(val) = conn.request_headers().get(TASKPROV_HEADER) {
+        if let Ok(hv) = HeaderValue::from_bytes(val.as_ref()) {
+            headers.insert(TASKPROV_HEADER, hv);
+        }
+    }
+    parse_taskprov_header_from_headers(aggregator, task_id, &headers)
+}
+
+/// Gets the [`AggregationJobStep`] from a raw query string.
+fn parse_step_from_query(query: Option<&str>) -> Result<Option<AggregationJobStep>, Error> {
     const STEP_KEY: &str = "step";
-    querify(conn.querystring())
+    let query = match query {
+        Some(q) => q,
+        None => return Ok(None),
+    };
+    querify(query)
         .into_iter()
         .find(|(key, _)| *key == STEP_KEY)
         .map(|(_, val)| val.parse::<u16>().map(AggregationJobStep::from))
         .transpose()
         .map_err(|err| Error::BadRequest(format!("couldn't parse step: {err}").into()))
+}
+
+/// Gets the [`AggregationJobStep`] from the request's query string (Trillium adapter).
+fn parse_step(conn: &Conn) -> Result<Option<AggregationJobStep>, Error> {
+    parse_step_from_query(Some(conn.querystring()))
 }
 
 struct BodyBytes(Vec<u8>);
