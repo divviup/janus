@@ -158,7 +158,10 @@ impl HpkeKeypairCache {
             .collect::<HashMap<_, _>>();
 
         for id in keypairs.keys() {
-            keypair_use_counter.add(0, &[KeyValue::new("id", i64::from(u8::from(*id)))]);
+            keypair_use_counter.add(
+                0,
+                &[KeyValue::new("hpke_config_id", i64::from(u8::from(*id)))],
+            );
         }
 
         let mut state = state.lock().unwrap();

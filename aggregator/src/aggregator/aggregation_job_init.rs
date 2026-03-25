@@ -199,7 +199,7 @@ where
                                 metrics.keypair_use_counter.add(
                                     1,
                                     &[KeyValue::new(
-                                        "id",
+                                        "hpke_config_id",
                                         i64::from(u8::from(
                                             *prepare_init
                                                 .report_share()

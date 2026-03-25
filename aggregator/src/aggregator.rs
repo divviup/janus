@@ -1883,7 +1883,7 @@ impl VdafOps {
         metrics.keypair_use_counter.add(
             1,
             &[KeyValue::new(
-                "id",
+                "hpke_config_id",
                 i64::from(u8::from(*report.leader_encrypted_input_share().config_id())),
             )],
         );
