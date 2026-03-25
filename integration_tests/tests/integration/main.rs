@@ -2,6 +2,7 @@ mod common;
 mod divviup_ts;
 mod in_cluster;
 mod janus;
+mod metrics;
 mod simulation;
 
 fn initialize_rustls() {

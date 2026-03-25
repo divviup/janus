@@ -71,15 +71,15 @@ impl JanusContainerPair {
 }
 
 /// A pair of Janus instances, running in-process, against which integration tests may be run.
-struct JanusInProcessPair {
+pub(crate) struct JanusInProcessPair {
     /// Task parameters needed by the client and collector, for the task configured in both Janus
     /// aggregators.
-    task_parameters: TaskParameters,
+    pub(crate) task_parameters: TaskParameters,
 
     /// The leader's resources, which are released on drop.
-    leader: JanusInProcess,
+    pub(crate) leader: JanusInProcess,
     /// The helper's resources, which are released on drop.
-    helper: JanusInProcess,
+    pub(crate) helper: JanusInProcess,
 }
 
 impl JanusInProcessPair {
