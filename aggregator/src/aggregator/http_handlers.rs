@@ -618,20 +618,84 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str =
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str =
     "tasks/:task_id/aggregate_shares/:aggregate_share_id";
 
-/// Path parameters for aggregation job endpoints.
+/// Parsed path parameters for aggregation job endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs.
 #[allow(dead_code)] // Will be used when aggregation job handlers migrate to axum.
-#[derive(Deserialize)]
 struct AggregationJobPath {
+    task_id: TaskId,
+    aggregation_job_id: AggregationJobId,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct RawAggregationJobPath {
     task_id: String,
     aggregation_job_id: String,
 }
 
-/// Path parameters for aggregate share endpoints.
+impl<S: Send + Sync> FromRequestParts<S> for AggregationJobPath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawAggregationJobPath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let aggregation_job_id = raw
+            .aggregation_job_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid AggregationJobId".into()))?;
+        Ok(Self {
+            task_id,
+            aggregation_job_id,
+        })
+    }
+}
+
+/// Parsed path parameters for aggregate share endpoints. Implements a custom Axum extractor that
+/// parses path segments into typed IDs.
 #[allow(dead_code)] // Will be used when aggregate share handlers migrate to axum.
-#[derive(Deserialize)]
 struct AggregateSharePath {
+    task_id: TaskId,
+    aggregate_share_id: AggregateShareId,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct RawAggregateSharePath {
     task_id: String,
     aggregate_share_id: String,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for AggregateSharePath {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(raw) = Path::<RawAggregateSharePath>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| Error::BadRequest(e.body_text().into()))?;
+        let task_id = raw
+            .task_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid TaskId".into()))?;
+        let aggregate_share_id = raw
+            .aggregate_share_id
+            .parse()
+            .map_err(|_| Error::BadRequest("invalid AggregateShareId".into()))?;
+        Ok(Self {
+            task_id,
+            aggregate_share_id,
+        })
+    }
 }
 
 /// Parsed path parameters for collection job endpoints. Implements a custom Axum extractor that
