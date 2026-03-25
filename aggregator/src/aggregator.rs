@@ -1856,7 +1856,7 @@ impl VdafOps {
                         1,
                         &[
                             KeyValue::new("type", "global"),
-                            KeyValue::new("id", i64::from(u8::from(hpke_config_id))),
+                            KeyValue::new("hpke_config_id", i64::from(u8::from(hpke_config_id))),
                         ],
                     );
                 })
@@ -1881,7 +1881,10 @@ impl VdafOps {
                                 1,
                                 &[
                                     KeyValue::new("type", "global"),
-                                    KeyValue::new("id", i64::from(u8::from(hpke_config_id))),
+                                    KeyValue::new(
+                                        "hpke_config_id",
+                                        i64::from(u8::from(hpke_config_id)),
+                                    ),
                                 ],
                             );
                         }),
@@ -2270,7 +2273,7 @@ impl VdafOps {
                                             &[
                                                 KeyValue::new("type", "global"),
                                                 KeyValue::new(
-                                                    "id",
+                                                    "hpke_config_id",
                                                     i64::from(u8::from(hpke_config_id)),
                                                 ),
                                             ],
@@ -2300,7 +2303,7 @@ impl VdafOps {
                                                         &[
                                                             KeyValue::new("type", "global"),
                                                             KeyValue::new(
-                                                                "id",
+                                                                "hpke_config_id",
                                                                 i64::from(u8::from(hpke_config_id)),
                                                             ),
                                                         ],

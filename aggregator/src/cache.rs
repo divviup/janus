@@ -171,7 +171,7 @@ impl GlobalHpkeKeypairCache {
                 0,
                 &[
                     KeyValue::new("type", "global"),
-                    KeyValue::new("id", i64::from(u8::from(*id))),
+                    KeyValue::new("hpke_config_id", i64::from(u8::from(*id))),
                 ],
             );
         }
