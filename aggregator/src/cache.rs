@@ -7,8 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "test-util")]
-use janus_aggregator_core::test_util::noop_meter;
+use educe::Educe;
 use janus_aggregator_core::{
     datastore::{
         Datastore,
@@ -29,13 +28,12 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::aggregator::{Error, TaskAggregator, report_writer::ReportWriteBatcher};
-#[cfg(feature = "test-util")]
-use crate::metrics::keypair_use_counter;
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<hpke::HpkeKeypair>>;
 
-#[derive(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct HpkeKeypairCache {
     // We use a std::sync::Mutex in this cache because we won't hold locks across `.await`
     // boundaries. StdMutex is lighter weight than `tokio::sync::Mutex`.
@@ -44,6 +42,10 @@ pub struct HpkeKeypairCache {
 
     /// Handle for task responsible for periodically refreshing the cache.
     refresh_handle: JoinHandle<()>,
+
+    #[cfg(feature = "test-util")]
+    #[educe(Debug(ignore))]
+    keypair_use_counter: Counter<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +78,7 @@ impl HpkeKeypairCache {
         let refresh_handle = spawn({
             let datastore = Arc::clone(&datastore);
             let state = Arc::clone(&state);
+            let keypair_use_counter = keypair_use_counter.clone();
 
             async move {
                 loop {
@@ -97,6 +100,8 @@ impl HpkeKeypairCache {
         Ok(Self {
             state,
             refresh_handle,
+            #[cfg(feature = "test-util")]
+            keypair_use_counter,
         })
     }
 
@@ -163,7 +168,7 @@ impl HpkeKeypairCache {
 
     #[cfg(feature = "test-util")]
     pub async fn refresh<C: Clock>(&self, datastore: &Datastore<C>) -> Result<(), Error> {
-        Self::refresh_inner(datastore, &self.state, &keypair_use_counter(&noop_meter())).await
+        Self::refresh_inner(datastore, &self.state, &self.keypair_use_counter).await
     }
 
     /// Retrieve active configs for config advertisement. This only returns configs for keypairs
