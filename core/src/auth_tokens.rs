@@ -10,7 +10,10 @@ use aws_lc_rs::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use educe::Educe;
-use http::{HeaderValue, header::AUTHORIZATION};
+use http::{
+    HeaderValue,
+    header::{AUTHORIZATION, HeaderName},
+};
 use rand::{RngExt, distr::StandardUniform, prelude::Distribution};
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
@@ -66,13 +69,19 @@ impl AuthenticationToken {
         DapAuthToken::try_from(string.into()).map(AuthenticationToken::DapAuth)
     }
 
-    /// Returns an HTTP header and value that should be used to authenticate an HTTP request with
-    /// this credential.
-    pub fn request_authentication(&self) -> (&'static str, String) {
+    /// Returns an HTTP header name and value that should be used to authenticate an HTTP request
+    /// with this credential.
+    pub fn request_authentication(&self) -> (HeaderName, HeaderValue) {
         match self {
-            Self::Bearer(token) => (AUTHORIZATION.as_str(), format!("Bearer {}", token.as_str())),
-            // Cloning is unfortunate but necessary since other arms must allocate.
-            Self::DapAuth(token) => (DAP_AUTH_HEADER, token.as_str().to_string()),
+            Self::Bearer(token) => (
+                AUTHORIZATION,
+                HeaderValue::try_from(format!("Bearer {}", token.as_str()))
+                    .expect("bearer token is not valid ASCII"),
+            ),
+            Self::DapAuth(token) => (
+                HeaderName::from_static(DAP_AUTH_HEADER),
+                HeaderValue::try_from(token.as_str()).expect("DAP auth token is not valid ASCII"),
+            ),
         }
     }
 
@@ -443,18 +452,25 @@ pub mod test_util {
     impl WithAuthenticationToken for trillium_testing::TestConn {
         fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
             let (header, value) = auth_token.request_authentication();
-            self.with_request_header(header, value)
+            self.with_request_header(
+                header.as_str().to_owned(),
+                value.to_str().unwrap().to_owned(),
+            )
         }
     }
 
     impl WithAuthenticationToken for http::HeaderMap {
         fn with_authentication_token(mut self, auth_token: &AuthenticationToken) -> Self {
             let (header, value) = auth_token.request_authentication();
-            self.insert(
-                http::header::HeaderName::from_bytes(header.as_bytes()).unwrap(),
-                value.parse().unwrap(),
-            );
+            self.insert(header, value);
             self
+        }
+    }
+
+    impl WithAuthenticationToken for http::request::Builder {
+        fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
+            let (header, value) = auth_token.request_authentication();
+            self.header(header, value)
         }
     }
 
@@ -468,7 +484,7 @@ pub mod test_util {
     impl MatchAuthenticationToken for mockito::Mock {
         fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
             let (header, value) = auth_token.request_authentication();
-            self.match_header(header, value.as_str())
+            self.match_header(header.as_str(), value.to_str().unwrap())
         }
     }
 }

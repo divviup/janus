@@ -226,22 +226,20 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &Router,
     ) -> http::Response<Body> {
-        let mut headers =
-            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-        headers.insert(
-            header::CONTENT_TYPE,
-            AggregationJobContinueReq::MEDIA_TYPE.parse().unwrap(),
-        );
-        let mut req = Request::builder()
+        let req = Request::builder()
             .method("POST")
             .uri(
                 task.aggregation_job_uri(aggregation_job_id, None)
                     .unwrap()
                     .path(),
             )
+            .with_authentication_token(task.aggregator_auth_token())
+            .header(
+                header::CONTENT_TYPE,
+                AggregationJobContinueReq::MEDIA_TYPE,
+            )
             .body(Body::from(request.get_encoded().unwrap()))
             .unwrap();
-        *req.headers_mut() = headers;
         handler.clone().oneshot(req).await.unwrap()
     }
 
@@ -639,18 +637,14 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
 
-        let headers =
-            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-        let mut req = Request::delete(
+        let req = Request::delete(
             task.aggregation_job_uri(&aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
+        .with_authentication_token(task.aggregator_auth_token())
         .body(Body::empty())
         .unwrap();
-        for (key, value) in &headers {
-            req.headers_mut().insert(key.clone(), value.clone());
-        }
         let mut response = router.clone().oneshot(req).await.unwrap();
 
         assert_eq!(
@@ -901,20 +895,16 @@ mod tests {
 
         // Delete the aggregation job. This should be idempotent.
         for _ in 0..2 {
-            let headers = http::HeaderMap::new()
-                .with_authentication_token(test_case.task.aggregator_auth_token());
-            let mut req = Request::delete(
+            let req = Request::delete(
                 test_case
                     .task
                     .aggregation_job_uri(&test_case.aggregation_job_id, None)
                     .unwrap()
                     .path(),
             )
+            .with_authentication_token(test_case.task.aggregator_auth_token())
             .body(Body::empty())
             .unwrap();
-            for (key, value) in &headers {
-                req.headers_mut().insert(key.clone(), value.clone());
-            }
             let response = test_case.handler.clone().oneshot(req).await.unwrap();
 
             assert_eq!(response.status(), StatusCode::NO_CONTENT);

@@ -41,23 +41,20 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     aggregate_share_id: &AggregateShareId,
     handler: &Router,
 ) -> http::Response<Body> {
-    let headers = http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-    let mut req = Request::builder()
+    let req = Request::builder()
         .method("PUT")
         .uri(
             task.aggregate_shares_uri(aggregate_share_id)
                 .unwrap()
                 .path(),
         )
+        .with_authentication_token(task.aggregator_auth_token())
         .header(
             http::header::CONTENT_TYPE,
             AggregateShareReq::<B>::MEDIA_TYPE,
         )
         .body(Body::from(request.get_encoded().unwrap()))
         .unwrap();
-    for (key, value) in &headers {
-        req.headers_mut().insert(key.clone(), value.clone());
-    }
     handler.clone().oneshot(req).await.unwrap()
 }
 
@@ -803,7 +800,6 @@ async fn aggregate_share_request_get_poll_after_put() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Try to GET the first ID again. It should be OK.
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let response = router
         .clone()
         .oneshot(
@@ -812,7 +808,7 @@ async fn aggregate_share_request_get_poll_after_put() {
                     .unwrap()
                     .path(),
             )
-            .header(header, value)
+            .with_authentication_token(task.aggregator_auth_token())
             .body(Body::empty())
             .unwrap(),
         )
@@ -821,7 +817,6 @@ async fn aggregate_share_request_get_poll_after_put() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Ensure it's idempotent.
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let mut response = router
         .clone()
         .oneshot(
@@ -830,7 +825,7 @@ async fn aggregate_share_request_get_poll_after_put() {
                     .unwrap()
                     .path(),
             )
-            .header(header, value)
+            .with_authentication_token(task.aggregator_auth_token())
             .body(Body::empty())
             .unwrap(),
         )
@@ -864,7 +859,6 @@ async fn aggregate_share_request_get_poll_after_put() {
     .unwrap();
 
     // We should be able to delete it
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let response = router
         .clone()
         .oneshot(
@@ -875,7 +869,7 @@ async fn aggregate_share_request_get_poll_after_put() {
                         .unwrap()
                         .path(),
                 )
-                .header(header, value)
+                .with_authentication_token(task.aggregator_auth_token())
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -908,7 +902,6 @@ async fn aggregate_share_request_get_unrecognized_id() {
     // Try to GET an aggregate share that doesn't exist
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let mut response = router
         .clone()
         .oneshot(
@@ -917,7 +910,7 @@ async fn aggregate_share_request_get_unrecognized_id() {
                     .unwrap()
                     .path(),
             )
-            .header(header, value)
+            .with_authentication_token(task.aggregator_auth_token())
             .body(Body::empty())
             .unwrap(),
         )
@@ -963,7 +956,6 @@ async fn aggregate_share_delete_nonexistant() {
     // Try to DELETE an aggregate share that doesn't exist
     let nonexistent_aggregate_share_id = AggregateShareId::from([99u8; 16]);
 
-    let (header, value) = task.aggregator_auth_token().request_authentication();
     let mut response = router
         .clone()
         .oneshot(
@@ -974,7 +966,7 @@ async fn aggregate_share_delete_nonexistant() {
                         .unwrap()
                         .path(),
                 )
-                .header(header, value)
+                .with_authentication_token(task.aggregator_auth_token())
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -650,26 +650,20 @@ pub mod test_util {
         aggregation_job: &AggregationJobInitializeReq<B>,
         handler: &Router,
     ) -> http::Response<Body> {
-        let headers =
-            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-        let mut request = Request::builder()
+        let request = Request::builder()
             .method("PUT")
             .uri(
                 task.aggregation_job_uri(aggregation_job_id, None)
                     .unwrap()
                     .path(),
             )
+            .with_authentication_token(task.aggregator_auth_token())
+            .header(
+                header::CONTENT_TYPE,
+                AggregationJobInitializeReq::<B>::MEDIA_TYPE,
+            )
             .body(Body::from(aggregation_job.get_encoded().unwrap()))
             .unwrap();
-        for (key, value) in &headers {
-            request.headers_mut().insert(key, value.clone());
-        }
-        request.headers_mut().insert(
-            header::CONTENT_TYPE,
-            AggregationJobInitializeReq::<B>::MEDIA_TYPE
-                .parse()
-                .unwrap(),
-        );
         handler.clone().oneshot(request).await.unwrap()
     }
 }
@@ -884,9 +878,7 @@ mod tests {
         )
         .await;
 
-        let headers = http::HeaderMap::new()
-            .with_authentication_token(test_case.task.aggregator_auth_token());
-        let mut req = Request::builder()
+        let req = Request::builder()
             .method("PUT")
             .uri(
                 test_case
@@ -895,6 +887,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
+            .with_authentication_token(test_case.task.aggregator_auth_token())
             .header(
                 header::CONTENT_TYPE,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -903,9 +896,6 @@ mod tests {
                 test_case.aggregation_job_init_req.get_encoded().unwrap(),
             ))
             .unwrap();
-        for (key, value) in &headers {
-            req.headers_mut().insert(key.clone(), value.clone());
-        }
         let response = test_case.handler.clone().oneshot(req).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -1455,9 +1445,7 @@ mod tests {
             test_case.aggregation_job_init_req.prepare_inits().to_vec(),
         );
 
-        let headers = http::HeaderMap::new()
-            .with_authentication_token(test_case.task.aggregator_auth_token());
-        let mut req = Request::builder()
+        let req = Request::builder()
             .method("PUT")
             .uri(
                 test_case
@@ -1466,15 +1454,13 @@ mod tests {
                     .unwrap()
                     .path(),
             )
+            .with_authentication_token(test_case.task.aggregator_auth_token())
             .header(
                 header::CONTENT_TYPE,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
             .body(Body::from(wrong_query.get_encoded().unwrap()))
             .unwrap();
-        for (key, value) in &headers {
-            req.headers_mut().insert(key.clone(), value.clone());
-        }
         let mut response = test_case.handler.clone().oneshot(req).await.unwrap();
         assert_eq!(
             take_problem_details(&mut response).await,

@@ -2076,7 +2076,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -2186,7 +2186,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -2241,7 +2241,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded().unwrap())

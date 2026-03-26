@@ -98,19 +98,15 @@ async fn aggregate_leader() {
     );
 
     // Check that CORS headers don't bleed over to other routes.
-    assert!(
-        response
-            .headers()
-            .get("access-control-allow-origin")
-            .is_none()
-    );
-    assert!(
-        response
-            .headers()
-            .get("access-control-allow-methods")
-            .is_none()
-    );
-    assert!(response.headers().get("access-control-max-age").is_none());
+    assert!(!response
+        .headers()
+        .contains_key("access-control-allow-origin"));
+    assert!(!response
+        .headers()
+        .contains_key("access-control-allow-methods"));
+    assert!(!response
+        .headers()
+        .contains_key("access-control-max-age"));
 
     let response = router
         .clone()
@@ -197,10 +193,7 @@ async fn aggregate_wrong_agg_auth_token() {
 
         for auth_token in auth_tokens {
             let (auth_header, auth_value) = auth_token.request_authentication();
-            req.headers_mut().insert(
-                http::header::HeaderName::from_bytes(auth_header.as_bytes()).unwrap(),
-                auth_value.parse().unwrap(),
-            );
+            req.headers_mut().insert(auth_header, auth_value);
         }
 
         let response = router.clone().oneshot(req).await.unwrap();
@@ -1022,24 +1015,20 @@ async fn aggregate_init_batch_already_collected() {
         .unwrap();
 
     let aggregation_job_id: AggregationJobId = random();
-    let mut headers =
-        http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE
-            .parse()
-            .unwrap(),
-    );
-    let mut req = Request::builder()
+    let req = Request::builder()
         .method(Method::PUT)
         .uri(
             task.aggregation_job_uri(&aggregation_job_id, None)
                 .unwrap()
                 .path(),
         )
+        .with_authentication_token(task.aggregator_auth_token())
+        .header(
+            http::header::CONTENT_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
         .body(Body::from(request.get_encoded().unwrap()))
         .unwrap();
-    *req.headers_mut() = headers;
     let mut response = router.clone().oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::CREATED);

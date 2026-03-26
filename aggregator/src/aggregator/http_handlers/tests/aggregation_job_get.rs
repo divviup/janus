@@ -580,11 +580,10 @@ async fn get_aggregation_job(
         None => uri.path().to_string(),
     };
 
-    let headers = http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
-    let mut req = Request::get(uri).body(Body::empty()).unwrap();
-    for (key, value) in &headers {
-        req.headers_mut().insert(key.clone(), value.clone());
-    }
+    let req = Request::get(uri)
+        .with_authentication_token(task.aggregator_auth_token())
+        .body(Body::empty())
+        .unwrap();
     router.clone().oneshot(req).await.unwrap()
 }
 
