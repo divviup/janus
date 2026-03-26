@@ -226,8 +226,8 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &Router,
     ) -> http::Response<Body> {
-        let mut headers = http::HeaderMap::new();
-        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let mut headers =
+            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
         headers.insert(
             header::CONTENT_TYPE,
             AggregationJobContinueReq::MEDIA_TYPE.parse().unwrap(),
@@ -639,8 +639,8 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut headers = http::HeaderMap::new();
-        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let headers =
+            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
         let mut req = Request::delete(
             task.aggregation_job_uri(&aggregation_job_id, None)
                 .unwrap()
@@ -901,8 +901,8 @@ mod tests {
 
         // Delete the aggregation job. This should be idempotent.
         for _ in 0..2 {
-            let mut headers = http::HeaderMap::new();
-            headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+            let headers = http::HeaderMap::new()
+                .with_authentication_token(test_case.task.aggregator_auth_token());
             let mut req = Request::delete(
                 test_case
                     .task
@@ -950,7 +950,7 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([prep_init]),
         );
-        let mut test_conn = put_aggregation_job(
+        let mut response = put_aggregation_job(
             &test_case.task,
             &test_case.aggregation_job_id,
             &init_req,
@@ -959,7 +959,7 @@ mod tests {
         .await;
 
         assert_eq!(
-            take_problem_details(&mut test_conn).await,
+            take_problem_details(&mut response).await,
             json!({
                 "status": StatusCode::GONE.as_u16(),
                 "type": "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",

@@ -650,8 +650,8 @@ pub mod test_util {
         aggregation_job: &AggregationJobInitializeReq<B>,
         handler: &Router,
     ) -> http::Response<Body> {
-        let mut headers = http::HeaderMap::new();
-        headers = headers.with_authentication_token(task.aggregator_auth_token());
+        let headers =
+            http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
         let mut request = Request::builder()
             .method("PUT")
             .uri(
@@ -884,8 +884,8 @@ mod tests {
         )
         .await;
 
-        let mut headers = http::HeaderMap::new();
-        headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+        let headers = http::HeaderMap::new()
+            .with_authentication_token(test_case.task.aggregator_auth_token());
         let mut req = Request::builder()
             .method("PUT")
             .uri(
@@ -1455,8 +1455,8 @@ mod tests {
             test_case.aggregation_job_init_req.prepare_inits().to_vec(),
         );
 
-        let mut headers = http::HeaderMap::new();
-        headers = headers.with_authentication_token(test_case.task.aggregator_auth_token());
+        let headers = http::HeaderMap::new()
+            .with_authentication_token(test_case.task.aggregator_auth_token());
         let mut req = Request::builder()
             .method("PUT")
             .uri(

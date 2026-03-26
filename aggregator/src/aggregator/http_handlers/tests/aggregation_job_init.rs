@@ -1022,8 +1022,8 @@ async fn aggregate_init_batch_already_collected() {
         .unwrap();
 
     let aggregation_job_id: AggregationJobId = random();
-    let mut headers = http::HeaderMap::new();
-    headers = headers.with_authentication_token(task.aggregator_auth_token());
+    let mut headers =
+        http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
     headers.insert(
         http::header::CONTENT_TYPE,
         AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE

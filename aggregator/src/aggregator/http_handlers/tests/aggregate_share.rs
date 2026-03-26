@@ -41,8 +41,7 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     aggregate_share_id: &AggregateShareId,
     handler: &Router,
 ) -> http::Response<Body> {
-    let mut headers = http::HeaderMap::new();
-    headers = headers.with_authentication_token(task.aggregator_auth_token());
+    let headers = http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
     let mut req = Request::builder()
         .method("PUT")
         .uri(
@@ -50,7 +49,10 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
                 .unwrap()
                 .path(),
         )
-        .header("content-type", AggregateShareReq::<B>::MEDIA_TYPE)
+        .header(
+            http::header::CONTENT_TYPE,
+            AggregateShareReq::<B>::MEDIA_TYPE,
+        )
         .body(Body::from(request.get_encoded().unwrap()))
         .unwrap();
     for (key, value) in &headers {
@@ -491,7 +493,7 @@ async fn aggregate_share_request() {
             assert_eq!(
                 response
                     .headers()
-                    .get("content-type")
+                    .get(http::header::CONTENT_TYPE)
                     .unwrap()
                     .to_str()
                     .unwrap(),

@@ -889,21 +889,16 @@ where
     }
 
     pub async fn build(self) -> Result<impl Handler, Error> {
-        self.build_with_queue(None).await
+        let queue = self.build_helper_queue()?;
+        self.build_with_prebuilt_queue(queue).await
     }
 
-    /// Build the handler with an optional pre-built helper queue. If `None`, a new queue is
-    /// created from the configuration. This avoids double-instantiation when callers also need
-    /// a reference to the axum router (e.g. tests).
-    async fn build_with_queue(
+    /// Build the handler with a pre-built helper queue. This avoids double-instantiation when
+    /// callers also need a reference to the axum router (e.g. tests).
+    async fn build_with_prebuilt_queue(
         self,
-        helper_queue: Option<Option<Arc<LIFORequestQueue>>>,
+        helper_queue: Option<Arc<LIFORequestQueue>>,
     ) -> Result<impl Handler, Error> {
-        let helper_queue = match helper_queue {
-            Some(q) => q,
-            None => self.build_helper_queue()?,
-        };
-
         // The Trillium router is now empty — all routes have migrated to axum.
         let router = Router::new().without_options_handling();
 
@@ -922,7 +917,8 @@ where
 
         let axum_router = self.build_axum_router(helper_queue);
 
-        // Bind a local listener for the axum router and spawn it.
+        // Bind on the IPv6 loopback to avoid a DNS lookup for "localhost" and restrict to local
+        // connections. Deployments require IPv6 loopback to be available (standard in Linux).
         let axum_listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
             .await
             .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
@@ -1558,7 +1554,10 @@ pub mod test_util {
 
             let helper_queue = builder.build_helper_queue().unwrap();
             let router = builder.build_axum_router(helper_queue.clone());
-            let handler = builder.build_with_queue(Some(helper_queue)).await.unwrap();
+            let handler = builder
+                .build_with_prebuilt_queue(helper_queue)
+                .await
+                .unwrap();
 
             Self {
                 clock,

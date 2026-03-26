@@ -580,8 +580,7 @@ async fn get_aggregation_job(
         None => uri.path().to_string(),
     };
 
-    let mut headers = http::HeaderMap::new();
-    headers = headers.with_authentication_token(task.aggregator_auth_token());
+    let headers = http::HeaderMap::new().with_authentication_token(task.aggregator_auth_token());
     let mut req = Request::get(uri).body(Body::empty()).unwrap();
     for (key, value) in &headers {
         req.headers_mut().insert(key.clone(), value.clone());
