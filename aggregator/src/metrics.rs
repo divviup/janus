@@ -364,3 +364,11 @@ pub(crate) fn past_report_clock_skew_histogram(meter: &Meter) -> Histogram<u64> 
         .with_boundaries(TIME_SKEW_HISTOGRAM_VALUES.to_vec())
         .build()
 }
+
+pub(crate) fn keypair_use_counter(meter: &Meter) -> Counter<u64> {
+    meter
+        .u64_counter("janus_hpke_keypair_use")
+        .with_description("Number of times a keypair has been used to decrypt a report share")
+        .with_unit("{report}")
+        .build()
+}

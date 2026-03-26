@@ -103,7 +103,7 @@ use crate::{
     diagnostic::AggregationJobInitForbiddenMutationEvent,
     metrics::{
         aggregate_step_failure_counter, aggregated_report_share_dimension_histogram,
-        early_report_clock_skew_histogram, past_report_clock_skew_histogram,
+        early_report_clock_skew_histogram, keypair_use_counter, past_report_clock_skew_histogram,
         report_aggregation_success_counter,
     },
 };
@@ -173,6 +173,8 @@ pub struct AggregatorMetrics {
     early_report_clock_skew_histogram: Histogram<u64>,
     /// Histogram tracking the clock skew of reports with timestamps in the past.
     past_report_clock_skew_histogram: Histogram<u64>,
+    /// Counters tracking usage of HPKE keypairs.
+    keypair_use_counter: Counter<u64>,
 }
 
 impl AggregatorMetrics {
@@ -321,10 +323,15 @@ impl<C: Clock> Aggregator<C> {
             aggregated_report_share_dimension_histogram(meter);
         let early_report_clock_skew_histogram = early_report_clock_skew_histogram(meter);
         let past_report_clock_skew_histogram = past_report_clock_skew_histogram(meter);
+        let keypair_use_counter = keypair_use_counter(meter);
 
         let hpke_keypairs = Arc::new(
-            HpkeKeypairCache::new(Arc::clone(&datastore), cfg.hpke_configs_refresh_interval)
-                .await?,
+            HpkeKeypairCache::new(
+                Arc::clone(&datastore),
+                cfg.hpke_configs_refresh_interval,
+                keypair_use_counter.clone(),
+            )
+            .await?,
         );
 
         let peer_aggregators = PeerAggregatorCache::new(&datastore).await?;
@@ -342,6 +349,7 @@ impl<C: Clock> Aggregator<C> {
                 aggregated_report_share_dimension_histogram,
                 early_report_clock_skew_histogram,
                 past_report_clock_skew_histogram,
+                keypair_use_counter,
             },
             hpke_keypairs,
             peer_aggregators,
@@ -1871,6 +1879,14 @@ impl VdafOps {
                 return Err(reject_report(ReportRejectionReason::DecryptFailure).await?);
             }
         };
+
+        metrics.keypair_use_counter.add(
+            1,
+            &[KeyValue::new(
+                "hpke_config_id",
+                i64::from(u8::from(*report.leader_encrypted_input_share().config_id())),
+            )],
+        );
 
         let decoded_leader_input_share = PlaintextInputShare::get_decoded(
             &encoded_leader_input_share,

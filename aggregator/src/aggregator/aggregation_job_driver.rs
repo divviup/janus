@@ -73,7 +73,7 @@ use crate::{
     cache::HpkeKeypairCache,
     metrics::{
         aggregated_report_share_dimension_histogram, early_report_clock_skew_histogram,
-        past_report_clock_skew_histogram,
+        keypair_use_counter, past_report_clock_skew_histogram,
     },
 };
 
@@ -109,6 +109,8 @@ pub struct AggregationJobDriver<B> {
     early_report_clock_skew_histogram: Histogram<u64>,
     #[educe(Debug(ignore))]
     past_report_clock_skew_histogram: Histogram<u64>,
+    #[educe(Debug(ignore))]
+    keypair_use_counter: Counter<u64>,
 }
 
 impl<R> AggregationJobDriver<R>
@@ -154,6 +156,7 @@ where
 
         let early_report_clock_skew_histogram = early_report_clock_skew_histogram(meter);
         let past_report_clock_skew_histogram = past_report_clock_skew_histogram(meter);
+        let keypair_use_counter = keypair_use_counter(meter);
 
         Self {
             batch_aggregation_shard_count,
@@ -170,6 +173,7 @@ where
             http_request_duration_histogram,
             early_report_clock_skew_histogram,
             past_report_clock_skew_histogram,
+            keypair_use_counter,
         }
     }
 
@@ -1526,6 +1530,7 @@ where
                     self.aggregate_step_failure_counter.clone(),
                     self.early_report_clock_skew_histogram.clone(),
                     self.past_report_clock_skew_histogram.clone(),
+                    self.keypair_use_counter.clone(),
                 ),
                 Arc::clone(&task),
                 Arc::clone(&aggregation_job),
@@ -1891,6 +1896,7 @@ where
                                 HpkeKeypairCache::new(
                                     Arc::clone(&datastore),
                                     this.hpke_configs_refresh_interval,
+                                    this.keypair_use_counter.clone(),
                                 )
                                 .await?,
                             );

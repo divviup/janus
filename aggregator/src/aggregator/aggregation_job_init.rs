@@ -47,6 +47,8 @@ pub struct AggregateInitMetrics {
     early_report_clock_skew_histogram: Histogram<u64>,
     /// Histogram tracking the clock skew of reports with timestamps in the past.
     past_report_clock_skew_histogram: Histogram<u64>,
+    /// Counters tracking usage of HPKE keypairs.
+    keypair_use_counter: Counter<u64>,
 }
 
 impl AggregateInitMetrics {
@@ -54,11 +56,13 @@ impl AggregateInitMetrics {
         aggregate_step_failure_counter: Counter<u64>,
         early_report_clock_skew_histogram: Histogram<u64>,
         past_report_clock_skew_histogram: Histogram<u64>,
+        keypair_use_counter: Counter<u64>,
     ) -> Self {
         Self {
             aggregate_step_failure_counter,
             early_report_clock_skew_histogram,
             past_report_clock_skew_histogram,
+            keypair_use_counter,
         }
     }
 }
@@ -69,6 +73,7 @@ impl From<AggregatorMetrics> for AggregateInitMetrics {
             aggregate_step_failure_counter: metrics.aggregate_step_failure_counter,
             early_report_clock_skew_histogram: metrics.early_report_clock_skew_histogram,
             past_report_clock_skew_histogram: metrics.past_report_clock_skew_histogram,
+            keypair_use_counter: metrics.keypair_use_counter,
         }
     }
 }
@@ -190,6 +195,20 @@ where
                                 prepare_init.report_share().encrypted_input_share(),
                                 &input_share_aad,
                             )
+                            .inspect(|_| {
+                                metrics.keypair_use_counter.add(
+                                    1,
+                                    &[KeyValue::new(
+                                        "hpke_config_id",
+                                        i64::from(u8::from(
+                                            *prepare_init
+                                                .report_share()
+                                                .encrypted_input_share()
+                                                .config_id(),
+                                        )),
+                                    )],
+                                )
+                            })
                             .map_err(|error| {
                                 debug!(
                                     task_id = %task.id(),
