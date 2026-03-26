@@ -97,7 +97,7 @@ async fn aggregate_share_request_to_leader() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 400,
+            "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             "title": "An endpoint received a message with an unknown task ID.",
             "taskid": format!("{}", task.id()),
@@ -151,7 +151,7 @@ async fn aggregate_share_request_invalid_batch_interval() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 400,
+            "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
             "title": "The batch implied by the query is invalid.",
             "taskid": format!("{}", task.id()),
@@ -215,7 +215,7 @@ async fn aggregate_share_request() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 400,
+            "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
             "taskid": format!("{}", task.id()),
@@ -351,7 +351,7 @@ async fn aggregate_share_request() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 400,
+            "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
             "title": "The number of reports included in the batch is invalid.",
             "taskid": format!("{}", task.id()),
@@ -426,7 +426,7 @@ async fn aggregate_share_request() {
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
-                "status": 400,
+                "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
                 "title": "Leader and helper disagree on reports aggregated in a batch.",
                 "taskid": format!("{}", task.id()),
@@ -596,7 +596,7 @@ async fn aggregate_share_request() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 400,
+            "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
             "title": "The queried batch overlaps with a previously queried batch.",
             "taskid": format!("{}", task.id()),
@@ -642,7 +642,7 @@ async fn aggregate_share_request() {
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
-                "status": 400,
+                "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "batch has already been collected with another aggregation parameter",
@@ -930,7 +930,7 @@ async fn aggregate_share_request_get_unrecognized_id() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 404,
+            "status": StatusCode::NOT_FOUND.as_u16(),
             "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),
@@ -987,7 +987,7 @@ async fn aggregate_share_delete_nonexistant() {
     assert_eq!(
         take_problem_details(&mut response).await,
         json!({
-            "status": 404,
+            "status": StatusCode::NOT_FOUND.as_u16(),
             "type": "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
             "title": "The aggregate share ID is not recognized.",
             "taskid": format!("{}", task.id()),

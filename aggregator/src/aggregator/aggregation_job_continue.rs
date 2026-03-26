@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({
-                "status": 400,
+                "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
