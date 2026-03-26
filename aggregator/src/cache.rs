@@ -1,6 +1,7 @@
 //! Various in-memory caches that can be used by an aggregator.
 
 use crate::aggregator::{report_writer::ReportWriteBatcher, Error, TaskAggregator};
+use educe::Educe;
 use janus_aggregator_core::{
     datastore::{
         models::{GlobalHpkeKeypair, HpkeKeyState},
@@ -15,6 +16,7 @@ use moka::{
     ops::compute::Op,
     Entry,
 };
+use opentelemetry::{metrics::Counter, KeyValue};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -28,7 +30,8 @@ use url::Url;
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;
 
-#[derive(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct GlobalHpkeKeypairCache {
     // We use a std::sync::Mutex in this cache because we won't hold locks across
     // `.await` boundaries. StdMutex is lighter weight than `tokio::sync::Mutex`.
@@ -40,6 +43,10 @@ pub struct GlobalHpkeKeypairCache {
 
     /// Handle for task responsible for periodically refreshing the cache.
     refresh_handle: JoinHandle<()>,
+
+    #[cfg(feature = "test-util")]
+    #[educe(Debug(ignore))]
+    keypair_use_counter: Counter<u64>,
 }
 
 impl GlobalHpkeKeypairCache {
@@ -53,17 +60,26 @@ impl GlobalHpkeKeypairCache {
         datastore: Arc<Datastore<C>>,
         refresh_interval: Duration,
         required: bool,
+        keypair_use_counter: Counter<u64>,
     ) -> Result<Self, Error> {
         let keypairs = Arc::new(StdMutex::new(HashMap::new()));
         let configs = Arc::new(StdMutex::new(Arc::new(Vec::new())));
 
         // Initial cache load.
-        Self::refresh_inner(&datastore, &configs, &keypairs, required).await?;
+        Self::refresh_inner(
+            &datastore,
+            &configs,
+            &keypairs,
+            required,
+            &keypair_use_counter,
+        )
+        .await?;
 
         // Start refresh task.
         let refresh_configs = configs.clone();
         let refresh_keypairs = keypairs.clone();
         let refresh_datastore = datastore.clone();
+        let refresh_keypair_use_counter = keypair_use_counter.clone();
         let refresh_handle = spawn(async move {
             loop {
                 sleep(refresh_interval).await;
@@ -74,6 +90,7 @@ impl GlobalHpkeKeypairCache {
                     &refresh_configs,
                     &refresh_keypairs,
                     required,
+                    &refresh_keypair_use_counter,
                 )
                 .await;
                 let elapsed = now.elapsed();
@@ -89,6 +106,8 @@ impl GlobalHpkeKeypairCache {
             configs,
             keypairs,
             refresh_handle,
+            #[cfg(feature = "test-util")]
+            keypair_use_counter,
         })
     }
 
@@ -125,6 +144,7 @@ impl GlobalHpkeKeypairCache {
         configs: &StdMutex<HpkeConfigs>,
         keypairs: &StdMutex<HpkeKeypairs>,
         required: bool,
+        keypair_use_counter: &Counter<u64>,
     ) -> Result<(), Error> {
         let global_keypairs = Self::get_global_hpke_keypairs(datastore, required).await?;
 
@@ -144,7 +164,17 @@ impl GlobalHpkeKeypairCache {
                 let keypair = keypair.hpke_keypair().clone();
                 (*keypair.config().id(), Arc::new(keypair))
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
+
+        for id in new_keypairs.keys() {
+            keypair_use_counter.add(
+                0,
+                &[
+                    KeyValue::new("type", "global"),
+                    KeyValue::new("hpke_config_id", i64::from(u8::from(*id))),
+                ],
+            );
+        }
 
         {
             let mut configs = configs.lock().unwrap();
@@ -159,7 +189,14 @@ impl GlobalHpkeKeypairCache {
 
     #[cfg(feature = "test-util")]
     pub async fn refresh<C: Clock>(&self, datastore: &Datastore<C>) -> Result<(), Error> {
-        Self::refresh_inner(datastore, &self.configs, &self.keypairs, false).await
+        Self::refresh_inner(
+            datastore,
+            &self.configs,
+            &self.keypairs,
+            false,
+            &self.keypair_use_counter,
+        )
+        .await
     }
 
     /// Retrieve active configs for config advertisement. This only returns configs
@@ -323,6 +360,7 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{models::HpkeKeyState, test_util::ephemeral_datastore},
         task::{test_util::TaskBuilder, QueryType},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::HpkeKeypair,
@@ -349,11 +387,13 @@ mod tests {
         // let it poll in the background.
         let cache = tokio::spawn({
             let datastore = datastore.clone();
+            let keypair_use_counter = noop_meter().u64_counter("janus_hpke_keypair_use").init();
             async move {
                 GlobalHpkeKeypairCache::new(
                     datastore,
                     GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
                     true,
+                    keypair_use_counter,
                 )
                 .await
             }

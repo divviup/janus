@@ -185,6 +185,8 @@ struct AggregatorMetrics {
     early_report_clock_skew_histogram: Histogram<u64>,
     /// Histogram tracking the clock skew of reports with timestamps in the past.
     past_report_clock_skew_histogram: Histogram<u64>,
+    /// Counters tracking usage of HPKE keypairs.
+    keypair_use_counter: Counter<u64>,
 }
 
 impl AggregatorMetrics {
@@ -344,11 +346,17 @@ impl<C: Clock> Aggregator<C> {
             )
             .with_unit("s")
             .init();
+        let keypair_use_counter = meter
+            .u64_counter("janus_hpke_keypair_use")
+            .with_description("Number of times a keypair has been used to decrypt a report share")
+            .with_unit("{report}")
+            .init();
 
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
             cfg.global_hpke_configs_refresh_interval,
             cfg.require_global_hpke_keys || cfg.taskprov_config.enabled,
+            keypair_use_counter.clone(),
         )
         .await?;
 
@@ -367,6 +375,7 @@ impl<C: Clock> Aggregator<C> {
                 aggregated_report_share_dimension_histogram,
                 early_report_clock_skew_histogram,
                 past_report_clock_skew_histogram,
+                keypair_use_counter,
             },
             global_hpke_keypairs,
             peer_aggregators,
@@ -1828,31 +1837,59 @@ impl VdafOps {
             )
         };
 
-        let global_hpke_keypair =
-            global_hpke_keypairs.keypair(report.leader_encrypted_input_share().config_id());
-
-        let task_hpke_keypair = task
-            .hpke_keys()
-            .get(report.leader_encrypted_input_share().config_id());
+        let hpke_config_id = *report.leader_encrypted_input_share().config_id();
+        let global_hpke_keypair = global_hpke_keypairs.keypair(&hpke_config_id);
+        let task_hpke_keypair = task.hpke_keys().get(&hpke_config_id);
 
         let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
             // Verify that the report's HPKE config ID is known.
             // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-17
             (None, None) => {
                 return Err(reject_report(ReportRejectionReason::OutdatedHpkeConfig(
-                    *report.leader_encrypted_input_share().config_id(),
+                    hpke_config_id,
                 ))
                 .await?);
             }
-            (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
-            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-                    // Only attempt second trial if _decryption_ fails, and not some
-                    // error in server-side HPKE configuration.
-                    hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-                    error => Err(error),
+            (None, Some(global_hpke_keypair)) => {
+                try_hpke_open(&global_hpke_keypair).inspect(|_| {
+                    metrics.keypair_use_counter.add(
+                        1,
+                        &[
+                            KeyValue::new("type", "global"),
+                            KeyValue::new("hpke_config_id", i64::from(u8::from(hpke_config_id))),
+                        ],
+                    );
                 })
+            }
+            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair).inspect(|_| {
+                metrics
+                    .keypair_use_counter
+                    .add(1, &[KeyValue::new("type", "task")]);
+            }),
+            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                try_hpke_open(task_hpke_keypair)
+                    .inspect(|_| {
+                        metrics
+                            .keypair_use_counter
+                            .add(1, &[KeyValue::new("type", "task")]);
+                    })
+                    .or_else(|error| match error {
+                        // Only attempt second trial if _decryption_ fails, and not some
+                        // error in server-side HPKE configuration.
+                        hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair).inspect(|_| {
+                            metrics.keypair_use_counter.add(
+                                1,
+                                &[
+                                    KeyValue::new("type", "global"),
+                                    KeyValue::new(
+                                        "hpke_config_id",
+                                        i64::from(u8::from(hpke_config_id)),
+                                    ),
+                                ],
+                            );
+                        }),
+                        error => Err(error),
+                    })
             }
         };
 
@@ -2159,42 +2196,34 @@ impl VdafOps {
             move || {
                 let span = info_span!(parent: &parent_span, "handle_aggregate_init_generic threadpool task");
 
-                req
-                    .prepare_inits()
+                req.prepare_inits()
                     .par_iter()
                     .enumerate()
                     .try_for_each_with((sender, span), |(sender, span), (ord, prepare_init)| {
                         let _entered = span.enter();
 
-                        // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-                        let global_hpke_keypair = global_hpke_keypairs.keypair(
-                            prepare_init
-                                .report_share()
-                                .encrypted_input_share()
-                                .config_id(),
-                        );
+                        // If decryption fails, then the aggregator MUST fail with error
+                        // `hpke-decrypt-error`. (§4.4.2.2)
+                        let hpke_config_id = *prepare_init
+                            .report_share()
+                            .encrypted_input_share()
+                            .config_id();
+                        let global_hpke_keypair = global_hpke_keypairs.keypair(&hpke_config_id);
+                        let task_hpke_keypair = task.hpke_keys().get(&hpke_config_id);
 
-                        let task_hpke_keypair = task.hpke_keys().get(
-                            prepare_init
-                                .report_share()
-                                .encrypted_input_share()
-                                .config_id(),
-                        );
-
-                        let check_keypairs = if task_hpke_keypair.is_none()
-                            && global_hpke_keypair.is_none()
-                        {
-                            debug!(
-                                config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
-                                "Helper encrypted input share references unknown HPKE config ID"
-                            );
-                            metrics
-                                .aggregate_step_failure_counter
-                                .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
-                            Err(PrepareError::HpkeUnknownConfigId)
-                        } else {
-                            Ok(())
-                        };
+                        let check_keypairs =
+                            if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
+                                debug!(
+                                    config_id = %hpke_config_id,
+                                    "Helper encrypted input share references unknown HPKE config ID"
+                                );
+                                metrics
+                                    .aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
+                                Err(PrepareError::HpkeUnknownConfigId)
+                            } else {
+                                Ok(())
+                            };
 
                         let input_share_aad = check_keypairs.and_then(|_| {
                             InputShareAad::new(
@@ -2238,16 +2267,51 @@ impl VdafOps {
                             match (task_hpke_keypair, global_hpke_keypair) {
                                 (None, None) => unreachable!("already checked this condition"),
                                 (None, Some(global_hpke_keypair)) => {
-                                    try_hpke_open(&global_hpke_keypair)
-                                }
-                                (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
-                                (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                                    try_hpke_open(task_hpke_keypair).or_else(|error| match error {
-                                        // Only attempt second trial if _decryption_ fails, and not some
-                                        // error in server-side HPKE configuration.
-                                        hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
-                                        error => Err(error),
+                                    try_hpke_open(&global_hpke_keypair).inspect(|_| {
+                                        metrics.keypair_use_counter.add(
+                                            1,
+                                            &[
+                                                KeyValue::new("type", "global"),
+                                                KeyValue::new(
+                                                    "hpke_config_id",
+                                                    i64::from(u8::from(hpke_config_id)),
+                                                ),
+                                            ],
+                                        );
                                     })
+                                }
+                                (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair)
+                                    .inspect(|_| {
+                                        metrics
+                                            .keypair_use_counter
+                                            .add(1, &[KeyValue::new("type", "task")]);
+                                    }),
+                                (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                                    try_hpke_open(task_hpke_keypair)
+                                        .inspect(|_| {
+                                            metrics
+                                                .keypair_use_counter
+                                                .add(1, &[KeyValue::new("type", "task")]);
+                                        })
+                                        .or_else(|error| match error {
+                                            // Only attempt second trial if _decryption_ fails, and
+                                            // not some error in server-side HPKE configuration.
+                                            hpke::Error::Hpke(_) => {
+                                                try_hpke_open(&global_hpke_keypair).inspect(|_| {
+                                                    metrics.keypair_use_counter.add(
+                                                        1,
+                                                        &[
+                                                            KeyValue::new("type", "global"),
+                                                            KeyValue::new(
+                                                                "hpke_config_id",
+                                                                i64::from(u8::from(hpke_config_id)),
+                                                            ),
+                                                        ],
+                                                    );
+                                                })
+                                            }
+                                            error => Err(error),
+                                        })
                                 }
                             }
                             .map_err(|error| {
@@ -2265,8 +2329,8 @@ impl VdafOps {
                         });
 
                         let plaintext_input_share = plaintext.and_then(|plaintext| {
-                            let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext)
-                                .map_err(|error| {
+                            let plaintext_input_share =
+                                PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
                                     debug!(
                                         task_id = %task.id(),
                                         metadata = ?prepare_init.report_share().metadata(),
@@ -2329,9 +2393,10 @@ impl VdafOps {
                                     "Non-taskprov task received report with unexpected taskprov \
                                     extension",
                                 );
-                                metrics
-                                    .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
+                                metrics.aggregate_step_failure_counter.add(
+                                    1,
+                                    &[KeyValue::new("type", "unexpected_taskprov_extension")],
+                                );
                                 return Err(PrepareError::InvalidMessage);
                             }
 
@@ -2460,26 +2525,29 @@ impl VdafOps {
                                 ),
                             };
 
-                        sender.send(ReportShareData {
-                            report_share: prepare_init.report_share().clone(),
-                            report_aggregation: WritableReportAggregation::new(
-                                ReportAggregation::<SEED_SIZE, A>::new(
-                                    *task.id(),
-                                    aggregation_job_id,
-                                    *prepare_init.report_share().metadata().id(),
-                                    *prepare_init.report_share().metadata().time(),
-                                    // Unwrap safety: we checked that all ordinal values are representable
-                                    // as a u64 before entering the parallel iterator.
-                                    ord.try_into().unwrap(),
-                                    Some(PrepareResp::new(
+                        sender
+                            .send(ReportShareData {
+                                report_share: prepare_init.report_share().clone(),
+                                report_aggregation: WritableReportAggregation::new(
+                                    ReportAggregation::<SEED_SIZE, A>::new(
+                                        *task.id(),
+                                        aggregation_job_id,
                                         *prepare_init.report_share().metadata().id(),
-                                        prepare_step_result,
-                                    )),
-                                    report_aggregation_state,
+                                        *prepare_init.report_share().metadata().time(),
+                                        // Unwrap safety: we checked that all ordinal values are
+                                        // representable as a u64 before entering the parallel
+                                        // iterator.
+                                        ord.try_into().unwrap(),
+                                        Some(PrepareResp::new(
+                                            *prepare_init.report_share().metadata().id(),
+                                            prepare_step_result,
+                                        )),
+                                        report_aggregation_state,
+                                    ),
+                                    output_share,
                                 ),
-                                output_share,
-                            ),
-                        }).map_err(drop)
+                            })
+                            .map_err(drop)
                     })
             }
         });
