@@ -836,7 +836,7 @@ async fn aggregate_share_request_get_poll_after_put() {
     assert_eq!(
         response
             .headers()
-            .get("content-type")
+            .get(http::header::CONTENT_TYPE)
             .unwrap()
             .to_str()
             .unwrap(),

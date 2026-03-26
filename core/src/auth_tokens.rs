@@ -19,7 +19,7 @@ use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
 /// HTTP header where auth tokens are provided in messages between participants.
-pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
+pub const DAP_AUTH_HEADER: &str = "dap-auth-token";
 
 /// Different modes of authentication supported by Janus for either sending requests (e.g., leader
 /// to helper) or receiving them (e.g., collector to leader).

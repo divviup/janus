@@ -598,7 +598,7 @@ async fn get_aggregation_job_and_decode(
     assert_eq!(
         response
             .headers()
-            .get("content-type")
+            .get(http::header::CONTENT_TYPE)
             .unwrap()
             .to_str()
             .unwrap(),

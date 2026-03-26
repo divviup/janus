@@ -234,10 +234,7 @@ pub mod test_util {
                     .path(),
             )
             .with_authentication_token(task.aggregator_auth_token())
-            .header(
-                header::CONTENT_TYPE,
-                AggregationJobContinueReq::MEDIA_TYPE,
-            )
+            .header(header::CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(Body::from(request.get_encoded().unwrap()))
             .unwrap();
         handler.clone().oneshot(req).await.unwrap()
@@ -263,7 +260,7 @@ pub mod test_util {
             assert_eq!(
                 response
                     .headers()
-                    .get("content-type")
+                    .get(header::CONTENT_TYPE)
                     .unwrap()
                     .to_str()
                     .unwrap(),
@@ -281,7 +278,7 @@ pub mod test_util {
             assert_eq!(
                 response
                     .headers()
-                    .get("retry-after")
+                    .get(header::RETRY_AFTER)
                     .unwrap()
                     .to_str()
                     .unwrap(),
@@ -290,7 +287,7 @@ pub mod test_util {
             assert_eq!(
                 response
                     .headers()
-                    .get("location")
+                    .get(header::LOCATION)
                     .unwrap()
                     .to_str()
                     .unwrap(),

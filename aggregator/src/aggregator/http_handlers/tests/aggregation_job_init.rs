@@ -98,15 +98,17 @@ async fn aggregate_leader() {
     );
 
     // Check that CORS headers don't bleed over to other routes.
-    assert!(!response
-        .headers()
-        .contains_key("access-control-allow-origin"));
-    assert!(!response
-        .headers()
-        .contains_key("access-control-allow-methods"));
-    assert!(!response
-        .headers()
-        .contains_key("access-control-max-age"));
+    assert!(
+        !response
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
+    assert!(
+        !response
+            .headers()
+            .contains_key("access-control-allow-methods")
+    );
+    assert!(!response.headers().contains_key("access-control-max-age"));
 
     let response = router
         .clone()
@@ -603,7 +605,7 @@ async fn aggregate_init_sync() {
         assert_eq!(
             response
                 .headers()
-                .get("content-type")
+                .get(http::header::CONTENT_TYPE)
                 .unwrap()
                 .to_str()
                 .unwrap(),
@@ -863,7 +865,13 @@ async fn aggregate_init_async() {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(take_response_body(&mut response).await, b"");
-        assert_eq!(response.headers().get("content-length").unwrap(), "0");
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .unwrap(),
+            "0"
+        );
 
         // Check aggregation job in datastore.
         let (aggregation_jobs, report_aggregations, batch_aggregations) = datastore
@@ -1094,7 +1102,7 @@ async fn aggregate_init_prep_init_failed() {
     assert_eq!(
         response
             .headers()
-            .get("content-type")
+            .get(http::header::CONTENT_TYPE)
             .unwrap()
             .to_str()
             .unwrap(),
@@ -1164,7 +1172,7 @@ async fn aggregate_init_prep_step_failed() {
     assert_eq!(
         response
             .headers()
-            .get("content-type")
+            .get(http::header::CONTENT_TYPE)
             .unwrap()
             .to_str()
             .unwrap(),
