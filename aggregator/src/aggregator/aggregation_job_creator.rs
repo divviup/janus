@@ -49,13 +49,13 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
-use trillium_tokio::{CloneCounterObserver, Stopper};
 
 use crate::{
     aggregator::{
         aggregation_job_writer::{AggregationJobWriter, InitialWrite},
         batch_creator::BatchCreator,
     },
+    binary_utils::{CloneCounterObserver, Stopper},
     metrics::AGGREGATION_JOB_SIZE_HISTOGRAM_BOUNDARIES,
 };
 
@@ -911,10 +911,9 @@ mod tests {
     };
     use rand::random;
     use tokio::{task, time, try_join};
-    use trillium_tokio::Stopper;
 
     use super::AggregationJobCreator;
-    use crate::aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT;
+    use crate::{aggregator::test_util::BATCH_AGGREGATION_SHARD_COUNT, binary_utils::Stopper};
 
     #[tokio::test]
     async fn aggregation_job_creator() {

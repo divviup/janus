@@ -1,7 +1,7 @@
 use std::{
     future::{Future, ready},
     iter::Iterator,
-    net::SocketAddr,
+    net::{Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -20,7 +20,6 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use tokio::{spawn, sync::watch, time::interval, try_join};
 use tracing::{error, info};
 use trillium::Handler;
-use trillium_router::router;
 use url::Url;
 
 use crate::{
@@ -30,7 +29,9 @@ use crate::{
         key_rotator::{HpkeKeyRotatorConfig, KeyRotator, deserialize_hpke_key_rotator_config},
     },
     binaries::garbage_collector::run_garbage_collector,
-    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions, setup_server},
+    binary_utils::{
+        BinaryContext, BinaryOptions, CommonBinaryOptions, setup_server, setup_trillium_server,
+    },
     cache::{
         HpkeKeypairCache, TASK_AGGREGATOR_CACHE_DEFAULT_CAPACITY, TASK_AGGREGATOR_CACHE_DEFAULT_TTL,
     },
@@ -104,7 +105,7 @@ async fn run_aggregator(
         aggregator_handler = aggregator_handler.with_helper_aggregation_request_queue(harq);
     }
 
-    let mut handlers = (aggregator_handler.build().await?, None);
+    let aggregator_router = aggregator_handler.build()?;
 
     let garbage_collector_handle = {
         let datastore = Arc::clone(&datastore);
@@ -122,38 +123,35 @@ async fn run_aggregator(
     let aggregator_api_handle =
         match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
-                if let Some(listen_address) = config.listen_address {
-                    // Bind the requested address and spawn a future that serves the aggregator API
-                    // on it, which we'll `tokio::join!` on below
-                    let (aggregator_api_bound_address, aggregator_api_server) =
-                        setup_server(listen_address, stopper.clone(), handler)
-                            .await
-                            .context("failed to create aggregator API server")?;
-
-                    info!(?aggregator_api_bound_address, "Running aggregator API");
-
-                    spawn(aggregator_api_server)
-                } else if let Some(path_prefix) = &config.path_prefix {
-                    // Create a Trillium handler under the requested path prefix, which we'll add to
-                    // the DAP API handler in the setup_server call below
-                    info!(
-                        aggregator_bound_address = ?config.listen_address,
-                        path_prefix,
-                        "Serving aggregator API relative to DAP API"
+                let listen_address = if let Some(listen_address) = config.listen_address {
+                    listen_address
+                } else if config.path_prefix.is_some() {
+                    // TODO(#4283): Once aggregator_api is migrated to axum, use
+                    // Router::nest() to serve it on the same port as the DAP API.
+                    // For now, serve it on a separate ephemeral port.
+                    tracing::warn!(
+                        "path_prefix aggregator API config is temporarily unsupported \
+                         with axum; serving on a loopback ephemeral port. See issue #4283."
                     );
-                    // Append wildcard so that this handler will match anything under the prefix
-                    let path_prefix = format!("{path_prefix}/*");
-                    handlers.1 = Some(router().all(path_prefix, handler));
-                    spawn(ready(()))
+                    SocketAddr::from((Ipv6Addr::LOCALHOST, 0))
                 } else {
                     unreachable!("the configuration should not have deserialized to this state")
-                }
+                };
+
+                let (aggregator_api_bound_address, aggregator_api_server) =
+                    setup_trillium_server(listen_address, stopper.clone(), handler)
+                        .await
+                        .context("failed to create aggregator API server")?;
+
+                info!(?aggregator_api_bound_address, "Running aggregator API");
+
+                spawn(aggregator_api_server)
             }
             None => spawn(ready(())),
         };
 
     let (aggregator_bound_address, aggregator_server) =
-        setup_server(config.listen_address, stopper.clone(), handlers)
+        setup_server(config.listen_address, stopper.clone(), aggregator_router)
             .await
             .context("failed to create aggregator server")?;
     sender.send_replace(Some(aggregator_bound_address));
@@ -249,11 +247,13 @@ pub struct AggregatorApi {
     /// and serve its API endpoints, independently from the address on which the DAP API is
     /// served. This is mutually exclusive with `path_prefix`.
     pub listen_address: Option<SocketAddr>,
-    /// The Janus aggregator API will be served on the same address as the DAP API, but relative
-    /// to the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then the DAP API's
-    /// uploads endpoint would be `{listen-address}/tasks/{task-id}/reports`, while task IDs
-    /// could be obtained from the aggregator API at `{listen-address}/aggregator-api/task_ids`.
-    /// This is mutually exclusive with `listen_address`.
+    /// The Janus aggregator API will be served relative to the provided prefix on the DAP API's
+    /// address. e.g., if `path_prefix` is `aggregator-api`, then task IDs could be obtained at
+    /// `{listen-address}/aggregator-api/task_ids`. This is mutually exclusive with
+    /// `listen_address`.
+    ///
+    /// Note: during the axum migration (#4283), `path_prefix` mode temporarily serves on a
+    /// separate ephemeral loopback port instead of sharing the DAP port.
     pub path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.

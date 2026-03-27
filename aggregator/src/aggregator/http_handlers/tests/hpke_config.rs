@@ -53,7 +53,7 @@ async fn hpke_config() {
         .unwrap(),
     );
     let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
-        .build()
+        .build_trillium_handler(None)
         .await
         .unwrap();
 
@@ -189,7 +189,7 @@ async fn hpke_config_with_taskprov() {
         .unwrap(),
     );
     let handler = AggregatorHandlerBuilder::from_aggregator(aggregator.clone(), &noop_meter())
-        .build()
+        .build_trillium_handler(None)
         .await
         .unwrap();
 

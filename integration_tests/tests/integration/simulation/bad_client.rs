@@ -428,7 +428,7 @@ async fn bad_client_report_validity() {
     )
     .await
     .unwrap()
-    .build()
+    .build_trillium_handler(None)
     .await
     .unwrap();
     let stopper = Stopper::new();
