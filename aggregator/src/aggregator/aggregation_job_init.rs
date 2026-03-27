@@ -648,7 +648,7 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         aggregation_job: &AggregationJobInitializeReq<B>,
-        handler: &Router,
+        router: &Router,
     ) -> http::Response<Body> {
         let request = Request::builder()
             .method("PUT")
@@ -664,7 +664,7 @@ pub mod test_util {
             )
             .body(Body::from(aggregation_job.get_encoded().unwrap()))
             .unwrap();
-        handler.clone().oneshot(request).await.unwrap()
+        router.clone().oneshot(request).await.unwrap()
     }
 }
 
@@ -723,7 +723,7 @@ mod tests {
         pub(super) aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
         aggregation_job_init_resp: Option<AggregationJobResp>,
         pub(super) aggregation_param: V::AggregationParam,
-        pub(super) handler: Router,
+        pub(super) router: Router,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
@@ -769,7 +769,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -832,7 +832,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let handler = builder.build_axum_router(None);
+        let router = builder.build_axum_router(None);
 
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
@@ -862,7 +862,7 @@ mod tests {
             aggregation_job_init_req,
             aggregation_job_init_resp: None,
             aggregation_param,
-            handler,
+            router,
             _ephemeral_datastore: ephemeral_datastore,
         }
     }
@@ -896,7 +896,7 @@ mod tests {
                 test_case.aggregation_job_init_req.get_encoded().unwrap(),
             ))
             .unwrap();
-        let response = test_case.handler.clone().oneshot(req).await.unwrap();
+        let response = test_case.router.clone().oneshot(req).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
     }
@@ -921,7 +921,7 @@ mod tests {
         // `DAP-Auth-Token` header. The presence of the former should cause an error despite
         // the latter being present and well formed.
         let response = test_case
-            .handler
+            .router
             .clone()
             .oneshot(
                 Request::builder()
@@ -984,7 +984,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -1015,7 +1015,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &mutated_aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -1056,7 +1056,7 @@ mod tests {
                 &test_case.task,
                 &test_case.aggregation_job_id,
                 &mutated_aggregation_job_init_req,
-                &test_case.handler,
+                &test_case.router,
             )
             .await;
             assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -1094,7 +1094,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &mutated_aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -1158,7 +1158,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -1217,7 +1217,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let handler = builder.build_axum_router(None);
+        let router = builder.build_axum_router(None);
 
         let vdaf = dummy::Vdaf::new(1);
         let aggregation_param = dummy::AggregationParam(0);
@@ -1272,7 +1272,7 @@ mod tests {
             &task,
             &aggregation_job_id,
             &aggregation_job_init_req,
-            &handler,
+            &router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -1311,7 +1311,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.aggregation_job_init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
 
@@ -1361,7 +1361,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let handler = builder.build_axum_router(None);
+        let router = builder.build_axum_router(None);
 
         let vdaf = dummy::Vdaf::new(1);
         let aggregation_param = dummy::AggregationParam(0);
@@ -1409,7 +1409,7 @@ mod tests {
             &task,
             &aggregation_job_id,
             &aggregation_job_init_req,
-            &handler,
+            &router,
         )
         .await;
         assert_eq!(response.status(), StatusCode::CREATED);
@@ -1461,7 +1461,7 @@ mod tests {
             )
             .body(Body::from(wrong_query.get_encoded().unwrap()))
             .unwrap();
-        let mut response = test_case.handler.clone().oneshot(req).await.unwrap();
+        let mut response = test_case.router.clone().oneshot(req).await.unwrap();
         assert_eq!(
             take_problem_details(&mut response).await,
             json!({

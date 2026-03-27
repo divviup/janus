@@ -39,7 +39,7 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
     task: &Task,
     request: &AggregateShareReq<B>,
     aggregate_share_id: &AggregateShareId,
-    handler: &Router,
+    router: &Router,
 ) -> http::Response<Body> {
     let req = Request::builder()
         .method("PUT")
@@ -55,7 +55,7 @@ pub(crate) async fn put_aggregate_share_request<B: batch_mode::BatchMode>(
         )
         .body(Body::from(request.get_encoded().unwrap()))
         .unwrap();
-    handler.clone().oneshot(req).await.unwrap()
+    router.clone().oneshot(req).await.unwrap()
 }
 
 #[tokio::test]

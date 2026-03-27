@@ -224,7 +224,7 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &Router,
+        router: &Router,
     ) -> http::Response<Body> {
         let req = Request::builder()
             .method("POST")
@@ -237,24 +237,21 @@ pub mod test_util {
             .header(header::CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(Body::from(request.get_encoded().unwrap()))
             .unwrap();
-        handler.clone().oneshot(req).await.unwrap()
+        router.clone().oneshot(req).await.unwrap()
     }
 
     pub async fn post_aggregation_job_and_decode(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &Router,
+        router: &Router,
     ) -> Option<AggregationJobResp> {
-        let mut response = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        let mut response = post_aggregation_job(task, aggregation_job_id, request, router).await;
 
         let length: Option<usize> = response
             .headers()
             .get(header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.parse())
-            .transpose()
-            .unwrap();
+            .map(|v| v.to_str().unwrap().parse().unwrap());
 
         if length.is_some_and(|l| l > 0) {
             assert_eq!(
@@ -302,10 +299,10 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &Router,
+        router: &Router,
         want_status: StatusCode,
     ) -> http::Response<Body> {
-        let response = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        let response = post_aggregation_job(task, aggregation_job_id, request, router).await;
 
         assert_eq!(want_status, response.status());
 
@@ -316,7 +313,7 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        handler: &Router,
+        router: &Router,
         want_status: StatusCode,
         want_error_type: &str,
         want_error_title: &str,
@@ -327,7 +324,7 @@ pub mod test_util {
             task,
             aggregation_job_id,
             request,
-            handler,
+            router,
             want_status,
         )
         .await;
@@ -419,7 +416,7 @@ mod tests {
         aggregation_parameter: V::AggregationParam,
         first_continue_request: AggregationJobContinueReq,
         first_continue_response: Option<AggregationJobResp>,
-        handler: Router,
+        router: Router,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
@@ -519,7 +516,7 @@ mod tests {
             )]),
         );
 
-        // Create aggregator handler.
+        // Create aggregator router.
         let builder = AggregatorHandlerBuilder::new(
             Arc::clone(&datastore),
             clock,
@@ -529,7 +526,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let handler = builder.build_axum_router(None);
+        let router = builder.build_axum_router(None);
 
         AggregationJobContinueTestCase {
             task,
@@ -539,7 +536,7 @@ mod tests {
             aggregation_parameter,
             first_continue_request,
             first_continue_response: None,
-            handler,
+            router,
             _ephemeral_datastore: ephemeral_datastore,
         }
     }
@@ -554,7 +551,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
 
@@ -673,7 +670,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &step_zero_request,
-            &test_case.handler,
+            &test_case.router,
             StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
@@ -693,7 +690,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
         assert_eq!(
@@ -767,7 +764,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &modified_request,
-            &test_case.handler,
+            &test_case.router,
             StatusCode::CONFLICT,
         )
         .await;
@@ -848,7 +845,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &past_step_request,
-            &test_case.handler,
+            &test_case.router,
             StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
@@ -876,7 +873,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &future_step_request,
-            &test_case.handler,
+            &test_case.router,
             StatusCode::BAD_REQUEST,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
@@ -902,7 +899,7 @@ mod tests {
             .with_authentication_token(test_case.task.aggregator_auth_token())
             .body(Body::empty())
             .unwrap();
-            let response = test_case.handler.clone().oneshot(req).await.unwrap();
+            let response = test_case.router.clone().oneshot(req).await.unwrap();
 
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
         }
@@ -941,7 +938,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &init_req,
-            &test_case.handler,
+            &test_case.router,
         )
         .await;
 
@@ -961,7 +958,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
-            &test_case.handler,
+            &test_case.router,
             StatusCode::GONE,
             "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
             "The aggregation job has been deleted.",
