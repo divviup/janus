@@ -553,7 +553,7 @@ mod tests {
     use trillium_testing::prelude::*;
 
     use crate::{
-        aggregator::http_handlers::test_util::take_response_body,
+        aggregator::http_handlers::test_util::take_response_body_conn as take_response_body,
         binary_utils::{
             CommonBinaryOptions, database_pool, initialize_rustls,
             register_database_pool_status_metrics, zpages_handler,

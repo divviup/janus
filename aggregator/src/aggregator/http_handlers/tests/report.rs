@@ -36,7 +36,10 @@ use crate::{
     aggregator::{
         http_handlers::{
             AggregatorHandlerBuilder,
-            test_util::{HttpHandlerTest, take_problem_details, take_response_body},
+            test_util::{
+                HttpHandlerTest, take_problem_details_conn as take_problem_details,
+                take_response_body_conn as take_response_body,
+            },
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
     },

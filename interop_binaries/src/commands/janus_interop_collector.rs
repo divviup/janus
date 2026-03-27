@@ -536,7 +536,7 @@ async fn handle_collection_start(
             }
 
             (_, vdaf_instance) => {
-                panic!("Unsupported VDAF: {vdaf_instance:?}")
+                anyhow::bail!("Unsupported VDAF: {vdaf_instance:?}")
             }
         };
 

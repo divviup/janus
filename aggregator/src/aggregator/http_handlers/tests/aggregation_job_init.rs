@@ -2,7 +2,9 @@
 #![allow(clippy::unit_arg)]
 
 use assert_matches::assert_matches;
+use axum::body::Body;
 use futures::future::try_join_all;
+use http::{Method, Request, StatusCode};
 use janus_aggregator_core::{
     datastore::{
         models::{
@@ -30,13 +32,14 @@ use janus_messages::{
 use prio::{codec::Encode, vdaf::dummy};
 use rand::random;
 use serde_json::json;
-use trillium::{KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_body, assert_headers, prelude::put};
+use tower::ServiceExt;
 
 use crate::aggregator::{
     BatchAggregationsIterator,
     aggregation_job_init::test_util::{PrepareInitGenerator, put_aggregation_job},
-    http_handlers::test_util::{HttpHandlerTest, decode_response_body, take_problem_details},
+    http_handlers::test_util::{
+        HttpHandlerTest, decode_response_body, take_problem_details, take_response_body,
+    },
     test_util::{
         BATCH_AGGREGATION_SHARD_COUNT, assert_task_aggregation_counter,
         generate_helper_report_share, generate_helper_report_share_for_plaintext,
@@ -48,7 +51,7 @@ async fn aggregate_leader() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -70,10 +73,10 @@ async fn aggregate_leader() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert!(!test_conn.status().unwrap().is_success());
+    let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
+    assert!(!response.status().is_success());
 
-    let problem_details = take_problem_details(&mut test_conn).await;
+    let problem_details = take_problem_details(&mut response).await;
     assert_eq!(
         problem_details,
         json!({
@@ -91,29 +94,45 @@ async fn aggregate_leader() {
             .unwrap()
             .as_u64()
             .unwrap(),
-        test_conn.status().unwrap() as u16 as u64
+        response.status().as_u16() as u64
     );
 
     // Check that CORS headers don't bleed over to other routes.
-    assert_headers!(
-        &test_conn,
-        "access-control-allow-origin" => None,
-        "access-control-allow-methods" => None,
-        "access-control-max-age" => None,
+    assert!(
+        !response
+            .headers()
+            .contains_key("access-control-allow-origin")
     );
+    assert!(
+        !response
+            .headers()
+            .contains_key("access-control-allow-methods")
+    );
+    assert!(!response.headers().contains_key("access-control-max-age"));
 
-    let test_conn = TestConn::build(
-        trillium::Method::Options,
-        task.aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path(),
-        (),
-    )
-    .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-    .with_request_header(KnownHeaderName::AccessControlRequestMethod, "PUT")
-    .run_async(&handler)
-    .await;
-    assert_headers!(&test_conn, "access-control-allow-methods" => None);
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri(
+                    task.aggregation_job_uri(&aggregation_job_id, None)
+                        .unwrap()
+                        .path(),
+                )
+                .header("origin", "https://example.com/")
+                .header("access-control-request-method", "PUT")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response
+            .headers()
+            .get("access-control-allow-methods")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -121,7 +140,7 @@ async fn aggregate_wrong_agg_auth_token() {
     let HttpHandlerTest {
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         ..
     } = HttpHandlerTest::new().await;
 
@@ -160,23 +179,27 @@ async fn aggregate_wrong_agg_auth_token() {
         Vec::from([]),
         Vec::from([dap_auth_token, wrong_token_value]),
     ] {
-        let mut test_conn = put(task
-            .aggregation_job_uri(&aggregation_job_id, None)
-            .unwrap()
-            .path())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded().unwrap());
+        let mut req = Request::builder()
+            .method(Method::PUT)
+            .uri(
+                task.aggregation_job_uri(&aggregation_job_id, None)
+                    .unwrap()
+                    .path(),
+            )
+            .header(
+                "content-type",
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .body(Body::from(request.get_encoded().unwrap()))
+            .unwrap();
 
         for auth_token in auth_tokens {
-            let (auth_header, auth_value) = auth_token.request_authentication();
-            test_conn = test_conn.with_request_header(auth_header, auth_value);
+            let (auth_header, auth_value) = auth_token.request_authentication().unwrap();
+            req.headers_mut().insert(auth_header, auth_value);
         }
 
-        let status = test_conn.run_async(&handler).await.status().unwrap();
-        assert_eq!(status, Status::Forbidden);
+        let response = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
 
@@ -186,7 +209,7 @@ async fn aggregate_init_sync() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -577,14 +600,18 @@ async fn aggregate_init_sync() {
     // Send request, parse response. Do this twice to prove that the request is idempotent.
     let aggregation_job_id: AggregationJobId = random();
     for _ in 0..2 {
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Created));
-        assert_headers!(
-            &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            AggregationJobResp::MEDIA_TYPE
         );
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+        let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
         let prepare_resps = assert_matches!(
             aggregate_resp,
             AggregationJobResp { prepare_resps } => prepare_resps
@@ -766,7 +793,7 @@ async fn aggregate_init_async() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -834,14 +861,16 @@ async fn aggregate_init_async() {
     let mut report_aggregations_results = Vec::new();
     let mut batch_aggregations_results = Vec::new();
     for _ in 0..2 {
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_body!(&mut test_conn, "");
-        assert_headers!(
-            &test_conn,
-            "content-length" => "0"
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(take_response_body(&mut response).await, b"");
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .unwrap(),
+            "0"
         );
 
         // Check aggregation job in datastore.
@@ -922,7 +951,7 @@ async fn aggregate_init_batch_already_collected() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -994,21 +1023,24 @@ async fn aggregate_init_batch_already_collected() {
         .unwrap();
 
     let aggregation_job_id: AggregationJobId = random();
-    let mut test_conn = put(task
-        .aggregation_job_uri(&aggregation_job_id, None)
-        .unwrap()
-        .path())
-    .with_authentication_token(task.aggregator_auth_token())
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&handler)
-    .await;
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri(
+            task.aggregation_job_uri(&aggregation_job_id, None)
+                .unwrap()
+                .path(),
+        )
+        .with_authentication_token(task.aggregator_auth_token())
+        .header(
+            http::header::CONTENT_TYPE,
+            AggregationJobInitializeReq::<LeaderSelected>::MEDIA_TYPE,
+        )
+        .body(Body::from(request.get_encoded().unwrap()))
+        .unwrap();
+    let mut response = router.clone().oneshot(req).await.unwrap();
 
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1034,7 +1066,7 @@ async fn aggregate_init_prep_init_failed() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -1065,13 +1097,18 @@ async fn aggregate_init_prep_init_failed() {
 
     // Send request, and parse response.
     let aggregation_job_id: AggregationJobId = random();
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        AggregationJobResp::MEDIA_TYPE
     );
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1100,7 +1137,7 @@ async fn aggregate_init_prep_step_failed() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -1130,13 +1167,18 @@ async fn aggregate_init_prep_step_failed() {
     );
 
     let aggregation_job_id: AggregationJobId = random();
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-    assert_eq!(test_conn.status(), Some(Status::Created));
-    assert_headers!(
-        &test_conn,
-        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        AggregationJobResp::MEDIA_TYPE
     );
-    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut response).await;
     let prepare_resps = assert_matches!(
         aggregate_resp,
         AggregationJobResp { prepare_resps } => prepare_resps
@@ -1165,7 +1207,7 @@ async fn aggregate_init_duplicated_report_id() {
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
+        router,
         hpke_keypair,
         ..
     } = HttpHandlerTest::new().await;
@@ -1197,11 +1239,11 @@ async fn aggregate_init_duplicated_report_id() {
     );
     let aggregation_job_id: AggregationJobId = random();
 
-    let mut test_conn = put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+    let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &router).await;
 
     let want_status = 400;
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        take_problem_details(&mut response).await,
         json!({
             "status": want_status,
             "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
@@ -1210,7 +1252,7 @@ async fn aggregate_init_duplicated_report_id() {
             "taskid": format!("{}", task.id()),
         })
     );
-    assert_eq!(want_status, test_conn.status().unwrap());
+    assert_eq!(want_status, response.status().as_u16());
 
     assert_task_aggregation_counter(&datastore, *task.id(), TaskAggregationCounter::default())
         .await;

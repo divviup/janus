@@ -801,6 +801,28 @@ where
         }
     }
 
+    fn build_helper_queue(&self) -> Result<Option<Arc<LIFORequestQueue>>, Error> {
+        self.helper_aggregation_request_queue
+            .as_ref()
+            .map(
+                |HelperAggregationRequestQueue {
+                     depth,
+                     concurrency,
+                     timeout_ms,
+                 }| {
+                    LIFORequestQueue::new(
+                        *concurrency,
+                        *depth,
+                        self.meter,
+                        "janus_helper",
+                        timeout_ms.map(StdDuration::from_millis),
+                    )
+                },
+            )
+            .transpose()
+            .map(|q| q.map(Arc::new))
+    }
+
     /// Build just the Axum router (without the Trillium wrapper and proxy). This is useful for
     /// tests that need to serve the axum router directly.
     pub fn build_axum_router(&self, helper_queue: Option<Arc<LIFORequestQueue>>) -> axum::Router {
@@ -867,26 +889,16 @@ where
     }
 
     pub async fn build(self) -> Result<impl Handler, Error> {
-        let helper_queue = self
-            .helper_aggregation_request_queue
-            .map(
-                |HelperAggregationRequestQueue {
-                     depth,
-                     concurrency,
-                     timeout_ms,
-                 }| {
-                    LIFORequestQueue::new(
-                        concurrency,
-                        depth,
-                        self.meter,
-                        "janus_helper",
-                        timeout_ms.map(StdDuration::from_millis),
-                    )
-                },
-            )
-            .transpose()?
-            .map(Arc::new);
+        let queue = self.build_helper_queue()?;
+        self.build_with_prebuilt_queue(queue).await
+    }
 
+    /// Build the handler with a pre-built helper queue. This avoids double-instantiation when
+    /// callers also need a reference to the axum router (e.g. tests).
+    async fn build_with_prebuilt_queue(
+        self,
+        helper_queue: Option<Arc<LIFORequestQueue>>,
+    ) -> Result<impl Handler, Error> {
         // The Trillium router is now empty — all routes have migrated to axum.
         let router = Router::new().without_options_handling();
 
@@ -905,8 +917,9 @@ where
 
         let axum_router = self.build_axum_router(helper_queue);
 
-        // Bind a local listener for the axum router and spawn it.
-        let axum_listener = tokio::net::TcpListener::bind("localhost:0")
+        // Bind on the IPv6 loopback to avoid a DNS lookup for "localhost" and restrict to local
+        // connections. Deployments require IPv6 loopback to be available (standard in Linux).
+        let axum_listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
             .await
             .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
         let axum_address = axum_listener.local_addr().map_err(|err| {
@@ -1432,6 +1445,7 @@ fn parse_step_from_query(query: Option<&str>) -> Result<Option<AggregationJobSte
 pub mod test_util {
     use std::sync::Arc;
 
+    use axum::{Router, body::to_bytes, response::Response};
     use janus_aggregator_core::{
         datastore::{
             Datastore,
@@ -1452,7 +1466,9 @@ pub mod test_util {
     use super::AggregatorHandlerBuilder;
     use crate::aggregator::test_util::default_aggregator_config;
 
-    pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
+    // Trillium-based test helpers (used by tests not yet migrated to axum).
+
+    pub async fn take_response_body_conn(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn
             .take_response_body()
             .unwrap()
@@ -1462,13 +1478,37 @@ pub mod test_util {
             .into_owned()
     }
 
-    pub async fn decode_response_body<T: Decode>(test_conn: &mut TestConn) -> T {
-        T::get_decoded(&take_response_body(test_conn).await).unwrap()
+    pub async fn decode_response_body_conn<T: Decode>(test_conn: &mut TestConn) -> T {
+        T::get_decoded(&take_response_body_conn(test_conn).await).unwrap()
     }
 
-    pub async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+    pub async fn take_problem_details_conn(test_conn: &mut TestConn) -> serde_json::Value {
         assert_headers!(&test_conn, "content-type" => "application/problem+json");
-        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
+        serde_json::from_slice(&take_response_body_conn(test_conn).await).unwrap()
+    }
+
+    // Axum-based test helpers.
+
+    pub async fn take_response_body(response: &mut Response) -> Vec<u8> {
+        let body = std::mem::take(response.body_mut());
+        to_bytes(body, usize::MAX).await.unwrap().to_vec()
+    }
+
+    pub async fn decode_response_body<T: Decode>(response: &mut Response) -> T {
+        T::get_decoded(&take_response_body(response).await).unwrap()
+    }
+
+    pub async fn take_problem_details(response: &mut Response) -> serde_json::Value {
+        assert_eq!(
+            response
+                .headers()
+                .get(http::header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/problem+json"
+        );
+        serde_json::from_slice(&take_response_body(response).await).unwrap()
     }
 
     /// Contains structures necessary for completing an HTTP handler test. The contained
@@ -1479,6 +1519,7 @@ pub mod test_util {
         pub ephemeral_datastore: EphemeralDatastore,
         pub datastore: Arc<Datastore<MockClock>>,
         pub handler: Box<dyn Handler>,
+        pub router: Router,
         pub hpke_keypair: HpkeKeypair,
     }
 
@@ -1492,30 +1533,38 @@ pub mod test_util {
 
             let hpke_keypair = datastore.put_hpke_key().await.unwrap();
 
-            let handler = AggregatorHandlerBuilder::new(
+            let meter = noop_meter();
+            let builder = AggregatorHandlerBuilder::new(
                 datastore.clone(),
                 clock.clone(),
                 TestRuntime::default(),
-                &noop_meter(),
+                &meter,
                 default_aggregator_config(),
             )
             .await
             .unwrap()
             // Shake out any bugs with helper request queuing.
-            .with_helper_aggregation_request_queue(super::HelperAggregationRequestQueue {
-                depth: 16,
-                concurrency: 2,
-                timeout_ms: None,
-            })
-            .build()
-            .await
-            .unwrap();
+            .with_helper_aggregation_request_queue(
+                super::HelperAggregationRequestQueue {
+                    depth: 16,
+                    concurrency: 2,
+                    timeout_ms: None,
+                },
+            );
+
+            let helper_queue = builder.build_helper_queue().unwrap();
+            let router = builder.build_axum_router(helper_queue.clone());
+            let handler = builder
+                .build_with_prebuilt_queue(helper_queue)
+                .await
+                .unwrap();
 
             Self {
                 clock,
                 ephemeral_datastore,
                 datastore,
                 handler: Box::new(handler),
+                router,
                 hpke_keypair,
             }
         }

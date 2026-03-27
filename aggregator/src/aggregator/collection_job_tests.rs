@@ -44,7 +44,10 @@ use trillium_testing::{
 use super::http_handlers::AggregatorHandlerBuilder;
 use crate::aggregator::{
     Config,
-    http_handlers::test_util::{decode_response_body, take_problem_details},
+    http_handlers::test_util::{
+        decode_response_body_conn as decode_response_body,
+        take_problem_details_conn as take_problem_details,
+    },
     test_util::BATCH_AGGREGATION_SHARD_COUNT,
 };
 

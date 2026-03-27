@@ -2068,7 +2068,7 @@ mod tests {
             Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
         let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
 
-        let (header, value) = agg_auth_token.request_authentication();
+        let (header, value) = agg_auth_token.request_authentication().unwrap();
         let mocked_async_aggregate_share_unavailable = server
             .mock(
                 "PUT",
@@ -2076,7 +2076,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -2178,7 +2178,7 @@ mod tests {
         let helper_response = fake_aggregate_share();
         let helper_encrypted_aggregate_share = helper_response.encrypted_aggregate_share().clone();
 
-        let (header, value) = agg_auth_token.request_authentication();
+        let (header, value) = agg_auth_token.request_authentication().unwrap();
         let mocked_async_aggregate_share_unavailable = server
             .mock(
                 "PUT",
@@ -2186,7 +2186,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -2241,7 +2241,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(header, value.as_str())
+            .match_header(header.as_str(), value.to_str().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded().unwrap())

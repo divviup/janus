@@ -681,7 +681,10 @@ where
                                         Prio3Sum { max_measurement } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                max_measurement.ilog2() as u64 + 1,
+                                                max_measurement
+                                                    .checked_ilog2()
+                                                    .map(|v| v as u64 + 1)
+                                                    .unwrap_or(0),
                                                 &[KeyValue::new("type", "Prio3Sum")],
                                             ),
 
@@ -692,7 +695,11 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                (length * (max_measurement.ilog2() as usize + 1))
+                                                (length
+                                                    * max_measurement
+                                                        .checked_ilog2()
+                                                        .map(|v| v as usize + 1)
+                                                        .unwrap_or(0))
                                                     as u64,
                                                 &[KeyValue::new("type", "Prio3SumVec")],
                                             ),
@@ -704,7 +711,11 @@ where
                                         } => metrics
                                             .aggregated_report_share_dimension_histogram
                                             .record(
-                                                (length * (max_measurement.ilog2() as usize + 1))
+                                                (length
+                                                    * max_measurement
+                                                        .checked_ilog2()
+                                                        .map(|v| v as usize + 1)
+                                                        .unwrap_or(0))
                                                     as u64,
                                                 &[KeyValue::new(
                                                     "type",
