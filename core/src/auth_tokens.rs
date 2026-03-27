@@ -3,7 +3,7 @@ use std::{
     sync::LazyLock,
 };
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use aws_lc_rs::{
     constant_time,
     digest::{SHA256, SHA256_OUTPUT_LEN, digest},
@@ -71,17 +71,18 @@ impl AuthenticationToken {
 
     /// Returns an HTTP header name and value that should be used to authenticate an HTTP request
     /// with this credential.
-    pub fn request_authentication(&self) -> (HeaderName, HeaderValue) {
+    pub fn request_authentication(&self) -> Result<(HeaderName, HeaderValue), anyhow::Error> {
         match self {
-            Self::Bearer(token) => (
+            Self::Bearer(token) => Ok((
                 AUTHORIZATION,
                 HeaderValue::try_from(format!("Bearer {}", token.as_str()))
-                    .expect("bearer token is not valid ASCII"),
-            ),
-            Self::DapAuth(token) => (
+                    .context("bearer token is not a valid header value")?,
+            )),
+            Self::DapAuth(token) => Ok((
                 HeaderName::from_static(DAP_AUTH_HEADER),
-                HeaderValue::try_from(token.as_str()).expect("DAP auth token is not valid ASCII"),
-            ),
+                HeaderValue::try_from(token.as_str())
+                    .context("DAP auth token is not a valid header value")?,
+            )),
         }
     }
 
@@ -451,7 +452,7 @@ pub mod test_util {
 
     impl WithAuthenticationToken for trillium_testing::TestConn {
         fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication();
+            let (header, value) = auth_token.request_authentication().unwrap();
             self.with_request_header(
                 header.as_str().to_owned(),
                 value.to_str().unwrap().to_owned(),
@@ -461,7 +462,7 @@ pub mod test_util {
 
     impl WithAuthenticationToken for http::HeaderMap {
         fn with_authentication_token(mut self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication();
+            let (header, value) = auth_token.request_authentication().unwrap();
             self.insert(header, value);
             self
         }
@@ -469,7 +470,7 @@ pub mod test_util {
 
     impl WithAuthenticationToken for http::request::Builder {
         fn with_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication();
+            let (header, value) = auth_token.request_authentication().unwrap();
             self.header(header, value)
         }
     }
@@ -483,7 +484,7 @@ pub mod test_util {
 
     impl MatchAuthenticationToken for mockito::Mock {
         fn match_authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-            let (header, value) = auth_token.request_authentication();
+            let (header, value) = auth_token.request_authentication().unwrap();
             self.match_header(header.as_str(), value.to_str().unwrap())
         }
     }

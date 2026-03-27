@@ -194,7 +194,7 @@ async fn aggregate_wrong_agg_auth_token() {
             .unwrap();
 
         for auth_token in auth_tokens {
-            let (auth_header, auth_value) = auth_token.request_authentication();
+            let (auth_header, auth_value) = auth_token.request_authentication().unwrap();
             req.headers_mut().insert(auth_header, auth_value);
         }
 

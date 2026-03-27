@@ -212,7 +212,10 @@ pub trait ReqwestAuthenticationToken {
 
 impl ReqwestAuthenticationToken for reqwest::RequestBuilder {
     fn authentication_token(self, auth_token: &AuthenticationToken) -> Self {
-        let (header, value) = auth_token.request_authentication();
+        // unwrap safety: Tokens are validated at construction time, so this should not fail.
+        let (header, value) = auth_token
+            .request_authentication()
+            .expect("auth token should produce a valid header");
         self.header(header, value)
     }
 }

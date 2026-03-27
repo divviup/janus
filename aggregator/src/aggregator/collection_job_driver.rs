@@ -2068,7 +2068,7 @@ mod tests {
             Arc::new(lease.clone().unwrap()).remaining_lease_duration(&clock.now(), 0);
         let retry_after_header_value = (remaining_time + StdDuration::from_secs(1)).as_secs();
 
-        let (header, value) = agg_auth_token.request_authentication();
+        let (header, value) = agg_auth_token.request_authentication().unwrap();
         let mocked_async_aggregate_share_unavailable = server
             .mock(
                 "PUT",
@@ -2178,7 +2178,7 @@ mod tests {
         let helper_response = fake_aggregate_share();
         let helper_encrypted_aggregate_share = helper_response.encrypted_aggregate_share().clone();
 
-        let (header, value) = agg_auth_token.request_authentication();
+        let (header, value) = agg_auth_token.request_authentication().unwrap();
         let mocked_async_aggregate_share_unavailable = server
             .mock(
                 "PUT",
