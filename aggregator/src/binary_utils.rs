@@ -9,12 +9,8 @@ use std::{
     net::SocketAddr,
     panic,
     path::{Path, PathBuf},
-    pin::Pin,
     str::FromStr,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -36,7 +32,7 @@ use opentelemetry_sdk::metrics::MetricError;
 use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use rustls::RootCertStore;
 use rustls_pki_types::{CertificateDer, pem::PemObject};
-use tokio::{runtime, sync::Notify};
+use tokio::runtime;
 use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tokio_util::sync::CancellationToken;
@@ -77,74 +73,7 @@ impl Stopper {
     /// Runs the given future to completion, unless this stopper is stopped first. Returns `Some`
     /// with the future's output if it completed, or `None` if the stopper was stopped.
     pub async fn run_until_stopped<F: Future>(&self, future: F) -> Option<F::Output> {
-        tokio::pin!(future);
-        tokio::select! {
-            output = &mut future => Some(output),
-            _ = self.0.cancelled() => None,
-        }
-    }
-}
-
-/// Tracks outstanding cloned counters and allows waiting for all of them to be dropped. Used to
-/// wait for spawned tasks to complete.
-pub struct CloneCounterObserver {
-    count: Arc<AtomicUsize>,
-    notify: Arc<Notify>,
-}
-
-#[must_use = "dropping immediately defeats the purpose of the counter"]
-pub struct CloneCounter {
-    count: Arc<AtomicUsize>,
-    notify: Arc<Notify>,
-}
-
-impl Default for CloneCounterObserver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CloneCounterObserver {
-    pub fn new() -> Self {
-        Self {
-            count: Arc::new(AtomicUsize::new(0)),
-            notify: Arc::new(Notify::new()),
-        }
-    }
-
-    pub fn counter(&self) -> CloneCounter {
-        self.count.fetch_add(1, Ordering::SeqCst);
-        CloneCounter {
-            count: Arc::clone(&self.count),
-            notify: Arc::clone(&self.notify),
-        }
-    }
-}
-
-impl std::future::IntoFuture for CloneCounterObserver {
-    type Output = ();
-    type IntoFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(async move {
-            loop {
-                let notified = self.notify.notified();
-                tokio::pin!(notified);
-                notified.as_mut().enable();
-                if self.count.load(Ordering::SeqCst) == 0 {
-                    break;
-                }
-                notified.await;
-            }
-        })
-    }
-}
-
-impl Drop for CloneCounter {
-    fn drop(&mut self) {
-        if self.count.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.notify.notify_waiters();
-        }
+        self.0.run_until_cancelled(future).await
     }
 }
 
