@@ -347,7 +347,7 @@ impl<H: Handler> LIFOQueueHandler<H> {
             Some(permit) => match permit {
                 Ok(_permit) => self.handler.run(conn).await,
                 Err(err) => {
-                    let status = axum::response::IntoResponse::into_response(err).status();
+                    let status = err.into_response().status();
                     conn.with_status(status.as_u16()).halt()
                 }
             },
