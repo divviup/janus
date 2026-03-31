@@ -1,6 +1,8 @@
 use std::{collections::HashSet, net::Ipv6Addr, sync::Arc, time::Duration as StdDuration};
 
+use axum::body::Body;
 use chrono::TimeDelta;
+use http::{Request, StatusCode};
 use janus_aggregator_core::{
     datastore::test_util::{EphemeralDatastoreBuilder, ephemeral_datastore},
     task::{AggregationMode, BatchMode, test_util::TaskBuilder},
@@ -28,17 +30,13 @@ use tokio::{
     net::{TcpListener, TcpStream},
     time::{sleep, timeout},
 };
-use trillium::{KnownHeaderName, Status};
-use trillium_testing::{TestConn, assert_headers, prelude::post};
+use tower::ServiceExt;
 
 use crate::{
     aggregator::{
         http_handlers::{
             AggregatorHandlerBuilder,
-            test_util::{
-                HttpHandlerTest, take_problem_details_conn as take_problem_details,
-                take_response_body_conn as take_response_body,
-            },
+            test_util::{HttpHandlerTest, take_problem_details, take_response_body},
         },
         test_util::{create_report, create_report_custom, default_aggregator_config},
     },
@@ -48,29 +46,35 @@ use crate::{
 #[tokio::test]
 async fn upload_handler() {
     async fn check_response(
-        test_conn: &mut TestConn,
+        response: &mut http::Response<Body>,
         desired_report_id: &ReportId,
         desired_report_error: ReportError,
     ) {
         // HTTP status is OK regardless of what happened to the constituent reports because the HTTP
         // messages were exchanged successfully.
-        if test_conn.status() != Some(Status::Ok) {
+        if response.status() != StatusCode::OK {
             println!(
                 "ERROR: Report {} got status {:?}",
                 desired_report_id,
-                test_conn.status()
+                response.status()
             );
-            if let Some(body) = test_conn.take_response_body_string() {
-                println!("Response body: {}", body);
+            let body = take_response_body(response).await;
+            if !body.is_empty() {
+                println!("Response body: {}", String::from_utf8_lossy(&body));
             }
         }
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(response.status(), StatusCode::OK);
 
-        assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
-        let body = &take_response_body(test_conn).await;
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/ppm-dap;message=upload-errors"
+        );
+        let body = &take_response_body(response).await;
         let expected_content_len = format!("{}", body.len());
-        let len_str = expected_content_len.as_str();
-        assert_headers!(&test_conn, "content-length" => len_str);
+        assert_eq!(
+            response.headers().get("content-length").unwrap(),
+            expected_content_len.as_str()
+        );
         let upload_response = UploadErrors::get_decoded_with_param(&body.len(), body).unwrap();
 
         assert_eq!(upload_response.status().len(), 1);
@@ -81,7 +85,7 @@ async fn upload_handler() {
     }
 
     let HttpHandlerTest {
-        handler,
+        router,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -114,43 +118,49 @@ async fn upload_handler() {
 
     // Upload a report. Do this twice to prove that PUT is idempotent.
     for _ in 0..2 {
-        let mut test_conn = post(task.report_upload_uri().unwrap().path())
-            .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-            .with_request_body(
-                UploadRequest::from_slice(std::slice::from_ref(&report))
-                    .get_encoded()
+        let mut response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(task.report_upload_uri().unwrap().path())
+                    .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                    .body(Body::from(
+                        UploadRequest::from_slice(std::slice::from_ref(&report))
+                            .get_encoded()
+                            .unwrap(),
+                    ))
                     .unwrap(),
             )
-            .run_async(&handler)
-            .await;
+            .await
+            .unwrap();
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert!(
-            test_conn
-                .take_response_body_string()
-                .is_some_and(|s| s.is_empty())
-        );
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(take_response_body(&mut response).await.is_empty());
     }
 
     // Upload a report with a versioned media-type header
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            format!("{};version_suffixes=ignored", UploadRequest::MEDIA_TYPE),
-        )
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(
+                    http::header::CONTENT_TYPE,
+                    format!("{};version_suffixes=ignored", UploadRequest::MEDIA_TYPE),
+                )
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(
-        test_conn
-            .take_response_body_string()
-            .is_some_and(|s| s.is_empty())
-    );
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(take_response_body(&mut response).await.is_empty());
 
     let accepted_report_id = report.metadata().id();
 
@@ -164,21 +174,24 @@ async fn upload_handler() {
         Vec::new(),
         Vec::new(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(&[duplicate_id_report])
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(&[duplicate_id_report])
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(
-        test_conn
-            .take_response_body_string()
-            .is_some_and(|s| s.is_empty())
-    );
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(take_response_body(&mut response).await.is_empty());
 
     // Upload multiple reports in a single request
     let reports = vec![
@@ -198,17 +211,22 @@ async fn upload_handler() {
             clock.now().to_time(task.time_precision()),
         ),
     ];
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::new(reports).get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert!(
-        test_conn
-            .take_response_body_string()
-            .is_some_and(|s| s.is_empty())
-    );
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::new(reports).get_encoded().unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(take_response_body(&mut response).await.is_empty());
 
     // Verify that reports older than the report expiry age are rejected with the reportRejected
     // error type.
@@ -229,17 +247,24 @@ async fn upload_handler() {
         report.leader_encrypted_input_share().clone(),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&gc_eligible_report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&gc_eligible_report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         gc_eligible_report.metadata().id(),
         ReportError::ReportDropped,
     )
@@ -262,17 +287,24 @@ async fn upload_handler() {
         ),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&bad_report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&bad_report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         bad_report.metadata().id(),
         ReportError::HpkeUnknownConfigId,
     )
@@ -294,17 +326,24 @@ async fn upload_handler() {
         report.leader_encrypted_input_share().clone(),
         report.helper_encrypted_input_share().clone(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&bad_report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&bad_report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         bad_report.metadata().id(),
         ReportError::ReportTooEarly,
     )
@@ -345,17 +384,24 @@ async fn upload_handler() {
             ))
             .unwrap(),
     );
-    let mut test_conn = post(task_end_soon.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&report_2))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task_end_soon.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&report_2))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         report_2.metadata().id(),
         ReportError::TaskExpired,
     )
@@ -378,17 +424,24 @@ async fn upload_handler() {
             .helper_encrypted_input_share()
             .clone(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(&[bad_public_share_report.clone()])
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(&[bad_public_share_report.clone()])
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         bad_public_share_report.metadata().id(),
         ReportError::InvalidMessage,
     )
@@ -405,17 +458,24 @@ async fn upload_handler() {
         Vec::new(),
         Vec::new(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&undecryptable_report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&undecryptable_report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         undecryptable_report.metadata().id(),
         ReportError::HpkeDecryptError,
     )
@@ -450,53 +510,94 @@ async fn upload_handler() {
             .helper_encrypted_input_share()
             .clone(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(&[bad_leader_input_share_report.clone()])
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(&[bad_leader_input_share_report.clone()])
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         bad_leader_input_share_report.metadata().id(),
         ReportError::InvalidMessage,
     )
     .await;
 
     // Check for appropriate CORS headers in response to a preflight request.
-    let test_conn = TestConn::build(
-        trillium::Method::Options,
-        task.report_upload_uri().unwrap().path(),
-        (),
-    )
-    .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-    .with_request_header(KnownHeaderName::AccessControlRequestMethod, "POST")
-    .with_request_header(KnownHeaderName::AccessControlRequestHeaders, "content-type")
-    .run_async(&handler)
-    .await;
-    assert!(test_conn.status().unwrap().is_success());
-    assert_headers!(
-        &test_conn,
-        "access-control-allow-origin" => "https://example.com/",
-        "access-control-allow-methods"=> "POST",
-        "access-control-allow-headers" => "content-type",
-        "access-control-max-age"=> "86400",
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header("origin", "https://example.com/")
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "content-type")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://example.com/"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-methods")
+            .unwrap(),
+        "POST"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-headers")
+            .unwrap(),
+        "content-type"
+    );
+    assert_eq!(
+        response.headers().get("access-control-max-age").unwrap(),
+        "86400"
     );
 
     // Check for appropriate CORS headers in response to the main request.
-    let test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
-    assert!(test_conn.status().unwrap().is_success());
-    assert_headers!(
-        &test_conn,
-        "access-control-allow-origin" => "https://example.com/"
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header("origin", "https://example.com/")
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(&[report]).get_encoded().unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://example.com/"
     );
 
     // Reports with duplicate extensions must be rejected
@@ -510,17 +611,24 @@ async fn upload_handler() {
         /* leader */ Vec::from([Extension::new(ExtensionType::Reserved, Vec::new())]),
         /* helper */ Vec::new(),
     );
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::from_slice(std::slice::from_ref(&dupe_ext_report))
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(std::slice::from_ref(&dupe_ext_report))
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
     check_response(
-        &mut test_conn,
+        &mut response,
         dupe_ext_report.metadata().id(),
         ReportError::InvalidMessage,
     )
@@ -532,7 +640,7 @@ async fn upload_handler() {
 #[tokio::test]
 async fn upload_handler_mixed_success_failure() {
     let HttpHandlerTest {
-        handler,
+        router,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -611,27 +719,37 @@ async fn upload_handler_mixed_success_failure() {
     );
 
     // Upload all four reports in a single batch
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::new(vec![
-                valid_report_1.clone(),
-                expired_report.clone(),
-                valid_report_2.clone(),
-                invalid_hpke_report.clone(),
-            ])
-            .get_encoded()
-            .unwrap(),
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::new(vec![
+                        valid_report_1.clone(),
+                        expired_report.clone(),
+                        valid_report_2.clone(),
+                        invalid_hpke_report.clone(),
+                    ])
+                    .get_encoded()
+                    .unwrap(),
+                ))
+                .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
 
     // Should get HTTP 200 OK even with mixed results
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/ppm-dap;message=upload-errors"
+    );
 
     // Parse the response
-    let body = take_response_body(&mut test_conn).await;
+    let body = take_response_body(&mut response).await;
     let upload_response = UploadErrors::get_decoded_with_param(&body.len(), &body).unwrap();
 
     // Successful reports should NOT appear in the response
@@ -664,7 +782,7 @@ async fn upload_handler_mixed_success_failure() {
 #[tokio::test]
 async fn upload_handler_task_not_started() {
     let HttpHandlerTest {
-        handler,
+        router,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -707,21 +825,31 @@ async fn upload_handler_task_not_started() {
         clock.now().to_time(task.time_precision()),
     );
 
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(
-            UploadRequest::new(vec![early_report.clone()])
-                .get_encoded()
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::new(vec![early_report.clone()])
+                        .get_encoded()
+                        .unwrap(),
+                ))
                 .unwrap(),
         )
-        .run_async(&handler)
-        .await;
+        .await
+        .unwrap();
 
     // Should get HTTP 200 OK but with TaskNotStarted error in response
-    assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_headers!(&test_conn, "content-type" => "application/ppm-dap;message=upload-errors");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/ppm-dap;message=upload-errors"
+    );
 
-    let body = take_response_body(&mut test_conn).await;
+    let body = take_response_body(&mut response).await;
     let upload_response = UploadErrors::get_decoded_with_param(&body.len(), &body).unwrap();
 
     assert_eq!(upload_response.status().len(), 1);
@@ -739,7 +867,7 @@ async fn upload_handler_task_not_started() {
 #[tokio::test]
 async fn upload_handler_helper() {
     let HttpHandlerTest {
-        handler,
+        router,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -762,14 +890,23 @@ async fn upload_handler_helper() {
         clock.now().to_time(task.time_precision()),
     );
 
-    let mut test_conn = post(task.report_upload_uri().unwrap().path())
-        .with_request_header(KnownHeaderName::ContentType, UploadRequest::MEDIA_TYPE)
-        .with_request_body(UploadRequest::from_slice(&[report]).get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
+    let mut response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(task.report_upload_uri().unwrap().path())
+                .header(http::header::CONTENT_TYPE, UploadRequest::MEDIA_TYPE)
+                .body(Body::from(
+                    UploadRequest::from_slice(&[report]).get_encoded().unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    assert!(!test_conn.status().unwrap().is_success());
-    let problem_details = take_problem_details(&mut test_conn).await;
+    assert!(!response.status().is_success());
+    let problem_details = take_problem_details(&mut response).await;
     assert_eq!(
         problem_details,
         json!({
@@ -787,7 +924,7 @@ async fn upload_handler_helper() {
             .unwrap()
             .as_u64()
             .unwrap(),
-        test_conn.status().unwrap() as u16 as u64
+        response.status().as_u16() as u64
     );
 }
 
@@ -804,7 +941,7 @@ async fn upload_handler_error_fanout() {
         .await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
-    let handler = AggregatorHandlerBuilder::new(
+    let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -813,8 +950,7 @@ async fn upload_handler_error_fanout() {
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
 
     const REPORT_EXPIRY_AGE: u64 = 1_000_000;
@@ -834,15 +970,13 @@ async fn upload_handler_error_fanout() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    // Use trillium_tokio instead of trillium_testing so we can send reqeusts in parallel and
+    // Use axum::serve instead of tower::oneshot so we can send requests in parallel and
     // better match production use cases.
-    let server_handle = trillium_tokio::config()
-        .without_signals()
-        .with_host("127.0.0.1")
-        .with_port(0)
-        .spawn(handler);
-    let server_info = server_handle.info().await;
-    let socket_addr = server_info.tcp_socket_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let socket_addr = listener.local_addr().unwrap();
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
 
     let client = reqwest::Client::new();
     let mut url = task.report_upload_uri().unwrap();
@@ -923,7 +1057,8 @@ async fn upload_handler_error_fanout() {
 
     exhaust_pool_task_handle.abort();
 
-    server_handle.stop().await;
+    server_handle.abort();
+    let _ = server_handle.await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1188,7 +1323,7 @@ async fn upload_client_http11_bulk() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     let hpke_keypair = datastore.put_hpke_key().await.unwrap();
-    let handler = AggregatorHandlerBuilder::new(
+    let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -1197,8 +1332,7 @@ async fn upload_client_http11_bulk() {
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
 
     let task = TaskBuilder::new(
@@ -1212,14 +1346,11 @@ async fn upload_client_http11_bulk() {
     let leader_task = task.leader_view().unwrap();
     datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-    let trillium_stopper = trillium_tokio::Stopper::new();
-    let server = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
-    let local_addr = server.local_addr().unwrap();
-    let handle = trillium_tokio::config()
-        .without_signals()
-        .with_stopper(trillium_stopper.clone())
-        .with_prebound_server(server)
-        .spawn(handler);
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
 
     let mut client_socket = TcpStream::connect(local_addr).await.unwrap();
     let request_line_and_headers = format!(
@@ -1273,8 +1404,8 @@ async fn upload_client_http11_bulk() {
         "Expected the right number of valid reports in the datastore"
     );
 
-    trillium_stopper.stop();
-    handle.await;
+    handle.abort();
+    let _ = handle.await;
 }
 
 /// These are all tests of the decode_reports_stream method in http_handlers.rs

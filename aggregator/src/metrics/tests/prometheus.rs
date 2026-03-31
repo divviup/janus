@@ -1,7 +1,8 @@
 use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
 
+use axum::body::Body;
 use backon::BackoffBuilder;
-use http::StatusCode;
+use http::{Request, StatusCode};
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
     retries::{retry_http_request, test_util::test_http_request_exponential_backoff},
@@ -13,8 +14,7 @@ use prometheus::{
     Registry,
     proto::{Metric, MetricType},
 };
-use trillium::Handler;
-use trillium_testing::prelude::get;
+use tower::ServiceExt;
 
 use crate::{
     aggregator::{http_handlers::AggregatorHandlerBuilder, test_util::default_aggregator_config},
@@ -104,7 +104,7 @@ async fn http_metrics() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     datastore.put_hpke_key().await.unwrap();
-    let mut handler = AggregatorHandlerBuilder::new(
+    let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -113,14 +113,20 @@ async fn http_metrics() {
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
 
-    // Call init to finish setting up metrics.
-    handler.init(&mut "testing".into()).await;
-
-    get("/hpke_config").run_async(&handler).await;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/hpke_config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     let metric_families = registry
         .gather()
@@ -223,7 +229,7 @@ async fn axum_http_metrics() {
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
     datastore.put_hpke_key().await.unwrap();
-    let mut handler = AggregatorHandlerBuilder::new(
+    let router = AggregatorHandlerBuilder::new(
         datastore.clone(),
         clock.clone(),
         TestRuntime::default(),
@@ -232,14 +238,20 @@ async fn axum_http_metrics() {
     )
     .await
     .unwrap()
-    .build_trillium_handler(None)
-    .await
+    .build()
     .unwrap();
 
-    handler.init(&mut "testing".into()).await;
-
-    // Hit the axum hpke_config endpoint through the proxy bridge.
-    get("/hpke_config").run_async(&handler).await;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/hpke_config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     let metric_families = registry
         .gather()
