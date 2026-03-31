@@ -31,6 +31,7 @@ use crate::{
 #[tokio::test]
 async fn hpke_config() {
     let HttpHandlerTest {
+        handler: _,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -151,6 +152,7 @@ async fn hpke_config() {
 #[tokio::test]
 async fn hpke_config_with_taskprov() {
     let HttpHandlerTest {
+        handler: _,
         clock,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
@@ -229,9 +231,9 @@ fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: 
 #[tokio::test]
 async fn hpke_config_cors_headers() {
     let HttpHandlerTest {
+        handler,
         ephemeral_datastore: _ephemeral_datastore,
         datastore,
-        handler,
         ..
     } = HttpHandlerTest::new().await;
 

@@ -1,9 +1,6 @@
-use std::{
-    borrow::Cow, collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration,
-};
+use std::{collections::VecDeque, io::Cursor, sync::Arc, time::Duration as StdDuration};
 
 use anyhow::Context;
-use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{FromRequestParts, Path, State as AxumState},
@@ -21,10 +18,7 @@ use futures::{
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE};
 use janus_aggregator_core::{
     datastore::{Datastore, Error as datastoreError},
-    http_server::{
-        BYTES_HISTOGRAM_BOUNDARIES, ErrorCode as AxumErrorCode, HttpMetrics,
-        TIME_HISTOGRAM_BOUNDARIES, http_metrics_middleware, trace_layer,
-    },
+    http_server::{ErrorCode as AxumErrorCode, HttpMetrics, http_metrics_middleware, trace_layer},
     taskprov::taskprov_task_id,
 };
 use janus_core::{
@@ -41,213 +35,25 @@ use janus_messages::{
     TaskId, UploadErrors, UploadRequest, batch_mode::TimeInterval, codec::Decode,
     problem_type::DapProblemType, taskprov::TaskConfig,
 };
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Meter},
-};
+use opentelemetry::metrics::Meter;
 use prio::codec::{CodecError, Encode};
 use querystring::querify;
 use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::warn;
-use trillium::{Conn, Handler, KnownHeaderName, Status};
-use trillium_api::State;
-use trillium_opentelemetry::Metrics;
+use trillium::Handler;
 use trillium_proxy::{Proxy, upstream::IntoUpstreamSelector};
-use trillium_router::{Router, RouterConnExt};
 
 use super::{
     Aggregator, Config, Error,
     error::ArcError,
     queue::{self, LIFORequestQueue},
 };
-use crate::aggregator::{
-    AggregationJobContinueResult,
-    problem_details::{ProblemDetailsConnExt, ProblemDocument, RetryAfterConnExt},
-};
+use crate::aggregator::{AggregationJobContinueResult, problem_details::ProblemDocument};
 
 #[cfg(test)]
 mod tests;
-
-/// Newtype holding a textual error code, to be stored in a Trillium connection's state.
-#[derive(Clone, Copy)]
-struct ErrorCode(&'static str);
-
-async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
-    let error_code = error.error_code();
-    conn.insert_state(ErrorCode(error_code));
-    let conn = match error {
-        Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
-        Error::MessageDecode(_) => {
-            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
-        }
-        Error::MessageEncode(_) => conn.with_status(Status::InternalServerError),
-        Error::ReportRejected(_) => {
-            panic!("no report rejected error should make it to the error handler")
-        }
-        Error::InvalidMessage(task_id, detail) => {
-            let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
-            if let Some(task_id) = task_id {
-                doc = doc.with_task_id(task_id);
-            }
-            if !detail.is_empty() {
-                doc = doc.with_detail(detail);
-            }
-            conn.with_problem_document(&doc)
-        }
-        Error::StepMismatch { task_id, .. } => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
-        ),
-        Error::UnrecognizedTask(task_id) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
-        ),
-        Error::UnrecognizedAggregationJob(task_id, _aggregation_job_id) => conn
-            .with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                    .with_task_id(task_id),
-            ),
-        Error::UnrecognizedAggregateShareId(task_id, aggregate_share_id) => conn
-            .with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#aggregate-share-id-unrecognized",
-                "The aggregate share ID is not recognized.",
-                StatusCode::NOT_FOUND,
-            )
-            .with_task_id(task_id)
-            .with_aggregate_share_id(aggregate_share_id),
-        ),
-        Error::AbandonedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#aggregation-job-abandoned",
-                "The aggregation job has been abandoned.",
-                StatusCode::GONE,
-            )
-            .with_task_id(task_id)
-            .with_aggregation_job_id(aggregation_job_id),
-        ),
-        Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
-                "The aggregation job has been deleted.",
-                StatusCode::GONE,
-            )
-            .with_task_id(task_id)
-            .with_aggregation_job_id(aggregation_job_id),
-        ),
-        Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
-        Error::AbandonedCollectionJob(task_id, collection_job_id) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
-                "The collection job has been abandoned.",
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .with_detail(
-                "An internal problem has caused the server to stop processing this collection job. \
-                The job is no longer collectable. Contact the server operators for assistance.",
-            )
-            .with_task_id(task_id)
-            .with_collection_job_id(collection_job_id),
-        ),
-        Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
-        Error::UnauthorizedRequest(..) => conn.with_status(Status::Forbidden),
-        Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
-        ),
-        Error::BatchInvalid(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
-        ),
-        Error::BatchOverlap(task_id, _) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
-        ),
-        Error::BatchMismatch(inner) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
-                .with_task_id(&inner.task_id)
-                .with_detail(&inner.to_string()),
-        ),
-        Error::Datastore(error @ datastoreError::TimeUnaligned { task_id, .. }) => conn
-            .with_problem_document(
-                &ProblemDocument::new(
-                    DapProblemType::InvalidMessage.type_uri(),
-                    "Time unaligned.",
-                    StatusCode::BAD_REQUEST,
-                )
-                .with_task_id(task_id)
-                .with_detail(&error.to_string()),
-            ),
-        Error::Datastore(_) => conn.with_status(Status::InternalServerError),
-        Error::Hpke(_)
-        | Error::Vdaf(_)
-        | Error::Internal(_)
-        | Error::Url(_)
-        | Error::Message(_)
-        | Error::HttpClient(_)
-        | Error::Http { .. }
-        | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
-        Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
-        Error::EmptyAggregation(task_id) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
-        ),
-        Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
-        Error::BadContentType(_) => conn.with_status(Status::UnsupportedMediaType),
-        Error::BadRequest(detail) => conn.with_problem_document(
-            &ProblemDocument::new(
-                "about:blank", // No additional semantics over-and-above the HTTP status code.
-                "Bad Request.",
-                StatusCode::BAD_REQUEST,
-            )
-            .with_detail(&detail.to_string()),
-        ),
-        Error::InvalidTask(task_id, opt_out_reason) => conn.with_problem_document(
-            &ProblemDocument::new_dap(DapProblemType::InvalidTask)
-                .with_task_id(task_id)
-                .with_detail(&format!("{opt_out_reason}")),
-        ),
-        Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
-        Error::ClientDisconnected => conn.with_status(Status::BadRequest),
-        Error::TooManyRequests => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#too-many-requests",
-                "The server is currently overloaded.",
-                StatusCode::TOO_MANY_REQUESTS,
-            )
-            .with_detail(
-                "The server is currently servicing too many requests, please try the request again \
-                later.",
-            ),
-        ).with_retry_after(StdDuration::from_secs(30)),
-        Error::RequestTimeout => conn.with_problem_document(
-            &ProblemDocument::new(
-                "https://docs.divviup.org/references/janus-errors#request-timeout",
-                "Request timed out waiting in queue.",
-                StatusCode::TOO_MANY_REQUESTS,
-            )
-            .with_detail("The request spent too long waiting to be processed."),
-        ).with_retry_after(StdDuration::from_secs(30)),
-    };
-
-    if matches!(conn.status(), Some(status) if status.is_server_error()) {
-        warn!(error_code, ?error, "Error handling endpoint");
-    }
-
-    conn
-}
-
-#[async_trait]
-impl Handler for Error {
-    async fn run(&self, conn: Conn) -> Conn {
-        run_error_handler(self, conn).await
-    }
-}
-
-// This implementation on a newtype avoids a warning in the generic <Arc<impl Handler> as
-// Handler>::init() implementation. We can suppress this, since this handler does not use init().
-#[async_trait]
-impl Handler for ArcError {
-    async fn run(&self, conn: Conn) -> Conn {
-        run_error_handler(self, conn).await
-    }
-}
 
 /// Default retry-after for rate limiting responses.
 const RATE_LIMIT_RETRY_AFTER: StdDuration = StdDuration::from_secs(30);
@@ -485,24 +291,7 @@ impl<T: Encode> IntoResponse for EncodedBody<T> {
     }
 }
 
-#[async_trait]
-impl<T> Handler for EncodedBody<T>
-where
-    T: Encode + Sync + Send + 'static,
-{
-    async fn run(&self, conn: Conn) -> Conn {
-        match self.object.get_encoded() {
-            Ok(encoded) => conn
-                .with_response_header(KnownHeaderName::ContentType, self.media_type)
-                .with_status(self.status.as_u16())
-                .with_body(encoded)
-                .halt(),
-            Err(e) => Error::MessageEncode(e).run(conn).await,
-        }
-    }
-}
-
-/// A Trillium handler that returns an empty body with retry-after and location headers.
+/// An empty body with retry-after and location headers.
 #[derive(Clone)]
 struct EmptyBody {
     location: String,
@@ -533,95 +322,6 @@ impl IntoResponse for EmptyBody {
             ],
         )
             .into_response()
-    }
-}
-
-#[async_trait]
-impl Handler for EmptyBody {
-    async fn run(&self, conn: Conn) -> Conn {
-        // To be fixed in issue #3921
-        conn.with_response_header(KnownHeaderName::RetryAfter, "2")
-            .with_response_header(KnownHeaderName::Location, self.location.clone())
-            .with_status(Status::Ok)
-            .halt()
-    }
-}
-
-/// A Trillium handler that wraps the proxy and only forwards the request when no prior handler
-/// (i.e. the Trillium router) has set a status on the conn. This prevents the proxy from
-/// overriding responses from Trillium-handled routes.
-// TODO(#4283): Remove when Trillium is fully removed.
-struct ConditionalProxy<H>(H);
-
-#[async_trait]
-impl<H: Handler> Handler for ConditionalProxy<H> {
-    async fn run(&self, conn: Conn) -> Conn {
-        if conn.status().is_some() {
-            return conn;
-        }
-        self.0.run(conn).await
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        self.0.before_send(conn).await
-    }
-}
-
-/// A Trillium handler that checks for state set when sending an error response, and updates an
-/// OpenTelemetry counter accordingly.
-// TODO(#4283): Remove in favour of `http_metrics_middleware` when Trillium is fully removed.
-struct StatusCounter(Counter<u64>);
-
-impl StatusCounter {
-    fn new(meter: &Meter) -> Self {
-        Self(
-            meter
-                .u64_counter("janus_aggregator_responses")
-                .with_description(
-                    "Count of requests handled by the aggregator, by method, route, and response status.",
-                )
-                .with_unit("{request}")
-                .build(),
-        )
-    }
-}
-
-#[async_trait]
-impl Handler for StatusCounter {
-    async fn run(&self, conn: Conn) -> Conn {
-        conn
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        // Check for the error code set by the Error handler implementation.
-        let error_code_opt = conn.state::<ErrorCode>().map(|error_code| error_code.0);
-        let error_code = if let Some(status) = conn.status() {
-            if status.is_client_error() || status.is_server_error() {
-                error_code_opt.unwrap_or("unknown")
-            } else {
-                // Set the label to an empty string on success.
-                ""
-            }
-        } else {
-            // No status is set, it will fall back to 404.
-            error_code_opt.unwrap_or("unknown")
-        };
-        // Fetch the method.
-        let method = conn.method().as_str();
-        // Check for the route set by the router.
-        let route = conn
-            .route()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "unknown".to_owned());
-        self.0.add(
-            1,
-            &[
-                KeyValue::new("method", method),
-                KeyValue::new("route", route),
-                KeyValue::new("error_code", error_code),
-            ],
-        );
-        conn
     }
 }
 
@@ -900,26 +600,8 @@ where
         self,
         helper_queue: Option<Arc<LIFORequestQueue>>,
     ) -> Result<impl Handler, Error> {
-        // The Trillium router is now empty — all routes have migrated to axum.
-        let router = Router::new().without_options_handling();
-
-        let metrics = Metrics::new(self.meter.clone())
-            .with_route(|conn| {
-                conn.route()
-                    .map(|route_spec| Cow::Owned(route_spec.to_string()))
-            })
-            .with_error_type(|conn| {
-                conn.state::<ErrorCode>()
-                    .map(|error_code| Cow::Borrowed(error_code.0))
-            })
-            .with_duration_histogram_boundaries(TIME_HISTOGRAM_BOUNDARIES.to_vec())
-            .with_request_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec())
-            .with_response_size_histogram_boundaries(BYTES_HISTOGRAM_BOUNDARIES.to_vec());
-
         let axum_router = self.build_axum_router(helper_queue);
 
-        // Bind on the IPv6 loopback to avoid a DNS lookup for "localhost" and restrict to local
-        // connections. Deployments require IPv6 loopback to be available (standard in Linux).
         let axum_listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
             .await
             .map_err(|err| Error::Internal(format!("binding axum listener: {err}").into()))?;
@@ -930,12 +612,6 @@ where
             axum::serve(axum_listener, axum_router).await.ok();
         });
 
-        // Proxy fallback: routes not matched by the Trillium router are forwarded to
-        // the local axum server. As endpoints migrate, they are removed from the
-        // Trillium router and added to the axum router; the proxy transparently
-        // forwards traffic to them. We use `proxy_not_found()` so that axum's
-        // intentional 404 responses (e.g. for missing collection jobs) are forwarded
-        // back to the client rather than being swallowed by the proxy.
         let upstream = format!("http://{axum_address}/").into_upstream();
         let proxy = Proxy::new(
             trillium_proxy::Client::new(trillium_tokio::ClientConfig::default())
@@ -944,13 +620,7 @@ where
         )
         .proxy_not_found();
 
-        Ok((
-            State(self.aggregator),
-            metrics,
-            router,
-            StatusCounter::new(self.meter),
-            ConditionalProxy(proxy),
-        ))
+        Ok(proxy)
     }
 }
 
@@ -1519,6 +1189,7 @@ pub mod test_util {
         pub clock: MockClock,
         pub ephemeral_datastore: EphemeralDatastore,
         pub datastore: Arc<Datastore<MockClock>>,
+        // TODO(#4283): Remove when all tests are migrated to tower::oneshot.
         pub handler: Box<dyn Handler>,
         pub router: Router,
         pub hpke_keypair: HpkeKeypair,

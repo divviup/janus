@@ -10,8 +10,6 @@ use janus_messages::{
 };
 use serde::Serialize;
 use tracing::warn;
-use trillium::{Conn, KnownHeaderName};
-use trillium_api::ApiConnExt;
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
@@ -150,36 +148,6 @@ impl IntoResponse for ProblemDocument<'_> {
 impl IntoResponse for &ProblemDocument<'_> {
     fn into_response(self) -> Response {
         self.to_response_with_retry_after(None)
-    }
-}
-
-pub trait ProblemDetailsConnExt {
-    /// Send a response containing a JSON-encoded problem details document for the given
-    /// DAP-specific problem document, and set the appropriate HTTP status code.
-    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self;
-}
-
-impl ProblemDetailsConnExt for Conn {
-    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
-        self.with_status(problem_document.status)
-            .with_response_header(
-                KnownHeaderName::ContentType,
-                PROBLEM_DETAILS_JSON_MEDIA_TYPE,
-            )
-            .with_json(problem_document)
-    }
-}
-
-pub trait RetryAfterConnExt {
-    fn with_retry_after(self, retry_after: Duration) -> Self;
-}
-
-impl RetryAfterConnExt for Conn {
-    fn with_retry_after(self, retry_after: Duration) -> Self {
-        self.with_response_header(
-            KnownHeaderName::RetryAfter,
-            retry_after.as_secs().to_string(),
-        )
     }
 }
 

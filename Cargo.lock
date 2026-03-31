@@ -2688,13 +2688,9 @@ dependencies = [
  "tracing-stackdriver",
  "tracing-subscriber",
  "trillium",
- "trillium-api",
- "trillium-head",
  "trillium-macros 0.0.6",
- "trillium-opentelemetry",
  "trillium-prometheus",
  "trillium-proxy",
- "trillium-router",
  "trillium-testing",
  "trillium-tokio",
  "trycmd",
@@ -6239,15 +6235,6 @@ checksum = "683796aeee40649ad14ef91d90c4963ffeea3ff283edfb9b0ea750eea03c40c0"
 dependencies = [
  "cidr",
  "log",
- "trillium",
-]
-
-[[package]]
-name = "trillium-head"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc125c6f329f4c7d26688ebb551f84ad6e03460094dd2f03f06f35b292aee474"
-dependencies = [
  "trillium",
 ]
 
