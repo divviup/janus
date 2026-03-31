@@ -127,7 +127,7 @@ where
             // Wait out our job discovery delay, if any.
             if self
                 .stopper
-                .stop_future(time::sleep_until(next_run_instant))
+                .run_until_stopped(time::sleep_until(next_run_instant))
                 .await
                 .is_none()
             {

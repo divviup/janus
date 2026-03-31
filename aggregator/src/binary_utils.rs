@@ -76,7 +76,7 @@ impl Stopper {
 
     /// Runs the given future to completion, unless this stopper is stopped first. Returns `Some`
     /// with the future's output if it completed, or `None` if the stopper was stopped.
-    pub async fn stop_future<F: Future>(&self, future: F) -> Option<F::Output> {
+    pub async fn run_until_stopped<F: Future>(&self, future: F) -> Option<F::Output> {
         tokio::pin!(future);
         tokio::select! {
             output = &mut future => Some(output),
@@ -523,7 +523,7 @@ async fn zpages_server(address: SocketAddr, trace_reload_handle: TraceReloadHand
 
 pub fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> Router {
     Router::new()
-        .route("/healthz", get(|| async { "" }))
+        .route("/healthz", get(StatusCode::OK))
         .route("/traceconfigz", get(get_traceconfigz).put(put_traceconfigz))
         .with_state(Arc::new(trace_reload_handle))
 }

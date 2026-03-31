@@ -84,7 +84,7 @@ async fn run_aggregator(
                 // Note that `interval` fires immediately at first, so the key rotator runs
                 // immediately on boot. This takes care of bootstrapping keys on the first run of
                 // Janus.
-                while stopper.stop_future(interval.tick()).await.is_some() {
+                while stopper.run_until_stopped(interval.tick()).await.is_some() {
                     if let Err(err) = key_rotator.run().await {
                         error!(?err, "key rotator error");
                     }

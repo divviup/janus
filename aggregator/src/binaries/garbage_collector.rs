@@ -49,7 +49,7 @@ pub(super) async fn run_garbage_collector(
     );
     info!("Running garbage collector");
     let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
-    while stopper.stop_future(interval.tick()).await.is_some() {
+    while stopper.run_until_stopped(interval.tick()).await.is_some() {
         if let Err(err) = gc.run().await {
             error!(?err, "GC error");
         }

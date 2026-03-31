@@ -167,7 +167,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         loop {
             if stopper
-                .stop_future(tasks_update_ticker.tick())
+                .run_until_stopped(tasks_update_ticker.tick())
                 .await
                 .is_none()
             {
@@ -263,7 +263,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         loop {
             if stopper
-                .stop_future(sleep_until(next_run_instant))
+                .run_until_stopped(sleep_until(next_run_instant))
                 .await
                 .is_none()
             {
